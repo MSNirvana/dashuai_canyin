@@ -3,7 +3,12 @@
 import '../env.js'
 import { prisma } from '../db.js'
 import { startRenderWorker, stopRenderWorker } from './worker.js'
+import { ensureLocalStorage, isLocalStorage, localStorageRoot } from '../lib/local-storage.js'
 
+if (isLocalStorage()) {
+  await ensureLocalStorage()
+  console.log(`[render-worker] 本地文件存储已启用: ${localStorageRoot()}`)
+}
 startRenderWorker()
 
 let stopping = false

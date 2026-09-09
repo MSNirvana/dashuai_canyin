@@ -20,3 +20,4 @@ apps/mini/.npm-cache/
 apps/mini/npm-cache/
 apps/admin/.npm-cache/
 apps/admin/npm-cache/
+server/storage/

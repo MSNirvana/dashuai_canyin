@@ -3,6 +3,7 @@
 import STS from 'qcloud-cos-sts'
 import type { PrismaClient } from '@prisma/client'
 import { assertUploadAllowed } from './subscription.service.js'
+import { storageMode, type StorageMode } from '../lib/local-storage.js'
 
 export interface StsCredential {
   tmpSecretId: string
@@ -13,6 +14,7 @@ export interface StsCredential {
   bucket: string
   region: string
   prefix: string
+  mode: StorageMode
 }
 
 export class UploadPrefixError extends Error {
@@ -48,7 +50,26 @@ export async function getSts(merchantId: bigint): Promise<StsCredential> {
   const prefix = `uploads/${merchantId}/`
   const appId = getAppId(bucket)
 
-  // 开发期无 COS 配置：返回占位凭证。前端代码路径完整（本地无法真传，仅联调页面流程）
+  if (storageMode() === 'cos' && !isCosConfigured()) {
+    throw new Error('COS 模式未配置 COS_SECRET_ID/KEY/BUCKET/REGION')
+  }
+
+  if (storageMode() === 'local') {
+    const now = Math.floor(Date.now() / 1000)
+    return {
+      tmpSecretId: 'local-storage',
+      tmpSecretKey: 'local-storage',
+      sessionToken: 'local-storage',
+      startTime: now,
+      expiredTime: now + 1800,
+      bucket: '',
+      region: '',
+      prefix,
+      mode: 'local',
+    }
+  }
+
+  // 兼容未显式设置 STORAGE_MODE 的旧开发环境；默认 storageMode() 已是 local，正常不会走到这里。
   if (!isCosConfigured()) {
     const now = Math.floor(Date.now() / 1000)
     return {
@@ -60,6 +81,7 @@ export async function getSts(merchantId: bigint): Promise<StsCredential> {
       bucket,
       region,
       prefix,
+      mode: 'local',
     }
   }
 
@@ -112,6 +134,7 @@ export async function getSts(merchantId: bigint): Promise<StsCredential> {
     bucket,
     region,
     prefix,
+    mode: 'cos',
   }
 }
 

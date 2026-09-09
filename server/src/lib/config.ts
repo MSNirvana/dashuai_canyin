@@ -13,5 +13,9 @@ export function validateProductionConfig(env: NodeJS.ProcessEnv = process.env): 
   }
   if ((env.WX_PAY_API_KEY_V3 ?? '').length !== 32) throw new Error('WX_PAY_API_KEY_V3 requires 32 characters')
   if (env.FFMPEG_WORKER !== 'true') throw new Error('Real render worker required in production')
+  if (env.STORAGE_MODE === 'local') throw new Error('Local storage forbidden in production')
+  for (const key of ['COS_BUCKET', 'COS_REGION', 'COS_SECRET_ID', 'COS_SECRET_KEY']) {
+    if (!(env[key] ?? '')) throw new Error(`Missing production storage config: ${key}`)
+  }
   if (env.CORS_ORIGIN === '*') throw new Error('Explicit CORS origins required')
 }

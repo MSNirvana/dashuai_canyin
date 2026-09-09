@@ -3,6 +3,7 @@
 import { createWriteStream, createReadStream, stat } from 'node:fs'
 import { promisify } from 'node:util'
 import COS from 'cos-nodejs-sdk-v5'
+import { copyFileToLocalObject, copyLocalObjectToFile, isLocalStorage, localObjectExists } from './local-storage.js'
 
 const statP = promisify(stat)
 
@@ -18,11 +19,12 @@ function getClient(): COS | null {
 
 /** COS 是否已配置（worker 启动时会据此告警） */
 export function cosReady(): boolean {
-  return !!getClient()
+  return isLocalStorage() || !!getClient()
 }
 
 /** 对象是否存在（中间产物缓存命中判定）。未配置或异常一律返回 false，走重算 */
 export async function objectExists(key: string): Promise<boolean> {
+  if (isLocalStorage()) return localObjectExists(key)
   const c = getClient()
   if (!c) return false
   const bucket = process.env.COS_BUCKET!
@@ -37,6 +39,7 @@ export async function objectExists(key: string): Promise<boolean> {
 
 /** 下载对象到本地文件（流式，避免大文件占满内存） */
 export function downloadToFile(key: string, localPath: string): Promise<void> {
+  if (isLocalStorage()) return copyLocalObjectToFile(key, localPath)
   const c = getClient()
   if (!c) return Promise.reject(new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）'))
   const bucket = process.env.COS_BUCKET!
@@ -57,6 +60,7 @@ export function downloadToFile(key: string, localPath: string): Promise<void> {
 
 /** 上传本地文件到桶，返回字节数 */
 export async function uploadFile(localPath: string, key: string, contentType = 'video/mp4'): Promise<number> {
+  if (isLocalStorage()) return copyFileToLocalObject(localPath, key)
   const c = getClient()
   if (!c) throw new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）')
   const bucket = process.env.COS_BUCKET!

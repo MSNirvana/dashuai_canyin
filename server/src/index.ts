@@ -21,6 +21,7 @@ import shotLibraryRouter from './routes/shot-library.js'
 import accountRouter from './routes/account.js'
 import previewCollageRouter from './routes/preview-collage.js'
 import systemSettingsRouter from './routes/system-settings.js'
+import { ensureLocalStorage, isLocalStorage, localStorageRoot } from './lib/local-storage.js'
 
 const app: Express = express()
 const PORT = Number(process.env.PORT ?? 3000)
@@ -73,6 +74,10 @@ app.use((_req, res) => {
 app.use(errorHandler)
 
 async function bootstrap() {
+  if (isLocalStorage()) {
+    await ensureLocalStorage()
+    console.log(`[server] 本地文件存储已启用: ${localStorageRoot()}`)
+  }
   try {
     await redis.connect()
   } catch (e) {

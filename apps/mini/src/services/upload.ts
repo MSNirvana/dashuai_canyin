@@ -1,6 +1,8 @@
 // 素材直传：拉 STS 临时密钥 → cos-wx-sdk-v5 分片上传 → 后端确认落库
 // 单文件最大 2GB，分片续传由 SDK 内部 TaskId 接管
 import COS from 'cos-wx-sdk-v5'
+import Taro from '@tarojs/taro'
+import { BASE_URL, PLATFORM, STORAGE_KEYS } from '../config'
 import { http } from './request'
 
 export interface StsCredential {
@@ -12,6 +14,7 @@ export interface StsCredential {
   bucket: string
   region: string
   prefix: string
+  mode?: 'local' | 'cos'
 }
 
 export interface MediaAsset {
@@ -39,6 +42,34 @@ export async function uploadMediaFile(opts: {
 }): Promise<MediaAsset> {
   const sts = await http.post<StsCredential>('/upload/sts')
   const ext = (opts.filePath.split('.').pop() || (opts.type === 'IMAGE' ? 'jpg' : 'mp4')).toLowerCase()
+
+  if (sts.mode === 'local') {
+    const token = Taro.getStorageSync<string>(STORAGE_KEYS.token)
+    const uploadTask = Taro.uploadFile({
+      url: `${BASE_URL}/upload/local`,
+      filePath: opts.filePath,
+      name: 'file',
+      header: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'X-Platform': PLATFORM,
+      },
+      formData: {
+        storeId: opts.storeId,
+        type: opts.type,
+        ...(opts.durationMs ? { durationMs: String(Math.round(opts.durationMs)) } : {}),
+      },
+    })
+    uploadTask.onProgressUpdate((p) => opts.onProgress?.(p.progress))
+    const result = await uploadTask
+    let body: { code?: number; message?: string; data?: MediaAsset }
+    try { body = JSON.parse(result.data || '{}') as typeof body } catch { throw new Error('上传服务返回格式错误') }
+    if (result.statusCode < 200 || result.statusCode >= 300 || body.code !== 0 || !body.data) {
+      throw new Error(body.message || '上传失败')
+    }
+    opts.onProgress?.(100)
+    return body.data
+  }
+
   const key = `${sts.prefix}${Date.now()}_${randomStr(6)}.${ext}`
 
   const cos = new COS({
