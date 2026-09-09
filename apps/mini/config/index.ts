@@ -4,7 +4,8 @@ import prodConfig from './prod'
 
 // Taro 4 配置：一套代码编译微信 / 抖音两端
 export default defineConfig(async (merge, { mode }) => {
-  const apiBaseUrl = process.env.TARO_APP_API_BASE_URL?.trim() || (mode === 'development'
+  const isDevelopment = process.env.NODE_ENV === 'development' || mode === 'development'
+  const apiBaseUrl = process.env.TARO_APP_API_BASE_URL?.trim() || (isDevelopment
     ? 'http://localhost:3000/api/v1'
     : 'https://REPLACE_ME.example.com/api/v1')
   const baseConfig: UserConfigExport = {

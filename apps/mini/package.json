@@ -10,6 +10,7 @@
   },
   "scripts": {
     "dev:weapp": "NODE_ENV=development npm run build:weapp -- --watch",
+    "build:weapp:dev": "NODE_ENV=development npm run build:weapp",
     "build:weapp": "taro build --type weapp",
     "dev:tt": "npm run build:tt -- --watch",
     "build:tt": "taro build --type tt",
