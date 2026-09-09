@@ -1,5 +1,5 @@
 import { Layout, Menu, Button } from 'tdesign-react'
-import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   DashboardIcon,
   UserCircleIcon,
@@ -49,7 +49,7 @@ export default function AppLayout() {
         >
           {MENU.map((m) => (
             <Menu.MenuItem key={m.path} value={m.path} icon={m.icon}>
-              <Link to={m.path}>{m.label}</Link>
+              {m.label}
             </Menu.MenuItem>
           ))}
         </Menu>
