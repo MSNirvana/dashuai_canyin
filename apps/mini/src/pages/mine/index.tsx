@@ -1,7 +1,10 @@
-import { useState } from 'react'
-import { View, Text } from '@tarojs/components'
+import { useEffect, useRef, useState } from 'react'
+import { Button, Image, View, Text } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
+import * as authApi from '../../services/auth'
+import { IS_DEV, STORAGE_KEYS } from '../../config'
 import { useMerchantStore } from '../../store/merchant'
+import logoPng from '../../assets/logo.png'
 import './index.scss'
 
 function fmtDate(s: string | null): string {
@@ -32,14 +35,83 @@ export default function Mine() {
   const storageQuota = useMerchantStore((s) => s.storageQuota)
   const storageSubscribed = useMerchantStore((s) => s.storageSubscribed)
   const refreshMe = useMerchantStore((s) => s.refreshMe)
+  const token = useMerchantStore((s) => s.token)
+  const setLogin = useMerchantStore((s) => s.setLogin)
+  const logout = useMerchantStore((s) => s.logout)
 
   const [loading, setLoading] = useState(true)
+  const [showLogin, setShowLogin] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [devMode, setDevMode] = useState(false)
+  const [phone] = useState('')
+  const loginRequest = useRef(0)
 
   useDidShow(() => {
-    refreshMe()
-      .catch(() => undefined)
-      .finally(() => setLoading(false))
+    const currentToken = Taro.getStorageSync<string>(STORAGE_KEYS.token) || ''
+    if (!currentToken && useMerchantStore.getState().token) logout()
+    setShowLogin(!currentToken)
+    if (currentToken) {
+      refreshMe().catch(() => undefined).finally(() => setLoading(false))
+    } else {
+      setLoading(false)
+    }
   })
+
+  useEffect(() => {
+    if (!showLogin || !IS_DEV) return
+    authApi.getDevMode().then((r) => setDevMode(r.enabled)).catch(() => setDevMode(false))
+  }, [showLogin])
+
+  useEffect(() => {
+    const requireLogin = () => {
+      logout()
+      setShowLogin(true)
+    }
+    Taro.eventCenter.on('auth:required', requireLogin)
+    return () => {
+      Taro.eventCenter.off('auth:required', requireLogin)
+    }
+  }, [logout])
+
+  const onGetPhoneNumber = async (e: { detail: { code?: string } }) => {
+    const phoneCode = e.detail?.code
+    if (!phoneCode) {
+      Taro.showToast({ title: '需要授权手机号才能登录', icon: 'none' })
+      return
+    }
+    if (submitting) return
+    const requestNo = ++loginRequest.current
+    setSubmitting(true)
+    try {
+      const loginRes = await Taro.login()
+      const res = await authApi.wechatLogin({ phoneCode, wxLoginCode: loginRes.code })
+      if (requestNo !== loginRequest.current) return
+      setLogin(res)
+      setShowLogin(false)
+      await refreshMe().catch(() => undefined)
+      Taro.showToast({ title: '登录成功', icon: 'success' })
+    } catch (err) {
+      Taro.showToast({ title: (err as { message?: string })?.message ?? '登录失败，请重试', icon: 'none', duration: 2500 })
+    } finally {
+      if (requestNo === loginRequest.current) setSubmitting(false)
+    }
+  }
+
+  const onDevLogin = async () => {
+    if (submitting) return
+    setSubmitting(true)
+    try {
+      const res = await authApi.devLogin(/^1[3-9]\d{9}$/.test(phone) ? phone : '13800000000')
+      setLogin(res)
+      setShowLogin(false)
+      await refreshMe().catch(() => undefined)
+      Taro.showToast({ title: '开发登录成功', icon: 'success' })
+    } catch (err) {
+      Taro.showToast({ title: (err as { message?: string })?.message ?? '开发登录失败', icon: 'none', duration: 2500 })
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const go = (url: string) => Taro.navigateTo({ url })
   // creation/list 是 tabBar 页，必须用 switchTab
@@ -139,6 +211,20 @@ export default function Mine() {
       </View>
 
       {loading && <View className='mine__tip'>加载中…</View>}
+
+      {showLogin && !token && <View className='mine__login-mask' catchMove>
+        <View className='mine__login-modal'>
+          <View className='mine__login-close' onClick={() => setShowLogin(false)}>×</View>
+          <Image className='mine__login-logo' src={logoPng} mode='aspectFit' />
+          <Text className='mine__login-title'>登录大帅餐饮</Text>
+          <Text className='mine__login-desc'>登录后管理门店并开始创作</Text>
+          <Button className='mine__login-primary' openType='getPhoneNumber' onGetPhoneNumber={onGetPhoneNumber} disabled={submitting}>
+            {submitting ? '登录中…' : '微信一键登录'}
+          </Button>
+          {IS_DEV && devMode && <Button className='mine__login-dev' onClick={onDevLogin} disabled={submitting}>开发登录（本地联调）</Button>}
+          <Text className='mine__login-tip'>授权即表示同意《用户协议》和《隐私政策》</Text>
+        </View>
+      </View>}
     </View>
   )
 }

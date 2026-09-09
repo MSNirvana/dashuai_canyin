@@ -1,7 +1,6 @@
 // defineAppConfig 是 Taro 4 的全局声明，无需 import
 export default defineAppConfig({
   pages: [
-    'pages/login/index',
     'pages/home/index',
     'pages/store/list',
     'pages/store/edit',

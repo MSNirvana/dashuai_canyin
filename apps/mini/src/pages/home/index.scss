@@ -95,6 +95,22 @@
     z-index: 3;
     padding: 28rpx 28rpx 24rpx;
   }
+  &__guest {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16rpx;
+    text-align: center;
+  }
+  &__guest-title {
+    font-size: 32rpx;
+    font-weight: 700;
+    color: var(--td-text-color-primary);
+  }
+  &__guest-desc {
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+  }
   &__info-row {
     display: flex;
     align-items: center;

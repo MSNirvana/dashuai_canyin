@@ -9,7 +9,7 @@
     "css": "sass"
   },
   "scripts": {
-    "dev:weapp": "npm run build:weapp -- --watch",
+    "dev:weapp": "NODE_ENV=development npm run build:weapp -- --watch",
     "build:weapp": "taro build --type weapp",
     "dev:tt": "npm run build:tt -- --watch",
     "build:tt": "taro build --type tt",

@@ -61,8 +61,9 @@ function clearLoginState() {
 function redirectToLogin() {
   const pages = Taro.getCurrentPages()
   const current = pages[pages.length - 1]?.route ?? ''
-  if (!current.includes('pages/login')) {
-    Taro.reLaunch({ url: `/pages/login/index?redirect=${encodeURIComponent(`/${current}`)}` })
+  Taro.eventCenter.trigger('auth:required')
+  if (!current.includes('pages/mine')) {
+    Taro.switchTab({ url: '/pages/mine/index' })
   }
 }
 

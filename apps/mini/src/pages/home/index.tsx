@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Image, Text, View } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
@@ -18,15 +18,25 @@ export default function HomePage() {
       setStoreName(stores.find((store) => store.id === currentStoreId)?.name || '')
     } catch { setError('门店或账户刷新失败，请重试') }
   }
-  useEffect(() => {
-    if (!merchant) void Taro.redirectTo({ url: '/pages/login/index' })
-  }, [merchant])
   useDidShow(() => { void refresh() })
-  if (!merchant) return null
+  const goMine = () => Taro.switchTab({ url: '/pages/mine/index' })
+  if (!merchant) return <View className='home'>
+    <View className='home__hero'>
+      <View className='home__topbar'>
+        <View className='home__brand'><Image className='home__logo' src={logoPng} mode='aspectFit' /><Text className='home__appname'>大帅餐饮</Text></View>
+        <View className='home__icon-btn' onClick={goMine}><t-icon name='user' size='20px' /></View>
+      </View>
+      <View className='home__hero-title'><Text className='home__hero-main'>商家短视频创作</Text><Text className='home__hero-sub'>门店资料 · 口播文案 · 分镜素材 · 成片</Text></View>
+    </View>
+    <View className='ds-card home__info home__guest'>
+      <Text className='home__guest-title'>登录后开始创作</Text>
+      <Text className='home__guest-desc'>进入“我的”完成微信一键登录</Text>
+      <View className='ds-btn ds-btn--primary ds-btn--sm' onClick={goMine}>去登录</View>
+    </View>
+  </View>
   const goStores = () => Taro.navigateTo({ url: '/pages/store/list' })
   const goCreations = () => Taro.switchTab({ url: '/pages/creation/list' })
   const goRecharge = () => Taro.navigateTo({ url: '/pages/recharge/index' })
-  const goMine = () => Taro.switchTab({ url: '/pages/mine/index' })
   const goDishes = () => currentStoreId
     ? Taro.navigateTo({ url: `/pages/dish/list?storeId=${currentStoreId}` })
     : goStores()
