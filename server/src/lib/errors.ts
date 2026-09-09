@@ -9,6 +9,7 @@ import { StoreLimitError, StoreDefaultDeleteError } from '../services/store.serv
 import { DishStoreMismatchError } from '../services/dish.service.js'
 import { SubscriptionRequiredError, StorageQuotaExceededError } from '../services/subscription.service.js'
 import { fail } from './result.js'
+import { RequestConflictError } from '../domain/request.js'
 
 export interface MappedError {
   code: number
@@ -19,6 +20,7 @@ export interface MappedError {
 function mapError(e: unknown): MappedError {
   if (e instanceof BeanNotEnoughError) return { code: 2001, message: '积分不足', httpStatus: 400 }
   if (e instanceof ScenePendingError) return { code: 2002, message: '请求进行中或已失败，请使用新的 requestId 重试', httpStatus: 409 }
+  if (e instanceof RequestConflictError) return { code: 2007, message: e.message, httpStatus: 409 }
   if (e instanceof WxApiError) return { code: 5001, message: `微信登录失败：${e.message}`, httpStatus: 502 }
   if (e instanceof SmsSendTooFrequentError) return { code: 1003, message: `验证码发送过于频繁，请 ${e.cooldownSec}s 后再试`, httpStatus: 429 }
   if (e instanceof SmsDailyLimitError) return { code: 1003, message: `今日验证码次数已达上限（${e.limit}）`, httpStatus: 429 }

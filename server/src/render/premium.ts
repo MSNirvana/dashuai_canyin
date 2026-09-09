@@ -3,8 +3,8 @@
 // 计费铁律与机器合成一致：submitRender 只 freeze 预留；交付成功才 consume，失败/超时 unfreeze 全额释放
 import type { PrismaClient } from '@prisma/client'
 import { prisma } from '../db.js'
-import { unfreeze, type Db } from '../bean/bean.service.js'
-import { completeRender, type RenderClip } from '../services/render.service.js'
+import type { Db } from '../bean/bean.service.js'
+import { completeRender, failRender, type RenderClip } from '../services/render.service.js'
 import { getSharedPlayUrlByKey } from '../services/media.service.js'
 
 export class PremiumTaskStateError extends Error {
@@ -63,6 +63,7 @@ export interface DeliverInput {
 export async function deliverPremiumTask(prisma: PrismaClient, taskId: bigint, input: DeliverInput) {
   const task = await getTaskOrThrow(taskId)
   if (task.status !== 'MANUAL_DOING' && task.status !== 'MANUAL_PENDING') {
+    if (task.status === 'SUCCESS') return task
     throw new PremiumTaskStateError(`任务状态 ${task.status} 不可交付`)
   }
   await prisma.$transaction(async (tx: Db) => {
@@ -81,33 +82,8 @@ export async function deliverPremiumTask(prisma: PrismaClient, taskId: bigint, i
 export async function failPremiumTask(prisma: PrismaClient, taskId: bigint, reason: string) {
   const task = await getTaskOrThrow(taskId)
   if (task.status === 'SUCCESS') throw new PremiumTaskStateError('任务已交付，不可标记失败')
-  const amount = task.beanCharged
-  const rid = task.requestId ?? `t${taskId.toString()}`
-  await prisma
-    .$transaction(async (tx: Db) => {
-      if (amount > 0n) {
-        await unfreeze(tx, {
-          merchantId: task.merchantId,
-          requestId: `rf:${rid}`,
-          amount,
-          bizType: 'RENDER',
-          bizId: taskId.toString(),
-          remark: '精品合成失败（人工终止），释放预留豆',
-        })
-      }
-    })
-    .catch((e) => {
-      throw new PremiumTaskStateError(`退款失败：${(e as Error).message}`, 4012, 500)
-    })
-  await prisma.renderTask.update({
-    where: { id: taskId },
-    data: {
-      status: 'FAILED',
-      errorCode: 'MANUAL_FAILED',
-      errorMsg: (reason || '人工标记失败').slice(0, 500),
-      finishAt: new Date(),
-    },
-  })
+  const state = await failRender(prisma, taskId, 'MANUAL_FAILED', reason || '人工标记失败')
+  if (state === 'SETTLEMENT_PENDING') throw new PremiumTaskStateError('退款处理中，请稍后查看任务状态', 4012, 500)
   return prisma.renderTask.findUnique({ where: { id: taskId } })
 }
 
@@ -166,30 +142,8 @@ async function sweep(): Promise<void> {
   })
   for (const task of overdue) {
     try {
-      const amount = task.beanCharged
-      const rid = task.requestId ?? `t${task.id.toString()}`
-      if (amount > 0n) {
-        await prisma.$transaction(async (tx: Db) => {
-          await unfreeze(tx, {
-            merchantId: task.merchantId,
-            requestId: `rf:${rid}`,
-            amount,
-            bizType: 'RENDER',
-            bizId: task.id.toString(),
-            remark: '精品合成超时未交付，自动退款',
-          })
-        })
-      }
-      await prisma.renderTask.update({
-        where: { id: task.id },
-        data: {
-          status: 'FAILED',
-          errorCode: 'SLA_TIMEOUT',
-          errorMsg: '精品合成超过承诺时限，已自动退款',
-          finishAt: new Date(),
-        },
-      })
-      console.warn(`[premium-sweeper] task ${task.id} 超时，已退款 ${amount} 豆`)
+      const state = await failRender(prisma, task.id, 'SLA_TIMEOUT', '精品合成超过承诺时限，已自动退款')
+      console.warn(`[premium-sweeper] task ${task.id} 超时，状态 ${state}`)
     } catch (e) {
       console.error(`[premium-sweeper] task ${task.id} 退款失败:`, (e as Error).message)
     }

@@ -90,9 +90,34 @@ async function writeLedger(
   })
 }
 
-async function findLedger(tx: Db, requestId: string | undefined, type: LedgerType) {
+async function findLedger(tx: Db, merchantId: bigint, bizType: string | undefined, requestId: string | undefined, type: LedgerType) {
   if (!requestId) return null
-  return tx.beanLedger.findFirst({ where: { requestId, type } })
+  return tx.beanLedger.findFirst({ where: { merchantId, bizType, requestId, type } })
+}
+
+async function findReservation(
+  tx: Db,
+  args: { merchantId: bigint; requestId?: string; bizType?: string; bizId?: string },
+) {
+  if (args.requestId && args.bizType) {
+    const row = await tx.beanReservation.findUnique({
+      where: {
+        merchantId_bizType_requestId: {
+          merchantId: args.merchantId,
+          bizType: args.bizType,
+          requestId: args.requestId,
+        },
+      },
+    })
+    if (row) return row
+  }
+  if (args.bizId && args.bizType) {
+    return tx.beanReservation.findFirst({
+      where: { merchantId: args.merchantId, bizType: args.bizType, bizId: args.bizId },
+      orderBy: { createdAt: 'desc' },
+    })
+  }
+  return null
 }
 
 // ────────────────────────────── 预留 / 结算 / 释放 ──────────────────────────────
@@ -101,6 +126,7 @@ export interface FreezeResult {
   duplicated: boolean
   frozen: bigint
   available: bigint
+  reservationId: bigint
 }
 
 /** 预留额度。幂等：同一 (requestId, FREEZE) 只执行一次 */
@@ -110,18 +136,41 @@ export async function freeze(
 ): Promise<FreezeResult> {
   if (args.amount <= 0n) throw new Error('freeze amount must be positive')
 
-  const dup = await findLedger(tx, args.requestId, 'FREEZE')
-  if (dup) {
-    return { duplicated: true, frozen: BigInt(dup.frozenAfter), available: 0n }
-  }
-
   const acc = await lockAccount(tx, args.merchantId)
+  const bizType = args.bizType ?? 'UNKNOWN'
+  const existing = await findReservation(tx, {
+    merchantId: args.merchantId,
+    requestId: args.requestId,
+    bizType,
+    bizId: args.bizId,
+  })
+  if (existing) {
+    return {
+      duplicated: true,
+      frozen: acc.frozen,
+      available: acc.balance + acc.grant_balance - acc.frozen,
+      reservationId: existing.id,
+    }
+  }
+  const dup = await findLedger(tx, args.merchantId, bizType, args.requestId, 'FREEZE')
+  if (dup) {
+    throw new Error('FREEZE 流水已存在但缺少积分预留记录')
+  }
   const available = acc.balance + acc.grant_balance - acc.frozen
   if (available < args.amount) {
     throw new BeanNotEnoughError(args.amount, available)
   }
 
   const frozenAfter = acc.frozen + args.amount
+  const reservation = await tx.beanReservation.create({
+    data: {
+      merchantId: args.merchantId,
+      bizType,
+      bizId: args.bizId ?? `${args.requestId ?? 'anonymous'}:${Date.now()}`,
+      requestId: args.requestId ?? `anonymous:${Date.now()}`,
+      reserved: args.amount,
+    },
+  })
   await tx.beanAccount.update({
     where: { merchantId: args.merchantId },
     data: { frozen: frozenAfter, version: { increment: 1 } },
@@ -134,21 +183,20 @@ export async function freeze(
       balanceAfter: acc.balance,
       grantAfter: acc.grant_balance,
       frozenAfter,
-      bizType: args.bizType,
+      bizType,
       bizId: args.bizId,
       requestId: args.requestId,
       remark: args.remark ?? `预留 ${args.amount} 豆`,
     })
   } catch (e) {
-    // 并发同 requestId：首条 FREEZE 已落库，其余命中 (requestId, FREEZE) 唯一约束
-    // —— 视为「已冻结」，交由上层按完成状态决定返回或重试，绝不重复扣豆
+    // reservation/account/ledger are one transaction; any error rolls all changes back.
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-      return { duplicated: true, frozen: frozenAfter, available: 0n }
+      throw e
     }
     throw e
   }
 
-  return { duplicated: false, frozen: frozenAfter, available: available - args.amount }
+  return { duplicated: false, frozen: frozenAfter, available: available - args.amount, reservationId: reservation.id }
 }
 
 export interface ConsumeResult {
@@ -166,7 +214,7 @@ export async function consume(
 ): Promise<ConsumeResult> {
   if (args.amount <= 0n) throw new Error('consume amount must be positive')
 
-  const dup = await findLedger(tx, args.requestId, 'CONSUME')
+  const dup = await findLedger(tx, args.merchantId, args.bizType, args.requestId, 'CONSUME')
   if (dup) {
     return {
       duplicated: true,
@@ -178,9 +226,16 @@ export async function consume(
   }
 
   const acc = await lockAccount(tx, args.merchantId)
-  if (acc.frozen < args.amount) {
-    throw new Error(`consume(${args.amount}) exceeds frozen(${acc.frozen})，请先 freeze`)
-  }
+  const reservation = await findReservation(tx, {
+    merchantId: args.merchantId,
+    requestId: args.requestId,
+    bizType: args.bizType,
+    bizId: args.bizId,
+  })
+  if (!reservation) throw new Error('consume 找不到对应积分预留')
+  const remaining = reservation.reserved - reservation.consumed - reservation.released
+  if (remaining < args.amount) throw new Error('consume exceeds business reservation')
+  if (acc.frozen < args.amount) throw new Error(`consume(${args.amount}) exceeds frozen(${acc.frozen})，请先 freeze`)
 
   const grantUsed: bigint = acc.grant_balance < args.amount ? acc.grant_balance : args.amount
   const rechargeUsed: bigint = args.amount - grantUsed
@@ -198,6 +253,14 @@ export async function consume(
       frozen: frozenAfter,
       totalConsume: { increment: args.amount },
       version: { increment: 1 },
+    },
+  })
+  const consumedAfter = reservation.consumed + args.amount
+  await tx.beanReservation.update({
+    where: { id: reservation.id },
+    data: {
+      consumed: consumedAfter,
+      status: consumedAfter + reservation.released >= reservation.reserved ? 'CONSUMED' : 'ACTIVE',
     },
   })
   await writeLedger(tx, {
@@ -223,20 +286,19 @@ export async function unfreeze(
   args: { merchantId: bigint; requestId?: string; amount: bigint; bizType?: string; bizId?: string; remark?: string },
 ): Promise<{ duplicated: boolean; frozenAfter: bigint }> {
   if (args.amount <= 0n) throw new Error('unfreeze amount must be positive')
-  const dup = await findLedger(tx, args.requestId, 'UNFREEZE')
+  const dup = await findLedger(tx, args.merchantId, args.bizType, args.requestId, 'UNFREEZE')
   if (dup) return { duplicated: true, frozenAfter: BigInt(dup.frozenAfter) }
 
   const acc = await lockAccount(tx, args.merchantId)
-  const scopedFrozen = args.bizId
-    ? await tx.beanLedger.aggregate({ _sum: { amount: true }, where: { merchantId: args.merchantId, bizId: args.bizId, type: 'FREEZE' } })
-    : null
-  const scopedReleased = args.bizId
-    ? await tx.beanLedger.aggregate({ _sum: { amount: true }, where: { merchantId: args.merchantId, bizId: args.bizId, type: 'UNFREEZE' } })
-    : null
-  const alreadyReleased: bigint = scopedReleased?._sum.amount ? BigInt(scopedReleased._sum.amount) : 0n
-  const scopedReserved: bigint = scopedFrozen?._sum.amount ? BigInt(scopedFrozen._sum.amount) : args.amount
-  const remainingScoped: bigint = scopedReserved - alreadyReleased
-  if (args.bizId && remainingScoped < args.amount) throw new Error('unfreeze exceeds business reservation')
+  const reservation = await findReservation(tx, {
+    merchantId: args.merchantId,
+    requestId: args.requestId,
+    bizType: args.bizType,
+    bizId: args.bizId,
+  })
+  if (!reservation) throw new Error('unfreeze 找不到对应积分预留')
+  const remainingScoped = reservation.reserved - reservation.consumed - reservation.released
+  if (remainingScoped < args.amount) throw new Error('unfreeze exceeds business reservation')
   if (acc.frozen < args.amount) throw new Error('unfreeze exceeds account frozen amount')
   const release = args.amount
   const frozenAfter = acc.frozen - release
@@ -245,10 +307,18 @@ export async function unfreeze(
     where: { merchantId: args.merchantId },
     data: { frozen: frozenAfter, version: { increment: 1 } },
   })
+  const releasedAfter = reservation.released + release
+  await tx.beanReservation.update({
+    where: { id: reservation.id },
+    data: {
+      released: releasedAfter,
+      status: releasedAfter + reservation.consumed >= reservation.reserved ? 'RELEASED' : 'ACTIVE',
+    },
+  })
   await writeLedger(tx, {
     merchantId: args.merchantId,
     type: 'UNFREEZE',
-    amount: 0n,
+    amount: -release,
     balanceAfter: acc.balance,
     grantAfter: acc.grant_balance,
     frozenAfter,

@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { prisma } from '../db.js'
-import { unfreeze } from '../bean/bean.service.js'
 import {
   completeRender,
+  failRender,
   DEFAULT_COLOR,
   RENDER_BEAN_FULL,
   type ColorGrade,
@@ -78,7 +78,7 @@ async function tick(): Promise<void> {
     console.log(`[render-worker] task ${task.id} done in ${Date.now() - startedAt}ms`)
   } catch (e) {
     console.error(`[render-worker] task ${task.id} failed:`, (e as Error).message)
-    await failTask(task.id, task.merchantId, task.requestId, (e as Error).message)
+    await failRender(prisma, task.id, 'FFMPEG_FAILED', (e as Error).message)
   }
 }
 
@@ -214,37 +214,4 @@ function intermediateKey(
 ): string {
   const raw = `${clip.assetId}:${startMs}:${endMs}:${output.width}x${output.height}`
   return createHash('sha1').update(raw).digest('hex')
-}
-
-/** 失败：释放 submitRender 的 freeze 预留（不扣豆），并标记 FAILED */
-async function failTask(taskId: bigint, merchantId: bigint, requestId: string | null, message: string): Promise<void> {
-  // submitRender 用 `rf:<requestId>` 冻结；requestId 理论非空（建任务时写入），缺失时退化为任务id
-  const rid = requestId ?? `t${taskId.toString()}`
-  const task = await prisma.renderTask.findUnique({ where: { id: taskId } })
-  const amount = task && task.beanCharged > 0n ? task.beanCharged : RENDER_BEAN_FULL
-
-  await prisma
-    .$transaction(async (tx) => {
-      await unfreeze(tx, {
-        merchantId,
-        requestId: `rf:${rid}`,
-        amount,
-        bizType: 'RENDER',
-        bizId: taskId.toString(),
-        remark: '合成失败，释放预留豆',
-      })
-    })
-    .catch((e) => console.error('[render-worker] unfreeze failed:', (e as Error).message))
-
-  await prisma.renderTask
-    .update({
-      where: { id: taskId },
-      data: {
-        status: 'FAILED',
-        errorCode: 'FFMPEG_FAILED',
-        errorMsg: (message || '合成失败').slice(0, 500),
-        finishAt: new Date(),
-      },
-    })
-    .catch(() => undefined)
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { View, Text, Button } from '@tarojs/components'
-import Taro from '@tarojs/taro'
+import Taro, { useRouter } from '@tarojs/taro'
 import {
   listBeanPackages,
   listMemberPlans,
@@ -26,6 +26,8 @@ function fmtDate(s: string | null): string {
 }
 
 export default function Recharge() {
+  const router = useRouter()
+  const redirect = router.params.redirect ? decodeURIComponent(router.params.redirect) : ''
   const balance = useMerchantStore((s) => s.available)
   const isMember = useMerchantStore((s) => s.isMember)
   const grantBalance = useMerchantStore((s) => s.grantBalance)
@@ -51,6 +53,7 @@ export default function Recharge() {
         setPendingOrderNo(null)
         void refreshMe()
         Taro.showToast({ title: '到账成功', icon: 'success' })
+        if (redirect) setTimeout(() => Taro.redirectTo({ url: redirect }), 500)
         return
       }
       if (['CANCELLED', 'EXPIRED', 'REFUNDED'].includes(order.status)) {

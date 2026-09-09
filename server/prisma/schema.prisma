@@ -25,15 +25,17 @@ model Merchant {
   updatedAt            DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt            DateTime? @map("deleted_at") @db.DateTime(3)
 
-  stores      Store[]
-  persona     Persona?
-  creations   Creation[]
-  beanAccount BeanAccount?
-  ledgers     BeanLedger[]
-  orders      Order[]
-  memberships Membership[]
-  aiCallLogs  AiCallLog[]
-  renderTasks RenderTask[]
+  stores           Store[]
+  persona          Persona?
+  creations        Creation[]
+  beanAccount      BeanAccount?
+  ledgers          BeanLedger[]
+  orders           Order[]
+  memberships      Membership[]
+  aiCallLogs       AiCallLog[]
+  renderTasks      RenderTask[]
+  businessRequests BusinessRequest[]
+  beanReservations BeanReservation[]
 
   @@map("merchant")
 }
@@ -54,9 +56,9 @@ model Store {
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt  DateTime? @map("deleted_at") @db.DateTime(3)
 
-  merchant Merchant     @relation(fields: [merchantId], references: [id])
-  dishes   Dish[]
-  assets   MediaAsset[]
+  merchant  Merchant     @relation(fields: [merchantId], references: [id])
+  dishes    Dish[]
+  assets    MediaAsset[]
   creations Creation[]
 
   @@index([merchantId, deletedAt])
@@ -64,20 +66,20 @@ model Store {
 }
 
 model Dish {
-  id             BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
-  storeId        BigInt    @map("store_id") @db.UnsignedBigInt()
-  name           String    @db.VarChar(128)
-  intro          String?   @db.VarChar(500)
-  sellingPoints  String?   @map("selling_points") @db.VarChar(1000)
-  coverKey       String?   @map("cover_key") @db.VarChar(512)
-  videoKey       String?   @map("video_key") @db.VarChar(512)
-  sort           Int       @default(0)
-  status         String    @default("ACTIVE") @db.VarChar(16)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
-  deletedAt      DateTime? @map("deleted_at") @db.DateTime(3)
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  storeId       BigInt    @map("store_id") @db.UnsignedBigInt()
+  name          String    @db.VarChar(128)
+  intro         String?   @db.VarChar(500)
+  sellingPoints String?   @map("selling_points") @db.VarChar(1000)
+  coverKey      String?   @map("cover_key") @db.VarChar(512)
+  videoKey      String?   @map("video_key") @db.VarChar(512)
+  sort          Int       @default(0)
+  status        String    @default("ACTIVE") @db.VarChar(16)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt     DateTime? @map("deleted_at") @db.DateTime(3)
 
-  store Store @relation(fields: [storeId], references: [id])
+  store     Store      @relation(fields: [storeId], references: [id])
   creations Creation[]
 
   @@index([storeId, deletedAt, sort])
@@ -98,23 +100,23 @@ model Persona {
 }
 
 model MediaAsset {
-  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
-  merchantId  BigInt    @map("merchant_id") @db.UnsignedBigInt()
-  storeId     BigInt    @map("store_id") @db.UnsignedBigInt()
-  ownerType   String    @map("owner_type") @db.VarChar(24)
-  ownerId     BigInt?   @map("owner_id") @db.UnsignedBigInt()
-  type        String    @db.VarChar(16)
-  cosKey      String    @map("cos_key") @db.VarChar(512)
-  bucket      String    @db.VarChar(128)
-  region      String    @db.VarChar(64)
-  sizeBytes   BigInt    @default(0) @map("size_bytes") @db.UnsignedBigInt()
-  durationMs  Int?      @map("duration_ms") @db.UnsignedInt()
-  width       Int?
-  height      Int?
-  coverKey    String?   @map("cover_key") @db.VarChar(512)
-  status      String    @default("READY") @db.VarChar(16)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
-  deletedAt   DateTime? @map("deleted_at") @db.DateTime(3)
+  id         BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  merchantId BigInt    @map("merchant_id") @db.UnsignedBigInt()
+  storeId    BigInt    @map("store_id") @db.UnsignedBigInt()
+  ownerType  String    @map("owner_type") @db.VarChar(24)
+  ownerId    BigInt?   @map("owner_id") @db.UnsignedBigInt()
+  type       String    @db.VarChar(16)
+  cosKey     String    @map("cos_key") @db.VarChar(512)
+  bucket     String    @db.VarChar(128)
+  region     String    @db.VarChar(64)
+  sizeBytes  BigInt    @default(0) @map("size_bytes") @db.UnsignedBigInt()
+  durationMs Int?      @map("duration_ms") @db.UnsignedInt()
+  width      Int?
+  height     Int?
+  coverKey   String?   @map("cover_key") @db.VarChar(512)
+  status     String    @default("READY") @db.VarChar(16)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  deletedAt  DateTime? @map("deleted_at") @db.DateTime(3)
 
   store Store @relation(fields: [storeId], references: [id])
 
@@ -148,20 +150,20 @@ model Creation {
 }
 
 model Shot {
-  id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
-  creationId       BigInt    @map("creation_id") @db.UnsignedBigInt()
-  seq              Int
-  shotType         String?   @map("shot_type") @db.VarChar(64)
-  durationSuggest  Int?      @map("duration_suggest")
-  line             String?   @db.Text
-  visualReq        String?   @map("visual_req") @db.Text
-  libraryShotId    BigInt?   @map("library_shot_id") @db.UnsignedBigInt()
-  assetId          BigInt?   @map("asset_id") @db.UnsignedBigInt()
-  trimStartMs      Int       @default(0) @map("trim_start_ms") @db.UnsignedInt()
-  trimEndMs        Int?      @map("trim_end_ms") @db.UnsignedInt()
-  status           String    @default("PENDING") @db.VarChar(16)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt        DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  id              BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  creationId      BigInt   @map("creation_id") @db.UnsignedBigInt()
+  seq             Int
+  shotType        String?  @map("shot_type") @db.VarChar(64)
+  durationSuggest Int?     @map("duration_suggest")
+  line            String?  @db.Text
+  visualReq       String?  @map("visual_req") @db.Text
+  libraryShotId   BigInt?  @map("library_shot_id") @db.UnsignedBigInt()
+  assetId         BigInt?  @map("asset_id") @db.UnsignedBigInt()
+  trimStartMs     Int      @default(0) @map("trim_start_ms") @db.UnsignedInt()
+  trimEndMs       Int?     @map("trim_end_ms") @db.UnsignedInt()
+  status          String   @default("PENDING") @db.VarChar(16)
+  createdAt       DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
   creation Creation @relation(fields: [creationId], references: [id])
 
@@ -170,55 +172,57 @@ model Shot {
 }
 
 model ShotLibrary {
-  id             BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
-  code           String    @unique @db.VarChar(64)
-  name           String    @db.VarChar(128)
-  category       String    @db.VarChar(32)
-  tips           String?   @db.Text
-  source         String    @default("MANUAL") @db.VarChar(16)
-  demoVideoKey   String?   @map("demo_video_key") @db.VarChar(512)
-  demoCoverKey   String?   @map("demo_cover_key") @db.VarChar(512)
-  sort           Int       @default(0)
-  enabled        Boolean   @default(true)
-  aiGeneratedAt  DateTime? @map("ai_generated_at") @db.DateTime(3)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  code          String    @unique @db.VarChar(64)
+  name          String    @db.VarChar(128)
+  category      String    @db.VarChar(32)
+  tips          String?   @db.Text
+  source        String    @default("MANUAL") @db.VarChar(16)
+  demoVideoKey  String?   @map("demo_video_key") @db.VarChar(512)
+  demoCoverKey  String?   @map("demo_cover_key") @db.VarChar(512)
+  sort          Int       @default(0)
+  enabled       Boolean   @default(true)
+  aiGeneratedAt DateTime? @map("ai_generated_at") @db.DateTime(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
 
   @@index([category, enabled, sort])
   @@map("shot_library")
 }
 
 model RenderTask {
-  id                 BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
-  merchantId         BigInt    @map("merchant_id") @db.UnsignedBigInt()
-  creationId         BigInt    @map("creation_id") @db.UnsignedBigInt()
-  status             String    @default("QUEUED") @db.VarChar(24)
-  progress           Int       @default(0) @db.UnsignedTinyInt()
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  merchantId    BigInt    @map("merchant_id") @db.UnsignedBigInt()
+  creationId    BigInt    @map("creation_id") @db.UnsignedBigInt()
+  status        String    @default("QUEUED") @db.VarChar(24)
+  progress      Int       @default(0) @db.UnsignedTinyInt()
   // 产品档位：BASIC 粗剪 / AI 全自动 / PREMIUM 人工精剪（技术语义见 paramsJson.mode）
-  grade              String    @default("AI") @db.VarChar(16)
-  paramsJson         Json      @map("params_json")
-  resultKey          String?   @map("result_key") @db.VarChar(512)
-  previewKey         String?   @map("preview_key") @db.VarChar(512)
-  resultSize         BigInt?   @map("result_size") @db.UnsignedBigInt()
-  durationMs         Int?      @map("duration_ms") @db.UnsignedInt()
-  errorCode          String?   @map("error_code") @db.VarChar(64)
-  errorMsg           String?   @map("error_msg") @db.VarChar(500)
-  retryCount         Int       @default(0) @map("retry_count") @db.UnsignedTinyInt()
-  beanCharged        BigInt    @default(0) @map("bean_charged")
-  cacheHit           Boolean   @default(false) @map("cache_hit")
-  requestId          String?   @map("request_id") @db.VarChar(64)
-  queueAt            DateTime? @map("queue_at") @db.DateTime(3)
-  startAt            DateTime? @map("start_at") @db.DateTime(3)
-  finishAt           DateTime? @map("finish_at") @db.DateTime(3)
-  costMs             Int?      @map("cost_ms") @db.UnsignedInt()
+  grade         String    @default("AI") @db.VarChar(16)
+  paramsJson    Json      @map("params_json")
+  resultKey     String?   @map("result_key") @db.VarChar(512)
+  previewKey    String?   @map("preview_key") @db.VarChar(512)
+  resultSize    BigInt?   @map("result_size") @db.UnsignedBigInt()
+  durationMs    Int?      @map("duration_ms") @db.UnsignedInt()
+  errorCode     String?   @map("error_code") @db.VarChar(64)
+  errorMsg      String?   @map("error_msg") @db.VarChar(500)
+  retryCount    Int       @default(0) @map("retry_count") @db.UnsignedTinyInt()
+  beanCharged   BigInt    @default(0) @map("bean_charged")
+  cacheHit      Boolean   @default(false) @map("cache_hit")
+  requestId     String?   @map("request_id") @db.VarChar(64)
+  reservationId BigInt?   @map("reservation_id") @db.UnsignedBigInt()
+  queueAt       DateTime? @map("queue_at") @db.DateTime(3)
+  startAt       DateTime? @map("start_at") @db.DateTime(3)
+  finishAt      DateTime? @map("finish_at") @db.DateTime(3)
+  costMs        Int?      @map("cost_ms") @db.UnsignedInt()
   // 精品档：剪辑师接单时间
-  assignedAt         DateTime? @map("assigned_at") @db.DateTime(3)
+  assignedAt    DateTime? @map("assigned_at") @db.DateTime(3)
   // 精品档：SLA 截止时间，超时自动退款
-  deadlineAt         DateTime? @map("deadline_at") @db.DateTime(3)
-  createdAt          DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  deadlineAt    DateTime? @map("deadline_at") @db.DateTime(3)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(3)
 
-  merchant Merchant @relation(fields: [merchantId], references: [id])
-  creation Creation @relation(fields: [creationId], references: [id])
+  merchant    Merchant         @relation(fields: [merchantId], references: [id])
+  creation    Creation         @relation(fields: [creationId], references: [id])
+  reservation BeanReservation? @relation(fields: [reservationId], references: [id])
 
   @@index([creationId, createdAt])
   @@index([status, queueAt])
@@ -243,6 +247,51 @@ model BeanAccount {
   @@map("bean_account")
 }
 
+model BeanReservation {
+  id         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  merchantId BigInt   @map("merchant_id") @db.UnsignedBigInt()
+  bizType    String   @map("biz_type") @db.VarChar(32)
+  bizId      String   @map("biz_id") @db.VarChar(64)
+  requestId  String   @map("request_id") @db.VarChar(64)
+  reserved   BigInt   @default(0)
+  consumed   BigInt   @default(0)
+  released   BigInt   @default(0)
+  status     String   @default("ACTIVE") @db.VarChar(16)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  merchant    Merchant     @relation(fields: [merchantId], references: [id])
+  renderTasks RenderTask[]
+
+  @@unique([merchantId, bizType, requestId])
+  @@index([merchantId, bizType, bizId])
+  @@index([status, updatedAt])
+  @@map("bean_reservation")
+}
+
+model BusinessRequest {
+  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  merchantId   BigInt   @map("merchant_id") @db.UnsignedBigInt()
+  operation    String   @db.VarChar(32)
+  requestId    String   @map("request_id") @db.VarChar(64)
+  payloadHash  String   @map("payload_hash") @db.Char(64)
+  resourceType String?  @map("resource_type") @db.VarChar(32)
+  resourceId   BigInt?  @map("resource_id") @db.UnsignedBigInt()
+  status       String   @default("PENDING") @db.VarChar(16)
+  resultRef    String?  @map("result_ref") @db.VarChar(255)
+  errorCode    String?  @map("error_code") @db.VarChar(64)
+  errorMsg     String?  @map("error_msg") @db.VarChar(500)
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+
+  @@unique([merchantId, operation, requestId])
+  @@index([merchantId, operation, createdAt])
+  @@index([status, updatedAt])
+  @@map("business_request")
+}
+
 model BeanLedger {
   id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
   merchantId   BigInt   @map("merchant_id") @db.UnsignedBigInt()
@@ -261,8 +310,8 @@ model BeanLedger {
 
   merchant Merchant @relation(fields: [merchantId], references: [id])
 
-  // 幂等键：同一 requestId 下，FREEZE / CONSUME / UNFREEZE 各只允许一条
-  @@unique([requestId, type])
+  // 幂等键必须包含商家，避免不同租户的 requestId 互相冲突
+  @@unique([merchantId, bizType, requestId, type])
   @@index([merchantId, createdAt])
   @@index([bizType, bizId])
   @@map("bean_ledger")
@@ -286,18 +335,18 @@ model BeanPackage {
 }
 
 model MemberPackage {
-  id          BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
-  name        String   @db.VarChar(128)
-  code        String   @unique @db.VarChar(32)
-  durationDays Int     @map("duration_days")
-  priceFen    Int      @map("price_fen") @db.UnsignedInt()
-  grantBeans  BigInt   @default(0) @map("grant_beans")
-  rightsJson  Json?    @map("rights_json")
-  tag         String?  @db.VarChar(32)
-  sort        Int      @default(0)
-  enabled     Boolean  @default(true)
-  createdAt   DateTime @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt   DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  id           BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  name         String   @db.VarChar(128)
+  code         String   @unique @db.VarChar(32)
+  durationDays Int      @map("duration_days")
+  priceFen     Int      @map("price_fen") @db.UnsignedInt()
+  grantBeans   BigInt   @default(0) @map("grant_beans")
+  rightsJson   Json?    @map("rights_json")
+  tag          String?  @db.VarChar(32)
+  sort         Int      @default(0)
+  enabled      Boolean  @default(true)
+  createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
   memberships Membership[]
 
@@ -306,16 +355,16 @@ model MemberPackage {
 }
 
 model Membership {
-  id             BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
-  merchantId     BigInt   @map("merchant_id") @db.UnsignedBigInt()
-  packageId      BigInt   @map("package_id") @db.UnsignedBigInt()
-  startAt        DateTime @map("start_at") @db.DateTime(3)
-  endAt          DateTime @map("end_at") @db.DateTime(3)
-  sourceOrderId  BigInt?  @map("source_order_id") @db.UnsignedBigInt()
-  grantBeans     BigInt   @default(0) @map("grant_beans")
-  grantExpireAt  DateTime? @map("grant_expire_at") @db.DateTime(3)
-  status         String   @default("ACTIVE") @db.VarChar(16)
-  createdAt      DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  merchantId    BigInt    @map("merchant_id") @db.UnsignedBigInt()
+  packageId     BigInt    @map("package_id") @db.UnsignedBigInt()
+  startAt       DateTime  @map("start_at") @db.DateTime(3)
+  endAt         DateTime  @map("end_at") @db.DateTime(3)
+  sourceOrderId BigInt?   @map("source_order_id") @db.UnsignedBigInt()
+  grantBeans    BigInt    @default(0) @map("grant_beans")
+  grantExpireAt DateTime? @map("grant_expire_at") @db.DateTime(3)
+  status        String    @default("ACTIVE") @db.VarChar(16)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(3)
 
   merchant Merchant      @relation(fields: [merchantId], references: [id])
   package  MemberPackage @relation(fields: [packageId], references: [id])
@@ -352,27 +401,27 @@ model Order {
 }
 
 model AiProvider {
-  id                 BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
-  code               String    @unique @db.VarChar(64)
-  name               String    @db.VarChar(128)
-  providerType       String    @map("provider_type") @db.VarChar(32)
-  protocol           String    @default("OPENAI_COMPATIBLE") @db.VarChar(32)
-  baseUrl            String    @map("base_url") @db.VarChar(512)
-  apiKeyEncrypted    Bytes     @map("api_key_encrypted") @db.VarBinary(1024)
-  apiKeyMasked       String?   @map("api_key_masked") @db.VarChar(64)
-  enabled            Boolean   @default(true)
-  priority           Int       @default(100)
-  healthStatus       String    @default("HEALTHY") @map("health_status") @db.VarChar(16)
-  circuitOpenUntil   DateTime? @map("circuit_open_until") @db.DateTime(3)
-  lastTestAt         DateTime? @map("last_test_at") @db.DateTime(3)
-  lastTestLatencyMs  Int?      @map("last_test_latency_ms")
-  lastTestStatus     String?   @map("last_test_status") @db.VarChar(16)
-  lastTestError      String?   @map("last_test_error") @db.VarChar(500)
-  monthlyBudgetFen   Int?      @map("monthly_budget_fen") @db.UnsignedInt()
-  usedBudgetFen      Int       @default(0) @map("used_budget_fen") @db.UnsignedInt()
-  budgetResetAt      DateTime? @map("budget_reset_at") @db.DateTime(3)
-  createdAt          DateTime  @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt          DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  code              String    @unique @db.VarChar(64)
+  name              String    @db.VarChar(128)
+  providerType      String    @map("provider_type") @db.VarChar(32)
+  protocol          String    @default("OPENAI_COMPATIBLE") @db.VarChar(32)
+  baseUrl           String    @map("base_url") @db.VarChar(512)
+  apiKeyEncrypted   Bytes     @map("api_key_encrypted") @db.VarBinary(1024)
+  apiKeyMasked      String?   @map("api_key_masked") @db.VarChar(64)
+  enabled           Boolean   @default(true)
+  priority          Int       @default(100)
+  healthStatus      String    @default("HEALTHY") @map("health_status") @db.VarChar(16)
+  circuitOpenUntil  DateTime? @map("circuit_open_until") @db.DateTime(3)
+  lastTestAt        DateTime? @map("last_test_at") @db.DateTime(3)
+  lastTestLatencyMs Int?      @map("last_test_latency_ms")
+  lastTestStatus    String?   @map("last_test_status") @db.VarChar(16)
+  lastTestError     String?   @map("last_test_error") @db.VarChar(500)
+  monthlyBudgetFen  Int?      @map("monthly_budget_fen") @db.UnsignedInt()
+  usedBudgetFen     Int       @default(0) @map("used_budget_fen") @db.UnsignedInt()
+  budgetResetAt     DateTime? @map("budget_reset_at") @db.DateTime(3)
+  createdAt         DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
 
   models AiModel[]
   logs   AiCallLog[]
@@ -382,18 +431,18 @@ model AiProvider {
 }
 
 model AiModel {
-  id                    BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
-  providerId            BigInt   @map("provider_id") @db.UnsignedBigInt()
-  modelCode             String   @map("model_code") @db.VarChar(128)
-  displayName           String   @map("display_name") @db.VarChar(128)
-  capability            String   @default("TEXT") @db.VarChar(32)
-  maxContextTokens      Int?     @map("max_context_tokens") @db.UnsignedInt()
-  maxOutputTokens       Int?     @map("max_output_tokens") @db.UnsignedInt()
-  inputPricePerMtok     Int      @default(0) @map("input_price_per_mtok") @db.UnsignedInt()
-  outputPricePerMtok    Int      @default(0) @map("output_price_per_mtok") @db.UnsignedInt()
-  enabled               Boolean  @default(true)
-  createdAt             DateTime @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt             DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  id                 BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  providerId         BigInt   @map("provider_id") @db.UnsignedBigInt()
+  modelCode          String   @map("model_code") @db.VarChar(128)
+  displayName        String   @map("display_name") @db.VarChar(128)
+  capability         String   @default("TEXT") @db.VarChar(32)
+  maxContextTokens   Int?     @map("max_context_tokens") @db.UnsignedInt()
+  maxOutputTokens    Int?     @map("max_output_tokens") @db.UnsignedInt()
+  inputPricePerMtok  Int      @default(0) @map("input_price_per_mtok") @db.UnsignedInt()
+  outputPricePerMtok Int      @default(0) @map("output_price_per_mtok") @db.UnsignedInt()
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt          DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
   provider AiProvider  @relation(fields: [providerId], references: [id])
   logs     AiCallLog[]
@@ -424,33 +473,33 @@ model AiScene {
 }
 
 model AiCallLog {
-  id                    BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
-  merchantId            BigInt?  @map("merchant_id") @db.UnsignedBigInt()
-  sceneCode             String   @map("scene_code") @db.VarChar(64)
-  requestId            String   @map("request_id") @db.VarChar(64)
-  providerId           BigInt   @map("provider_id") @db.UnsignedBigInt()
-  modelId              BigInt   @map("model_id") @db.UnsignedBigInt()
-  isFallback           Boolean  @default(false) @map("is_fallback")
-  fallbackFromModelId  BigInt?  @map("fallback_from_model_id") @db.UnsignedBigInt()
-  promptTokens         Int      @default(0) @map("prompt_tokens") @db.UnsignedInt()
-  completionTokens     Int      @default(0) @map("completion_tokens") @db.UnsignedInt()
-  totalTokens          Int      @default(0) @map("total_tokens") @db.UnsignedInt()
-  costFen              Int      @default(0) @map("cost_fen") @db.UnsignedInt()
-  beanCharged          BigInt   @default(0) @map("bean_charged")
-  beanBucket           String?  @map("bean_bucket") @db.VarChar(16)
-  latencyMs            Int      @default(0) @map("latency_ms") @db.UnsignedInt()
-  status               String   @db.VarChar(16)
-  errorCode            String?  @map("error_code") @db.VarChar(64)
-  errorMsg             String?  @map("error_msg") @db.VarChar(1000)
-  promptSnapshot       String?  @map("prompt_snapshot") @db.MediumText
-  responseSnapshot     String?  @map("response_snapshot") @db.MediumText
-  createdAt            DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  id                  BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  merchantId          BigInt?  @map("merchant_id") @db.UnsignedBigInt()
+  sceneCode           String   @map("scene_code") @db.VarChar(64)
+  requestId           String   @map("request_id") @db.VarChar(64)
+  providerId          BigInt   @map("provider_id") @db.UnsignedBigInt()
+  modelId             BigInt   @map("model_id") @db.UnsignedBigInt()
+  isFallback          Boolean  @default(false) @map("is_fallback")
+  fallbackFromModelId BigInt?  @map("fallback_from_model_id") @db.UnsignedBigInt()
+  promptTokens        Int      @default(0) @map("prompt_tokens") @db.UnsignedInt()
+  completionTokens    Int      @default(0) @map("completion_tokens") @db.UnsignedInt()
+  totalTokens         Int      @default(0) @map("total_tokens") @db.UnsignedInt()
+  costFen             Int      @default(0) @map("cost_fen") @db.UnsignedInt()
+  beanCharged         BigInt   @default(0) @map("bean_charged")
+  beanBucket          String?  @map("bean_bucket") @db.VarChar(16)
+  latencyMs           Int      @default(0) @map("latency_ms") @db.UnsignedInt()
+  status              String   @db.VarChar(16)
+  errorCode           String?  @map("error_code") @db.VarChar(64)
+  errorMsg            String?  @map("error_msg") @db.VarChar(1000)
+  promptSnapshot      String?  @map("prompt_snapshot") @db.MediumText
+  responseSnapshot    String?  @map("response_snapshot") @db.MediumText
+  createdAt           DateTime @default(now()) @map("created_at") @db.DateTime(3)
 
   merchant Merchant?  @relation(fields: [merchantId], references: [id])
   provider AiProvider @relation(fields: [providerId], references: [id])
   model    AiModel    @relation(fields: [modelId], references: [id])
 
-  @@unique([requestId])
+  @@unique([merchantId, sceneCode, requestId])
   @@index([merchantId, createdAt])
   @@index([providerId, createdAt])
   @@index([createdAt, costFen])
@@ -474,33 +523,33 @@ model SystemSetting {
 }
 
 model TtsProvider {
-  id               BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
-  code             String    @unique @db.VarChar(32)
-  name             String    @db.VarChar(128)
-  appId            String?   @map("app_id") @db.VarChar(64)
+  id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  code              String   @unique @db.VarChar(32)
+  name              String   @db.VarChar(128)
+  appId             String?  @map("app_id") @db.VarChar(64)
   secretIdEncrypted Bytes?   @map("secret_id_encrypted") @db.VarBinary(1024)
-  apiKeyEncrypted  Bytes?    @map("api_key_encrypted") @db.VarBinary(1024)
-  voiceId          String?   @map("voice_id") @db.VarChar(64)
-  extraJson        Json?     @map("extra_json")
-  enabled          Boolean   @default(false)
-  priority         Int       @default(100)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt        DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  apiKeyEncrypted   Bytes?   @map("api_key_encrypted") @db.VarBinary(1024)
+  voiceId           String?  @map("voice_id") @db.VarChar(64)
+  extraJson         Json?    @map("extra_json")
+  enabled           Boolean  @default(false)
+  priority          Int      @default(100)
+  createdAt         DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
   @@index([enabled, priority])
   @@map("tts_provider")
 }
 
 model SmsCode {
-  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
-  phone     String   @db.VarChar(20)
-  codeHash  String   @map("code_hash") @db.VarChar(128)
-  scene     String   @default("LOGIN") @db.VarChar(24)
-  ip        String?  @db.VarChar(64)
-  expiresAt DateTime @map("expires_at") @db.DateTime(3)
+  id        BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  phone     String    @db.VarChar(20)
+  codeHash  String    @map("code_hash") @db.VarChar(128)
+  scene     String    @default("LOGIN") @db.VarChar(24)
+  ip        String?   @db.VarChar(64)
+  expiresAt DateTime  @map("expires_at") @db.DateTime(3)
   usedAt    DateTime? @map("used_at") @db.DateTime(3)
-  attempts  Int      @default(0) @db.UnsignedTinyInt()
-  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  attempts  Int       @default(0) @db.UnsignedTinyInt()
+  createdAt DateTime  @default(now()) @map("created_at") @db.DateTime(3)
 
   @@index([phone, scene, createdAt])
   @@map("sms_code")
@@ -519,15 +568,15 @@ model AdminUser {
 }
 
 model SubscribeMessageRecord {
-  id            BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
-  merchantId    BigInt   @map("merchant_id") @db.UnsignedBigInt()
-  templateCode  String   @map("template_code") @db.VarChar(64)
-  wxTemplateId  String   @map("wx_template_id") @db.VarChar(128)
-  grantedCount  Int      @default(0) @map("granted_count") @db.UnsignedTinyInt()
-  usedCount     Int      @default(0) @map("used_count") @db.UnsignedTinyInt()
-  expiredAt     DateTime? @map("expired_at") @db.DateTime(3)
-  createdAt     DateTime @default(now()) @map("created_at") @db.DateTime(3)
-  updatedAt     DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+  id           BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  merchantId   BigInt    @map("merchant_id") @db.UnsignedBigInt()
+  templateCode String    @map("template_code") @db.VarChar(64)
+  wxTemplateId String    @map("wx_template_id") @db.VarChar(128)
+  grantedCount Int       @default(0) @map("granted_count") @db.UnsignedTinyInt()
+  usedCount    Int       @default(0) @map("used_count") @db.UnsignedTinyInt()
+  expiredAt    DateTime? @map("expired_at") @db.DateTime(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
 
   @@unique([merchantId, templateCode])
   @@index([templateCode, grantedCount, usedCount])

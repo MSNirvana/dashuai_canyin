@@ -22,6 +22,20 @@ export class CreationStoreMismatchError extends Error {
   }
 }
 
+export class CreationDishMismatchError extends Error {
+  constructor() {
+    super('菜品不属于当前商家门店')
+    this.name = 'CreationDishMismatchError'
+  }
+}
+
+export class CreationAssetMismatchError extends Error {
+  constructor() {
+    super('创作中的素材不属于当前商家门店或已被删除')
+    this.name = 'CreationAssetMismatchError'
+  }
+}
+
 export interface CreateCreationInput {
   storeId: bigint
   dishId?: bigint
@@ -78,6 +92,13 @@ export async function createCreation(
     where: { id: input.storeId, merchantId, deletedAt: null },
   })
   if (!store) throw new CreationStoreMismatchError()
+  if (input.dishId !== undefined) {
+    const dish = await prisma.dish.findFirst({
+      where: { id: input.dishId, storeId: input.storeId, store: { merchantId, deletedAt: null }, deletedAt: null },
+      select: { id: true },
+    })
+    if (!dish) throw new CreationDishMismatchError()
+  }
   return prisma.creation.create({
     data: {
       merchantId,
@@ -103,8 +124,9 @@ export async function getCreation(prisma: PrismaClient, merchantId: bigint, crea
   // 附加素材时长：合成页前端预估积分需要（未 trim 的分镜按素材实际时长计价）
   const assetIds = c.shots.map((s) => s.assetId).filter((v): v is bigint => v !== null)
   const assets = assetIds.length
-    ? await prisma.mediaAsset.findMany({ where: { id: { in: assetIds }, deletedAt: null } })
+    ? await prisma.mediaAsset.findMany({ where: { id: { in: assetIds }, merchantId, storeId: c.storeId, deletedAt: null } })
     : []
+  if (assets.length !== assetIds.length) throw new CreationAssetMismatchError()
   const durMap = new Map(assets.map((a) => [a.id, a.durationMs]))
   return {
     ...c,

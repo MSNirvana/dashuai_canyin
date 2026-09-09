@@ -7,6 +7,7 @@ import { AiGateway } from './gateway.js'
 import * as bean from '../bean/bean.service.js'
 import { BeanNotEnoughError, type BeanBucket } from '../bean/bean.service.js'
 import { getNumber } from '../lib/settings.js'
+import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } from '../domain/request.js'
 
 export interface BilledSceneResult {
   text: string
@@ -54,36 +55,112 @@ export async function runBilledScene(
   const price = scene.beanPrice
   const frozenAmount = price
   const bizType = `AI_${params.sceneCode}`
+  const operation = params.sceneCode === 'copy_generate'
+    ? 'AI_COPY'
+    : params.sceneCode === 'storyboard_generate'
+      ? 'AI_STORYBOARD'
+      : `AI_${params.sceneCode.toUpperCase()}`
   const bizId = params.bizId ?? null
-
-  // 1) 预冻结（余额不足直接抛 BEAN_NOT_ENOUGH，前端弹充值）
-  const fr = await prisma.$transaction((tx) =>
-    bean.freeze(tx, {
-      merchantId: params.merchantId,
-      requestId: params.requestId,
-      amount: frozenAmount,
-      bizType,
-      bizId: bizId ?? undefined,
-      remark: `${scene.name} 预留`,
-    }),
-  )
 
   const balanceAfter = async () => bean.getBalance(prisma, params.merchantId)
 
-  // 幂等命中：已冻结的 requestId。
-  //  - 若已完成（存在 aiCallLog）→ 返回首次结果，不重复扣豆
-  //  - 否则（进行中或先前失败已释放）→ 抛 SCENE_PENDING，要求调用方换新的 requestId 重试
-  //    绝不可返回空 text 的「伪成功」
-  if (fr.duplicated) {
-    const log = await prisma.aiCallLog.findFirst({ where: { requestId: params.requestId } })
+  const settle = async (costFen: number, usedFallback: boolean) => {
+    const wantCharge = beansFromCost(costFen, beansPerYuan, multiplier)
+    const charged = wantCharge > frozenAmount ? frozenAmount : wantCharge
+    return prisma.$transaction(async (tx) => {
+      let cr: { charged: bigint; bucket: BeanBucket | null }
+      if (charged > 0n) {
+        const consumed = await bean.consume(tx, {
+          merchantId: params.merchantId,
+          requestId: params.requestId,
+          amount: charged,
+          bizType,
+          bizId: bizId ?? undefined,
+          remark: usedFallback ? `${scene.name}（备用通道）` : scene.name,
+        })
+        cr = { charged: consumed.charged, bucket: consumed.bucket }
+        if (frozenAmount > charged) {
+          await bean.unfreeze(tx, {
+            merchantId: params.merchantId,
+            requestId: params.requestId,
+            amount: frozenAmount - charged,
+            bizType,
+            bizId: bizId ?? undefined,
+            remark: '结算后差额释放',
+          })
+        }
+      } else {
+        await bean.unfreeze(tx, {
+          merchantId: params.merchantId,
+          requestId: params.requestId,
+          amount: frozenAmount,
+          bizType,
+          bizId: bizId ?? undefined,
+          remark: '零成本调用，全额释放',
+        })
+        cr = { charged: 0n, bucket: null }
+      }
+      await tx.aiCallLog.updateMany({
+        where: { merchantId: params.merchantId, sceneCode: params.sceneCode, requestId: params.requestId },
+        data: { beanCharged: cr.charged, beanBucket: cr.bucket },
+      })
+      await completeBusinessRequest(tx, params.merchantId, operation, params.requestId, params.requestId)
+      return cr
+    })
+  }
+
+  // 请求占用与积分预留必须原子完成，进程退出时不会留下无预留的 PENDING 请求。
+  const claim = await prisma.$transaction(async (tx) => {
+    const result = await claimBusinessRequest(tx, {
+      merchantId: params.merchantId,
+      operation,
+      requestId: params.requestId,
+      payload: { sceneCode: params.sceneCode, variables: params.variables, bizId },
+      resourceType: 'CREATION',
+      resourceId: params.bizId ? BigInt(params.bizId) : undefined,
+    })
+    if (result.created) {
+      await bean.freeze(tx, {
+        merchantId: params.merchantId,
+        requestId: params.requestId,
+        amount: frozenAmount,
+        bizType,
+        bizId: bizId ?? undefined,
+        remark: `${scene.name} 预留`,
+      })
+    }
+    return result
+  })
+
+  // 已有相同业务请求时先返回结果或报告进行中，不能再次创建冻结。
+  if (!claim.created) {
+    const log = await prisma.aiCallLog.findFirst({ where: { merchantId: params.merchantId, sceneCode: params.sceneCode, requestId: params.requestId } })
     if (log) {
+      const settled = claim.row.status === 'COMPLETED'
+        ? {
+            charged: log.beanCharged ?? 0n,
+            bucket: log.beanBucket === 'GRANT' ? 'GRANT' as const : log.beanBucket === 'RECHARGE' ? 'RECHARGE' as const : null,
+          }
+        : await settle(log.costFen, log.isFallback)
       const b = await balanceAfter()
       return {
         text: log.responseSnapshot ?? '',
-        beanCharged: log.beanCharged ?? 0n,
-        bucket: log.beanBucket === 'GRANT' ? 'GRANT' : log.beanBucket === 'RECHARGE' ? 'RECHARGE' : null,
+        beanCharged: settled.charged,
+        bucket: settled.bucket,
         usedFallbackChannel: log.isFallback ?? false,
         isFallbackTemplate: false,
+        balance: { balance: b.balance, grantBalance: b.grantBalance, available: b.available },
+        duplicated: true,
+      }
+    }
+    if (claim.row.status === 'FAILED') {
+      const b = await balanceAfter()
+      return {
+        text: renderFallback(scene.fallbackTemplate, params.variables),
+        beanCharged: 0n,
+        bucket: null,
+        usedFallbackChannel: false,
+        isFallbackTemplate: true,
         balance: { balance: b.balance, grantBalance: b.grantBalance, available: b.available },
         duplicated: true,
       }
@@ -101,16 +178,17 @@ export async function runBilledScene(
 
   // 3) 失败 / 超时：全额解冻，返回兜底模板，不扣豆
   if (!r.ok) {
-    await prisma.$transaction((tx) =>
-      bean.unfreeze(tx, {
+    await prisma.$transaction(async (tx) => {
+      await bean.unfreeze(tx, {
         merchantId: params.merchantId,
         requestId: params.requestId,
         amount: frozenAmount,
         bizType,
         bizId: bizId ?? undefined,
         remark: 'AI 调用失败，全额释放',
-      }),
-    )
+      })
+      await failBusinessRequest(tx, params.merchantId, operation, params.requestId, 'AI_FAILED', r.message)
+    })
     const b = await balanceAfter()
     return {
       text: renderFallback(scene.fallbackTemplate, params.variables),
@@ -123,51 +201,8 @@ export async function runBilledScene(
     }
   }
 
-  // 4) 成功：按「实际成本 × 系数」结算（v5 已废除固定标价），且不超过冻结上限
-  const wantCharge = beansFromCost(r.costFen, beansPerYuan, multiplier)
-  const charged = wantCharge > frozenAmount ? frozenAmount : wantCharge
-
-  const res = await prisma.$transaction(async (tx) => {
-    let cr: { charged: bigint; bucket: BeanBucket | null }
-    if (charged > 0n) {
-      const c = await bean.consume(tx, {
-        merchantId: params.merchantId,
-        requestId: params.requestId,
-        amount: charged,
-        bizType,
-        bizId: bizId ?? undefined,
-        remark: r.usedFallback ? `${scene.name}（备用通道）` : scene.name,
-      })
-      cr = { charged: c.charged, bucket: c.bucket }
-      if (frozenAmount > charged) {
-        await bean.unfreeze(tx, {
-          merchantId: params.merchantId,
-          requestId: params.requestId,
-          amount: frozenAmount - charged,
-          bizType,
-          bizId: bizId ?? undefined,
-          remark: '结算后差额释放',
-        })
-      }
-    } else {
-      // 零成本调用（mock / 免费模型）：不扣费，冻结全额释放。
-      // bean.consume 不接受 0 金额，跳过并记 0 费用流水
-      await bean.unfreeze(tx, {
-        merchantId: params.merchantId,
-        requestId: params.requestId,
-        amount: frozenAmount,
-        bizType,
-        bizId: bizId ?? undefined,
-        remark: '零成本调用，全额释放',
-      })
-      cr = { charged: 0n, bucket: null }
-    }
-    await tx.aiCallLog.updateMany({
-      where: { requestId: params.requestId },
-      data: { beanCharged: cr.charged, beanBucket: cr.bucket },
-    })
-    return cr
-  })
+  // 4) 成功：按实际成本结算，并与业务请求完成状态同事务提交。
+  const res = await settle(r.costFen, r.usedFallback)
 
   const b = await balanceAfter()
   return {

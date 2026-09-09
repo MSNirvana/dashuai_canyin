@@ -10,6 +10,7 @@ import { aiGateway } from '../ai/gateway-instance.js'
 import { BeanNotEnoughError } from '../bean/bean.service.js'
 import { ScenePendingError } from '../ai/ai.service.js'
 import { SubscriptionRequiredError } from '../services/subscription.service.js'
+import { RequestConflictError } from '../domain/request.js'
 
 const router = Router()
 router.use(auth)
@@ -42,7 +43,7 @@ router.post('/', async (req, res) => {
     })
     ok(res, c)
   } catch (e) {
-    if (e instanceof creationSvc.CreationStoreMismatchError) fail(res, 2004, e.message, 400)
+    if (e instanceof creationSvc.CreationStoreMismatchError || e instanceof creationSvc.CreationDishMismatchError) fail(res, 2004, e.message, 400)
     else fail(res, 400, '创建失败', 400)
   }
 })
@@ -110,11 +111,13 @@ router.put('/:id/shots/:shotId', async (req, res) => {
 
 function handleAiErr(e: unknown, res: import('express').Response) {
   // 真实异常必须落日志：既有 bug 是 catch 吞掉后 500 无任何排查线索
-  if (!(e instanceof BeanNotEnoughError) && !(e instanceof creationSvc.CreationNotFoundError) && !(e instanceof ScenePendingError)) {
+  if (!(e instanceof BeanNotEnoughError) && !(e instanceof creationSvc.CreationNotFoundError) && !(e instanceof ScenePendingError) && !(e instanceof SubscriptionRequiredError) && !(e instanceof RequestConflictError)) {
     console.error('[creations] AI 调用异常:', e)
   }
   if (e instanceof BeanNotEnoughError) return fail(res, 2001, 'AI豆不足，请充值', 400)
   if (e instanceof creationSvc.CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
+  if (e instanceof SubscriptionRequiredError) return fail(res, 2005, e.message, 403)
+  if (e instanceof RequestConflictError) return fail(res, 2007, e.message, 409)
   if (e instanceof ScenePendingError) return fail(res, 2006, '任务进行中或上次失败，请换 requestId 重试', 409)
   return fail(res, 500, '生成失败', 500)
 }

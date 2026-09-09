@@ -16,6 +16,7 @@ export const ERROR_TEXT: Record<number, string> = {
   2001: '积分不足',
   2003: '门店数量已达上限',
   2005: '需要订阅后才能使用该功能',
+  2007: '请求参数与此前提交不一致，请更换 requestId',
   3001: '文件超出大小限制',
   3002: '素材不存在或未就绪',
   3006: '档位不存在或未启用',
@@ -63,6 +64,28 @@ function redirectToLogin() {
   if (!current.includes('pages/login')) {
     Taro.reLaunch({ url: `/pages/login/index?redirect=${encodeURIComponent(`/${current}`)}` })
   }
+}
+
+function guideSubscription() {
+  const pages = Taro.getCurrentPages()
+  const current = pages[pages.length - 1]
+  const route = current?.route ?? ''
+  const options = (current as { options?: Record<string, string> } | undefined)?.options ?? {}
+  const query = Object.keys(options)
+    .sort()
+    .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(options[key] ?? '')}`)
+    .join('&')
+  const redirect = `/${route}${query ? `?${query}` : ''}`
+  Taro.showModal({
+    title: '需要订阅',
+    content: '订阅后才能使用生成能力，前往订阅与积分页面？',
+    confirmText: '去订阅',
+    cancelText: '稍后再说',
+  }).then((result) => {
+    if (result.confirm) {
+      Taro.navigateTo({ url: `/pages/recharge/index?redirect=${encodeURIComponent(redirect)}` })
+    }
+  })
 }
 
 interface RequestOptions<T> {
@@ -121,7 +144,8 @@ export async function request<T>(options: RequestOptions<T>): Promise<T> {
     traceId: body?.traceId,
   }
   if (!silent) {
-    Taro.showToast({ title: err.message, icon: 'none', duration: 2000 })
+    if (err.code === 2005) guideSubscription()
+    else Taro.showToast({ title: err.message, icon: 'none', duration: 2000 })
   }
   throw err
 }
