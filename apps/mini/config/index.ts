@@ -4,6 +4,9 @@ import prodConfig from './prod'
 
 // Taro 4 配置：一套代码编译微信 / 抖音两端
 export default defineConfig(async (merge, { mode }) => {
+  const apiBaseUrl = process.env.TARO_APP_API_BASE_URL?.trim() || (mode === 'development'
+    ? 'http://localhost:3000/api/v1'
+    : 'https://REPLACE_ME.example.com/api/v1')
   const baseConfig: UserConfigExport = {
     projectName: 'dashuai-mini',
     date: '2026-9-7',
@@ -17,7 +20,9 @@ export default defineConfig(async (merge, { mode }) => {
     sourceRoot: 'src',
     outputRoot: `dist/${process.env.TARO_ENV}`,
     plugins: [],
-    defineConstants: {},
+    defineConstants: {
+      __API_BASE_URL__: JSON.stringify(apiBaseUrl),
+    },
     copy: {
       patterns: [
         // 原生小程序 npm 组件（tdesign-miniprogram）不会被打包进 webpack，
