@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
-import { View, Text } from '@tarojs/components'
-import Taro from '@tarojs/taro'
+import { useState } from 'react'
+import { View, Text, Image } from '@tarojs/components'
+import Taro, { useDidShow } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
-import { listStores, deleteStore, type StoreItem } from '../../services/store'
+import { getStoreCoverUrl, listStores, deleteStore, type StoreItem } from '../../services/store'
 import './list.scss'
 
 export default function StoreListPage() {
   const { currentStoreId, setStore } = useMerchantStore()
   const [list, setList] = useState<StoreItem[]>([])
+  const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
 
   const load = async () => {
@@ -15,6 +16,15 @@ export default function StoreListPage() {
     try {
       const data = await listStores()
       setList(data)
+      const entries = await Promise.all(data.filter((s) => s.coverKey).map(async (s) => {
+        try {
+          const result = await getStoreCoverUrl(s.coverKey!)
+          return result.url ? [s.id, result.url] as const : null
+        } catch {
+          return null
+        }
+      }))
+      setCoverUrls(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => !!entry)))
       // 没有当前门店时，默认选中首个（通常是默认门店）
       if (!currentStoreId && data.length) setStore(data[0].id)
     } catch {
@@ -24,9 +34,9 @@ export default function StoreListPage() {
     }
   }
 
-  useEffect(() => {
+  useDidShow(() => {
     load()
-  }, [])
+  })
 
   const onSelect = (s: StoreItem) => {
     setStore(s.id)
@@ -82,12 +92,16 @@ export default function StoreListPage() {
         <View className='store-list__items'>
           {list.map((s) => {
             const active = s.id === currentStoreId
+            const location = Array.from(new Set([s.province, s.city, s.district].filter(Boolean))).join(' · ')
             return (
               <View
                 key={s.id}
                 className={`store-card ${active ? 'store-card--active' : ''}`}
                 onClick={() => onSelect(s)}
               >
+                <View className='store-card__cover'>
+                  {coverUrls[s.id] ? <Image className='store-card__cover-image' src={coverUrls[s.id]} mode='aspectFill' /> : <Text className='store-card__cover-empty'>门店</Text>}
+                </View>
                 <View className='store-card__main'>
                   <View className='store-card__title'>
                     <Text className='store-card__name'>{s.name}</Text>
@@ -95,7 +109,7 @@ export default function StoreListPage() {
                     {active && <Text className='store-card__current'>当前</Text>}
                   </View>
                   <Text className='store-card__meta'>
-                    {[s.category, s.city, s.district].filter(Boolean).join(' · ') || '未填写分类/地区'}
+                    {[s.category, location].filter(Boolean).join(' · ') || '未填写分类/地区'}
                   </Text>
                   <Text className='store-card__count'>菜品 {s._count?.dishes ?? 0} 道</Text>
                 </View>

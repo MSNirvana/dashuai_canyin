@@ -17,6 +17,7 @@ const storeInput = z.object({
   district: z.string().max(64).optional(),
   address: z.string().max(255).optional(),
   contact: z.string().max(64).optional(),
+  coverKey: z.string().max(512).nullable().optional(),
   isDefault: z.boolean().optional(),
 })
 
@@ -50,6 +51,7 @@ router.put('/:id', async (req, res) => {
     ok(res, store)
   } catch (e) {
     if (e instanceof storeSvc.StoreDefaultDeleteError) fail(res, 2003, e.message, 400)
+    else if (e instanceof storeSvc.StoreCoverError) fail(res, 2009, e.message, 400)
     else fail(res, 400, '更新失败', 400)
   }
 })

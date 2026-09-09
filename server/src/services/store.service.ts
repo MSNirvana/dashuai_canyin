@@ -26,6 +26,7 @@ export interface StoreInput {
   district?: string
   address?: string
   contact?: string
+  coverKey?: string | null
 }
 
 export async function listStores(prisma: PrismaClient, merchantId: bigint) {
@@ -41,6 +42,7 @@ export async function listStores(prisma: PrismaClient, merchantId: bigint) {
       district: true,
       address: true,
       contact: true,
+      coverKey: true,
       isDefault: true,
       createdAt: true,
       _count: { select: { dishes: true } },
@@ -84,6 +86,21 @@ export async function updateStore(
   const store = await prisma.store.findFirst({ where: { id: storeId, merchantId, deletedAt: null } })
   if (!store) return null
 
+  if (input.coverKey !== undefined && input.coverKey !== null) {
+    const asset = await prisma.mediaAsset.findFirst({
+      where: {
+        merchantId,
+        storeId,
+        cosKey: input.coverKey,
+        type: 'IMAGE',
+        status: 'READY',
+        deletedAt: null,
+      },
+      select: { id: true },
+    })
+    if (!asset) throw new StoreCoverError()
+  }
+
   // 设为默认：先把其它门店取消默认，再置当前为默认（事务保证唯一默认）
   if (input.isDefault === true && !store.isDefault) {
     await prisma.$transaction([
@@ -102,8 +119,16 @@ export async function updateStore(
       district: input.district,
       address: input.address,
       contact: input.contact,
+      ...(input.coverKey !== undefined ? { coverKey: input.coverKey } : {}),
     },
   })
+}
+
+export class StoreCoverError extends Error {
+  constructor() {
+    super('门店图片无效或不属于当前门店')
+    this.name = 'StoreCoverError'
+  }
 }
 
 export async function deleteStore(prisma: PrismaClient, merchantId: bigint, storeId: bigint) {

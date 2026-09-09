@@ -1,0 +1,1 @@
+ALTER TABLE `store` ADD COLUMN `cover_key` VARCHAR(512) NULL;

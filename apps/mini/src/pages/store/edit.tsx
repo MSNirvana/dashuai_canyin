@@ -1,42 +1,35 @@
 import { useEffect, useState } from 'react'
-import { View, Text, Input, Textarea, Switch, Picker } from '@tarojs/components'
+import { View, Text, Input, Textarea, Switch, Picker, Image } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import { useRouter } from '@tarojs/taro'
-import { createStore, updateStore, getStore, type StoreInput, type StoreItem } from '../../services/store'
+import { createStore, updateStore, getStore, getStoreCoverUrl, type StoreInput, type StoreItem } from '../../services/store'
+import { uploadMediaFile } from '../../services/upload'
+import { cityOptions, districtOptions, provinceOptions, resolveAreaNames } from '../../services/area'
 import './edit.scss'
 
 interface FormState {
   name: string
   category: string
+  province: string
   city: string
   district: string
   address: string
   contact: string
   isDefault: boolean
+  coverKey: string
 }
 
 const EMPTY: FormState = {
   name: '',
   category: '',
+  province: '',
   city: '',
   district: '',
   address: '',
   contact: '',
   isDefault: false,
+  coverKey: '',
 }
-
-const CITY_OPTIONS = [
-  { city: '北京', districts: ['东城区', '西城区', '朝阳区', '海淀区', '丰台区', '石景山区', '通州区', '大兴区', '昌平区'] },
-  { city: '上海', districts: ['黄浦区', '徐汇区', '长宁区', '静安区', '普陀区', '虹口区', '杨浦区', '浦东新区', '闵行区'] },
-  { city: '广州', districts: ['越秀区', '海珠区', '荔湾区', '天河区', '白云区', '黄埔区', '番禺区', '花都区'] },
-  { city: '深圳', districts: ['福田区', '罗湖区', '南山区', '宝安区', '龙岗区', '龙华区', '坪山区', '光明区'] },
-  { city: '杭州', districts: ['上城区', '拱墅区', '西湖区', '滨江区', '萧山区', '余杭区', '临平区', '钱塘区'] },
-  { city: '成都', districts: ['锦江区', '青羊区', '金牛区', '武侯区', '成华区', '龙泉驿区', '温江区', '双流区'] },
-  { city: '重庆', districts: ['渝中区', '江北区', '南岸区', '九龙坡区', '沙坪坝区', '渝北区', '巴南区', '北碚区'] },
-  { city: '武汉', districts: ['江岸区', '江汉区', '硚口区', '汉阳区', '武昌区', '青山区', '洪山区', '东西湖区'] },
-  { city: '西安', districts: ['新城区', '碑林区', '莲湖区', '雁塔区', '未央区', '灞桥区', '长安区'] },
-  { city: '长沙', districts: ['芙蓉区', '天心区', '岳麓区', '开福区', '雨花区', '望城区', '长沙县'] },
-]
 
 export default function StoreEditPage() {
   const router = useRouter()
@@ -44,6 +37,8 @@ export default function StoreEditPage() {
   const [form, setForm] = useState<FormState>(EMPTY)
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [pendingImage, setPendingImage] = useState<{ path: string; size: number } | null>(null)
+  const [coverPreview, setCoverPreview] = useState('')
 
   useEffect(() => {
     if (!id) {
@@ -52,15 +47,21 @@ export default function StoreEditPage() {
     }
     getStore(id)
       .then((s: StoreItem) => {
+        const area = resolveAreaNames(s)
         setForm({
           name: s.name,
           category: s.category ?? '',
-          city: s.city ?? '',
-          district: s.district ?? '',
+          province: area.province,
+          city: area.city,
+          district: area.district,
           address: s.address ?? '',
           contact: s.contact ?? '',
           isDefault: s.isDefault,
+          coverKey: s.coverKey ?? '',
         })
+        if (s.coverKey) {
+          getStoreCoverUrl(s.coverKey).then((r) => setCoverPreview(r.url ?? '')).catch(() => undefined)
+        }
       })
       .catch(() => {
         Taro.showToast({ title: '门店不存在', icon: 'none' })
@@ -71,33 +72,76 @@ export default function StoreEditPage() {
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
 
-  const cityNames = CITY_OPTIONS.map((o) => o.city)
-  const cityIndex = Math.max(0, cityNames.indexOf(form.city))
-  const districtOptions = CITY_OPTIONS[cityIndex]?.districts ?? []
-  const districtIndex = Math.max(0, districtOptions.indexOf(form.district))
+  const provinceIndex = Math.max(0, provinceOptions.findIndex((o) => o.name === form.province))
+  const provinceCode = provinceOptions[provinceIndex]?.code ?? ''
+  const cities = cityOptions(provinceCode)
+  const cityIndex = Math.max(0, cities.findIndex((o) => o.name === form.city))
+  const cityCode = cities[cityIndex]?.code ?? ''
+  const districts = districtOptions(cityCode)
+  const districtIndex = Math.max(0, districts.findIndex((o) => o.name === form.district))
+
+  const pickImage = async () => {
+    if (saving) return
+    try {
+      const r = await Taro.chooseImage({ count: 1, sizeType: ['compressed'], sourceType: ['album', 'camera'] })
+      const file = r.tempFiles[0]
+      if (!file) return
+      setPendingImage({ path: file.path, size: file.size })
+      setCoverPreview(file.path)
+      set('coverKey', '')
+    } catch {
+      // 用户取消选择时不提示错误
+    }
+  }
+
+  const removeImage = () => {
+    setPendingImage(null)
+    setCoverPreview('')
+    set('coverKey', '')
+  }
 
   const onSubmit = async () => {
+    if (saving) return
     if (!form.name.trim()) {
       Taro.showToast({ title: '请填写门店名称', icon: 'none' })
       return
     }
     setSaving(true)
-    const payload: StoreInput = {
-      name: form.name.trim(),
-      category: form.category || undefined,
-      city: form.city || undefined,
-      district: form.district || undefined,
-      address: form.address || undefined,
-      contact: form.contact || undefined,
-      isDefault: form.isDefault || undefined,
-    }
+    let storeId = id
+    let uploadedCoverKey = form.coverKey || null
     try {
-      if (id) await updateStore(id, payload)
-      else await createStore(payload)
+      const basePayload: StoreInput = {
+        name: form.name.trim(),
+        category: form.category || undefined,
+        province: form.province || undefined,
+        city: form.city || undefined,
+        district: form.district || undefined,
+        address: form.address || undefined,
+        contact: form.contact || undefined,
+        isDefault: form.isDefault || undefined,
+      }
+      if (storeId) {
+        if (pendingImage) {
+          const asset = await uploadMediaFile({ filePath: pendingImage.path, storeId, type: 'IMAGE', sizeBytes: pendingImage.size })
+          uploadedCoverKey = asset.cosKey
+        }
+        await updateStore(storeId, { ...basePayload, coverKey: uploadedCoverKey })
+      } else {
+        const created = await createStore(basePayload)
+        storeId = created.id
+        if (pendingImage) {
+          const asset = await uploadMediaFile({ filePath: pendingImage.path, storeId, type: 'IMAGE', sizeBytes: pendingImage.size })
+          await updateStore(storeId, { ...basePayload, coverKey: asset.cosKey })
+        }
+      }
       Taro.showToast({ title: '已保存', icon: 'success' })
       Taro.navigateBack()
     } catch {
-      /* 错误已 toast */
+      if (!id && storeId) {
+        Taro.showToast({ title: '门店已创建，图片保存失败', icon: 'none' })
+        Taro.navigateBack()
+      }
+      else Taro.showToast({ title: '保存失败，请重试', icon: 'none' })
     } finally {
       setSaving(false)
     }
@@ -108,6 +152,23 @@ export default function StoreEditPage() {
   return (
     <View className='store-edit'>
       <View className='store-edit__form'>
+        <View className='field'>
+          <Text className='field__label'>门店图片</Text>
+          {coverPreview ? (
+            <View className='store-cover'>
+              <Image className='store-cover__image' src={coverPreview} mode='aspectFill' />
+              <View className='store-cover__actions'>
+                <View className='store-cover__action' onClick={pickImage}>更换</View>
+                <View className='store-cover__action store-cover__action--danger' onClick={removeImage}>删除</View>
+              </View>
+            </View>
+          ) : (
+            <View className='store-cover store-cover--empty' onClick={pickImage}>
+              <Text>上传门店主图</Text>
+            </View>
+          )}
+        </View>
+
         <View className='field'>
           <Text className='field__label'>门店名称<Text className='field__req'>*</Text></Text>
           <Input
@@ -130,17 +191,33 @@ export default function StoreEditPage() {
           />
         </View>
 
-        <View className='field field--row'>
+        <View className='field field--region'>
+          <View className='field__col'>
+            <Text className='field__label'>省/地区</Text>
+            <Picker mode='selector' range={provinceOptions.map((o) => o.name)} value={provinceIndex} onChange={(e) => {
+              const next = provinceOptions[Number(e.detail.value)]
+              const nextCities = cityOptions(next?.code ?? '')
+              const nextCity = nextCities[0]
+              const nextDistrict = nextCity ? districtOptions(nextCity.code)[0] : undefined
+              setForm((f) => ({ ...f, province: next?.name ?? '', city: nextCity?.name ?? '', district: nextDistrict?.name ?? '' }))
+            }}>
+              <View className='field__picker'>{form.province || '选择省/地区'}</View>
+            </Picker>
+          </View>
           <View className='field__col'>
             <Text className='field__label'>城市</Text>
-            <Picker mode='selector' range={cityNames} value={cityIndex} onChange={(e) => set('city', cityNames[Number(e.detail.value)] ?? '')}>
-              <View className='field__picker'>{form.city || '选择城市'}</View>
+            <Picker disabled={!form.province} mode='selector' range={cities.map((o) => o.name)} value={cityIndex} onChange={(e) => {
+              const nextCity = cities[Number(e.detail.value)]
+              const nextDistrict = nextCity ? districtOptions(nextCity.code)[0] : undefined
+              setForm((f) => ({ ...f, city: nextCity?.name ?? '', district: nextDistrict?.name ?? '' }))
+            }}>
+              <View className={`field__picker ${!form.province ? 'field__picker--disabled' : ''}`}>{form.city || '请先选择省/地区'}</View>
             </Picker>
           </View>
           <View className='field__col'>
             <Text className='field__label'>区县</Text>
-            <Picker mode='selector' range={districtOptions} value={districtIndex} onChange={(e) => set('district', districtOptions[Number(e.detail.value)] ?? '')}>
-              <View className='field__picker'>{form.district || '选择区县'}</View>
+            <Picker disabled={!form.city} mode='selector' range={districts.map((o) => o.name)} value={districtIndex} onChange={(e) => set('district', districts[Number(e.detail.value)]?.name ?? '')}>
+              <View className={`field__picker ${!form.city ? 'field__picker--disabled' : ''}`}>{form.district || (form.city ? '选择区县' : '请先选择城市')}</View>
             </Picker>
           </View>
         </View>

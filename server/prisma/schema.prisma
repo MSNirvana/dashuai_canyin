@@ -50,6 +50,7 @@ model Store {
   district   String?   @db.VarChar(64)
   address    String?   @db.VarChar(255)
   contact    String?   @db.VarChar(64)
+  coverKey   String?   @map("cover_key") @db.VarChar(512)
   isDefault  Boolean   @default(false) @map("is_default")
   status     String    @default("ACTIVE") @db.VarChar(16)
   createdAt  DateTime  @default(now()) @map("created_at") @db.DateTime(3)

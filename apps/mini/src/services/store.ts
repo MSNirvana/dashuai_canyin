@@ -10,6 +10,7 @@ export interface StoreItem {
   district: string | null
   address: string | null
   contact: string | null
+  coverKey: string | null
   isDefault: boolean
   createdAt: string
   _count?: { dishes: number }
@@ -23,6 +24,7 @@ export interface StoreInput {
   district?: string
   address?: string
   contact?: string
+  coverKey?: string | null
   isDefault?: boolean
 }
 
@@ -44,4 +46,8 @@ export function updateStore(id: string, input: StoreInput) {
 
 export function deleteStore(id: string) {
   return http.del<{ deleted: boolean }>(`/stores/${id}`)
+}
+
+export function getStoreCoverUrl(key: string) {
+  return http.get<{ url: string | null; dev: boolean }>(`/media/play-url?key=${encodeURIComponent(key)}`)
 }
