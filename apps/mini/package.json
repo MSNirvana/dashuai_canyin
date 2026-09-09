@@ -9,8 +9,8 @@
     "css": "sass"
   },
   "scripts": {
-    "dev:weapp": "NODE_ENV=development npm run build:weapp -- --watch",
-    "build:weapp:dev": "NODE_ENV=development npm run build:weapp",
+    "dev:weapp": "NODE_ENV=production TARO_APP_API_BASE_URL=http://localhost:3000/api/v1 npm run build:weapp -- --watch",
+    "build:weapp:dev": "NODE_ENV=production TARO_APP_API_BASE_URL=http://localhost:3000/api/v1 npm run build:weapp",
     "build:weapp": "taro build --type weapp",
     "dev:tt": "npm run build:tt -- --watch",
     "build:tt": "taro build --type tt",
