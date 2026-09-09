@@ -23,6 +23,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft
 .login-wrap { display: flex; align-items: center; justify-content: center; height: 100vh; background: linear-gradient(135deg, #001529 0%, #003a8c 100%); }
 .login-card { width: 380px; padding: 32px; background: #fff; border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.2); }
 .login-card__title { font-size: 22px; font-weight: 600; margin-bottom: 24px; text-align: center; color: #222; }
+.login-card__form { display: flex; flex-direction: column; gap: 18px; }
+.login-card__field { display: flex; flex-direction: column; gap: 8px; color: #333; font-size: 14px; }
 .login-card__hint { margin-top: 12px; color: #999; font-size: 12px; text-align: center; }
 
 .muted { color: #888; font-size: 12px; }

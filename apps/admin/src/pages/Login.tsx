@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { Form, Input, Button } from 'tdesign-react'
+import { Input, Button } from 'tdesign-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
@@ -49,16 +49,18 @@ export default function LoginPage() {
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
         <div className="login-card__title">大帅餐饮 · 管理后台</div>
-        <Form layout="vertical">
-          <Form.FormItem label="用户名">
+        <div className="login-card__form">
+          <label className="login-card__field">
+            <span>用户名</span>
             <Input
               value={username}
               onChange={(v) => setUsername(v as string)}
               placeholder="请输入管理员账号"
               autocomplete="username"
             />
-          </Form.FormItem>
-          <Form.FormItem label="密码">
+          </label>
+          <label className="login-card__field">
+            <span>密码</span>
             <Input
               type="password"
               value={password}
@@ -66,12 +68,12 @@ export default function LoginPage() {
               placeholder="请输入密码"
               autocomplete="current-password"
             />
-          </Form.FormItem>
+          </label>
           {err && <div className="danger-text" style={{ marginBottom: 12 }}>{err}</div>}
           <Button theme="primary" type="submit" block loading={loading}>
             登 录
           </Button>
-        </Form>
+        </div>
         <div className="login-card__hint">
           默认账号 admin / admin123456（仅种子已写入时可用）
         </div>
