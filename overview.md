@@ -1,22 +1,20 @@
-# 大帅餐饮整改进展概览
+# 大帅餐饮 GitHub 同步概览
 
-## 当前已完成并验证
-- 初始产品/架构/QA审计已完成。
-- JWT/auth 独立受控验收 18/18 通过；仅使用商家查询桩，未访问真实数据库。
-- `server` 类型检查通过。
-- `apps/mini` 类型检查通过。
-- 订单路由已修复，账户接口不会被动态订单路由遮蔽。
-- 充值页支付成功后只在服务端订单状态为 `PAID` 时刷新账户并提示到账。
-- 登录/refresh 响应补齐 `available/frozen`；refresh 失败后清理会话并跳回登录页。
-- 创建门店时城市、区县已改为下拉选择。
-- 菜品新增图片、视频上传，使用现有上传链路并保存到 `coverKey`/`videoKey`；数据库新增非破坏性 `video_key` 迁移。
+## 已完成
+- 当前工作区已初始化为 Git 仓库并推送至 GitHub：`https://github.com/MSNirvana/dashuai_canyin.git`。
+- 分支：`main`。
+- 提交：`3c7482ac2ff9ec2b62786287a0824cf2fb9f2699`。
+- 本地 HEAD 与 `origin/main` 已确认一致。
+- 已包含 `apps/mini`、`apps/admin`、`server`、`docs`、`scripts`、数据库 schema 与迁移文件。
+- 已排除 node_modules、构建产物、本地私有配置、`.workbuddy`、缓存和 vite 临时时间戳文件。
 
-## 仍需继续
-- Bean Reservation 独立业务预留、并发原子性、跨任务 consume/unfreeze 隔离。
-- 支付订单终态 CAS、权益快照、真实微信支付联调。
-- 全链路跨租户 AI/渲染隔离、RenderTask 原子创建与资金状态机、Worker 租约恢复、Shot.line/TTS/字幕实物。
-- 小程序首页、创作、分镜、协议入口的完整升级；充值订单完整生命周期和真机验证。
-- apps/admin 完整 build；COS、FFmpeg、TTS、真实 MySQL、真机验证。
+## 当前代码包含的主要改动
+- 登录兼容与旧 refresh token 处理。
+- 订单状态查询与充值确认流程。
+- 门店城市/区县下拉选择。
+- 菜品图片、视频上传与 `video_key` 迁移。
+- JWT、支付配置和账务部分加固。
+- 审计文档与整改验收脚本。
 
-## 发布结论
-仍不开放真实付费生产流量。当前可继续本地开发测试；真实付费联调必须等高风险账务、支付、渲染验收完成。
+## 注意
+仓库不是发布就绪状态。真实付费联调、MySQL 并发、COS/FFmpeg/TTS、真机验收仍继续。
