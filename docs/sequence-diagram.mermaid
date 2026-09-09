@@ -1,0 +1,90 @@
+sequenceDiagram
+  autonumber
+  actor M as Merchant
+  participant Mini as Miniapp
+  participant Auth as AuthMiddleware
+  participant C as CreationService
+  participant AI as AiService
+  participant G as AiGateway
+  participant B as BeanService
+  participant R as RenderService
+  participant W as RenderWorker
+  participant P as PremiumService
+  participant O as OrderService
+  participant WX as WeChat Pay
+  participant DB as MySQL
+
+  M->>Mini: Login / submit request
+  Mini->>Auth: Authorization Bearer access token
+  Auth->>Auth: verifyToken(secret)
+  Auth->>DB: (recommended) verify Merchant ACTIVE
+  Auth-->>Mini: merchant context or 401
+
+  M->>Mini: Create creation(storeId,dishId)
+  Mini->>C: createCreation(merchantId,input)
+  C->>DB: verify Store merchant ownership
+  C->>DB: create Creation
+  DB-->>C: Creation
+  C-->>Mini: creation
+
+  M->>Mini: Generate copy/storyboard(requestId)
+  Mini->>C: generateCopy/generateShots(...)
+  C->>DB: require subscription + getCreation tenant scoped
+  C->>AI: runBilledScene(params)
+  AI->>DB: lock BeanAccount + FREEZE ledger(requestId)
+  AI->>G: runScene(scene, variables)
+  G->>DB: select provider/model; write AiCallLog
+  G-->>AI: text, cost, fallback
+  alt AI failed or timeout
+    AI->>DB: UNFREEZE ledger
+    AI-->>C: fallback template + zero charge
+  else AI success
+    AI->>DB: CONSUME actual charge; release remainder
+    AI-->>C: text + balance snapshot
+    C->>DB: update copy or replace Shots
+  end
+  C-->>Mini: result + code/message/data/traceId
+
+  M->>Mini: Submit render(requestId)
+  Mini->>R: submitRender(merchantId,creationId,input)
+  R->>DB: lock Creation; check active RenderTask
+  R->>DB: create RenderTask QUEUED or MANUAL_PENDING
+  R->>DB: lock BeanAccount + FREEZE ledger
+  alt Demo mode
+    R->>DB: CONSUME ledger + mark RenderTask SUCCESS
+    R-->>Mini: successful task/result key
+  else Machine render
+    R-->>Mini: QUEUED task
+    W->>DB: conditional QUEUED -> RUNNING claim
+    W->>DB: read clips and COS metadata
+    W->>W: FFmpeg normalize/concat/TTS/subtitle
+    W->>DB: transaction completeRender + CONSUME
+    W-->>Mini: polling shows SUCCESS
+  else Premium render
+    R-->>Mini: MANUAL_PENDING task
+    P->>DB: conditional claim MANUAL_PENDING -> MANUAL_DOING
+    P->>DB: transaction completeRender + CONSUME
+    P-->>Mini: polling/re-entry shows SUCCESS
+  end
+  alt Render failure or SLA timeout
+    W->>DB: transaction UNFREEZE
+    W->>DB: mark RenderTask FAILED
+    P->>DB: transaction UNFREEZE
+    P->>DB: mark RenderTask FAILED/SLA_TIMEOUT
+  end
+
+  M->>Mini: Buy membership/bean package
+  Mini->>O: createMemberOrder/createBeanOrder
+  O->>DB: create Order PENDING with immutable amount
+  alt Real payment
+    O->>WX: JSAPI order
+    WX-->>O: prepay_id
+    O-->>Mini: wx.requestPayment params
+    WX->>O: POST encrypted notify(raw body)
+    O->>O: verify signature, timestamp, decrypt AES-GCM
+    O->>DB: conditionally mark PAID by orderNo/transactionId
+    O->>DB: recharge or activate Membership + grant ledger
+  else Demo payment disabled only in non-production
+    O->>DB: markOrderPaid with DEV transaction
+  end
+  O-->>Mini: order status / refreshed balance

@@ -1,0 +1,57 @@
+{
+  "name": "dashuai-mini",
+  "version": "0.1.0",
+  "private": true,
+  "description": "大帅餐饮 · 商家短视频创作工具（微信小程序 / 抖音小程序）",
+  "templateInfo": {
+    "name": "default",
+    "typescript": true,
+    "css": "sass"
+  },
+  "scripts": {
+    "dev:weapp": "npm run build:weapp -- --watch",
+    "build:weapp": "taro build --type weapp",
+    "dev:tt": "npm run build:tt -- --watch",
+    "build:tt": "taro build --type tt",
+    "build:alipay": "taro build --type alipay",
+    "dev:alipay": "npm run build:alipay -- --watch",
+    "build:h5": "taro build --type h5",
+    "dev:h5": "npm run build:h5 -- --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "browserslist": [
+    "defaults",
+    "not IE 11",
+    "last 2 versions"
+  ],
+  "dependencies": {
+    "@babel/preset-react": "^8.0.1",
+    "@babel/preset-typescript": "^8.0.1",
+    "@tarojs/components": "^4.0.0",
+    "@tarojs/plugin-framework-react": "^4.2.1",
+    "@tarojs/plugin-platform-alipay": "^4.0.0",
+    "@tarojs/plugin-platform-h5": "^4.0.0",
+    "@tarojs/plugin-platform-tt": "^4.0.0",
+    "@tarojs/plugin-platform-weapp": "^4.0.0",
+    "@tarojs/react": "^4.0.0",
+    "@tarojs/runtime": "^4.0.0",
+    "@tarojs/shared": "^4.2.1",
+    "@tarojs/taro": "^4.0.0",
+    "cos-wx-sdk-v5": "^1.8.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tdesign-miniprogram": "^1.5.0",
+    "webpack": "5.91.0",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@tarojs/cli": "^4.0.0",
+    "@tarojs/webpack5-runner": "^4.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "babel-preset-taro": "^4.0.0",
+    "postcss": "^8.4.47",
+    "sass": "^1.80.6",
+    "typescript": "^5.6.3"
+  }
+}

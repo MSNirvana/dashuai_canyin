@@ -1,0 +1,171 @@
+.recharge {
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  padding: 24rpx 24rpx 40rpx;
+  box-sizing: border-box;
+
+  &__balance {
+    background: var(--td-brand-color);
+    border: 1rpx solid rgba(255, 255, 255, 0.12);
+    border-radius: var(--td-radius-extra);
+    padding: 40rpx 32rpx;
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    box-shadow: var(--ds-glow-red);
+  }
+  &__balabel {
+    font-size: 24rpx;
+    opacity: 0.9;
+    letter-spacing: 1rpx;
+  }
+  &__banum {
+    font-size: 72rpx;
+    font-weight: 800;
+    line-height: 1.2;
+    margin-top: 8rpx;
+    letter-spacing: 1rpx;
+  }
+  &__bagrant {
+    font-size: 22rpx;
+    opacity: 0.85;
+    margin-top: 4rpx;
+  }
+
+  &__tabs {
+    display: flex;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: 999rpx;
+    margin: 28rpx 0;
+    overflow: hidden;
+    padding: 6rpx;
+    gap: 6rpx;
+  }
+  &__tab {
+    flex: 1;
+    text-align: center;
+    padding: 18rpx 0;
+    font-size: 28rpx;
+    color: var(--td-text-color-secondary);
+    border-radius: 999rpx;
+    transition: background 0.15s ease, color 0.15s ease;
+    &--on {
+      color: #fff;
+      font-weight: 700;
+      background: var(--td-brand-color);
+      box-shadow: var(--ds-glow-red);
+    }
+  }
+
+  &__list {
+    display: flex;
+    flex-direction: column;
+    gap: 20rpx;
+  }
+  &__empty,
+  &__hint {
+    text-align: center;
+    color: var(--td-text-color-placeholder);
+    font-size: 24rpx;
+    padding: 40rpx 0;
+  }
+  &__hint {
+    color: var(--td-brand-color);
+  }
+  &__locktip {
+    text-align: center;
+    color: var(--ds-bean);
+    font-size: 24rpx;
+    padding: 28rpx 0;
+    background: var(--ds-warning-soft);
+    border: 1rpx dashed #eddfc3;
+    border-radius: var(--td-radius-default);
+    line-height: 1.6;
+  }
+
+  &__card {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 32rpx 28rpx;
+    display: flex;
+    align-items: center;
+    position: relative;
+    overflow: hidden;
+    box-shadow: var(--ds-shadow-card);
+    &--off {
+      opacity: 0.5;
+    }
+  }
+  &__tag {
+    position: absolute;
+    top: 0;
+    left: 0;
+    background: var(--ds-warning);
+    color: var(--td-text-color-anti);
+    font-size: 20rpx;
+    font-weight: 600;
+    padding: 6rpx 18rpx;
+    border-radius: 0 0 20rpx 0;
+    letter-spacing: 1rpx;
+  }
+  &__cardmain {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  &__beans {
+    font-size: 36rpx;
+    font-weight: 700;
+    color: var(--td-text-color-primary);
+  }
+  &__sub {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+    margin-top: 8rpx;
+  }
+  &__price {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    margin-right: 20rpx;
+  }
+  &__now {
+    font-size: 36rpx;
+    font-weight: 700;
+    color: var(--td-brand-color);
+  }
+  &__origin {
+    font-size: 22rpx;
+    color: var(--td-text-color-disabled);
+    text-decoration: line-through;
+  }
+  &__vip {
+    font-size: 18rpx;
+    color: var(--ds-bean);
+    margin-top: 4rpx;
+  }
+  &__buy {
+    background: var(--td-brand-color);
+    color: #fff;
+    font-size: 26rpx;
+    font-weight: 600;
+    border-radius: 999rpx;
+    margin: 0;
+    padding: 0 32rpx;
+    height: 64rpx;
+    line-height: 64rpx;
+
+    &::after {
+      border: none;
+    }
+  }
+
+  &__footer {
+    text-align: center;
+    color: var(--td-text-color-disabled);
+    font-size: 22rpx;
+    margin-top: 48rpx;
+  }
+}

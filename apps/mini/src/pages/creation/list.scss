@@ -1,0 +1,49 @@
+.clist {
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  padding: 24rpx;
+
+  &__bar {
+    margin-bottom: 24rpx;
+  }
+  &__new {
+    background: var(--td-brand-color);
+    box-shadow: var(--ds-glow-red);
+    color: #fff;
+    font-size: 30rpx;
+    font-weight: 600;
+    letter-spacing: 2rpx;
+    border-radius: 999rpx;
+  }
+  &__tip,
+  &__empty {
+    text-align: center;
+    color: var(--td-text-color-placeholder);
+    font-size: 28rpx;
+    padding: 100rpx 0;
+  }
+  &__card {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx;
+    margin-bottom: 20rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__title {
+    font-size: 32rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    margin-bottom: 16rpx;
+  }
+  &__meta {
+    display: flex;
+    gap: 24rpx;
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__status {
+    color: var(--td-brand-color);
+    font-weight: 500;
+  }
+}

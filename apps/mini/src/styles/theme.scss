@@ -1,0 +1,55 @@
+// 大帅餐饮 · 品牌主题（红白简约 · 大气）
+// 设计语言：白底浅灰层次 + 品牌红单点强调 + 精炼琥珀做权益色；
+// 去渐变、去光晕、去暗色，追求「留白、克制、高级感」
+
+page {
+  // —— 品牌主色（唯一强调色） ——
+  --td-brand-color: #e63946;          // 品牌红（按钮、icon、强调）
+  --td-brand-color-hover: #ee4d59;
+  --td-brand-color-active: #c1202c;
+  --td-brand-color-light: #fdecee;     // 红浅底（选中态容器）
+  --td-brand-color-disabled: #f2b3b9;
+  --td-brand-color-soft: #fdf4f5;      // 更浅红底（图标容器、提示条）
+
+  // —— 文字（中性灰阶，去暖调） ——
+  --td-text-color-primary: #1d2129;    // 主文（近黑）
+  --td-text-color-secondary: #646a73;  // 次要文（中灰）
+  --td-text-color-placeholder: #a9aeb8; // 占位
+  --td-text-color-disabled: #c3c7cf;   // 禁用
+  --td-text-color-anti: #ffffff;       // 反白（红底上的白字）
+
+  // —— 背景（白 + 浅灰层级） ——
+  --td-bg-color-page: #f5f6f8;         // 页面底（浅灰白）
+  --td-bg-color-container: #ffffff;    // 卡片底（纯白）
+  --td-bg-color-container-active: #f2f3f5;
+  --td-bg-color-secondary: #f5f6f8;    // 输入框底
+  --td-bg-color-elevated: #ffffff;     // 弹层/浮层
+
+  // —— 描边（浅灰细线） ——
+  --td-component-stroke: #e7e8eb;      // 默认描边
+  --td-component-border: #f0f1f3;      // 分隔线（更浅）
+
+  // —— 圆角 ——
+  --td-radius-small: 8rpx;
+  --td-radius-default: 12rpx;
+  --td-radius-large: 20rpx;
+  --td-radius-extra: 24rpx;
+  --td-radius-pill: 999px;
+
+  // —— 业务语义色 ——
+  --ds-danger: #d54941;
+  --ds-warning: #cf8a2d;               // 精炼琥珀（积分/权益，替代亮金）
+  --ds-warning-soft: #faf4e8;          // 琥珀浅底
+  --ds-success: #2ba471;
+  --ds-bean: #cf8a2d;                  // 积分主色（琥珀）
+  --ds-member: #b27c2b;                // 会员标识（深琥珀）
+
+  // —— 阴影（极轻，只做层次不做装饰） ——
+  --ds-glow-red: 0 8rpx 24rpx rgba(230, 57, 70, 0.16);   // 主按钮微投影
+  --ds-glow-gold: 0 6rpx 18rpx rgba(207, 138, 45, 0.16);
+  --ds-shadow-card: 0 2rpx 12rpx rgba(29, 33, 41, 0.04); // 卡片极轻投影
+
+  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+  background: var(--td-bg-color-page);
+  color: var(--td-text-color-primary);
+}

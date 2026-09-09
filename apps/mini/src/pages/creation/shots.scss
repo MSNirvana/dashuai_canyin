@@ -1,0 +1,131 @@
+.cshots {
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  padding: 24rpx 24rpx 60rpx;
+
+  &__tip {
+    text-align: center;
+    color: var(--td-text-color-placeholder);
+    padding: 100rpx 0;
+    font-size: 28rpx;
+  }
+  &__hint {
+    font-size: 24rpx;
+    color: var(--ds-bean);
+    background: var(--ds-warning-soft);
+    border: 1rpx solid #eddfc3;
+    border-radius: var(--td-radius-default);
+    padding: 20rpx 24rpx;
+    margin-bottom: 20rpx;
+    line-height: 1.6;
+  }
+  &__card {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx;
+    margin-bottom: 18rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__head {
+    display: flex;
+    gap: 16rpx;
+    align-items: center;
+    margin-bottom: 14rpx;
+  }
+  &__seq {
+    width: 44rpx;
+    height: 44rpx;
+    line-height: 44rpx;
+    text-align: center;
+    font-size: 24rpx;
+    font-weight: 600;
+    color: #fff;
+    background: var(--td-brand-color);
+    border-radius: 50%;
+  }
+  &__type {
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__line {
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+    display: block;
+    margin-bottom: 14rpx;
+    line-height: 1.6;
+  }
+  &__prog {
+    font-size: 26rpx;
+    color: var(--td-brand-color);
+  }
+  &__ok {
+    font-size: 26rpx;
+    color: var(--ds-success);
+  }
+  &__up {
+    background: var(--td-brand-color-soft);
+    color: var(--td-brand-color);
+    border: 1rpx solid var(--td-brand-color-light);
+    border-radius: 999rpx;
+    font-size: 24rpx;
+    font-weight: 500;
+  }
+  &__tipsbox {
+    background: var(--td-bg-color-secondary);
+    border: 1rpx solid #f3e6c8;
+    border-radius: var(--td-radius-default);
+    padding: 20rpx 22rpx;
+    margin-bottom: 16rpx;
+  }
+  &__tipslabel {
+    display: inline-block;
+    font-size: 22rpx;
+    font-weight: 600;
+    color: var(--ds-warning);
+    letter-spacing: 2rpx;
+    margin-bottom: 12rpx;
+  }
+  &__tipsitem {
+    margin-bottom: 12rpx;
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+  &__tipshead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12rpx;
+  }
+  &__tipsname {
+    font-size: 24rpx;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+  }
+  &__demo {
+    background: var(--ds-warning-soft);
+    color: var(--ds-warning);
+    border: 1rpx solid #eddfc3;
+    border-radius: 999rpx;
+    font-size: 20rpx;
+    padding: 0 16rpx;
+    line-height: 44rpx;
+  }
+  &__tipstext {
+    display: block;
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+    line-height: 1.7;
+    margin-top: 6rpx;
+  }
+  &__next {
+    margin-top: 12rpx;
+    background: var(--td-brand-color);
+    box-shadow: var(--ds-glow-red);
+    color: #fff;
+    font-weight: 600;
+    letter-spacing: 2rpx;
+    border-radius: 999rpx;
+  }
+}

@@ -1,0 +1,424 @@
+.home {
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  padding-bottom: 80rpx;
+
+  // ─────────── Hero 顶栏（浅红渐入浅灰，干净不抢戏） ───────────
+  &__hero {
+    position: relative;
+    padding: 48rpx 32rpx 80rpx;
+    background: linear-gradient(180deg, #fdecee 0%, #fafbfc 60%, var(--td-bg-color-page) 100%);
+    overflow: hidden;
+  }
+  &__hero-deco {
+    display: none;  // 简约风：去掉装饰光晕
+  }
+  &__topbar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 40rpx;
+    z-index: 2;
+  }
+  &__brand {
+    display: flex;
+    align-items: center;
+  }
+  &__logo {
+    width: 56rpx;
+    height: 56rpx;
+    margin-right: 14rpx;
+    background: var(--td-bg-color-container);
+    border-radius: 14rpx;
+    padding: 4rpx;
+    border: 1rpx solid var(--td-component-stroke);
+  }
+  &__appname {
+    font-size: 30rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    letter-spacing: 1rpx;
+  }
+  &__topbar-actions {
+    display: flex;
+    gap: 12rpx;
+  }
+  &__icon-btn {
+    width: 64rpx;
+    height: 64rpx;
+    border-radius: 32rpx;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--td-text-color-secondary);
+  }
+  &__hero-title {
+    position: relative;
+    z-index: 2;
+    margin-bottom: 28rpx;
+  }
+  &__hero-greet {
+    display: block;
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+    margin-bottom: 8rpx;
+    letter-spacing: 2rpx;
+  }
+  &__hero-main {
+    display: block;
+    font-size: 64rpx;
+    line-height: 1.1;
+    margin-bottom: 12rpx;
+    letter-spacing: 2rpx;
+  }
+  &__hero-sub {
+    display: block;
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+    letter-spacing: 1rpx;
+  }
+  &__tags {
+    position: relative;
+    z-index: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12rpx;
+  }
+
+  // ─────────── 商家信息卡（纯白浮卡） ───────────
+  &__info {
+    margin-top: -56rpx;
+    position: relative;
+    z-index: 3;
+    padding: 28rpx 28rpx 24rpx;
+  }
+  &__info-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24rpx;
+  }
+  &__info-store {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+  }
+  &__info-avatar {
+    width: 80rpx;
+    height: 80rpx;
+    border-radius: 24rpx;
+    background: var(--td-brand-color);
+    color: #fff;
+    font-size: 36rpx;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 20rpx;
+  }
+  &__info-name {
+    display: block;
+    font-size: 30rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    margin-bottom: 8rpx;
+  }
+  &__info-meta {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+  }
+  &__info-store-name {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__info-member {
+    font-size: 20rpx;
+    padding: 2rpx 12rpx;
+  }
+  &__info-bean {
+    text-align: right;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  &__info-bean-num {
+    font-size: 52rpx;
+    font-weight: 700;
+    color: var(--ds-bean);
+    line-height: 1.1;
+    letter-spacing: 1rpx;
+  }
+  &__info-bean-unit {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+    margin-top: 2rpx;
+  }
+  &__info-bean-gift {
+    font-size: 20rpx;
+    color: var(--ds-bean);
+    margin-top: 6rpx;
+  }
+  &__info-actions {
+    display: flex;
+    gap: 16rpx;
+  }
+
+  // ─────────── 4 宫格 ───────────
+  &__grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16rpx;
+    padding: 0 24rpx;
+  }
+  &__grid-cell {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx 24rpx;
+    transition: transform 0.15s ease, background 0.15s ease;
+  }
+  &__grid-icon {
+    width: 72rpx;
+    height: 72rpx;
+    border-radius: 20rpx;
+    background: var(--td-brand-color-soft);
+    color: var(--td-brand-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16rpx;
+  }
+  &__grid-title {
+    font-size: 28rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    display: block;
+    margin-bottom: 4rpx;
+  }
+  &__grid-sub {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+  }
+
+  // ─────────── 营销 banner（浅红底 + 品牌红大标题） ───────────
+  &__banner {
+    position: relative;
+    margin: 24rpx;
+    padding: 36rpx 32rpx;
+    border-radius: var(--td-radius-extra);
+    background: var(--td-brand-color-soft);
+    border: 1rpx solid #f9dfe2;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  &__banner-text {
+    flex: 1;
+    z-index: 2;
+  }
+  &__banner-line1 {
+    display: block;
+    font-size: 28rpx;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+    margin-bottom: 6rpx;
+  }
+  &__banner-line2 {
+    display: block;
+    font-size: 40rpx;
+    font-weight: 800;
+    color: var(--td-brand-color);
+    letter-spacing: 6rpx;
+  }
+  &__banner-cta {
+    z-index: 2;
+    font-size: 24rpx;
+    padding: 0 28rpx;
+    height: 64rpx;
+  }
+  &__banner-deco {
+    display: none;  // 去装饰
+  }
+
+  // ─────────── 工具双列 ───────────
+  &__tool-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16rpx;
+    padding: 0 24rpx;
+  }
+  &__tool-card {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx 24rpx;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  &__tool-emoji {
+    width: 80rpx;
+    height: 80rpx;
+    border-radius: 24rpx;
+    background: var(--td-brand-color-soft);
+    color: var(--td-brand-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16rpx;
+  }
+  &__tool-title {
+    font-size: 28rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    margin-bottom: 4rpx;
+  }
+  &__tool-sub {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+  }
+
+  // ─────────── HOT 一键生成（白底 + 红描边） ───────────
+  &__hot-banner {
+    position: relative;
+    margin: 24rpx;
+    padding: 32rpx 28rpx;
+    border-radius: var(--td-radius-extra);
+    background: var(--td-bg-color-container);
+    border: 2rpx solid var(--td-brand-color);
+    display: flex;
+    align-items: center;
+    gap: 20rpx;
+  }
+  &__hot-tag {
+    position: absolute;
+    top: 0;
+    left: 24rpx;
+    padding: 4rpx 16rpx;
+    font-size: 20rpx;
+    font-weight: 600;
+    color: #fff;
+    background: var(--td-brand-color);
+    border-radius: 0 0 12rpx 12rpx;
+    letter-spacing: 2rpx;
+  }
+  &__hot-text {
+    flex: 1;
+    padding-left: 80rpx;
+  }
+  &__hot-line1 {
+    display: block;
+    font-size: 30rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    margin-bottom: 4rpx;
+    letter-spacing: 1rpx;
+  }
+  &__hot-line2 {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__hot-cta {
+    font-size: 24rpx;
+    padding: 0 24rpx;
+    height: 60rpx;
+  }
+
+  // ─────────── 优秀作品横向（白卡 + 灰封面） ───────────
+  &__works-scroll {
+    display: flex;
+    overflow-x: auto;
+    gap: 16rpx;
+    padding: 8rpx 24rpx 24rpx;
+    white-space: nowrap;
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+  &__work-card {
+    flex: 0 0 280rpx;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    overflow: hidden;
+  }
+  &__work-cover {
+    position: relative;
+    width: 100%;
+    height: 200rpx;
+    background: #f2f3f5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--td-text-color-placeholder);
+  }
+  &__work-emoji {
+    font-size: 0;  // emoji 已替换为 t-icon，隐藏 fallback 字符
+  }
+  &__work-tag {
+    position: absolute;
+    top: 12rpx;
+    left: 12rpx;
+    font-size: 20rpx;
+    padding: 4rpx 12rpx;
+  }
+  &__work-title {
+    display: block;
+    padding: 12rpx 16rpx 4rpx;
+    font-size: 24rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  &__work-stat {
+    display: block;
+    padding: 0 16rpx 16rpx;
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+  }
+
+  // ─────────── 分类 tab 条 ───────────
+  &__categories {
+    display: flex;
+    gap: 12rpx;
+    padding: 0 24rpx;
+    overflow-x: auto;
+    white-space: nowrap;
+    margin-bottom: 24rpx;
+    &::-webkit-scrollbar {
+      display: none;
+    }
+  }
+  &__cat-pill {
+    flex: 0 0 auto;
+    padding: 12rpx 24rpx;
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-pill);
+
+    &.is-active {
+      background: var(--td-brand-color);
+      color: #fff;
+      border-color: var(--td-brand-color);
+      font-weight: 500;
+    }
+  }
+
+  &__logout {
+    padding: 32rpx;
+    text-align: center;
+    font-size: 24rpx;
+    color: var(--td-text-color-disabled);
+    margin-top: 16rpx;
+  }
+}

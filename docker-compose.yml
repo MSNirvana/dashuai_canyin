@@ -1,0 +1,52 @@
+# 大帅餐饮短视频工具 · 本地依赖栈
+# 仅起 MySQL + Redis，后端与小程序在本机原生运行（便于热重载 + 微信开发者工具联调）
+#
+#   docker compose up -d        # 启动依赖
+#   docker compose down         # 停止（保留数据）
+#   docker compose down -v      # 停止并清空数据卷
+#
+# 账号与 server/.env 保持一致：
+#   MySQL  dashuai / CHANGE_ME  @ localhost:3306 / db=dashuai
+#   Redis  (无密码)            @ localhost:6379
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: dashuai-mysql
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: root123456
+      MYSQL_DATABASE: dashuai
+      MYSQL_USER: dashuai
+      MYSQL_PASSWORD: CHANGE_ME
+    ports:
+      - "3306:3306"
+    volumes:
+      - dashuai_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pdashuai" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7
+    container_name: dashuai-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - dashuai_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+volumes:
+  dashuai_mysql:
+  dashuai_redis:

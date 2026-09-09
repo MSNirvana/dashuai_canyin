@@ -1,0 +1,195 @@
+.mine {
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  padding-bottom: 40rpx;
+
+  // ─────────── 头像区（浅红渐变顶部 + 干净白底） ───────────
+  &__head {
+    position: relative;
+    padding: 64rpx 32rpx 96rpx;
+    display: flex;
+    align-items: center;
+    background: linear-gradient(180deg, #fdecee 0%, #fafbfc 70%, var(--td-bg-color-page) 100%);
+    overflow: hidden;
+  }
+  &__head-deco {
+    display: none;  // 简约风：去掉装饰
+  }
+  &__avatar {
+    position: relative;
+    width: 128rpx;
+    height: 128rpx;
+    border-radius: 36rpx;
+    background: var(--td-brand-color);
+    color: #fff;
+    font-size: 52rpx;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 28rpx;
+  }
+  &__info {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+  }
+  &__name {
+    font-size: 36rpx;
+    font-weight: 700;
+    color: var(--td-text-color-primary);
+    margin-bottom: 12rpx;
+  }
+  &__vipwrap {
+    display: flex;
+    align-items: center;
+    gap: 16rpx;
+  }
+  &__vip--on {
+    font-size: 20rpx;
+  }
+  &__vipend {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+    &--cta {
+      color: var(--ds-bean);
+    }
+  }
+
+  // ─────────── 积分卡 ───────────
+  &__bean {
+    margin: -56rpx 24rpx 0;
+    position: relative;
+    z-index: 2;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-extra);
+    padding: 32rpx 28rpx;
+    display: flex;
+    align-items: center;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__beancell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  &__beandiv {
+    width: 1rpx;
+    height: 64rpx;
+    background: var(--td-component-stroke);
+  }
+  &__beannum {
+    font-size: 52rpx;
+    font-weight: 800;
+    color: var(--td-brand-color);
+    line-height: 1.1;
+    &--gold {
+      color: var(--ds-bean);
+    }
+  }
+  &__beanlabel {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+    margin-top: 8rpx;
+  }
+  &__beanbtn {
+    margin-left: 24rpx;
+  }
+
+  // ─────────── 空间 ───────────
+  &__storage {
+    margin: 24rpx;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx;
+  }
+  &__storagehead {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  &__storagetitle {
+    font-size: 26rpx;
+    color: var(--td-text-color-primary);
+    font-weight: 500;
+  }
+  &__storageval {
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+    font-family: 'SF Mono', Menlo, monospace;
+  }
+  &__storagebar {
+    height: 14rpx;
+    background: var(--td-bg-color-secondary);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: 999rpx;
+    margin-top: 20rpx;
+    overflow: hidden;
+  }
+  &__storagefill {
+    height: 100%;
+    background: var(--td-brand-color);
+    border-radius: 999rpx;
+    transition: width 0.3s;
+  }
+
+  // ─────────── 菜单 ───────────
+  &__menu {
+    margin: 0 24rpx;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    overflow: hidden;
+  }
+  &__item {
+    display: flex;
+    align-items: center;
+    padding: 28rpx 24rpx;
+    border-bottom: 1rpx solid var(--td-component-border);
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+  &__item-icon {
+    width: 64rpx;
+    height: 64rpx;
+    border-radius: 18rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30rpx;
+    margin-right: 20rpx;
+    &--red {
+      background: var(--td-brand-color-soft);
+    }
+    &--gold {
+      background: var(--ds-warning-soft);
+    }
+  }
+  &__item-title {
+    font-size: 28rpx;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+  }
+  &__item-desc {
+    flex: 1;
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+    margin-left: 16rpx;
+  }
+  &__arrow {
+    color: var(--td-text-color-placeholder);
+    font-size: 32rpx;
+  }
+  &__tip {
+    text-align: center;
+    color: var(--td-text-color-disabled);
+    font-size: 22rpx;
+    margin-top: 24rpx;
+  }
+}

@@ -1,0 +1,178 @@
+classDiagram
+  class Merchant {
+    +bigint id
+    +string phone
+    +string status
+    +string wechatOpenid
+  }
+  class Store {
+    +bigint id
+    +bigint merchantId
+    +string name
+    +datetime deletedAt
+  }
+  class Dish {
+    +bigint id
+    +bigint storeId
+    +string name
+    +string intro
+  }
+  class MediaAsset {
+    +bigint id
+    +bigint merchantId
+    +bigint storeId
+    +string cosKey
+    +string status
+    +bigint sizeBytes
+    +int durationMs
+  }
+  class Creation {
+    +bigint id
+    +bigint merchantId
+    +bigint storeId
+    +bigint dishId
+    +string status
+  }
+  class Shot {
+    +bigint id
+    +bigint creationId
+    +bigint assetId
+    +int seq
+    +string line
+    +string status
+  }
+  class RenderTask {
+    +bigint id
+    +bigint merchantId
+    +bigint creationId
+    +string grade
+    +string status
+    +bigint beanCharged
+    +string requestId
+    +string resultKey
+    +datetime deadlineAt
+  }
+  class BeanAccount {
+    +bigint merchantId
+    +bigint balance
+    +bigint grantBalance
+    +bigint frozen
+    +int version
+  }
+  class BeanLedger {
+    +bigint merchantId
+    +string type
+    +string bucket
+    +bigint amount
+    +string requestId
+    +string bizId
+  }
+  class Order {
+    +bigint id
+    +string orderNo
+    +bigint merchantId
+    +string orderType
+    +int amountFen
+    +string status
+    +string wxTransactionId
+  }
+  class Membership {
+    +bigint id
+    +bigint merchantId
+    +datetime startAt
+    +datetime endAt
+    +string status
+    +bigint grantBeans
+  }
+  class AiScene {
+    +string code
+    +bigint beanPrice
+    +int timeoutMs
+    +bool enabled
+  }
+  class AiProvider {
+    +bigint id
+    +string code
+    +bool enabled
+    +int monthlyBudgetFen
+    +int usedBudgetFen
+  }
+  class AiCallLog {
+    +bigint merchantId
+    +string sceneCode
+    +string requestId
+    +bigint beanCharged
+    +string responseSnapshot
+  }
+  class AuthMiddleware {
+    +auth(req, res, next)
+  }
+  class BeanService {
+    +freeze(tx, args)
+    +consume(tx, args)
+    +unfreeze(tx, args)
+    +recharge(tx, args)
+    +grant(tx, args)
+    +expireGrant(tx, args)
+  }
+  class CreationService {
+    +createCreation(prisma, merchantId, input)
+    +generateCopy(prisma, gateway, merchantId, creationId, requestId)
+    +generateShots(prisma, gateway, merchantId, creationId, requestId)
+    +updateShotAsset(prisma, merchantId, creationId, shotId, input)
+  }
+  class RenderService {
+    +submitRender(prisma, merchantId, creationId, input)
+    +completeRender(tx, merchantId, taskId, result)
+  }
+  class OrderService {
+    +createBeanOrder(prisma, merchantId, packageId)
+    +createMemberOrder(prisma, merchantId, packageId)
+    +markOrderPaid(prisma, orderNo, transactionId)
+    +handleNotify(prisma, rawBody)
+  }
+  class RenderWorker {
+    +startRenderWorker()
+    +tick()
+    +processTask(task)
+    +failTask(taskId, merchantId, requestId, message)
+  }
+  class PremiumService {
+    +claimPremiumTask(prisma, taskId)
+    +deliverPremiumTask(prisma, taskId, input)
+    +failPremiumTask(prisma, taskId, reason)
+    +sweep()
+  }
+  class AiService {
+    +runBilledScene(prisma, gateway, params)
+  }
+  class AiGateway {
+    +runScene(input)
+  }
+
+  Merchant "1" --> "many" Store : owns
+  Store "1" --> "many" Dish : contains
+  Merchant "1" --> "many" MediaAsset : owns
+  Merchant "1" --> "many" Creation : owns
+  Store "1" --> "many" Creation : context
+  Creation "1" --> "many" Shot : contains
+  MediaAsset "0..1" ..> Shot : assetId (no DB FK)
+  Creation "1" --> "many" RenderTask : renders
+  Merchant "1" --> "many" RenderTask : tenant boundary
+  Merchant "1" --> "1" BeanAccount : owns
+  Merchant "1" --> "many" BeanLedger : owns
+  Merchant "1" --> "many" Order : pays
+  Merchant "1" --> "many" Membership : subscribes
+  AiProvider "1" --> "many" AiCallLog : records
+  AiScene ..> AiGateway : selected scene
+  AuthMiddleware ..> Merchant : JWT mid
+  CreationService ..> Creation : CRUD
+  CreationService ..> AiService : billed generation
+  AiService ..> BeanService : freeze/consume/unfreeze
+  AiService ..> AiGateway : provider/fallback call
+  RenderService ..> BeanService : freeze/consume
+  RenderWorker ..> RenderService : complete/fail
+  PremiumService ..> RenderService : deliver
+  PremiumService ..> BeanService : refund
+  OrderService ..> BeanService : recharge/grant
+  OrderService ..> Membership : activate/renew

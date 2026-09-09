@@ -1,0 +1,13 @@
+{
+  "name": "daiShuai-monorepo",
+  "private": true,
+  "scripts": {
+    "admin:install": "cd apps/admin && npm install",
+    "admin:dev": "cd apps/admin && npm run dev",
+    "admin:build": "cd apps/admin && npm run build",
+    "admin:typecheck": "cd apps/admin && npm run typecheck",
+    "server:dev": "cd server && npm run dev",
+    "server:typecheck": "cd server && npm run typecheck",
+    "mini:typecheck": "cd apps/mini && npm run typecheck"
+  }
+}

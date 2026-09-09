@@ -1,0 +1,232 @@
+// 全局基础样式 · 大帅餐饮红白简约主题
+// 原则：白卡片 + 浅灰细描边 + 极轻投影；按钮一律纯色扁平，无渐变无光晕
+
+@use './styles/theme.scss';
+
+page {
+  box-sizing: border-box;
+  background: var(--td-bg-color-page);
+}
+
+view, text, button, input, textarea, image {
+  box-sizing: border-box;
+}
+
+// ───────────── 通用卡片（白底 + 细描边 + 大圆角 + 极轻投影） ─────────────
+.ds-card {
+  background: var(--td-bg-color-container);
+  border: 1rpx solid var(--td-component-stroke);
+  border-radius: var(--td-radius-large);
+  padding: 28rpx;
+  margin: 24rpx;
+  box-shadow: var(--ds-shadow-card);
+}
+.ds-card--elevated {
+  background: var(--td-bg-color-elevated);
+  box-shadow: 0 8rpx 32rpx rgba(29, 33, 41, 0.08);
+}
+.ds-card--soft-red {
+  background: var(--td-brand-color-soft);
+  border-color: #f9dfe2;
+}
+.ds-card--glass {
+  background: var(--td-bg-color-container);
+}
+
+// ───────────── 区块标题 ─────────────
+.ds-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 32rpx 32rpx 16rpx;
+  &__title {
+    font-size: 32rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    display: flex;
+    align-items: center;
+  }
+  &__title-bar {
+    width: 6rpx;
+    height: 28rpx;
+    background: var(--td-brand-color);
+    border-radius: 3rpx;
+    margin-right: 12rpx;
+  }
+  &__more {
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+    display: flex;
+    align-items: center;
+  }
+}
+
+// ───────────── 标签 pill ─────────────
+.ds-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6rpx 16rpx;
+  border-radius: var(--td-radius-pill);
+  font-size: 22rpx;
+  line-height: 1.4;
+  border: 1rpx solid transparent;
+}
+.ds-pill--red {
+  background: var(--td-brand-color);
+  color: var(--td-text-color-anti);
+  font-weight: 500;
+}
+.ds-pill--red-outline {
+  background: transparent;
+  color: var(--td-brand-color);
+  border-color: var(--td-brand-color);
+}
+.ds-pill--gold {
+  background: var(--ds-warning-soft);
+  color: var(--ds-member);
+  border-color: #eddfc3;
+  font-weight: 500;
+}
+.ds-pill--ghost {
+  background: #f2f3f5;
+  color: var(--td-text-color-secondary);
+}
+
+// ───────────── 按钮（纯色扁平 + 微投影） ─────────────
+.ds-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 88rpx;
+  padding: 0 48rpx;
+  border-radius: var(--td-radius-pill);
+  font-size: 30rpx;
+  font-weight: 500;
+  border: 1rpx solid transparent;
+  letter-spacing: 1rpx;
+  transition: opacity 0.15s ease;
+}
+.ds-btn--primary {
+  background: var(--td-brand-color);
+  color: var(--td-text-color-anti);
+  box-shadow: var(--ds-glow-red);
+}
+.ds-btn--gold {
+  background: var(--ds-warning);
+  color: var(--td-text-color-anti);
+  box-shadow: var(--ds-glow-gold);
+}
+.ds-btn--outline {
+  background: transparent;
+  color: var(--td-brand-color);
+  border-color: var(--td-brand-color);
+}
+.ds-btn--ghost {
+  background: var(--td-bg-color-container);
+  color: var(--td-text-color-primary);
+  border-color: var(--td-component-stroke);
+}
+.ds-btn--block {
+  display: flex;
+  width: 100%;
+}
+.ds-btn--sm {
+  height: 60rpx;
+  padding: 0 28rpx;
+  font-size: 24rpx;
+}
+.ds-btn[disabled],
+.ds-btn--disabled {
+  opacity: 0.4;
+  box-shadow: none;
+}
+
+// ───────────── 列表行（设置/详情/带箭头） ─────────────
+.ds-row {
+  display: flex;
+  align-items: center;
+  padding: 28rpx 24rpx;
+  background: var(--td-bg-color-container);
+  border-radius: var(--td-radius-default);
+  margin-bottom: 2rpx;
+  &__icon {
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 16rpx;
+    background: var(--td-brand-color-soft);
+    color: var(--td-brand-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-right: 20rpx;
+    font-size: 28rpx;
+  }
+  &__icon--gold {
+    background: var(--ds-warning-soft);
+    color: var(--ds-warning);
+  }
+  &__main {
+    flex: 1;
+    min-width: 0;
+  }
+  &__title {
+    font-size: 28rpx;
+    color: var(--td-text-color-primary);
+    font-weight: 500;
+  }
+  &__desc {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+    margin-top: 4rpx;
+  }
+  &__extra {
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__arrow {
+    margin-left: 12rpx;
+    color: var(--td-text-color-placeholder);
+    font-size: 24rpx;
+  }
+}
+.ds-list {
+  margin: 24rpx;
+  border-radius: var(--td-radius-large);
+  overflow: hidden;
+  background: var(--td-bg-color-container);
+  border: 1rpx solid var(--td-component-stroke);
+}
+
+// ───────────── 积分数（琥珀） ─────────────
+.ds-bean {
+  color: var(--ds-bean);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+}
+
+// ───────────── 页面底部固定操作区（浅色毛玻璃 + 顶部细线） ─────────────
+.ds-footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 20rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(20rpx);
+  border-top: 1rpx solid var(--td-component-border);
+}
+
+// ───────────── 大标题（实色近黑，替代旧渐变字） ─────────────
+.ds-text-gradient {
+  color: var(--td-text-color-primary);
+  font-weight: 800;
+}
+
+// ───────────── 通用间距工具类 ─────────────
+.ds-mt-8 { margin-top: 8rpx; }
+.ds-mt-16 { margin-top: 16rpx; }
+.ds-mt-24 { margin-top: 24rpx; }
+.ds-mb-16 { margin-bottom: 16rpx; }
+.ds-pad-24 { padding: 24rpx; }
+.ds-pad-32 { padding: 32rpx; }

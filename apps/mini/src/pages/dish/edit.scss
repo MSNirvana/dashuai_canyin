@@ -1,0 +1,119 @@
+.dish-edit {
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  padding-bottom: 200rpx;
+
+  &--loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--td-text-color-placeholder);
+    font-size: 28rpx;
+  }
+
+  &__form {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    margin: 24rpx;
+    overflow: hidden;
+  }
+
+  &__footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 20rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(20rpx);
+    border-top: 1rpx solid var(--td-component-border);
+  }
+
+  &__save {
+    height: 88rpx;
+    border-radius: 999rpx;
+    background: var(--td-brand-color);
+    box-shadow: var(--ds-glow-red);
+    color: #fff;
+    font-size: 30rpx;
+    font-weight: 600;
+    letter-spacing: 2rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    &--disabled {
+      opacity: 0.4;
+    }
+  }
+}
+
+.media__button {
+  font-size: 30rpx;
+  color: var(--td-text-color-primary);
+  background: var(--td-bg-color-secondary);
+  border: 1rpx solid var(--td-component-stroke);
+  border-radius: var(--td-radius-default);
+  padding: 24rpx 28rpx;
+  min-height: 80rpx;
+  line-height: 1.5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &--busy {
+    opacity: 0.6;
+  }
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  padding: 28rpx 24rpx;
+  border-bottom: 1rpx solid var(--td-component-border);
+
+  &:last-child {
+    border-bottom: none;
+  }
+
+  &__label {
+    font-size: 26rpx;
+    color: var(--td-text-color-primary);
+    font-weight: 500;
+    margin-bottom: 14rpx;
+  }
+
+  &__req {
+    color: var(--td-brand-color);
+    margin-left: 4rpx;
+  }
+
+  &__input {
+    font-size: 30rpx;
+    color: var(--td-text-color-primary);
+    background: var(--td-bg-color-secondary);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+    padding: 24rpx 28rpx;
+    min-height: 80rpx;
+    line-height: 1.5;
+  }
+  &__input::placeholder,
+  &__textarea::placeholder {
+    color: var(--td-text-color-placeholder);
+  }
+  &__textarea {
+    font-size: 30rpx;
+    color: var(--td-text-color-primary);
+    background: var(--td-bg-color-secondary);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+    padding: 24rpx 28rpx;
+    width: 100%;
+    box-sizing: border-box;
+    line-height: 1.6;
+    min-height: 120rpx;
+    word-break: break-all;
+  }
+}

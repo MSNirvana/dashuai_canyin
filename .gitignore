@@ -1,0 +1,22 @@
+node_modules/
+dist/
+.DS_Store
+.env
+.env.local
+.env.*.local
+
+# editor
+.vscode/
+.idea/
+
+# build / cache
+.cache/
+*.log
+apps/mini/.swc/
+vite.config.ts.timestamp-*.mjs
+project.private.config.json
+.workbuddy/
+apps/mini/.npm-cache/
+apps/mini/npm-cache/
+apps/admin/.npm-cache/
+apps/admin/npm-cache/

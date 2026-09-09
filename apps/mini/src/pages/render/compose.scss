@@ -1,0 +1,279 @@
+.rcompose {
+  padding: 24rpx 24rpx 200rpx;
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  box-sizing: border-box;
+
+  &__tip {
+    padding: 60rpx;
+    text-align: center;
+    color: var(--td-text-color-placeholder);
+    font-size: 28rpx;
+  }
+  &__head {
+    margin-bottom: 20rpx;
+  }
+  &__title {
+    font-size: 36rpx;
+    font-weight: 700;
+    color: var(--td-text-color-primary);
+  }
+  &__store {
+    margin-left: 16rpx;
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__preview {
+    width: 100%;
+    height: 560rpx;
+    background: #000;
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-extra);
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  &__video {
+    width: 100%;
+    height: 100%;
+  }
+  &__placeholder {
+    color: var(--td-text-color-placeholder);
+    font-size: 26rpx;
+    text-align: center;
+    padding: 0 40rpx;
+    line-height: 1.7;
+  }
+  &__sec {
+    margin-top: 24rpx;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__sectitle {
+    font-size: 28rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    display: block;
+    margin-bottom: 16rpx;
+  }
+  &__aimode {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  &__aimodeinfo {
+    display: flex;
+    flex-direction: column;
+  }
+  &__aimodesub {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+    margin-top: -6rpx;
+  }
+
+  /* ── 三档生成方式卡片 ── */
+  &__notice {
+    margin: 16rpx 0;
+    font-size: 24rpx;
+    line-height: 1.7;
+    color: var(--td-text-color-secondary);
+    overflow-wrap: anywhere;
+  }
+  &__actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12rpx;
+    margin: 20rpx 0;
+  }
+  &__history {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12rpx;
+    padding: 20rpx 0;
+    border-top: 1rpx solid var(--td-component-border);
+    font-size: 24rpx;
+    overflow-wrap: anywhere;
+  }
+  &__grades {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16rpx;
+  }
+  &__grade {
+    flex: 1 1 150rpx;
+    min-width: 0;
+    &--disabled { opacity: 0.55; }
+    position: relative;
+    background: var(--td-bg-color-secondary);
+    border: 2rpx solid var(--td-component-stroke);
+    border-radius: 16rpx;
+    padding: 26rpx 16rpx 20rpx;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    overflow: hidden;
+    transition: border-color 0.2s ease, background 0.2s ease;
+
+    &--on {
+      border-color: var(--td-brand-color);
+      background: var(--td-brand-color-light);
+    }
+    &--premium.rcompose__grade--on {
+      border-color: var(--ds-warning);
+      background: var(--ds-warning-soft);
+    }
+  }
+  &__gradetag {
+    position: absolute;
+    top: 0;
+    right: 0;
+    font-size: 18rpx;
+    line-height: 30rpx;
+    padding: 0 12rpx;
+    color: var(--td-text-color-anti);
+    background: var(--ds-warning);
+    border-bottom-left-radius: 12rpx;
+
+    &--hot {
+      background: var(--td-brand-color);
+    }
+  }
+  &__gradetitle {
+    font-size: 28rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+  &__gradedesc {
+    font-size: 20rpx;
+    color: var(--td-text-color-secondary);
+    margin-top: 8rpx;
+  }
+  &__gradespeed {
+    font-size: 20rpx;
+    color: var(--ds-warning);
+    margin-top: 10rpx;
+  }
+  &__premiumtip {
+    margin-top: 16rpx;
+    font-size: 22rpx;
+    line-height: 1.7;
+    color: var(--ds-warning);
+    background: var(--ds-warning-soft);
+    border: 1rpx solid #eddfc3;
+    border-radius: 12rpx;
+    padding: 16rpx 20rpx;
+  }
+  &__clip {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18rpx 0;
+    border-top: 1rpx solid var(--td-component-border);
+  }
+  &__clipinfo {
+    display: flex;
+    align-items: center;
+  }
+  &__clipseq {
+    width: 44rpx;
+    height: 44rpx;
+    line-height: 44rpx;
+    text-align: center;
+    background: var(--td-brand-color);
+    color: #fff;
+    border-radius: 50%;
+    font-size: 24rpx;
+    font-weight: 600;
+    margin-right: 16rpx;
+  }
+  &__cliptype {
+    font-size: 26rpx;
+    color: var(--td-text-color-primary);
+    margin-right: 16rpx;
+  }
+  &__clipstate {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__clipplaying {
+    font-size: 22rpx;
+    color: var(--td-brand-color);
+  }
+  &__slider {
+    display: flex;
+    align-items: center;
+    margin: 12rpx 0;
+  }
+  &__slabel {
+    width: 120rpx;
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__sbar {
+    flex: 1;
+  }
+  &__bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    padding: 20rpx 32rpx;
+    padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(20rpx);
+    border-top: 1rpx solid var(--td-component-border);
+  }
+  &__cost {
+    display: flex;
+    flex-wrap: wrap;
+    max-width: 48%;
+    align-items: baseline;
+    margin-right: 20rpx;
+  }
+  &__costnum {
+    font-size: 44rpx;
+    font-weight: 800;
+    color: var(--ds-bean);
+    line-height: 1.1;
+  }
+  &__costunit {
+    font-size: 24rpx;
+    color: var(--ds-bean);
+    margin-right: 12rpx;
+  }
+  &__balance {
+    font-size: 22rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__render {
+    flex: 1;
+    background: var(--td-brand-color);
+    color: #fff;
+    font-size: 30rpx;
+    font-weight: 500;
+    letter-spacing: 0;
+    border-radius: 999rpx;
+  }
+  &__recolor {
+    margin: 16rpx 0 0;
+    background: transparent;
+    color: var(--td-brand-color);
+    border: 1rpx solid var(--td-brand-color);
+    font-size: 26rpx;
+    border-radius: 999rpx;
+  }
+  &__progress {
+    margin-top: 16rpx;
+    text-align: center;
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+  }
+}

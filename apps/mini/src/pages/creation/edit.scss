@@ -1,0 +1,143 @@
+.cedit {
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  padding: 24rpx 24rpx 60rpx;
+
+  &__tip {
+    text-align: center;
+    color: var(--td-text-color-placeholder);
+    padding: 100rpx 0;
+    font-size: 28rpx;
+  }
+  &__field {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx;
+    margin-bottom: 20rpx;
+    display: flex;
+    align-items: center;
+  }
+  &__label {
+    width: 130rpx;
+    font-size: 28rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__picker {
+    flex: 1;
+    font-size: 28rpx;
+    color: var(--td-text-color-primary);
+  }
+  &__input {
+    flex: 1;
+    font-size: 28rpx;
+    color: var(--td-text-color-primary);
+  }
+  &__submit {
+    margin-top: 20rpx;
+    background: var(--td-brand-color);
+    box-shadow: var(--ds-glow-red);
+    color: #fff;
+    font-weight: 600;
+    letter-spacing: 2rpx;
+    border-radius: 999rpx;
+  }
+  &__head {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx;
+    margin-bottom: 20rpx;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  &__htitle {
+    font-size: 32rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+  &__hstore {
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__section {
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx;
+    margin-bottom: 20rpx;
+  }
+  &__secbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20rpx;
+  }
+  &__sectitle {
+    font-size: 30rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    display: flex;
+    align-items: center;
+  }
+  &__gen {
+    background: var(--td-brand-color-soft);
+    color: var(--td-brand-color);
+    border: 1rpx solid var(--td-brand-color-light);
+    border-radius: 999rpx;
+    font-size: 24rpx;
+    font-weight: 500;
+  }
+  &__copy {
+    font-size: 28rpx;
+    line-height: 1.8;
+    color: var(--td-text-color-primary);
+    white-space: pre-wrap;
+  }
+  &__ph {
+    font-size: 26rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__shot {
+    border-top: 1rpx solid var(--td-component-border);
+    padding: 20rpx 0;
+    display: flex;
+    gap: 16rpx;
+  }
+  &__shotseq {
+    width: 48rpx;
+    height: 48rpx;
+    line-height: 48rpx;
+    text-align: center;
+    background: var(--td-brand-color);
+    color: #fff;
+    border-radius: 50%;
+    font-size: 24rpx;
+    font-weight: 600;
+    flex-shrink: 0;
+  }
+  &__shotbody {
+    flex: 1;
+  }
+  &__shottype {
+    font-size: 26rpx;
+    color: var(--td-brand-color);
+    margin-right: 12rpx;
+    font-weight: 500;
+  }
+  &__shotline {
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+    line-height: 1.6;
+  }
+  &__next {
+    margin-top: 12rpx;
+    background: var(--td-brand-color);
+    box-shadow: var(--ds-glow-red);
+    color: #fff;
+    font-weight: 600;
+    letter-spacing: 2rpx;
+    border-radius: 999rpx;
+  }
+}
