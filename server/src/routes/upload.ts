@@ -78,7 +78,7 @@ router.post('/local', localUpload.single('file'), async (req, res) => {
     })
     return ok(res, asset)
   } catch (e) {
-    await removeLocalFile(finalPath || file.path)
+    await Promise.all([removeLocalFile(finalPath), removeLocalFile(file.path)])
     if (e instanceof z.ZodError) return fail(res, 400, '上传参数错误', 400)
     if (e instanceof uploadSvc.UploadPrefixError || e instanceof uploadSvc.UploadStoreMismatchError)
       return fail(res, 2008, (e as Error).message, 400)

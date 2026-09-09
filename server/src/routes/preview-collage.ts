@@ -56,7 +56,11 @@ router.post('/preview-collage', async (req, res) => {
       const key = asset.coverKey ?? asset.cosKey
       if (!key) continue
       try {
-        const url = await mediaSvc.getPlayUrlByKey(req.merchantId!, key)
+        const url = await mediaSvc.getPlayUrlByKey(
+          req.merchantId!,
+          key,
+          `${req.protocol}://${req.get('host')}/api/v1/media`,
+        )
         items.push({
           shotId: s.id.toString(),
           seq: s.seq,

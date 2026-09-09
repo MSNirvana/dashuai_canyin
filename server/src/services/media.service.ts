@@ -65,10 +65,12 @@ export async function getSharedPlayUrlByKey(key: string, baseUrl?: string): Prom
 
 async function signKey(key: string, bucket: string, region: string, baseUrl?: string): Promise<PlayUrl> {
   if (isLocalStorage()) {
-    if (!baseUrl) return { url: null, dev: true }
+    const localBaseUrl = baseUrl
+      ?? process.env.LOCAL_MEDIA_BASE_URL?.replace(/\/$/, '')
+      ?? `http://127.0.0.1:${process.env.PORT ?? '3000'}/api/v1/media`
     const { expires, token } = createLocalMediaToken(key)
     return {
-      url: `${baseUrl}/file?key=${encodeURIComponent(key)}&expires=${expires}&token=${token}`,
+      url: `${localBaseUrl}/file?key=${encodeURIComponent(key)}&expires=${expires}&token=${token}`,
       dev: true,
     }
   }

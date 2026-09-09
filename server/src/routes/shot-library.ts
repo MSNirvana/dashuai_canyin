@@ -42,7 +42,10 @@ router.get('/:id/demo-play-url', async (req, res) => {
       select: { demoVideoKey: true, enabled: true },
     })
     if (!lib || !lib.enabled || !lib.demoVideoKey) return fail(res, 4048, '示范视频不存在', 404)
-    const r = await mediaSvc.getSharedPlayUrlByKey(lib.demoVideoKey)
+    const r = await mediaSvc.getSharedPlayUrlByKey(
+      lib.demoVideoKey,
+      `${req.protocol}://${req.get('host')}/api/v1/media`,
+    )
     ok(res, r)
   } catch {
     return fail(res, 500, '获取示范视频失败', 500)
