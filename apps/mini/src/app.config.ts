@@ -6,6 +6,7 @@ export default defineAppConfig({
     'pages/store/edit',
     'pages/dish/list',
     'pages/dish/edit',
+    'pages/dish/detail',
     'pages/persona/index',
     'pages/creation/list',
     'pages/creation/edit',

@@ -82,6 +82,7 @@ model Dish {
 
   store     Store      @relation(fields: [storeId], references: [id])
   creations Creation[]
+  media     DishMedia[]
 
   @@index([storeId, deletedAt, sort])
   @@map("dish")
@@ -124,6 +125,21 @@ model MediaAsset {
   @@index([storeId, type, deletedAt])
   @@index([ownerType, ownerId])
   @@map("media_asset")
+}
+
+model DishMedia {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  dishId    BigInt   @map("dish_id") @db.UnsignedBigInt()
+  type      String   @db.VarChar(16)
+  cosKey    String   @map("cos_key") @db.VarChar(512)
+  coverKey  String?  @map("cover_key") @db.VarChar(512)
+  sort      Int      @default(0)
+  createdAt DateTime @default(now()) @map("created_at") @db.DateTime(3)
+
+  dish Dish @relation(fields: [dishId], references: [id], onDelete: Cascade)
+
+  @@index([dishId, type, sort])
+  @@map("dish_media")
 }
 
 model Creation {

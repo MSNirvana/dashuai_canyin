@@ -16,6 +16,8 @@ const dishInput = z.object({
   intro: z.string().max(500).optional(),
   sellingPoints: z.string().max(1000).optional(),
   coverKey: z.string().max(512).optional(),
+  videoKey: z.string().max(512).optional(),
+  media: z.array(z.object({ type: z.enum(['IMAGE', 'VIDEO']), cosKey: z.string().min(1).max(512), coverKey: z.string().max(512).optional(), sort: z.number().int().min(0).optional() })).max(6).optional(),
   sort: z.number().int().optional(),
 })
 
@@ -24,6 +26,18 @@ router.get('/', async (req, res) => {
     const { storeId } = req.params as StoreDishParams
     const list = await dishSvc.listDishes(prisma, req.merchantId!, BigInt(storeId))
     ok(res, list)
+  } catch (e) {
+    if (e instanceof dishSvc.DishStoreMismatchError) fail(res, 2004, e.message, 400)
+    else fail(res, 400, '查询失败', 400)
+  }
+})
+
+router.get('/:id', async (req, res) => {
+  try {
+    const { storeId, id } = req.params as StoreDishParams
+    const dish = await dishSvc.getDish(prisma, req.merchantId!, BigInt(storeId), BigInt(id!))
+    if (!dish) return fail(res, 4045, '菜品不存在', 404)
+    ok(res, dish)
   } catch (e) {
     if (e instanceof dishSvc.DishStoreMismatchError) fail(res, 2004, e.message, 400)
     else fail(res, 400, '查询失败', 400)

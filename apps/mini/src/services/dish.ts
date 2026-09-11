@@ -10,7 +10,10 @@ export interface DishItem {
   videoKey: string | null
   sort: number
   createdAt: string
+  media?: DishMedia[]
 }
+
+export interface DishMedia { id?: string; type: 'IMAGE' | 'VIDEO'; cosKey: string; coverKey?: string | null; sort: number; url?: string | null; coverUrl?: string | null }
 
 export interface DishInput {
   name: string
@@ -19,6 +22,11 @@ export interface DishInput {
   coverKey?: string
   videoKey?: string
   sort?: number
+  media?: Array<{ type: 'IMAGE' | 'VIDEO'; cosKey: string; coverKey?: string; sort: number }>
+}
+
+export function getDishMediaUrl(key: string) {
+  return http.get<{ url: string | null; dev: boolean }>(`/media/play-url?key=${encodeURIComponent(key)}`)
 }
 
 function base(storeId: string) {

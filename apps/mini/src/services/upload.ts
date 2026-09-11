@@ -23,6 +23,7 @@ export interface MediaAsset {
   type: string
   sizeBytes: number
   status: string
+  coverKey?: string | null
 }
 
 function randomStr(n: number): string {

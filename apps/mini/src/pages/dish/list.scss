@@ -64,6 +64,12 @@
   justify-content: space-between;
   box-shadow: var(--ds-shadow-card);
 
+  &__cover { width: 150rpx; height: 150rpx; flex: 0 0 150rpx; border-radius: var(--td-radius-default); overflow: hidden; background: var(--td-bg-color-secondary); margin-right: 20rpx; display: flex; align-items: center; justify-content: center; }
+  &__cover-image { width: 100%; height: 100%; }
+  &__cover-empty { color: var(--td-text-color-placeholder); font-size: 22rpx; }
+  &__main { flex: 1; min-width: 0; }
+  &__hint { display: block; margin-top: 10rpx; color: var(--td-text-color-placeholder); font-size: 20rpx; }
+
   &__name {
     font-size: 30rpx;
     font-weight: 600;
