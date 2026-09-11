@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { View, Text, Image, Video } from '@tarojs/components'
 import Taro, { useRouter } from '@tarojs/taro'
 import { getDish, getDishMediaUrl, type DishItem, type DishMedia } from '../../services/dish'
+import { useMerchantStore } from '../../store/merchant'
 import './detail.scss'
 
 interface MediaView extends DishMedia { url: string; coverUrl?: string }
 export default function DishDetailPage() {
-  const router = useRouter(); const storeId = router.params.storeId ?? ''; const id = router.params.id
+  const router = useRouter(); const { currentStoreId } = useMerchantStore(); const storeId = router.params.storeId ?? currentStoreId; const id = router.params.id
   const [dish, setDish] = useState<DishItem | null>(null); const [media, setMedia] = useState<MediaView[]>([]); const [loading, setLoading] = useState(true)
   useEffect(() => { if (!id) { setLoading(false); return }; getDish(storeId, id).then(async (d) => { setDish(d); const legacy: DishMedia[] = d.media?.length ? d.media : [...(d.coverKey ? [{ type: 'IMAGE' as const, cosKey: d.coverKey, sort: 0 }] : []), ...(d.videoKey ? [{ type: 'VIDEO' as const, cosKey: d.videoKey, sort: 0 }] : [])]; const views = await Promise.all(legacy.map(async (m) => { const r = await getDishMediaUrl(m.cosKey).catch(() => ({ url: null })); const c = m.coverKey ? await getDishMediaUrl(m.coverKey).catch(() => ({ url: null })) : { url: null }; return { ...m, url: r.url || '', coverUrl: c.url || undefined } })); setMedia(views) }).catch(() => Taro.showToast({ title: '菜品加载失败', icon: 'none' })).finally(() => setLoading(false)) }, [id, storeId])
   const images = media.filter((m) => m.type === 'IMAGE' && m.url); const videos = media.filter((m) => m.type === 'VIDEO')

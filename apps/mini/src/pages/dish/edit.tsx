@@ -3,6 +3,7 @@ import { View, Text, Input, Textarea, Image, Video } from '@tarojs/components'
 import Taro, { useRouter } from '@tarojs/taro'
 import { createDish, updateDish, getDish, getDishMediaUrl, type DishInput, type DishItem, type DishMedia } from '../../services/dish'
 import { uploadMediaFile } from '../../services/upload'
+import { useMerchantStore } from '../../store/merchant'
 import './edit.scss'
 
 interface LocalMedia { type: 'IMAGE' | 'VIDEO'; cosKey: string; coverKey?: string; sort: number; url: string; coverUrl?: string }
@@ -17,7 +18,7 @@ async function toLocalMedia(m: DishMedia): Promise<LocalMedia> {
 }
 
 export default function DishEditPage() {
-  const router = useRouter(); const storeId = router.params.storeId ?? ''; const id = router.params.id
+  const router = useRouter(); const { currentStoreId } = useMerchantStore(); const storeId = router.params.storeId ?? currentStoreId; const id = router.params.id
   const [form, setForm] = useState<FormState>(EMPTY); const [loaded, setLoaded] = useState(false); const [saving, setSaving] = useState(false); const [uploading, setUploading] = useState(false)
   useEffect(() => {
     if (!id) { setLoaded(true); return }

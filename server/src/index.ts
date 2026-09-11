@@ -54,8 +54,8 @@ app.use('/api/v1/creations', renderRouter)
 app.use('/api/v1/media', mediaRouter)
 app.use('/api/v1/upload', uploadRouter)
 app.use('/api/v1/orders', orderRouter)
-// 本轮补全：人设 / 镜头库 / 账户查询 / 免费预览 / 公开系统设置
-app.use('/api/v1/persona', personaRouter)
+// 本轮补全：人设（门店级，挂 stores 子路由）/ 镜头库 / 账户查询 / 免费预览 / 公开系统设置
+app.use('/api/v1/stores/:storeId/persona', personaRouter)
 app.use('/api/v1/shot-library', shotLibraryRouter)
 app.use('/api/v1/account', accountRouter)
 app.use('/api/v1/render', previewCollageRouter)

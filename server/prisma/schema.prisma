@@ -26,7 +26,7 @@ model Merchant {
   deletedAt            DateTime? @map("deleted_at") @db.DateTime(3)
 
   stores           Store[]
-  persona          Persona?
+  personas         Persona[]
   creations        Creation[]
   beanAccount      BeanAccount?
   ledgers          BeanLedger[]
@@ -61,6 +61,7 @@ model Store {
   dishes    Dish[]
   assets    MediaAsset[]
   creations Creation[]
+  persona   Persona?
 
   @@index([merchantId, deletedAt])
   @@map("store")
@@ -90,13 +91,16 @@ model Dish {
 
 model Persona {
   id         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
-  merchantId BigInt   @unique @map("merchant_id") @db.UnsignedBigInt()
+  merchantId BigInt   @map("merchant_id") @db.UnsignedBigInt()
+  // 门店级：一门店一条人设，内容（菜品/创作/人设）全部跟随门店
+  storeId    BigInt   @unique @map("store_id") @db.UnsignedBigInt()
   bossTags   String?  @map("boss_tags") @db.VarChar(500)
   activity   String?  @db.VarChar(1000)
   createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
   merchant Merchant @relation(fields: [merchantId], references: [id])
+  store    Store    @relation(fields: [storeId], references: [id])
 
   @@map("persona")
 }

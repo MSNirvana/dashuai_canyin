@@ -2,10 +2,11 @@ import { useState } from 'react'
 import { View, Text, Image } from '@tarojs/components'
 import Taro, { useRouter, useDidShow } from '@tarojs/taro'
 import { listDishes, deleteDish, getDishMediaUrl, type DishItem } from '../../services/dish'
+import { useMerchantStore } from '../../store/merchant'
 import './list.scss'
 
 export default function DishListPage() {
-  const router = useRouter(); const storeId = router.params.storeId ?? ''; const storeName = router.params.storeName ?? ''
+  const router = useRouter(); const { currentStoreId } = useMerchantStore(); const storeId = router.params.storeId ?? currentStoreId; const storeName = router.params.storeName ?? ''
   const [list, setList] = useState<DishItem[]>([]); const [coverUrls, setCoverUrls] = useState<Record<string, string>>({}); const [loading, setLoading] = useState(true)
   const load = async () => { if (!storeId) return; setLoading(true); try { const data = await listDishes(storeId); setList(data); const entries = await Promise.all(data.map(async (d) => { const key = d.media?.find((m) => m.type === 'IMAGE')?.cosKey || d.coverKey; if (!key) return null; try { const r = await getDishMediaUrl(key); return r.url ? [d.id, r.url] as const : null } catch { return null } })); setCoverUrls(Object.fromEntries(entries.filter((x): x is readonly [string, string] => !!x))) } finally { setLoading(false) } }
   useDidShow(load)

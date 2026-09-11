@@ -137,18 +137,17 @@ export async function getCreation(prisma: PrismaClient, merchantId: bigint, crea
   }
 }
 
-/** 拼装 AI 提示词变量：门店 + 菜品 + 商家人设 + 已生成文案 */
+/** 拼装 AI 提示词变量：门店 + 菜品 + 门店人设 + 已生成文案（人设跟随门店） */
 async function buildVariables(prisma: PrismaClient, creationId: bigint) {
   const c = await prisma.creation.findUnique({
     where: { id: creationId },
     include: {
-      store: true,
+      store: { include: { persona: true } },
       dish: true,
-      merchant: { include: { persona: true } },
     },
   })
   if (!c) throw new CreationNotFoundError()
-  const persona = c.merchant.persona
+  const persona = c.store.persona
   return {
     storeName: c.store.name,
     category: c.store.category ?? '',

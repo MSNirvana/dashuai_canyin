@@ -1,4 +1,4 @@
-// 人设 API：对接 /api/v1/persona（老板人设标签 + 门店活动）
+// 人设 API：对接 /api/v1/stores/:storeId/persona（老板人设标签 + 门店活动，门店级）
 import { http } from './request'
 
 export interface PersonaItem {
@@ -7,10 +7,14 @@ export interface PersonaItem {
   updatedAt: string | null
 }
 
-export function getPersona() {
-  return http.get<PersonaItem>('/persona')
+function base(storeId: string) {
+  return `/stores/${storeId}/persona`
 }
 
-export function savePersona(input: { bossTags?: string | null; activity?: string | null }) {
-  return http.put<PersonaItem>('/persona', input)
+export function getPersona(storeId: string) {
+  return http.get<PersonaItem>(base(storeId))
+}
+
+export function savePersona(storeId: string, input: { bossTags?: string | null; activity?: string | null }) {
+  return http.put<PersonaItem>(base(storeId), input)
 }
