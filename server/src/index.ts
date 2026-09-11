@@ -112,6 +112,16 @@ async function bootstrap() {
       process.once('SIGTERM', m.stopPremiumSweeper)
     })
     .catch((e) => console.error('[premium-sweeper] 启动失败:', (e as Error).message))
+
+  // 机器任务卡死恢复 sweeper：worker 崩溃后 RUNNING 卡死 / QUEUED 长期无人处理的任务
+  // 超时自动退款 + FAILED，常驻 API 进程不依赖 FFMPEG_WORKER（worker 独立部署挂掉也能兜底）
+  void import('./render/worker.js')
+    .then((m) => {
+      m.startStuckSweeper()
+      process.once('SIGINT', m.stopStuckSweeper)
+      process.once('SIGTERM', m.stopStuckSweeper)
+    })
+    .catch((e) => console.error('[stuck-sweeper] 启动失败:', (e as Error).message))
 }
 
 bootstrap().catch((e) => {

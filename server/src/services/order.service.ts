@@ -203,7 +203,7 @@ export async function createMemberOrder(
   return { dev: false, orderNo, amountFen: pkg.priceFen, beans: '0', memberDiscountApplied: false, payParams: buildPayParams(prepayId) }
 }
 
-/** 标记订单已支付并结算（幂等：已 PAID 直接返回） */
+/** 标记订单已支付并结算（终态 CAS：仅 PENDING→PAID 可发放权益，并发重复回调天然幂等） */
 export async function markOrderPaid(prisma: PrismaClient, orderNo: string, wxTransactionId: string, _dev = false): Promise<void> {
   const order = await prisma.order.findUnique({ where: { orderNo } })
   if (!order) throw new Error(`order not found: ${orderNo}`)
@@ -216,10 +216,14 @@ export async function markOrderPaid(prisma: PrismaClient, orderNo: string, wxTra
   )
 
   await prisma.$transaction(async (tx: Db) => {
-    await tx.order.update({
-      where: { orderNo },
+    // 终态 CAS：条件更新仅允许 PENDING → PAID。
+    // 微信回调会重试，两个并发回调可能同时通过外层「已 PAID」快照检查；
+    // 只有抢到状态流转的那一个会发放权益，另一个 count=0 直接返回，杜绝双重发豆/双开会员。
+    const claimed = await tx.order.updateMany({
+      where: { orderNo, status: 'PENDING' },
       data: { status: 'PAID', paidAt: new Date(), wxTransactionId },
     })
+    if (claimed.count === 0) return
     if (order.orderType === 'BEAN') {
       await recharge(tx, { merchantId: order.merchantId, amount: order.beans, bizId: order.orderNo })
     } else if (order.orderType === 'MEMBER') {

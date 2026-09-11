@@ -215,3 +215,51 @@ function intermediateKey(
   const raw = `${clip.assetId}:${startMs}:${endMs}:${output.width}x${output.height}`
   return createHash('sha1').update(raw).digest('hex')
 }
+
+// ──────────────────────── 卡死任务恢复 sweeper ────────────────────────
+// worker 进程在 RUNNING 中途被杀（kill -9 / 断电 / OOM）时，任务会永久卡在 RUNNING；
+// QUEUED 任务在 worker 长期不在线时同样会卡住，并阻塞该创作的再次提交。
+// 本 sweeper 常驻 API 进程（与 premium sweeper 一样不依赖 FFMPEG_WORKER），
+// 超时任务统一走 failRender：unfreeze 全额退款 + FAILED(WORKER_TIMEOUT)，用户可重新提交。
+const STUCK_SWEEP_MS = Math.max(60_000, Number(process.env.RENDER_STUCK_SWEEP_MS ?? 300_000))
+const STUCK_TIMEOUT_MS = Math.max(120_000, Number(process.env.RENDER_STUCK_MS ?? 1_800_000))
+
+let stuckSweeping = false
+let stuckTimer: ReturnType<typeof setInterval> | null = null
+
+export function startStuckSweeper(): void {
+  if (stuckSweeping) return
+  stuckSweeping = true
+  console.log(`[stuck-sweeper] started (interval=${STUCK_SWEEP_MS}ms, timeout=${STUCK_TIMEOUT_MS}ms)`)
+  stuckTimer = setInterval(() => void sweepStuck(), STUCK_SWEEP_MS)
+}
+
+export function stopStuckSweeper(): void {
+  stuckSweeping = false
+  if (stuckTimer) clearInterval(stuckTimer)
+  stuckTimer = null
+}
+
+/** 超时的机器任务（RUNNING 卡死 / QUEUED 长期无人处理）：退款 + FAILED(WORKER_TIMEOUT) */
+async function sweepStuck(): Promise<void> {
+  if (!stuckSweeping) return
+  const deadline = new Date(Date.now() - STUCK_TIMEOUT_MS)
+  const stuck = await prisma.renderTask.findMany({
+    where: {
+      grade: { not: 'PREMIUM' },
+      OR: [
+        { status: 'RUNNING', OR: [{ startAt: { lt: deadline } }, { startAt: null }] },
+        { status: 'QUEUED', createdAt: { lt: deadline } },
+      ],
+    },
+    take: 50,
+  })
+  for (const task of stuck) {
+    try {
+      const state = await failRender(prisma, task.id, 'WORKER_TIMEOUT', '合成超时未完成，已自动退款，可重新提交')
+      console.warn(`[stuck-sweeper] task ${task.id}(${task.status}) 超时回收，结果 ${state}`)
+    } catch (e) {
+      console.error(`[stuck-sweeper] task ${task.id} 回收失败:`, (e as Error).message)
+    }
+  }
+}
