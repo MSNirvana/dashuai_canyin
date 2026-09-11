@@ -1,21 +1,21 @@
-// 一键接入 GPT-5-Sol 中转：插入供应商 + 模型 + 把生成文案/分镜默认切换到 gpt-5-sol，mock 降为兜底
+// 一键接入 GPT-5.6-Sol 中转：插入供应商 + 模型 + 把生成文案/分镜默认切换到 gpt-5-sol，mock 降为兜底
 // 运行：npx tsx scripts/setup-gpt5sol.ts
 import { PrismaClient } from '@prisma/client'
 import { encryptSecret, maskSecret } from '../src/lib/secret.js'
 
 const API_KEY = 'sk-JfslOnRv2hSvhM9nOSYaPqoG7ctpju9IU2si4yf9Qia691bX'
-const BASE_URL = 'https://tokenbox.you'
+const BASE_URL = 'https://tokenbox.you/v1'
 
 async function main() {
   const prisma = new PrismaClient()
 
   // 已存在则跳过（幂等：方便重复跑）
-  let provider = await prisma.aiProvider.findUnique({ where: { code: 'gpt-5-sol' } })
+  let provider = await prisma.aiProvider.findUnique({ where: { code: 'gpt-5.6-sol' } })
   if (!provider) {
     provider = await prisma.aiProvider.create({
       data: {
-        code: 'gpt-5-sol',
-        name: 'GPT-5-Sol 中转',
+        code: 'gpt-5.6-sol',
+        name: 'GPT-5.6-Sol 中转',
         providerType: 'OPENAI_COMPATIBLE',
         protocol: 'OPENAI_COMPATIBLE',
         baseUrl: BASE_URL,
@@ -30,13 +30,13 @@ async function main() {
     console.log(`= provider ${provider.code} (id=${provider.id}) 已存在，保持现状`)
   }
 
-  let model = await prisma.aiModel.findFirst({ where: { providerId: provider.id, modelCode: 'gpt-5-sol' } })
+  let model = await prisma.aiModel.findFirst({ where: { providerId: provider.id, modelCode: 'gpt-5.6-sol' } })
   if (!model) {
     model = await prisma.aiModel.create({
       data: {
         providerId: provider.id,
-        modelCode: 'gpt-5-sol',
-        displayName: 'GPT-5-Sol',
+        modelCode: 'gpt-5.6-sol',
+        displayName: 'GPT-5.6-Sol',
         capability: 'TEXT',
         maxContextTokens: 128000,
         maxOutputTokens: 8192,
@@ -73,7 +73,7 @@ async function main() {
   console.log(`✓ apiKey 加密往返 OK（${provider.apiKeyMasked}）`)
 
   await prisma.$disconnect()
-  console.log('\n配置完成。可在管理后台「供应商配置」看到 gpt-5-sol；点「生成文案/分镜」即走 GPT-5-Sol，失败自动降级 mock。')
+  console.log('\n配置完成。可在管理后台「供应商配置」看到 gpt-5-sol；点「生成文案/分镜」即走 GPT-5.6-Sol，失败自动降级 mock。')
 }
 
 main().catch((e) => { console.error('FAIL:', e); process.exit(1) })
