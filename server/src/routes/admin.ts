@@ -8,6 +8,8 @@ import { adminAuth } from '../middleware/admin-auth.js'
 import * as adminSvc from '../services/admin.service.js'
 import * as adminExtra from '../services/admin-extra.service.js'
 import * as adminAi from '../services/admin-ai.service.js'
+import * as workSvc from '../services/work.service.js'
+import { getSharedPlayUrlByKey } from '../services/media.service.js'
 import * as ttsSvc from '../services/tts-provider.service.js'
 import * as premium from '../render/premium.js'
 import { invalidate } from '../lib/settings.js'
@@ -570,6 +572,153 @@ router.delete('/shot-library/:id', async (req, res) => {
   } catch (e) {
     if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
     fail(res, 500, '删除失败', 500)
+  }
+})
+
+// ──────────────────────── 首页优秀作品 ────────────────────────
+const workQuery = z.object({
+  category: z.string().max(32).optional(),
+  enabled: z.enum(['true', 'false']).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+})
+router.get('/works', async (req, res) => {
+  try {
+    const q = workQuery.parse(req.query)
+    ok(
+      res,
+      await workSvc.listAdminWorks(prisma, {
+        category: q.category,
+        enabled: q.enabled === undefined ? undefined : q.enabled === 'true',
+        page: q.page,
+        pageSize: q.pageSize,
+      }),
+    )
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    console.error('[admin] 查询优秀作品失败:', e)
+    fail(res, 500, '查询失败', 500)
+  }
+})
+
+const workRecipeInput = z.object({
+  track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
+  complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
+  titleHint: z.string().max(128).optional(),
+  voiceId: z.string().max(128).optional(),
+  shotSkeleton: z
+    .array(
+      z.object({
+        shotType: z.string().max(32).optional(),
+        shotSize: z.string().max(32).optional(),
+        durationSuggest: z.number().int().min(1).max(60).optional(),
+        line: z.string().max(500).optional(),
+        visualReq: z.string().max(500).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
+  notes: z.string().max(500).optional(),
+})
+
+const workInput = z.object({
+  title: z.string().min(1).max(128),
+  category: z.string().min(1).max(32),
+  subCategory: z.string().max(32).nullable().optional(),
+  tags: z.array(z.string().max(32)).max(10).nullable().optional(),
+  coverKey: z.string().max(512).nullable().optional(),
+  videoKey: z.string().max(512).nullable().optional(),
+  durationMs: z.number().int().min(0).nullable().optional(),
+  recipeJson: workRecipeInput.optional(),
+  sort: z.number().int().optional(),
+  enabled: z.boolean().optional(),
+})
+
+router.post('/works', async (req, res) => {
+  try {
+    ok(res, await workSvc.createWork(prisma, workInput.parse(req.body)))
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    console.error('[admin] 创建优秀作品失败:', e)
+    fail(res, 500, '创建失败', 500)
+  }
+})
+
+router.put('/works/:id', async (req, res) => {
+  try {
+    const r = await workSvc.updateWork(prisma, BigInt(req.params.id), workInput.partial().parse(req.body))
+    if (!r) return fail(res, 4049, '作品不存在', 404)
+    ok(res, r)
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    console.error('[admin] 更新优秀作品失败:', e)
+    fail(res, 500, '更新失败', 500)
+  }
+})
+
+router.delete('/works/:id', async (req, res) => {
+  try {
+    const okDel = await workSvc.deleteWork(prisma, BigInt(req.params.id))
+    if (!okDel) return fail(res, 4049, '作品不存在', 404)
+    ok(res, { deleted: true })
+  } catch (e) {
+    console.error('[admin] 删除优秀作品失败:', e)
+    fail(res, 500, '删除失败', 500)
+  }
+})
+
+/** 按 videoKey 重新抽一帧当封面（首帧不好看 / 自动抽帧上线前入库的作品） */
+router.post('/works/:id/cover', async (req, res) => {
+  try {
+    ok(res, await workSvc.regenerateWorkCover(prisma, BigInt(req.params.id)))
+  } catch (e) {
+    if (e instanceof workSvc.WorkNotFoundError) return fail(res, 4049, '作品不存在', 404)
+    if (e instanceof workSvc.WorkCoverError) return fail(res, 4010, e.message, 400)
+    console.error('[admin] 抽取作品封面失败:', e)
+    fail(res, 500, '抽帧失败', 500)
+  }
+})
+
+/** 可入库成片列表：给「从成片入库」弹窗做挑选用，已入库的不会再出现 */
+router.get('/works/importable-tasks', async (req, res) => {
+  try {
+    const { limit } = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30) }).parse(req.query)
+    ok(res, await workSvc.listImportableTasks(prisma, limit))
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    console.error('[admin] 查询可入库成片失败:', e)
+    fail(res, 500, '查询失败', 500)
+  }
+})
+
+/** 从商家成功成片入库：生成一条未上架草稿，运营补齐分类/配方后再上架 */
+router.post('/works/from-render-task', async (req, res) => {
+  try {
+    const { taskId } = z.object({ taskId: z.string().min(1) }).parse(req.body)
+    ok(res, await workSvc.createWorkFromRenderTask(prisma, BigInt(taskId)))
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof workSvc.WorkAlreadyImportedError) return fail(res, 4090, e.message, 409)
+    if (e instanceof workSvc.WorkNotFoundError) return fail(res, 4049, '成片不存在或尚未成功', 404)
+    console.error('[admin] 从成片入库失败:', e)
+    fail(res, 500, '入库失败', 500)
+  }
+})
+
+// ──────────────────────── 素材预览 ────────────────────────
+/**
+ * 把 COS 对象键签成临时地址，供运营在上架前核对封面 / 视频（与成片同一存储）。
+ * 刻意不传 baseUrl：本地模式走 LOCAL_MEDIA_BASE_URL（默认 127.0.0.1:3000/api/v1/media），
+ * 用请求 host 会得到后台 dev server 的地址，而 /api/v1/media/file 并不在后台侧。
+ */
+router.get('/media/preview', async (req, res) => {
+  try {
+    const { key } = z.object({ key: z.string().min(1).max(512) }).parse(req.query)
+    ok(res, await getSharedPlayUrlByKey(key))
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    console.error('[admin] 素材预览签名失败:', e)
+    fail(res, 500, '预览失败', 500)
   }
 })
 

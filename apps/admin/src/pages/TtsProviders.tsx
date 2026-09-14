@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Tag, Dialog, Form, Input, InputNumber, Switch, message } from 'tdesign-react'
+import { Button, Tag, Dialog, Input, InputNumber, Switch, message } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -84,7 +86,7 @@ export default function TtsProvidersPage() {
         <h2>TTS 供应商（腾讯云 / 火山 / 自定义）</h2>
         <Button theme="primary" onClick={startCreate}>新增</Button>
       </div>
-      <Table
+      <DataTable
         rowKey="code"
         data={list}
         columns={[
@@ -109,26 +111,26 @@ export default function TtsProvidersPage() {
       />
 
       <Dialog header={editing ? '编辑供应商' : '新增供应商'} visible={open} onClose={() => setOpen(false)} onConfirm={submit} width={560}>
-        <Form labelWidth={120}>
-          <Form.FormItem label="编码">
+        <FieldGroup labelWidth={120}>
+          <Field label="编码">
             <Input value={form.code} onChange={(v) => setForm((f) => ({ ...f, code: v as string }))} disabled={!!editing} placeholder="tencent / volcano / 自定义" />
-          </Form.FormItem>
-          <Form.FormItem label="名称"><Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="AppID">
+          </Field>
+          <Field label="名称"><Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} /></Field>
+          <Field label="AppID">
             <Input value={form.appId ?? ''} onChange={(v) => setForm((f) => ({ ...f, appId: v as string }))} placeholder="腾讯云需填" />
-          </Form.FormItem>
-          <Form.FormItem label={editing ? '新 SecretID（留空不变）' : 'SecretID'}>
+          </Field>
+          <Field label={editing ? '新 SecretID（留空不变）' : 'SecretID'}>
             <Input type="password" value={form.secretId} onChange={(v) => setForm((f) => ({ ...f, secretId: v as string }))} />
-          </Form.FormItem>
-          <Form.FormItem label={editing ? '新 API Key（留空不变）' : 'API Key'}>
+          </Field>
+          <Field label={editing ? '新 API Key（留空不变）' : 'API Key'}>
             <Input type="password" value={form.apiKey} onChange={(v) => setForm((f) => ({ ...f, apiKey: v as string }))} placeholder="sk-..." />
-          </Form.FormItem>
-          <Form.FormItem label="默认音色">
+          </Field>
+          <Field label="默认音色">
             <Input value={form.voiceId ?? ''} onChange={(v) => setForm((f) => ({ ...f, voiceId: v as string }))} placeholder="如 BV001_streaming" />
-          </Form.FormItem>
-          <Form.FormItem label="优先级"><InputNumber value={form.priority} onChange={(v) => setForm((f) => ({ ...f, priority: v as number }))} min={0} /></Form.FormItem>
-          <Form.FormItem label="启用"><Switch value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Form.FormItem>
-        </Form>
+          </Field>
+          <Field label="优先级"><InputNumber value={form.priority} onChange={(v) => setForm((f) => ({ ...f, priority: v as number }))} min={0} /></Field>
+          <Field label="启用"><Switch value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Field>
+        </FieldGroup>
       </Dialog>
     </div>
   )

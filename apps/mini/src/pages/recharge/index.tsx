@@ -11,6 +11,7 @@ import {
   getOrderStatus,
 } from '../../services/order'
 import { useMerchantStore } from '../../store/merchant'
+import Segmented from '../../components/segmented'
 import './index.scss'
 
 type Tab = 'subscribe' | 'bean'
@@ -79,6 +80,10 @@ export default function Recharge() {
   }
 
   useEffect(() => {
+    Taro.setNavigationBarTitle({ title: '订阅与积分' })
+  }, [])
+
+  useEffect(() => {
     load()
     refreshMe().catch(() => undefined)
   }, [refreshMe])
@@ -96,7 +101,7 @@ export default function Recharge() {
       if (r.dev) {
         setPendingOrderNo(r.orderNo)
         setConfirming(true)
-        Taro.showToast({ title: '演示订单确认中', icon: 'none' })
+        Taro.showToast({ title: '测试订单确认中', icon: 'none' })
         confirmOrder(r.orderNo)
         return
       }
@@ -134,21 +139,26 @@ export default function Recharge() {
 
   return (
     <View className='recharge'>
-      {confirming && <View className='recharge__hint'>支付已完成，订单 {pendingOrderNo ?? ''} 确认中，正在核对到账状态，请勿重复购买。</View>}
+      {confirming && (
+        <View className='ds-notice recharge__confirming'>
+          支付已完成，订单 {pendingOrderNo ?? ''} 确认中，正在核对到账状态，请勿重复购买。
+        </View>
+      )}
       <View className='recharge__balance'>
         <Text className='recharge__balabel'>当前可用积分</Text>
         <Text className='recharge__banum'>{balance}</Text>
         {Number(grantBalance) > 0 && <Text className='recharge__bagrant'>（赠积分 {grantBalance}）</Text>}
       </View>
 
-      <View className='recharge__tabs'>
-        <View className={`recharge__tab ${tab === 'subscribe' ? 'recharge__tab--on' : ''}`} onClick={() => setTab('subscribe')}>
-          订阅
-        </View>
-        <View className={`recharge__tab ${tab === 'bean' ? 'recharge__tab--on' : ''}`} onClick={() => setTab('bean')}>
-          加油包
-        </View>
-      </View>
+      <Segmented
+        className='recharge__tabs'
+        options={[
+          { value: 'subscribe', label: '订阅' },
+          { value: 'bean', label: '加油包' },
+        ]}
+        value={tab}
+        onChange={(v) => setTab(v as Tab)}
+      />
 
       {tab === 'subscribe' && (
         <View className='recharge__list'>
@@ -156,21 +166,34 @@ export default function Recharge() {
             <View className='recharge__hint'>已订阅 · 至 {fmtDate(memberEndAt)}，续费可叠加时长与赠积分</View>
           )}
           {plans.length === 0 && <View className='recharge__empty'>暂无订阅套餐（后台未配置）</View>}
-          {plans.map((p) => (
-            <View className='recharge__card' key={p.id}>
-              {p.tag && <Text className='recharge__tag'>{p.tag}</Text>}
-              <View className='recharge__cardmain'>
-                <Text className='recharge__beans'>{p.name}</Text>
-                <Text className='recharge__sub'>有效期 {p.durationDays} 天 · 赠积分 {p.grantBeans}</Text>
+          {plans.map((p, idx) => {
+            const rec = idx === 0
+            return (
+              <View className={`recharge__card ${rec ? 'recharge__card--rec' : ''}`} key={p.id}>
+                {rec && <Text className='recharge__badge'>最超值</Text>}
+                <View className='recharge__cardtop'>
+                  <View className='recharge__cardmain'>
+                    <Text className='recharge__name'>{p.name}</Text>
+                    <Text className='recharge__sub'>有效期 {p.durationDays} 天 · 赠积分 {p.grantBeans}</Text>
+                  </View>
+                  <View className='recharge__price'>
+                    <View className='recharge__now'>
+                      <Text className='recharge__cny'>¥</Text>
+                      <Text className='recharge__num ds-num'>{fenToYuan(p.priceFen)}</Text>
+                    </View>
+                    {!!p.tag && <Text className='recharge__tag'>{p.tag}</Text>}
+                  </View>
+                </View>
+                <Button
+                  className={`recharge__buy ${rec ? 'recharge__buy--rec' : ''}`}
+                  loading={busy}
+                  onClick={() => pay('subscribe', p.id)}
+                >
+                  {isMember ? (rec ? '立即续费' : '续费') : (rec ? '立即开通' : '开通')}
+                </Button>
               </View>
-              <View className='recharge__price'>
-                <Text className='recharge__now'>¥{fenToYuan(p.priceFen)}</Text>
-              </View>
-              <Button className='recharge__buy' loading={busy} onClick={() => pay('subscribe', p.id)}>
-                {isMember ? '续费' : '开通'}
-              </Button>
-            </View>
-          ))}
+            )
+          })}
         </View>
       )}
 
@@ -184,13 +207,18 @@ export default function Recharge() {
           {beans.length === 0 && <View className='recharge__empty'>暂无加油包（后台未配置）</View>}
           {beans.map((p) => (
             <View className={`recharge__card ${!isMember ? 'recharge__card--off' : ''}`} key={p.id}>
-              {p.tag && <Text className='recharge__tag'>{p.tag}</Text>}
-              <View className='recharge__cardmain'>
-                <Text className='recharge__beans'>{Number(p.beans) + Number(p.bonusBeans)} 积分</Text>
-                <Text className='recharge__sub'>1元 = 100积分</Text>
-              </View>
-              <View className='recharge__price'>
-                <Text className='recharge__now'>¥{fenToYuan(p.priceFen)}</Text>
+              <View className='recharge__cardtop'>
+                <View className='recharge__cardmain'>
+                  <Text className='recharge__name'>{Number(p.beans) + Number(p.bonusBeans)} 积分</Text>
+                  <Text className='recharge__sub'>1 元 = 100 积分{Number(p.bonusBeans) > 0 ? ` · 额外赠送 ${p.bonusBeans}` : ''}</Text>
+                </View>
+                <View className='recharge__price'>
+                  <View className='recharge__now'>
+                    <Text className='recharge__cny'>¥</Text>
+                    <Text className='recharge__num ds-num'>{fenToYuan(p.priceFen)}</Text>
+                  </View>
+                  {!!p.tag && <Text className='recharge__tag'>{p.tag}</Text>}
+                </View>
               </View>
               <Button
                 className='recharge__buy'
@@ -205,7 +233,12 @@ export default function Recharge() {
         </View>
       )}
 
-      <View className='recharge__footer'>1元 = 100积分 · 加油包仅订阅可用 · 参数后台可调</View>
+      <View className='recharge__footer'>
+        <Text className='recharge__rule'>· 订阅是文案、分镜、合成能力的前置条件</Text>
+        <Text className='recharge__rule'>· 1 元 = 100 积分，加油包仅订阅用户可购买</Text>
+        <Text className='recharge__rule'>· 机器合成按素材有效时长计费，失败全额返还</Text>
+        <Text className='recharge__rule'>· 支付以服务端订单状态为准，重复下载不扣积分</Text>
+      </View>
     </View>
   )
 }

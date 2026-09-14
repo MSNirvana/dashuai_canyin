@@ -39,6 +39,7 @@ router.get('/:assetId/play-url', async (req, res) => {
     ok(res, r)
   } catch (e) {
     if (e instanceof mediaSvc.MediaNotFoundError) return fail(res, 3002, '素材不存在或未就绪', 404)
+    console.error('[media] 按 assetId 获取播放地址失败:', e)
     return fail(res, 500, '获取播放地址失败', 500)
   }
 })

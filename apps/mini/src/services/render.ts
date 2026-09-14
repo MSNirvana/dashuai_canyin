@@ -16,6 +16,27 @@ export interface RenderClip {
   trimStartMs: number
   trimEndMs: number | null
   durationMs: number | null
+  line?: string | null
+}
+
+export const CHATCUT_VOICES = [
+  { id: 'warm-female', name: '温暖女声', desc: '自然亲切，适合探店种草' },
+  { id: 'bright-female', name: '活力女声', desc: '节奏明快，适合促销上新' },
+  { id: 'gentle-male', name: '温和男声', desc: '沉稳自然，适合品牌介绍' },
+  { id: 'magnetic-male', name: '磁性男声', desc: '质感突出，适合品质表达' },
+  { id: 'energetic-youth', name: '活力青年', desc: '轻快有冲劲，适合同城引流' },
+] as const
+
+export type ChatCutOptions = {
+  voiceId: typeof CHATCUT_VOICES[number]['id']
+  subtitles: boolean
+  subtitleStyle: 'CLEAN' | 'EMPHASIS' | 'SOCIAL'
+  bgm: 'NONE' | 'LIGHT' | 'UPBEAT' | 'PREMIUM'
+  pacing: 'NATURAL' | 'FAST' | 'STORY'
+  transitions: 'CLEAN' | 'SMOOTH' | 'DYNAMIC'
+  removeSilence: boolean
+  normalizeAudio: boolean
+  note: string
 }
 
 /** 产品档位：BASIC 粗剪 / AI 全自动 / PREMIUM 人工精剪 */
@@ -29,6 +50,7 @@ export type RenderTaskStatus =
   | 'TIMEOUT'
   | 'CANCELLED'
   | 'REFUND_PENDING'
+  | 'SETTLEMENT_PENDING'
   | 'MANUAL_PENDING'
   | 'MANUAL_DOING'
 
@@ -68,6 +90,7 @@ export function submitRender(
     color?: ColorGrade
     requestId: string
     aiMode?: boolean
+    chatcut?: ChatCutOptions
   },
 ) {
   return http.post<{ task: RenderTask; duplicated: boolean }>(`/creations/${creationId}/render`, body)

@@ -1,10 +1,13 @@
 // 全局商户状态：登录态 / 会员 / 豆余额 / 当前门店
+// 门店是最高层：门店列表与当前门店缓存在这里，全站（菜品/创作/人设）统一跟随
 
 import { create } from 'zustand'
 import Taro from '@tarojs/taro'
 import { STORAGE_KEYS } from '../config'
 import * as authApi from '../services/auth'
 import * as orderApi from '../services/order'
+import * as storeApi from '../services/store'
+import type { StoreItem } from '../services/store'
 
 export interface MerchantInfo {
   id: string
@@ -34,11 +37,18 @@ interface MerchantState {
   storageUsed: string
   storageQuota: string
   storageSubscribed: boolean
+  /** 当前门店 id（全站唯一上下文，所有内容按它隔离） */
   currentStoreId: string
+  /** 门店列表缓存（切换器与各页共用，避免重复请求） */
+  stores: StoreItem[]
+  storesLoadedAt: number
 
   hydrate: () => void
   setLogin: (res: authApi.LoginResult) => void
   setStore: (storeId: string) => void
+  /** 拉取门店列表（默认 30s 内复用缓存）；当前门店失效时自动回落 */
+  loadStores: (force?: boolean) => Promise<StoreItem[]>
+  currentStore: () => StoreItem | undefined
   refreshBean: () => Promise<void>
   refreshMe: () => Promise<void>
   logout: () => void
@@ -59,6 +69,8 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
   storageQuota: '0',
   storageSubscribed: false,
   currentStoreId: '',
+  stores: [],
+  storesLoadedAt: 0,
 
   hydrate: () => {
     try {
@@ -84,12 +96,40 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
       rechargeBalance: res.bean.balance,
       grantBalance: res.bean.grantBalance,
       frozen: res.bean.frozen,
+      // 换账号登录：门店缓存作废，由切换器/首页重新拉取
+      stores: [],
+      storesLoadedAt: 0,
     })
   },
 
   setStore: (storeId) => {
     Taro.setStorageSync(STORAGE_KEYS.currentStoreId, storeId)
     set({ currentStoreId: storeId })
+  },
+
+  loadStores: async (force = false) => {
+    const { stores, storesLoadedAt, token } = get()
+    // 未登录不请求；30s 内命中缓存
+    if (!token) return []
+    if (!force && stores.length && Date.now() - storesLoadedAt < 30_000) return stores
+    const list = await storeApi.listStores()
+    set({ stores: list, storesLoadedAt: Date.now() })
+    const cur = get().currentStoreId
+    if (list.length && !list.some((s) => s.id === cur)) {
+      // 当前门店被删或首次进入：回落到默认门店（无默认则第一家）
+      const fallback = list.find((s) => s.isDefault) ?? list[0]
+      if (fallback) get().setStore(fallback.id)
+    } else if (!list.length && cur) {
+      // 门店全被删：清空当前门店，各页显示建店引导
+      Taro.removeStorageSync(STORAGE_KEYS.currentStoreId)
+      set({ currentStoreId: '' })
+    }
+    return list
+  },
+
+  currentStore: () => {
+    const { stores, currentStoreId } = get()
+    return stores.find((s) => s.id === currentStoreId)
   },
 
   refreshBean: async () => {
@@ -133,6 +173,8 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
       storageQuota: '0',
       storageSubscribed: false,
       currentStoreId: '',
+      stores: [],
+      storesLoadedAt: 0,
     })
   },
 }))

@@ -1,5 +1,6 @@
-// 全局基础样式 · 大帅餐饮红白简约主题
+// 全局基础样式 · 大帅餐饮（Logo 红 · iOS 简约）
 // 原则：白卡片 + 浅灰细描边 + 极轻投影；按钮一律纯色扁平，无渐变无光晕
+// 一屏只允许一个红色实心主按钮，其余操作降为浅底 / 描边 / 文字链
 
 @use './styles/theme.scss';
 
@@ -12,22 +13,32 @@ view, text, button, input, textarea, image {
   box-sizing: border-box;
 }
 
-// ───────────── 通用卡片（白底 + 细描边 + 大圆角 + 极轻投影） ─────────────
+// ───────────── 点击反馈（配合 hover-class='ds-hover' 使用） ─────────────
+// 小程序 view 不支持 :active，统一用 hover-class 挂这个类
+.ds-hover {
+  opacity: 0.72;
+}
+.ds-hover--press {
+  opacity: 0.86;
+  transform: scale(0.985);
+}
+
+// ───────────── 通用卡片（白底 + 细描边 + 18px 圆角 + 极轻投影） ─────────────
 .ds-card {
   background: var(--td-bg-color-container);
   border: 1rpx solid var(--td-component-stroke);
   border-radius: var(--td-radius-large);
-  padding: 28rpx;
+  padding: 32rpx;
   margin: 24rpx;
   box-shadow: var(--ds-shadow-card);
 }
 .ds-card--elevated {
   background: var(--td-bg-color-elevated);
-  box-shadow: 0 8rpx 32rpx rgba(29, 33, 41, 0.08);
+  box-shadow: var(--ds-shadow-card);
 }
 .ds-card--soft-red {
   background: var(--td-brand-color-soft);
-  border-color: #f9dfe2;
+  border-color: var(--td-brand-color-light);
 }
 .ds-card--glass {
   background: var(--td-bg-color-container);
@@ -38,10 +49,11 @@ view, text, button, input, textarea, image {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 32rpx 32rpx 16rpx;
+  padding: 36rpx 32rpx 18rpx;
   &__title {
-    font-size: 32rpx;
-    font-weight: 600;
+    font-size: 34rpx;
+    font-weight: 700;
+    letter-spacing: -0.02em;
     color: var(--td-text-color-primary);
     display: flex;
     align-items: center;
@@ -51,14 +63,24 @@ view, text, button, input, textarea, image {
     height: 28rpx;
     background: var(--td-brand-color);
     border-radius: 3rpx;
-    margin-right: 12rpx;
+    margin-right: 14rpx;
   }
   &__more {
-    font-size: 24rpx;
+    font-size: 26rpx;
     color: var(--td-text-color-secondary);
     display: flex;
     align-items: center;
   }
+}
+
+// 小写标签式分组标题（用于「常用功能」这类次级分组）
+.ds-label {
+  padding: 0 34rpx;
+  margin: 40rpx 0 16rpx;
+  font-size: 24rpx;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--td-text-color-placeholder);
 }
 
 // ───────────── 标签 pill ─────────────
@@ -81,30 +103,46 @@ view, text, button, input, textarea, image {
   color: var(--td-brand-color);
   border-color: var(--td-brand-color);
 }
+.ds-pill--red-soft {
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+  font-weight: 600;
+}
 .ds-pill--gold {
   background: var(--ds-warning-soft);
   color: var(--ds-member);
-  border-color: #eddfc3;
+  border-color: #f0e3c8;
+  font-weight: 500;
+}
+.ds-pill--gray {
+  background: var(--td-bg-color-secondary);
+  color: var(--td-text-color-secondary);
+  font-weight: 500;
+}
+.ds-pill--green {
+  background: var(--ds-success-soft);
+  color: var(--ds-success);
   font-weight: 500;
 }
 .ds-pill--ghost {
-  background: #f2f3f5;
+  background: var(--td-bg-color-secondary);
   color: var(--td-text-color-secondary);
 }
 
 // ───────────── 按钮（纯色扁平 + 微投影） ─────────────
+// 圆角 20rpx（10px），非胶囊 —— 对齐设计稿
 .ds-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 88rpx;
-  padding: 0 48rpx;
-  border-radius: var(--td-radius-pill);
-  font-size: 30rpx;
-  font-weight: 500;
+  height: 96rpx;
+  padding: 0 44rpx;
+  border-radius: var(--td-radius-default);
+  font-size: 32rpx;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   border: 1rpx solid transparent;
-  letter-spacing: 1rpx;
-  transition: opacity 0.15s ease;
+  transition: opacity 0.12s ease;
 }
 .ds-btn--primary {
   background: var(--td-brand-color);
@@ -116,6 +154,10 @@ view, text, button, input, textarea, image {
   color: var(--td-text-color-anti);
   box-shadow: var(--ds-glow-gold);
 }
+.ds-btn--soft {
+  background: var(--td-brand-color-light);
+  color: var(--td-brand-color);
+}
 .ds-btn--outline {
   background: transparent;
   color: var(--td-brand-color);
@@ -126,19 +168,37 @@ view, text, button, input, textarea, image {
   color: var(--td-text-color-primary);
   border-color: var(--td-component-stroke);
 }
+.ds-btn--gray {
+  background: var(--td-bg-color-secondary);
+  color: var(--td-text-color-secondary);
+}
 .ds-btn--block {
   display: flex;
   width: 100%;
 }
 .ds-btn--sm {
-  height: 60rpx;
+  height: 72rpx;
   padding: 0 28rpx;
-  font-size: 24rpx;
+  font-size: 26rpx;
+  border-radius: var(--td-radius-small);
+}
+.ds-btn--lg {
+  height: 104rpx;
+  font-size: 34rpx;
 }
 .ds-btn[disabled],
 .ds-btn--disabled {
-  opacity: 0.4;
+  background: var(--td-bg-color-secondary);
+  color: var(--td-text-color-disabled);
   box-shadow: none;
+  opacity: 1;
+}
+// 小程序原生 Button 有默认边框与行高，套用 ds-btn 时需清掉
+button.ds-btn {
+  line-height: 1.2;
+  &::after {
+    border: none;
+  }
 }
 
 // ───────────── 列表行（设置/详情/带箭头） ─────────────
@@ -150,10 +210,10 @@ view, text, button, input, textarea, image {
   border-radius: var(--td-radius-default);
   margin-bottom: 2rpx;
   &__icon {
-    width: 56rpx;
-    height: 56rpx;
-    border-radius: 16rpx;
-    background: var(--td-brand-color-soft);
+    width: 64rpx;
+    height: 64rpx;
+    border-radius: 20rpx;
+    background: var(--td-brand-color-light);
     color: var(--td-brand-color);
     display: flex;
     align-items: center;
@@ -170,12 +230,12 @@ view, text, button, input, textarea, image {
     min-width: 0;
   }
   &__title {
-    font-size: 28rpx;
+    font-size: 30rpx;
     color: var(--td-text-color-primary);
-    font-weight: 500;
+    font-weight: 600;
   }
   &__desc {
-    font-size: 22rpx;
+    font-size: 24rpx;
     color: var(--td-text-color-secondary);
     margin-top: 4rpx;
   }
@@ -185,16 +245,18 @@ view, text, button, input, textarea, image {
   }
   &__arrow {
     margin-left: 12rpx;
-    color: var(--td-text-color-placeholder);
-    font-size: 24rpx;
+    color: var(--td-text-color-disabled);
+    font-size: 26rpx;
   }
 }
+// iOS 式分组列表：圆角容器 + 内部细分割线
 .ds-list {
   margin: 24rpx;
   border-radius: var(--td-radius-large);
   overflow: hidden;
   background: var(--td-bg-color-container);
   border: 1rpx solid var(--td-component-stroke);
+  box-shadow: var(--ds-shadow-card);
 }
 
 // ───────────── 积分数（琥珀） ─────────────
@@ -211,16 +273,77 @@ view, text, button, input, textarea, image {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 20rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
-  background: rgba(255, 255, 255, 0.94);
+  z-index: 10;
+  padding: 24rpx 36rpx calc(24rpx + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.96);
   backdrop-filter: blur(20rpx);
   border-top: 1rpx solid var(--td-component-border);
 }
+// 底部操作区下方的一行说明（积分预估等）
+.ds-footer__note {
+  margin-top: 14rpx;
+  text-align: center;
+  font-size: 22rpx;
+  color: var(--td-text-color-placeholder);
+}
 
-// ───────────── 大标题（实色近黑，替代旧渐变字） ─────────────
-.ds-text-gradient {
+// ───────────── 内联提示条（替代 Toast 的错误/说明） ─────────────
+.ds-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  padding: 20rpx 24rpx;
+  border-radius: var(--td-radius-default);
+  font-size: 24rpx;
+  line-height: 1.6;
+  background: var(--td-brand-color-soft);
+  border: 1rpx solid var(--td-brand-color-light);
+  color: var(--td-text-color-secondary);
+}
+.ds-notice--warn {
+  background: var(--ds-warning-soft);
+  border-color: #f0e3c8;
+  color: var(--ds-member);
+}
+
+// ───────────── 页面主标题（大标题，iOS Large Title 观感） ─────────────
+.ds-title {
+  font-size: 68rpx;
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
   color: var(--td-text-color-primary);
-  font-weight: 800;
+}
+.ds-subtitle {
+  margin-top: 12rpx;
+  font-size: 26rpx;
+  color: var(--td-text-color-placeholder);
+}
+
+// ───────────── 空状态（永远给出下一步动作） ─────────────
+.ds-empty {
+  padding: 120rpx 48rpx;
+  text-align: center;
+  &__text {
+    display: block;
+    font-size: 28rpx;
+    color: var(--td-text-color-placeholder);
+    line-height: 1.7;
+  }
+  &__action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 32rpx;
+    height: 80rpx;
+    padding: 0 44rpx;
+    border-radius: var(--td-radius-default);
+    background: var(--td-brand-color);
+    color: #fff;
+    font-size: 28rpx;
+    font-weight: 600;
+    box-shadow: var(--ds-glow-red);
+  }
 }
 
 // ───────────── 通用间距工具类 ─────────────

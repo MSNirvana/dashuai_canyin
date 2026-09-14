@@ -62,6 +62,21 @@ export function getCurrentMembership() {
   return http.get<CurrentMembership>('/account/membership/current')
 }
 
+export interface MembershipReminder {
+  id: string
+  reminderDays: number
+  status: string
+  scheduledAt: string
+  sentAt: string | null
+  endAt: string
+}
+export function listMembershipReminders() {
+  return http.get<MembershipReminder[]>('/account/membership/reminders')
+}
+export function markMembershipReminderRead(id: string) {
+  return http.post<{ ok: boolean }>(`/account/membership/reminders/${id}/read`)
+}
+
 // ───────────── 公开系统设置（启动拉取） ─────────────
 export interface PublicSettingItem {
   key: string

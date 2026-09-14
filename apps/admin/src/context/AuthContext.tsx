@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
-import { auth } from '../lib/http'
+import { auth, request } from '../lib/http'
 
 export interface AdminUser {
   id: string
@@ -32,6 +32,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  // 启动时校验一次会话：localStorage 里的 token 可能早已过期，而 RequireAuth 只看「有没有这个字符串」，
+  // 不校验就会带着失效 token 渲染出一个请求全失败的「空页面」。401 由 http 拦截器统一清会话 + 跳登录页。
+  useEffect(() => {
+    if (!auth.token()) return
+    void request({ url: '/auth/me', method: 'GET' }).catch(() => undefined)
   }, [])
 
   const ctx: AuthCtx = {

@@ -1,155 +1,158 @@
+// 我的：头像区 + 积分双列卡 + 空间用量 + iOS 分组列表
 .mine {
   min-height: 100vh;
   background: var(--td-bg-color-page);
-  padding-bottom: 40rpx;
+  padding-bottom: 48rpx;
 
-  // ─────────── 头像区（浅红渐变顶部 + 干净白底） ───────────
+  // ─────────── 头像区（纯色白底，去渐变） ───────────
   &__head {
-    position: relative;
-    padding: 64rpx 32rpx 96rpx;
     display: flex;
     align-items: center;
-    background: linear-gradient(180deg, #fdecee 0%, #fafbfc 70%, var(--td-bg-color-page) 100%);
-    overflow: hidden;
-  }
-  &__head-deco {
-    display: none;  // 简约风：去掉装饰
+    padding: 40rpx 36rpx 32rpx;
   }
   &__avatar {
-    position: relative;
-    width: 128rpx;
-    height: 128rpx;
-    border-radius: 36rpx;
+    width: 116rpx;
+    height: 116rpx;
+    border-radius: 50%;
     background: var(--td-brand-color);
     color: #fff;
-    font-size: 52rpx;
+    font-size: 46rpx;
     font-weight: 600;
     display: flex;
     align-items: center;
     justify-content: center;
     margin-right: 28rpx;
+    flex: none;
+    box-shadow: var(--ds-glow-red);
   }
   &__info {
-    position: relative;
-    display: flex;
-    flex-direction: column;
     flex: 1;
     min-width: 0;
   }
   &__name {
-    font-size: 36rpx;
+    display: block;
+    font-size: 44rpx;
     font-weight: 700;
+    letter-spacing: -0.025em;
     color: var(--td-text-color-primary);
-    margin-bottom: 12rpx;
   }
   &__vipwrap {
     display: flex;
     align-items: center;
-    gap: 16rpx;
+    gap: 14rpx;
+    margin-top: 12rpx;
   }
   &__vip--on {
     font-size: 20rpx;
   }
   &__vipend {
     font-size: 22rpx;
-    color: var(--td-text-color-secondary);
+    color: var(--td-text-color-placeholder);
     &--cta {
       color: var(--ds-bean);
+      font-weight: 600;
     }
   }
 
   // ─────────── 积分卡 ───────────
   &__bean {
-    margin: -56rpx 24rpx 0;
-    position: relative;
-    z-index: 2;
+    margin: 0 36rpx;
     background: var(--td-bg-color-container);
-    border: 1rpx solid var(--td-component-stroke);
-    border-radius: var(--td-radius-extra);
-    padding: 32rpx 28rpx;
+    border-radius: var(--td-radius-large);
+    padding: 32rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__beantop {
     display: flex;
     align-items: center;
-    box-shadow: var(--ds-shadow-card);
+    gap: 20rpx;
   }
   &__beancell {
     flex: 1;
     display: flex;
     flex-direction: column;
-    align-items: center;
   }
   &__beandiv {
     width: 1rpx;
-    height: 64rpx;
-    background: var(--td-component-stroke);
+    align-self: stretch;
+    background: var(--td-component-border);
   }
   &__beannum {
     font-size: 52rpx;
-    font-weight: 800;
-    color: var(--td-brand-color);
-    line-height: 1.1;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    color: var(--td-text-color-primary);
+    font-variant-numeric: tabular-nums;
     &--gold {
-      color: var(--ds-bean);
+      color: var(--ds-member);
     }
   }
   &__beanlabel {
+    display: block;
     font-size: 22rpx;
-    color: var(--td-text-color-secondary);
-    margin-top: 8rpx;
+    color: var(--td-text-color-placeholder);
+    margin-top: 12rpx;
   }
   &__beanbtn {
-    margin-left: 24rpx;
+    width: 100%;
+    margin-top: 26rpx;
   }
 
   // ─────────── 空间 ───────────
   &__storage {
-    margin: 24rpx;
+    margin: 24rpx 36rpx 0;
     background: var(--td-bg-color-container);
-    border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-large);
-    padding: 28rpx;
+    padding: 32rpx;
+    box-shadow: var(--ds-shadow-card);
   }
   &__storagehead {
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: 16rpx;
   }
   &__storagetitle {
     font-size: 26rpx;
     color: var(--td-text-color-primary);
-    font-weight: 500;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 10rpx;
   }
   &__storageval {
     font-size: 24rpx;
     color: var(--td-text-color-secondary);
-    font-family: 'SF Mono', Menlo, monospace;
+    font-variant-numeric: tabular-nums;
+    flex: none;
   }
   &__storagebar {
-    height: 14rpx;
+    height: 10rpx;
     background: var(--td-bg-color-secondary);
-    border: 1rpx solid var(--td-component-stroke);
-    border-radius: 999rpx;
-    margin-top: 20rpx;
+    border-radius: var(--td-radius-pill);
+    margin-top: 22rpx;
     overflow: hidden;
   }
   &__storagefill {
     height: 100%;
     background: var(--td-brand-color);
-    border-radius: 999rpx;
-    transition: width 0.3s;
+    border-radius: var(--td-radius-pill);
+    transition: width 0.3s ease-out;
   }
 
-  // ─────────── 菜单 ───────────
+  // ─────────── 菜单（iOS 分组列表） ───────────
   &__menu {
-    margin: 0 24rpx;
+    margin: 0 36rpx;
     background: var(--td-bg-color-container);
-    border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-large);
     overflow: hidden;
+    box-shadow: var(--ds-shadow-card);
   }
   &__item {
     display: flex;
     align-items: center;
-    padding: 28rpx 24rpx;
+    padding: 30rpx 28rpx;
     border-bottom: 1rpx solid var(--td-component-border);
     &:last-child {
       border-bottom: none;
@@ -158,41 +161,59 @@
   &__item-icon {
     width: 64rpx;
     height: 64rpx;
-    border-radius: 18rpx;
+    border-radius: 20rpx;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 30rpx;
-    margin-right: 20rpx;
-    &--red {
-      background: var(--td-brand-color-soft);
-    }
+    margin-right: 22rpx;
+    flex: none;
+    background: var(--td-brand-color-light);
+    color: var(--td-brand-color);
     &--gold {
       background: var(--ds-warning-soft);
+      color: var(--ds-member);
     }
   }
+  &__item-copy {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6rpx;
+  }
   &__item-title {
-    font-size: 28rpx;
-    font-weight: 500;
+    font-size: 30rpx;
+    font-weight: 600;
+    letter-spacing: -0.01em;
     color: var(--td-text-color-primary);
+    flex: none;
   }
   &__item-desc {
-    flex: 1;
     font-size: 22rpx;
-    color: var(--td-text-color-secondary);
-    margin-left: 16rpx;
+    color: var(--td-text-color-placeholder);
+    line-height: 1.45;
   }
   &__arrow {
-    color: var(--td-text-color-placeholder);
-    font-size: 32rpx;
+    color: var(--td-text-color-disabled);
+    font-size: 30rpx;
+    flex: none;
+    margin-left: 12rpx;
   }
   &__tip {
     text-align: center;
     color: var(--td-text-color-disabled);
     font-size: 22rpx;
-    margin-top: 24rpx;
+    margin-top: 32rpx;
+  }
+  &__privacy {
+    margin: 18rpx 56rpx 0;
+    text-align: center;
+    color: var(--td-text-color-disabled);
+    font-size: 21rpx;
+    line-height: 1.6;
   }
 
+  // ─────────── 登录弹层 ───────────
   &__login-mask {
     position: fixed;
     inset: 0;
@@ -201,7 +222,7 @@
     align-items: center;
     justify-content: center;
     padding: 48rpx;
-    background: rgba(29, 33, 41, 0.48);
+    background: rgba(17, 17, 20, 0.42);
   }
   &__login-modal {
     position: relative;
@@ -210,8 +231,8 @@
     box-sizing: border-box;
     padding: 56rpx 40rpx 40rpx;
     background: var(--td-bg-color-container);
-    border-radius: 28rpx;
-    box-shadow: 0 24rpx 80rpx rgba(29, 33, 41, 0.2);
+    border-radius: var(--td-radius-extra);
+    box-shadow: 0 24rpx 80rpx rgba(17, 17, 20, 0.18);
     text-align: center;
   }
   &__login-close {
@@ -226,7 +247,7 @@
   &__login-logo {
     width: 96rpx;
     height: 96rpx;
-    margin-bottom: 24rpx;
+    margin: 0 auto 24rpx;
     border-radius: 24rpx;
     background: var(--td-bg-color-page);
   }
@@ -240,18 +261,18 @@
     display: block;
     margin-top: 12rpx;
     color: var(--td-text-color-secondary);
-    font-size: 24rpx;
+    font-size: 26rpx;
   }
   &__login-primary,
   &__login-dev {
     width: 100%;
-    height: 88rpx;
+    height: 96rpx;
     margin-top: 32rpx;
     border: none;
-    border-radius: 999rpx;
-    line-height: 88rpx;
-    font-size: 30rpx;
-    font-weight: 700;
+    border-radius: var(--td-radius-default);
+    line-height: 96rpx;
+    font-size: 32rpx;
+    font-weight: 600;
     &::after { border: none; }
   }
   &__login-primary {
@@ -261,14 +282,20 @@
   }
   &__login-dev {
     margin-top: 20rpx;
-    background: var(--ds-warning-soft);
-    color: var(--ds-warning);
+    background: var(--td-bg-color-secondary);
+    color: var(--td-text-color-secondary);
     font-size: 26rpx;
+    box-shadow: none;
+  }
+  &__login-link {
+    display: inline;
+    color: var(--td-brand-color);
   }
   &__login-tip {
     display: block;
-    margin-top: 24rpx;
-    color: var(--td-text-color-secondary);
-    font-size: 20rpx;
+    margin-top: 28rpx;
+    color: var(--td-text-color-disabled);
+    font-size: 22rpx;
+    line-height: 1.6;
   }
 }

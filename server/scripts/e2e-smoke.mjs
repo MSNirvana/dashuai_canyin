@@ -30,6 +30,20 @@ const must = (name, r, expectCode = 0) => {
   return r.json
 }
 
+// 冒烟脚本会反复建门店，而门店数受 store.max_per_merchant 限制（默认 10）。
+// 软删除（deletedAt）不计入上限，所以在开始与结束时清理本次前缀的门店，保证可重复运行。
+const TEST_STORE_PREFIXES = ['冒烟门店', '隔离校验门店']
+
+async function pruneTestStores(token) {
+  const r = await api('GET', '/stores', { token })
+  const list = r.json?.data ?? []
+  const junk = list.filter(
+    (s) => !s.isDefault && TEST_STORE_PREFIXES.some((p) => String(s.name ?? '').startsWith(p)),
+  )
+  for (const s of junk) await api('DELETE', `/stores/${s.id}`, { token })
+  return junk.length
+}
+
 console.log(`\n=== e2e smoke @ ${API} ===\n`)
 
 // 1. dev-mode 开关
@@ -46,6 +60,12 @@ const token = login.data.token
 const merchantId = login.data.merchant.id
 console.log(`   商家: ${login.data.merchant.nickname}(${PHONE}) 积分: ${login.data.bean.balance} 会员: ${login.data.member.isMember}`)
 
+// 2b. 默认保留验收数据；仅显式 CLEAN_TEST_DATA=true 时清理旧数据
+if (process.env.CLEAN_TEST_DATA === 'true') {
+  const pruned = await pruneTestStores(token)
+  if (pruned) console.log(`   已清理历史冒烟门店 ${pruned} 家`)
+}
+
 // 3. 门店
 const store = must('POST /stores', await api('POST', '/stores', {
   token,
@@ -60,11 +80,20 @@ const dish = must('POST /stores/:id/dishes', await api('POST', `/stores/${store.
   body: { name: '招牌麻婆豆腐', intro: '麻、辣、烫、香、酥、嫩、鲜、活八字箴言', sellingPoints: '手工石磨豆腐,现泼红油,3 分钟出锅' },
 })).data
 
-// 5. 人设
-must('PUT /persona', await api('PUT', '/persona', {
+// 5. 人设（门店级：/stores/:id/persona，一门店一条）
+must('PUT /stores/:id/persona', await api('PUT', `/stores/${store.id}/persona`, {
   token,
   body: { bossTags: '川菜老师傅,20 年掌勺,爱唠嗑,宠粉', activity: '到店报暗号「大帅」送例汤' },
 }))
+const personaRead = must('GET /stores/:id/persona', await api('GET', `/stores/${store.id}/persona`, { token })).data
+step('人设写入后可读回', personaRead?.bossTags === '川菜老师傅,20 年掌勺,爱唠嗑,宠粉' && personaRead?.activity === '到店报暗号「大帅」送例汤')
+
+// 5b. 人设按门店隔离（门店是最高层：第二家门店不应读到第一家的老板人设）
+const store2 = must('POST /stores（第二家，用于隔离校验）', await api('POST', '/stores', {
+  token, body: { name: `隔离校验门店 ${Date.now() % 10000}`, category: '烧烤' },
+})).data
+const persona2 = must('GET 第二家门店人设', await api('GET', `/stores/${store2.id}/persona`, { token }))
+step('人设按门店隔离', persona2.code === 0 && persona2.data?.bossTags == null && persona2.data?.activity == null, `第二家 bossTags=${JSON.stringify(persona2.data?.bossTags)}`)
 
 // 6. 创作
 const creation = must('POST /creations', await api('POST', '/creations', {
@@ -116,13 +145,17 @@ must('POST /render/preview-collage', await api('POST', '/render/preview-collage'
   token, body: { creationId: creation.id },
 }))
 
-// 12. 提交合成（演示模式：提交即 SUCCESS）
-const submit = must('POST /creations/:id/render（演示模式）', await api('POST', `/creations/${creation.id}/render`, {
+// 12. 提交合成（FFMPEG_WORKER=false 时提交即 SUCCESS；=true 时进队列异步执行）
+const submit = must('POST /creations/:id/render', await api('POST', `/creations/${creation.id}/render`, {
   token,
   body: { mode: 'FULL', aiMode: true, requestId: `smoke-render-${Date.now()}` },
 }))
 const render = submit.data.task
-step('合成任务即时 SUCCESS（演示模式）', render.status === 'SUCCESS', `status=${render.status}`)
+const ACCEPTED_STATUS = ['SUCCESS', 'QUEUED', 'PENDING', 'RUNNING', 'PROCESSING']
+step('合成任务已受理', ACCEPTED_STATUS.includes(render.status), `status=${render.status}`)
+if (render.status !== 'SUCCESS') {
+  console.log('   ℹ FFMPEG_WORKER=true 时合成走异步队列，非即时 SUCCESS 属预期（非缺陷）')
+}
 step('合成扣积分 > 0', BigInt(render.beanCharged) > 0n, `beanCharged=${render.beanCharged}`)
 console.log(`   合成任务 id=${render.id} status=${render.status} 扣豆=${render.beanCharged} 时长=${render.durationMs}ms`)
 
@@ -141,17 +174,31 @@ console.log(`   AI 日志 ${aiLogs.total} 条`)
 const member = must('GET /account/membership/current', await api('GET', '/account/membership/current', { token })).data
 step('订阅有效', member.active === true, `${member.planName ?? ''} 至 ${member.endAt ?? '-'}`)
 
-// 15. 镜头库（seed 后应有 6 类 12 条拍摄技巧）
+// 15. 镜头库（seed 后应有 9 类 18 条拍摄技巧）
 const shotLib = must('GET /shot-library', await api('GET', '/shot-library', { token }))
 const libList = shotLib.data ?? []
-const libOk = Array.isArray(libList) && libList.length >= 12 && libList.every((it) => it.tips)
-step('镜头库有种子数据且带拍摄技巧', libOk, `${Array.isArray(libList) ? libList.length : 0} 条`)
+const libCats = new Set(libList.map((it) => it.category))
+const libOk = Array.isArray(libList) && libList.length >= 18 && libCats.size >= 9 && libList.every((it) => it.tips)
+step('镜头库有种子数据且带拍摄技巧', libOk, `${libList.length} 条 / ${libCats.size} 类`)
+// 必备基础拍摄手法（AI 分镜匹配依赖这 6 条）
+const REQUIRED_CODES = ['closeup_food', 'boss_talk', 'make_serve', 'scene_ambience', 'make_ingredient', 'make_process']
+const libCodes = new Set(libList.map((it) => it.code))
+const missingCodes = REQUIRED_CODES.filter((c) => !libCodes.has(c))
+step('镜头库含必备基础手法', missingCodes.length === 0, missingCodes.length ? `缺: ${missingCodes.join(', ')}` : `美食特写/口播/出锅/环境/原料/制作 齐备`)
 // 按分类过滤
 const libByCat = await api('GET', '/shot-library?category=' + encodeURIComponent('特写'), { token })
 step('镜头库按分类过滤', libByCat.json.code === 0 && (libByCat.json.data ?? []).length > 0 && (libByCat.json.data ?? []).every((it) => it.category === '特写'), `特写 ${(libByCat.json.data ?? []).length} 条`)
 // 分镜类型与镜头库分类对齐（AI mock 分镜的开场镜应有技巧可查）
 const catSet = new Set(libList.map((it) => it.category))
 step('AI 分镜 shotType 与镜头库分类对齐', shotList.some((s) => s.shotType && catSet.has(s.shotType)), `镜头库分类: ${[...catSet].join('/')}`)
+
+// 16. 收尾：默认保留全部验收数据，便于后台复核；清理仅由 CLEAN_TEST_DATA=true 显式开启
+if (process.env.CLEAN_TEST_DATA === 'true') {
+  const cleaned = await pruneTestStores(token)
+  if (cleaned) console.log(`   已清理本次冒烟门店 ${cleaned} 家`)
+} else {
+  console.log(`   验收数据已保留：merchant=${merchantId} store=${store.id} creation=${creation.id} render=${render.id}`)
+}
 
 console.log(`\n=== 结果：${failed === 0 ? '全部通过 ✅' : `${failed} 项失败 ❌`} ===\n`)
 process.exit(failed === 0 ? 0 : 1)

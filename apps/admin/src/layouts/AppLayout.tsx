@@ -27,6 +27,7 @@ const MENU = [
   { label: 'AI 场景', icon: <ServerIcon />, path: '/ai/scenes' },
   { label: 'AI 调用日志', icon: <TimeIcon />, path: '/ai/call-logs' },
   { label: '镜头库', icon: <ImageIcon />, path: '/shot-library' },
+  { label: '优秀作品', icon: <VideoIcon />, path: '/works' },
   { label: '系统设置', icon: <SettingIcon />, path: '/settings' },
   { label: 'TTS 供应商', icon: <ServiceIcon />, path: '/tts-providers' },
 ]

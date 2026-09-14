@@ -12,6 +12,7 @@ import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { writeFile, rm } from 'node:fs/promises'
 import type { TtsProviderConfig } from '../services/tts-provider.service.js'
+import { ffmpegBin } from './ffmpeg.js'
 
 const execFileP = promisify(execFile)
 
@@ -53,7 +54,7 @@ export async function synthesizeNarration(
 /** 生成指定时长的静音 aac 轨（44.1kHz 立体声，与真实配音输出参数一致） */
 async function synthSilence(durMs: number, outPath: string, timeoutMs: number): Promise<void> {
   await execFileP(
-    'ffmpeg',
+    ffmpegBin(),
     [
       '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
       '-t', (durMs / 1000).toFixed(3),
@@ -158,7 +159,7 @@ async function synthesizeVolcano(
   await writeFile(mp3Path, Buffer.concat(chunks))
   try {
     await execFileP(
-      'ffmpeg',
+      ffmpegBin(),
       [
         '-i', mp3Path,
         '-af', 'apad',

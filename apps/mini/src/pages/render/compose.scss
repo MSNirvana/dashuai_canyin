@@ -1,279 +1,411 @@
+// 合成成片：16:9 预览 + 三档卡片 + 整片调色 + 底部积分预估条
 .rcompose {
-  padding: 24rpx 24rpx 200rpx;
+  padding: 24rpx 36rpx 260rpx;
   min-height: 100vh;
   background: var(--td-bg-color-page);
   box-sizing: border-box;
 
   &__tip {
-    padding: 60rpx;
+    padding: 120rpx 40rpx;
     text-align: center;
     color: var(--td-text-color-placeholder);
-    font-size: 28rpx;
+    font-size: 26rpx;
   }
+
+  &__stage { margin-bottom: 24rpx; padding: 30rpx 28rpx; border-radius: var(--td-radius-large); background: #211514; }
+  &__stage-kicker { display: block; color: #ffaaa3; font-size: 20rpx; font-weight: 700; letter-spacing: .1em; }
+  &__stage-title { display: block; margin-top: 12rpx; color: #fff; font-size: 36rpx; font-weight: 700; line-height: 1.3; letter-spacing: -.025em; }
+  &__stage-desc { display: block; margin-top: 10rpx; color: rgba(255,255,255,.68); font-size: 23rpx; line-height: 1.6; }
+
   &__head {
-    margin-bottom: 20rpx;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16rpx;
+    padding: 4rpx 4rpx 24rpx;
+  }
+  &__headmain {
+    flex: 1;
+    min-width: 0;
   }
   &__title {
-    font-size: 36rpx;
+    display: block;
+    font-size: 40rpx;
     font-weight: 700;
+    letter-spacing: -0.025em;
     color: var(--td-text-color-primary);
   }
   &__store {
-    margin-left: 16rpx;
+    display: block;
+    margin-top: 8rpx;
     font-size: 24rpx;
-    color: var(--td-text-color-secondary);
+    color: var(--td-text-color-placeholder);
   }
+  &__materials {
+    flex: none;
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+    background: var(--td-bg-color-secondary);
+    border-radius: var(--td-radius-pill);
+    padding: 6rpx 18rpx;
+    &--ok {
+      color: var(--ds-success);
+      background: var(--ds-success-soft);
+    }
+  }
+
+  /* ── 预览 ── */
   &__preview {
+    position: relative;
     width: 100%;
-    height: 560rpx;
-    background: #000;
-    border: 1rpx solid var(--td-component-stroke);
-    border-radius: var(--td-radius-extra);
+    height: 390rpx;
+    background: #15161a;
+    border-radius: var(--td-radius-default);
     overflow: hidden;
-    display: flex;
-    align-items: center;
-    justify-content: center;
   }
   &__video {
     width: 100%;
     height: 100%;
   }
   &__placeholder {
-    color: var(--td-text-color-placeholder);
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: rgba(255, 255, 255, 0.5);
     font-size: 26rpx;
-    text-align: center;
-    padding: 0 40rpx;
-    line-height: 1.7;
   }
-  &__sec {
+  &__preview-badge {
+    position: absolute;
+    top: 18rpx;
+    left: 18rpx;
+    font-size: 21rpx;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.45);
+    border-radius: var(--td-radius-small);
+    padding: 6rpx 16rpx;
+  }
+
+  &__notice {
+    margin-top: 24rpx;
+  }
+
+  &__actions {
+    display: flex;
+    gap: 16rpx;
+    margin-top: 20rpx;
+  }
+  &__action {
+    flex: 1;
+    background: var(--td-bg-color-container);
+    color: var(--td-text-color-secondary);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-small);
+    font-size: 26rpx;
+    font-weight: 600;
+  }
+
+  /* ── 分区白卡 ── */
+  &__card {
     margin-top: 24rpx;
     background: var(--td-bg-color-container);
-    border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-large);
-    padding: 28rpx;
+    padding: 32rpx;
     box-shadow: var(--ds-shadow-card);
   }
   &__sectitle {
-    font-size: 28rpx;
-    font-weight: 600;
-    color: var(--td-text-color-primary);
     display: block;
-    margin-bottom: 16rpx;
-  }
-  &__aimode {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  &__aimodeinfo {
-    display: flex;
-    flex-direction: column;
-  }
-  &__aimodesub {
-    font-size: 22rpx;
-    color: var(--td-text-color-secondary);
-    margin-top: -6rpx;
+    font-size: 34rpx;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--td-text-color-primary);
+    margin-bottom: 24rpx;
   }
 
-  /* ── 三档生成方式卡片 ── */
-  &__notice {
-    margin: 16rpx 0;
-    font-size: 24rpx;
-    line-height: 1.7;
-    color: var(--td-text-color-secondary);
-    overflow-wrap: anywhere;
-  }
-  &__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 12rpx;
-    margin: 20rpx 0;
-  }
-  &__history {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12rpx;
-    padding: 20rpx 0;
-    border-top: 1rpx solid var(--td-component-border);
-    font-size: 24rpx;
-    overflow-wrap: anywhere;
-  }
+  /* ── 三档生成方式 ── */
   &__grades {
     display: flex;
-    flex-wrap: wrap;
     gap: 16rpx;
   }
   &__grade {
-    flex: 1 1 150rpx;
+    flex: 1;
     min-width: 0;
-    &--disabled { opacity: 0.55; }
-    position: relative;
-    background: var(--td-bg-color-secondary);
+    padding: 26rpx 16rpx 22rpx;
     border: 2rpx solid var(--td-component-stroke);
-    border-radius: 16rpx;
-    padding: 26rpx 16rpx 20rpx;
+    border-radius: var(--td-radius-default);
+    background: var(--td-bg-color-container);
+    text-align: center;
     display: flex;
     flex-direction: column;
     align-items: center;
-    text-align: center;
-    overflow: hidden;
-    transition: border-color 0.2s ease, background 0.2s ease;
 
     &--on {
       border-color: var(--td-brand-color);
-      background: var(--td-brand-color-light);
-    }
-    &--premium.rcompose__grade--on {
-      border-color: var(--ds-warning);
-      background: var(--ds-warning-soft);
-    }
-  }
-  &__gradetag {
-    position: absolute;
-    top: 0;
-    right: 0;
-    font-size: 18rpx;
-    line-height: 30rpx;
-    padding: 0 12rpx;
-    color: var(--td-text-color-anti);
-    background: var(--ds-warning);
-    border-bottom-left-radius: 12rpx;
-
-    &--hot {
-      background: var(--td-brand-color);
+      background: var(--td-brand-color-soft);
     }
   }
   &__gradetitle {
     font-size: 28rpx;
-    font-weight: 600;
+    font-weight: 700;
     color: var(--td-text-color-primary);
   }
   &__gradedesc {
-    font-size: 20rpx;
-    color: var(--td-text-color-secondary);
     margin-top: 8rpx;
+    font-size: 21rpx;
+    line-height: 1.5;
+    color: var(--td-text-color-placeholder);
   }
-  &__gradespeed {
-    font-size: 20rpx;
-    color: var(--ds-warning);
-    margin-top: 10rpx;
+  &__graderatio {
+    margin-top: 14rpx;
+    font-size: 22rpx;
+    font-weight: 700;
+    color: var(--td-brand-color);
+    font-variant-numeric: tabular-nums;
   }
   &__premiumtip {
-    margin-top: 16rpx;
-    font-size: 22rpx;
-    line-height: 1.7;
-    color: var(--ds-warning);
-    background: var(--ds-warning-soft);
-    border: 1rpx solid #eddfc3;
-    border-radius: 12rpx;
-    padding: 16rpx 20rpx;
+    margin-top: 24rpx;
   }
-  &__clip {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 18rpx 0;
-    border-top: 1rpx solid var(--td-component-border);
-  }
-  &__clipinfo {
-    display: flex;
-    align-items: center;
-  }
-  &__clipseq {
-    width: 44rpx;
-    height: 44rpx;
-    line-height: 44rpx;
-    text-align: center;
-    background: var(--td-brand-color);
-    color: #fff;
-    border-radius: 50%;
-    font-size: 24rpx;
-    font-weight: 600;
-    margin-right: 16rpx;
-  }
-  &__cliptype {
-    font-size: 26rpx;
-    color: var(--td-text-color-primary);
-    margin-right: 16rpx;
-  }
-  &__clipstate {
-    font-size: 22rpx;
-    color: var(--td-text-color-secondary);
-  }
-  &__clipplaying {
-    font-size: 22rpx;
-    color: var(--td-brand-color);
-  }
+
+  &__fieldlabel { display: block; margin: 20rpx 0 12rpx; font-size: 24rpx; color: var(--td-text-color-secondary); }
+  &__voicegrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14rpx; }
+  &__voice { padding: 18rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-default); }
+  &__voice--on { border-color: var(--td-brand-color); background: var(--td-brand-color-soft); }
+  &__voicename, &__voicedesc { display: block; }
+  &__voicename { font-size: 26rpx; font-weight: 600; }
+  &__voicedesc { margin-top: 6rpx; font-size: 20rpx; color: var(--td-text-color-placeholder); }
+  &__optionrow { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 18rpx 0; border-top: 1rpx solid var(--td-component-border); }
+  &__optiontitle, &__optiondesc { display: block; }
+  &__optiontitle { font-size: 26rpx; }
+  &__optiondesc { margin-top: 6rpx; font-size: 20rpx; color: var(--td-text-color-placeholder); }
+  &__choices { display: flex; flex-wrap: wrap; gap: 12rpx; }
+  &__choiceitem { padding: 10rpx 18rpx; border: 1rpx solid var(--td-component-stroke); border-radius: 6rpx; font-size: 22rpx; color: var(--td-text-color-secondary); }
+  &__choiceitem--on { color: var(--td-brand-color); border-color: var(--td-brand-color); background: var(--td-brand-color-soft); }
+  &__note { width: 100%; min-height: 120rpx; box-sizing: border-box; padding: 18rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-default); font-size: 24rpx; }
+
+  /* ── 调色 ── */
   &__slider {
     display: flex;
     align-items: center;
-    margin: 12rpx 0;
+    padding: 8rpx 0;
   }
   &__slabel {
     width: 120rpx;
+    flex: none;
     font-size: 26rpx;
     color: var(--td-text-color-secondary);
   }
   &__sbar {
     flex: 1;
+    margin: 0;
   }
-  &__bar {
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    padding: 20rpx 32rpx;
-    padding-bottom: calc(20rpx + env(safe-area-inset-bottom));
-    background: rgba(255, 255, 255, 0.94);
-    backdrop-filter: blur(20rpx);
+
+  /* ── 成片记录 ── */
+  &__history {
+    padding: 24rpx 0;
     border-top: 1rpx solid var(--td-component-border);
   }
-  &__cost {
+  &__history-heading {
     display: flex;
-    flex-wrap: wrap;
-    max-width: 48%;
-    align-items: baseline;
-    margin-right: 20rpx;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16rpx;
+    .rcompose__sectitle { margin-bottom: 0; }
   }
-  &__costnum {
-    font-size: 44rpx;
-    font-weight: 800;
-    color: var(--ds-bean);
-    line-height: 1.1;
+  &__history-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16rpx;
   }
-  &__costunit {
-    font-size: 24rpx;
-    color: var(--ds-bean);
-    margin-right: 12rpx;
+  &__history-title {
+    font-size: 28rpx;
+    font-weight: 650;
+    color: var(--td-text-color-primary);
   }
-  &__balance {
+  &__history-meta {
+    display: block;
+    margin-top: 8rpx;
     font-size: 22rpx;
-    color: var(--td-text-color-secondary);
+    color: var(--td-text-color-placeholder);
   }
-  &__render {
+  &__history-err {
+    display: block;
+    margin-top: 8rpx;
+    font-size: 22rpx;
+    color: var(--ds-danger);
+    line-height: 1.6;
+  }
+
+  /* ── 分镜素材 ── */
+  &__clip {
+    display: flex;
+    align-items: flex-start;
+    gap: 20rpx;
+    padding: 20rpx 0;
+    border-top: 1rpx solid var(--td-component-border);
+  }
+  // 缩略图
+  &__clipthumbwrap {
+    position: relative;
+    flex-shrink: 0;
+    width: 200rpx;
+    height: 144rpx;
+    border-radius: var(--td-radius-default);
+    overflow: hidden;
+    background: var(--td-bg-color-page);
+    border: 1rpx solid var(--td-component-stroke);
+  }
+  &__clipthumb {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  &__clipthumbph {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6rpx;
+  }
+  &__clipthumbno {
+    font-size: 30rpx;
+    font-weight: 750;
+    line-height: 1;
+    color: var(--td-text-color-disabled);
+    letter-spacing: .06em;
+  }
+  &__clipthumbtip {
+    font-size: 20rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  // 居中小播放按钮
+  &__clipplay {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 56rpx;
+    height: 56rpx;
+    margin: -28rpx 0 0 -28rpx;
+    background: rgba(0, 0, 0, 0.42);
+    border-radius: 50%;
+    &::after {
+      content: '';
+      position: absolute;
+      left: 22rpx;
+      top: 18rpx;
+      width: 0;
+      height: 0;
+      border-left: 14rpx solid #fff;
+      border-top: 10rpx solid transparent;
+      border-bottom: 10rpx solid transparent;
+    }
+  }
+  // 分镜信息
+  &__clipinfo {
     flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10rpx;
+    padding-top: 4rpx;
+  }
+  &__cliphead {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    flex-wrap: wrap;
+  }
+  &__clipseq {
+    width: 40rpx;
+    height: 40rpx;
+    line-height: 40rpx;
+    text-align: center;
     background: var(--td-brand-color);
     color: #fff;
-    font-size: 30rpx;
-    font-weight: 500;
-    letter-spacing: 0;
-    border-radius: 999rpx;
+    border-radius: 50%;
+    font-size: 22rpx;
+    font-weight: 600;
   }
+  &__cliptype {
+    font-size: 26rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+  &__clipmeta {
+    font-size: 20rpx;
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-page);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: 6rpx;
+    padding: 2rpx 10rpx;
+  }
+  &__clipline {
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+    line-height: 1.5;
+    display: block;
+    // 最多两行
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  &__clipstate {
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
   &__recolor {
-    margin: 16rpx 0 0;
+    margin-top: 24rpx;
     background: transparent;
     color: var(--td-brand-color);
     border: 1rpx solid var(--td-brand-color);
     font-size: 26rpx;
-    border-radius: 999rpx;
+    font-weight: 600;
+    border-radius: var(--td-radius-default);
   }
-  &__progress {
-    margin-top: 16rpx;
-    text-align: center;
-    font-size: 26rpx;
-    color: var(--td-text-color-secondary);
+
+  /* ── 底部条 ── */
+  &__bar {
+    display: flex;
+    align-items: center;
+    gap: 24rpx;
+  }
+  &__cost {
+    flex: none;
+  }
+  &__costnum {
+    display: flex;
+    align-items: baseline;
+    gap: 4rpx;
+  }
+  &__cost-label {
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__cost-value {
+    font-size: 48rpx;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    color: var(--td-text-color-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  &__cost-unit {
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__balance {
+    display: block;
+    margin-top: 10rpx;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__render {
+    flex: 1;
   }
 }

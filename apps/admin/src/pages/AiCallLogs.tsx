@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Select, Tag, Input } from 'tdesign-react'
+import { Select, Tag, Input } from 'tdesign-react'
+import DataTable from '../lib/table'
 import { request } from '../lib/http'
 import dayjs from 'dayjs'
 
@@ -58,7 +59,7 @@ export default function AiCallLogsPage() {
         </div>
       </div>
 
-      <Table
+      <DataTable
         rowKey="id"
         data={data?.list ?? []}
         loading={loading}

@@ -39,6 +39,13 @@ export async function uploadMediaFile(opts: {
   type: 'IMAGE' | 'VIDEO'
   durationMs?: number
   sizeBytes?: number
+  /** 视频封面图本地路径（chooseMedia 的 thumbTempFilePath）：COS 模式随视频一起上报，用于生成缩略图 */
+  thumbFilePath?: string
+  /**
+   * 素材归属：默认 CREATION（创作素材）。
+   * 门店主图 / 门店视频传 STORE，标记为门店资料，不会混进创作素材池。
+   */
+  ownerType?: 'CREATION' | 'STORE' | 'DISH'
   onProgress?: (percent: number) => void
 }): Promise<MediaAsset> {
   const sts = await http.post<StsCredential>('/upload/sts')
@@ -58,6 +65,7 @@ export async function uploadMediaFile(opts: {
         storeId: opts.storeId,
         type: opts.type,
         ...(opts.durationMs ? { durationMs: String(Math.round(opts.durationMs)) } : {}),
+        ...(opts.ownerType ? { ownerType: opts.ownerType } : {}),
       },
     })
     uploadTask.onProgressUpdate((p) => opts.onProgress?.(p.progress))
@@ -69,6 +77,23 @@ export async function uploadMediaFile(opts: {
     }
     opts.onProgress?.(100)
     return body.data
+  }
+
+  // COS 模式：服务端读不到本地视频文件，改由客户端先传封面图，再把对象键随视频上报
+  let coverKey: string | undefined
+  if (opts.type === 'VIDEO' && opts.thumbFilePath) {
+    try {
+      const cover = await uploadMediaFile({
+        filePath: opts.thumbFilePath,
+        storeId: opts.storeId,
+        type: 'IMAGE',
+        ownerType: opts.ownerType,
+      })
+      coverKey = cover.cosKey
+    } catch {
+      // 封面上传失败不阻断视频上传，缩略图后续可再补
+      coverKey = undefined
+    }
   }
 
   const key = `${sts.prefix}${Date.now()}_${randomStr(6)}.${ext}`
@@ -107,6 +132,8 @@ export async function uploadMediaFile(opts: {
     type: opts.type,
     sizeBytes: opts.sizeBytes ?? 0,
     ...(opts.durationMs ? { durationMs: Math.round(opts.durationMs) } : {}),
+    ...(coverKey ? { coverKey } : {}),
+    ...(opts.ownerType ? { ownerType: opts.ownerType } : {}),
   })
 }
 
@@ -118,6 +145,10 @@ export function uploadVideoFile(opts: {
   durationMs?: number
   /** 文件大小（字节）：chooseMedia 的 size */
   sizeBytes?: number
+  /** 视频封面图本地路径：chooseMedia 的 thumbTempFilePath，COS 模式用它生成缩略图 */
+  thumbFilePath?: string
+  /** 素材归属：门店视频传 STORE，避免混进创作素材池 */
+  ownerType?: 'CREATION' | 'STORE' | 'DISH'
   onProgress?: (percent: number) => void
 }): Promise<MediaAsset> {
   return uploadMediaFile({ ...opts, type: 'VIDEO' })

@@ -31,6 +31,14 @@ npm run dev
 | `REDIS_URL` | `redis://127.0.0.1:6379` |
 | `APP_MASTER_KEY` | **64 位十六进制**，AI 通道密钥的加密主密钥。生成：`openssl rand -hex 32`。**泄露等于所有 API Key 泄露，不要进代码库** |
 
+## ChatCut MCP 配置
+
+AI 成片使用 ChatCut MCP 时，服务端读取 `CHATCUT_MCP_URL`、`CHATCUT_MCP_SUBMIT_TOOL` 和 `CHATCUT_MCP_STATUS_TOOL`。工具名必须以授权后的 `tools/list` 实际返回为准，不能根据公开资料猜测。
+
+生产环境建议同时配置 `CHATCUT_OAUTH_TOKEN_URL` 与 `CHATCUT_OAUTH_REFRESH_TOKEN`。服务端会在 access token 进入刷新窗口时自动续期，支持 refresh token 轮换，并使用 Redis 分布式锁 + 进程内 single-flight 防止并发刷新。access token 和 refresh token 只放服务端环境或密钥管理系统，不要写入小程序、日志或 Git。
+
+首次 OAuth 授权和 ChatCut 商业/额度确认仍需在 ChatCut 侧完成；在未配置有效 token 或工具映射时，AI Worker 会拒绝假成功并按失败流程释放冻结积分。未配置 OAuth 刷新端点时仍兼容固定 `CHATCUT_MCP_ACCESS_TOKEN`，可用 `CHATCUT_MCP_ACCESS_TOKEN_EXPIRES_AT` 标记过期时间。
+
 ## 账务两阶段模型
 
 ```

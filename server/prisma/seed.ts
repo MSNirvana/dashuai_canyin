@@ -68,6 +68,7 @@ const LEGACY_PACKAGE_NAMES = [
 // ================= AI 通道 / 模型 / 场景 =================
 // mock-local：本地联调协议，不发起网络请求，直接返回可解析样例（文案/分镜 JSON）
 // deepseek  ：真实 OpenAI 兼容通道，默认 disabled；填入 DEEPSEEK_API_KEY 并 enabled=true 即可上线
+// 文案四款（对应小程序端「流量款 / 介绍款 / 质量款 / 种草型」四选一，均可在后台「AI 场景」里改提示词）
 const COPY_PROMPT = `你是一家餐饮门店的短视频文案助手。
 门店：{{storeName}}
 品类：{{category}}
@@ -77,13 +78,170 @@ const COPY_PROMPT = `你是一家餐饮门店的短视频文案助手。
 卖点：{{sellingPoints}}
 人设：{{persona}}
 请写一段适合抖音/视频号口播的 30 秒短视频文案，口语化、有钩子、突出到店理由。`
-const STORY_PROMPT = `你是短视频分镜导演。根据以下信息把文案拆成 6-8 个镜头。
-门店：{{storeName}}
-菜品：{{dishName}}
-已有文案：{{copyText}}
-请只输出 JSON 数组，每个元素含 shotType、durationSuggest(秒)、line(口播)、visualReq(画面要求)。`
+
+const COPY_TRAFFIC_PROMPT = `你是餐饮短视频「流量款」文案专家，核心目标是【同城引流 + 制造话题热度】：让人刷到就停下、愿意评论、愿意到店。
+【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
+【菜品】{{dishName}}
+【菜品简介】{{dishIntro}}
+【卖点】{{sellingPoints}}
+【老板人设】{{persona}}
+
+写作要求：
+1. 开头 3 秒必须有强钩子：反差、悬念、本地梗，或直接点名城市/商圈，禁止平铺直叙
+2. 强化「同城」属性：自然带出城市、区域、地标或「就在 XX 路」这类信息，降低到店门槛
+3. 短句、口语化、有情绪起伏，适合举着手机对着镜头念
+4. 结尾给一个具体、低门槛的行动指令（如「评论区扣 1」「明天中午 12 点第一锅」）
+5. 全文 80~150 字。只输出文案正文，不要标题、不要分点、不要任何解释`
+
+const COPY_INTRO_PROMPT = `你是餐饮短视频「介绍款」文案专家，核心目标是【把菜品和套餐讲清楚，让人一看就懂、一看就想点】。
+【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
+【菜品】{{dishName}}
+【菜品简介】{{dishIntro}}
+【卖点】{{sellingPoints}}
+【老板人设】{{persona}}
+
+写作要求：
+1. 开门见山说清「这是什么」：菜名 + 一句话定位（口味 / 做法 / 分量）
+2. 讲清怎么吃、有哪些配菜或蘸料、套餐都包含什么，让人有画面感
+3. 把性价比说透：价格、分量、套餐内容，消除「贵不贵」的犹豫
+4. 语言清楚有条理、不夸张，像老板在耐心介绍自家招牌
+5. 结尾引导「到店点一份试试」
+6. 全文 80~150 字。只输出文案正文，不要标题、不要分点、不要任何解释`
+
+const COPY_QUALITY_PROMPT = `你是餐饮短视频「质量款」文案专家，核心目标是【讲食材品质与匠心人设，建立信任、沉淀口碑】。
+【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
+【菜品】{{dishName}}
+【菜品简介】{{dishIntro}}
+【卖点】{{sellingPoints}}
+【老板人设】{{persona}}
+
+写作要求：
+1. 讲清食材来源与挑选标准（产地、新鲜度、当天采购、不用预制料包等）
+2. 讲工艺与坚持：几道工序、多少年手艺、老板的执念与小故事
+3. 用具体细节代替形容词（「凌晨 4 点去市场挑」「手工现做现卖」）
+4. 语气真诚、克制、有温度，不喊麦、不浮夸
+5. 结尾引导「懂吃的人来尝尝」「认准这一家」
+6. 全文 80~150 字。只输出文案正文，不要标题、不要分点、不要任何解释`
+
+const COPY_RECOMMEND_PROMPT = `你是餐饮短视频「种草型」文案专家，核心目标是【用真实体验降低决策成本，让用户产生收藏、到店和分享意愿】。
+【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
+【菜品】{{dishName}}
+【菜品简介】{{dishIntro}}
+【卖点】{{sellingPoints}}
+【老板人设】{{persona}}
+
+写作要求：
+1. 用第一人称体验或朋友推荐的自然口吻开场，像真实顾客分享，不像硬广告
+2. 描述 2~3 个可感知细节：香气、口感、分量、环境、服务或价格，优先使用已提供的信息
+3. 说明适合谁、适合什么场景，例如朋友聚餐、下班夜宵、家庭用餐或游客打卡
+4. 不编造价格、奖项、排队人数、食材产地和绝对化结论；没有的信息不强行补充
+5. 结尾自然引导收藏、转发给饭搭子或到店尝试，不喊麦、不制造虚假稀缺
+6. 全文 80~150 字。只输出文案正文，不要标题、不要分点、不要任何解释`
+
+const STORY_PROMPT = `你是餐饮短视频分镜导演。请把下面的口播文案拆成一份可以直接照着开拍的分镜脚本。
+【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
+【菜品】{{dishName}}｜卖点：{{sellingPoints}}
+【老板人设】{{persona}}
+【口播文案】{{copyText}}
+【分镜复杂度】{{complexityLabel}}（{{complexity}}）
+【分镜数量要求】{{shotCountRule}}
+【可用镜头库 · 拍摄手法（libraryCode 必须从下表中选择）】
+{{shotLibrary}}
+
+输出要求：
+1. 严格按「分镜数量要求」输出，镜头总数必须落在规定区间内
+2. 每个分镜输出以下字段：
+   - shotType：镜头分类，从 开场/口播/特写/原料/制作/环境/试吃/卖点/收尾 中选一个
+   - shotSize：景别，从 远景/全景/中景/近景/特写/大特写 中选一个
+   - durationSuggest：建议时长（整数秒，一般 2~6 秒）
+   - line：该镜头对应的台词片段（口播文案的自然切分，按顺序拼接要能还原完整文案）
+   - visualReq：画面要求，具体到机位、动作、光线，能照着拍
+   - libraryCode：从上方镜头库中选择最匹配的一条 libraryCode
+3. 尽量覆盖这些基础拍摄手法：美食特写、老板口播、出锅、环境、原料、制作过程（复杂版/精细版应全部覆盖，简单版优先覆盖美食特写与老板口播）
+4. 只输出 JSON 数组，不要 Markdown 代码块、不要任何解释文字`
+
 const COPY_FALLBACK = `{{storeName}}{{dishName}}好味道，欢迎到店品尝。`
-const STORY_FALLBACK = `[{"shotType":"主厨","durationSuggest":4,"line":"今日推荐","visualReq":"招牌菜特写"}]`
+const COPY_TRAFFIC_FALLBACK = `{{city}}的{{dishName}}，本地人都排队的味道！就在{{storeName}}，评论区扣 1 我给你留位。`
+const COPY_INTRO_FALLBACK = `{{storeName}}招牌{{dishName}}，{{sellingPoints}}。分量实在、价格透明，欢迎到店点一份试试。`
+const COPY_QUALITY_FALLBACK = `{{storeName}}坚持好食材、现做现卖，{{dishName}}从选料到出锅都不将就。懂吃的人，值得专程来一趟。`
+const COPY_RECOMMEND_FALLBACK = `朋友推荐的{{storeName}}，这份{{dishName}}口感实在、细节耐吃。路过或想找{{city}}附近值得收藏的一家，可以到店试试。`
+const STORY_FALLBACK = `[{"shotType":"特写","shotSize":"特写","durationSuggest":3,"line":"{{dishName}}，现做现卖","visualReq":"菜品出锅特写，蒸汽升腾，微距近拍","libraryCode":"closeup_food"},{"shotType":"口播","shotSize":"近景","durationSuggest":4,"line":"就在{{city}}{{storeName}}","visualReq":"老板对镜头口播，门店内景，正脸打光","libraryCode":"boss_talk"},{"shotType":"收尾","shotSize":"全景","durationSuggest":3,"line":"欢迎到店品尝","visualReq":"门店环境全景，结尾压定位字幕","libraryCode":"scene_ambience"}]`
+
+// ================= 合成增强 Skill（AI 生成档的后续能力，场景已就位、调用方待接入） =================
+// 说明：这 5 个场景先在后台可见可配，worker 侧逐步接入（见 docs/09-AI-Skill清单.md）。
+// 未接入前不会被业务调用，也不会产生费用。
+
+const SCRIPT_POLISH_PROMPT = `你是餐饮短视频口播稿润色专家。请把下面的营销文案改写成【可以直接对着镜头念】的口播稿。
+【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
+【菜品】{{dishName}}｜卖点：{{sellingPoints}}
+【原始文案】
+{{copyText}}
+
+改写要求：
+1. 保留原始文案的核心卖点与情绪，不要新增未提供的信息
+2. 拆成短句，每句 8~20 字，方便断句与换气
+3. 去掉书面语与生僻词，改成日常说话的语气
+4. 数字、地名、菜名口语化（「人均消费」→「人均」这类）
+5. 总字数控制在 120 字以内（按每秒约 4~5 字估算时长）
+6. 只输出改写后的口播稿正文，不要标题、不要分点、不要任何解释`
+
+const REVIEW_GUARD_PROMPT = `你是短视频内容安全审校员。请检查下面的餐饮短视频文案是否存在违规风险。
+【待审文案】
+{{copyText}}
+
+检查维度：
+1. 极限词与绝对化用语（「最好吃」「第一」「绝对」「独家」）
+2. 虚假宣传与医疗功效暗示（「治病」「养生特效」「药膳」）
+3. 平台违禁词（涉政、涉黄、涉赌、涉毒、封建迷信）
+4. 诱导性表述（「不转不是中国人」「点进来必发财」）
+5. 价格与承诺类违规（「全网最低价」「永久免费」）
+
+输出要求：只输出 JSON 对象，不要 Markdown 代码块、不要任何解释：
+{"pass": true, "hits": ["命中的违规词"], "reason": "风险原因简述", "suggestion": "改写建议（pass 为 true 时留空）"}`
+
+const TITLE_OVERLAY_PROMPT = `你是餐饮短视频封面文案专家。请为下面的短视频生成封面标题与贴片文案。
+【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
+【菜品】{{dishName}}｜卖点：{{sellingPoints}}
+【口播文案】{{copyText}}
+
+生成要求：
+1. title：封面主标题，6~12 字，要有钩子、能引发好奇或食欲，可用数字与反差
+2. subtitle：副标题，10~18 字，补充到店理由或价格信息
+3. badge：角标短句，4~6 字（如「现做现卖」「当天现杀」「同城可送」）
+4. 三个字段都口语化、不浮夸，避免绝对化用语
+5. 只输出 JSON 对象，不要 Markdown 代码块、不要任何解释：
+{"title": "", "subtitle": "", "badge": ""}`
+
+const BGM_SELECT_PROMPT = `你是短视频配乐师。请为下面的餐饮短视频挑选合适的 BGM 风格。
+【门店】{{storeName}}｜品类：{{category}}
+【菜品】{{dishName}}
+【口播文案】{{copyText}}
+
+挑选要求：
+1. mood：整体情绪，从 热闹/温馨/治愈/烟火气/高级感/轻快 中选一个
+2. tags：3~5 个曲风标签（如 民谣吉他、轻电子、国风、爵士、钢琴）
+3. tempo：建议节奏，从 慢/中/快 中选一个
+4. reason：一句话说明为什么这样选
+5. 只输出 JSON 对象，不要 Markdown 代码块、不要任何解释：
+{"mood": "", "tags": [], "tempo": "", "reason": ""}`
+
+const RHYTHM_DETECT_PROMPT = `你是短视频剪辑节奏指导。请为下面的分镜脚本给出卡点建议。
+【门店】{{storeName}}｜菜品：{{dishName}}
+【分镜数量要求】{{shotCountRule}}
+【口播文案】{{copyText}}
+
+输出要求：
+1. shots：按分镜顺序给出每个镜头的建议停留时长（整数秒），总和要与口播文案时长匹配
+2. beatPoints：建议卡点位置（相对成片起点的秒数，保留 1 位小数），用于踩 BGM 重音
+3. reason：一句话说明节奏设计思路
+4. 只输出 JSON 对象，不要 Markdown 代码块、不要任何解释：
+{"shots": [{"seq": 1, "durationSec": 3}], "beatPoints": [1.2, 4.5], "reason": ""}`
+
+const SCRIPT_POLISH_FALLBACK = `{{copyText}}`
+const REVIEW_GUARD_FALLBACK = `{"pass":true,"hits":[],"reason":"","suggestion":""}`
+const TITLE_OVERLAY_FALLBACK = `{"title":"{{dishName}}","subtitle":"{{storeName}}·{{sellingPoints}}","badge":"现做现卖"}`
+const BGM_SELECT_FALLBACK = `{"mood":"烟火气","tags":["轻快","民谣吉他"],"tempo":"中","reason":"餐饮日常场景通用配乐"}`
+const RHYTHM_DETECT_FALLBACK = `{"shots":[],"beatPoints":[],"reason":"按分镜建议时长自然衔接"}`
 
 async function seedAi() {
   // v5：AI 计费 = 实际成本 × 系数（bean.cost_multiplier，默认 4）。
@@ -105,7 +263,15 @@ async function seedAi() {
       priority: 100,
       healthStatus: 'HEALTHY',
     },
-    update: { name: '本地联调（MOCK）', protocol: 'MOCK', enabled: true, priority: 100 },
+    update: {
+      name: '本地联调（MOCK）',
+      protocol: 'MOCK',
+      enabled: true,
+      priority: 100,
+      // 每次 seed 都重写密钥：避免历史密文用旧主密钥加密后无法解密，导致 AI 全失败
+      apiKeyEncrypted: encryptSecret('mock-local-key'),
+      apiKeyMasked: 'mock****local',
+    },
   })
   const mockChat = await prisma.aiModel.upsert({
     where: { providerId_modelCode: { providerId: mockProvider.id, modelCode: 'mock-chat' } },
@@ -147,68 +313,94 @@ async function seedAi() {
     update: { enabled: true },
   })
 
-  // 3) 场景：文案 / 分镜。default 指向 MOCK 模型，fallback 指向另一个 MOCK 模型，保证本地可跑
-  await prisma.aiScene.upsert({
-    where: { code: 'copy_generate' },
-    create: {
-      code: 'copy_generate',
-      name: '短视频文案生成',
-      promptTemplate: COPY_PROMPT,
-      fallbackTemplate: COPY_FALLBACK,
-      defaultModelId: mockChat.id,
-      fallbackModelIds: [Number(mockReasoner.id)],
-      beanPrice: 5n,
-      timeoutMs: 30000,
-      maxRetries: 1,
-      temperature: 0.8,
-      maxOutputTokens: 800,
-      enabled: true,
-    },
-    update: {
-      name: '短视频文案生成',
-      promptTemplate: COPY_PROMPT,
-      fallbackTemplate: COPY_FALLBACK,
-      defaultModelId: mockChat.id,
-      fallbackModelIds: [Number(mockReasoner.id)],
-      beanPrice: 5n,
-      timeoutMs: 30000,
-      maxRetries: 1,
-      temperature: 0.8,
-      maxOutputTokens: 800,
-      enabled: true,
-    },
+  // 3) 场景：文案（通用 + 四款）/ 分镜 / 合成增强
+  //
+  //    模型绑定策略：优先绑定「已启用的真实模型」（如后台配好的 gpt-5.6-sol / DeepSeek），
+  //    找不到才退回 MOCK，保证本地无 key 也能跑通全链路。
+  //    ⚠ 必须保证 defaultModelId 指向 enabled=true 的 provider：若指向已停用通道，
+  //      网关候选链会直接 ALL_FAILED 落兜底模板（前端提示「AI 繁忙」）。
+  const realModel = await prisma.aiModel.findFirst({
+    where: { enabled: true, provider: { enabled: true, protocol: { not: 'MOCK' } } },
+    orderBy: { id: 'asc' },
   })
+  const defaultModelId = realModel?.id ?? mockChat.id
+  const fallbackModelIds = realModel ? [Number(mockChat.id)] : [Number(mockReasoner.id)]
+  console.log(
+    realModel
+      ? `[seed] AI 场景默认模型 = ${realModel.modelCode} (id=${realModel.id})，MOCK 作兜底`
+      : '[seed] 未找到已启用的真实模型，AI 场景回退到 MOCK 通道（本地联调）',
+  )
+
+  // 文案四款与小程序端「流量款 / 介绍款 / 质量款 / 种草型」一一对应，提示词均可在后台「AI 场景」页修改
+  const copyScenes = [
+    { code: 'copy_generate', name: '短视频文案生成（通用·兼容旧客户端）', prompt: COPY_PROMPT, fallback: COPY_FALLBACK, temperature: 0.8 },
+    { code: 'copy_traffic', name: '文案 · 流量款（同城引流/话题热度）', prompt: COPY_TRAFFIC_PROMPT, fallback: COPY_TRAFFIC_FALLBACK, temperature: 0.9 },
+    { code: 'copy_intro', name: '文案 · 介绍款（菜品讲解/套餐推广）', prompt: COPY_INTRO_PROMPT, fallback: COPY_INTRO_FALLBACK, temperature: 0.8 },
+    { code: 'copy_quality', name: '文案 · 质量款（食材品质/匠心人设）', prompt: COPY_QUALITY_PROMPT, fallback: COPY_QUALITY_FALLBACK, temperature: 0.75 },
+    { code: 'copy_recommend', name: '文案 · 种草型（真实体验/消费决策）', prompt: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK, temperature: 0.85 },
+  ]
+  for (const s of copyScenes) {
+    const data = {
+      name: s.name,
+      promptTemplate: s.prompt,
+      fallbackTemplate: s.fallback,
+      defaultModelId,
+      fallbackModelIds,
+      beanPrice: 5n,
+      timeoutMs: 30000,
+      maxRetries: 1,
+      temperature: s.temperature,
+      maxOutputTokens: 800,
+      enabled: true,
+    }
+    await prisma.aiScene.upsert({ where: { code: s.code }, create: { code: s.code, ...data }, update: data })
+  }
+
+  const storyData = {
+    name: '分镜脚本生成（按复杂度 2~9 镜 + 镜头库匹配）',
+    promptTemplate: STORY_PROMPT,
+    fallbackTemplate: STORY_FALLBACK,
+    defaultModelId,
+    fallbackModelIds,
+    beanPrice: 10n,
+    timeoutMs: 40000,
+    maxRetries: 1,
+    temperature: 0.7,
+    maxOutputTokens: 2500,
+    enabled: true,
+  }
   await prisma.aiScene.upsert({
     where: { code: 'storyboard_generate' },
-    create: {
-      code: 'storyboard_generate',
-      name: '分镜脚本生成',
-      promptTemplate: STORY_PROMPT,
-      fallbackTemplate: STORY_FALLBACK,
-      defaultModelId: mockReasoner.id,
-      fallbackModelIds: [Number(mockChat.id)],
-      beanPrice: 10n,
-      timeoutMs: 40000,
-      maxRetries: 1,
-      temperature: 0.7,
-      maxOutputTokens: 2000,
-      enabled: true,
-    },
-    update: {
-      name: '分镜脚本生成',
-      promptTemplate: STORY_PROMPT,
-      fallbackTemplate: STORY_FALLBACK,
-      defaultModelId: mockReasoner.id,
-      fallbackModelIds: [Number(mockChat.id)],
-      beanPrice: 10n,
-      timeoutMs: 40000,
-      maxRetries: 1,
-      temperature: 0.7,
-      maxOutputTokens: 2000,
-      enabled: true,
-    },
+    create: { code: 'storyboard_generate', ...storyData },
+    update: storyData,
   })
-  console.log('[seed] ai providers: 2, models: 4, scenes: 2')
+
+  // 合成增强 Skill：场景已就位（后台可编辑提示词），worker 侧按 docs/09 顺序逐步接入调用
+  const synthScenes = [
+    { code: 'script_polish', name: '口播润色 · 合成增强（待接入）', prompt: SCRIPT_POLISH_PROMPT, fallback: SCRIPT_POLISH_FALLBACK, temperature: 0.6, maxOutputTokens: 600, beanPrice: 5n },
+    { code: 'review_guard', name: '内容安全审校 · 合成增强（待接入）', prompt: REVIEW_GUARD_PROMPT, fallback: REVIEW_GUARD_FALLBACK, temperature: 0.2, maxOutputTokens: 400, beanPrice: 3n },
+    { code: 'title_overlay', name: '封面标题贴片 · 合成增强（待接入）', prompt: TITLE_OVERLAY_PROMPT, fallback: TITLE_OVERLAY_FALLBACK, temperature: 0.85, maxOutputTokens: 300, beanPrice: 5n },
+    { code: 'bgm_select', name: 'BGM 智能选择 · 合成增强（待接入）', prompt: BGM_SELECT_PROMPT, fallback: BGM_SELECT_FALLBACK, temperature: 0.7, maxOutputTokens: 300, beanPrice: 3n },
+    { code: 'rhythm_detect', name: '节奏点检测 · 合成增强（待接入）', prompt: RHYTHM_DETECT_PROMPT, fallback: RHYTHM_DETECT_FALLBACK, temperature: 0.4, maxOutputTokens: 500, beanPrice: 3n },
+  ]
+  for (const s of synthScenes) {
+    const data = {
+      name: s.name,
+      promptTemplate: s.prompt,
+      fallbackTemplate: s.fallback,
+      defaultModelId,
+      fallbackModelIds,
+      beanPrice: s.beanPrice,
+      timeoutMs: 30000,
+      maxRetries: 1,
+      temperature: s.temperature,
+      maxOutputTokens: s.maxOutputTokens,
+      enabled: true,
+    }
+    await prisma.aiScene.upsert({ where: { code: s.code }, create: { code: s.code, ...data }, update: data })
+  }
+
+  console.log(`[seed] ai providers: 2, models: 4, scenes: ${copyScenes.length + 1 + synthScenes.length}`)
 }
 
 // ================= 演示商家（开发登录用） =================
@@ -359,6 +551,43 @@ async function seedShotLibrary() {
       category: '收尾',
       tips: '最后一个镜头固定：老板对镜头说一句话（如「想吃扣 1」），说完再停 1 秒切黑。互动率上去了，下一条流量才稳。',
     },
+    // 基础拍摄手法（分镜匹配的必备库：美食特写 / 老板口播 / 出锅 / 环境 / 原料 / 制作过程）
+    {
+      code: 'closeup_food',
+      name: '美食特写',
+      category: '特写',
+      tips: '把镜头怼到 15~20cm，锁死焦点在菜品最诱人的部位（焦边、拉丝、爆汁处）。侧逆光让油光更亮，蒸汽升起时连拍 3 条挑最饱满的一条。',
+    },
+    {
+      code: 'boss_talk',
+      name: '老板口播',
+      category: '口播',
+      tips: '机位与眼睛齐平，人物居中，背后留出门店环境做背景。开拍前先深呼吸、看镜头说话，别念稿；一句一个动作，手可以指着菜或价目牌。',
+    },
+    {
+      code: 'make_serve',
+      name: '出锅装盘',
+      category: '制作',
+      tips: '从锅里盛出的瞬间最能刺激食欲：一手端盘一手舀菜，让热气正对镜头。提前想好落盘位置，动作要一次到位，别来回找角度。',
+    },
+    {
+      code: 'scene_ambience',
+      name: '门店环境',
+      category: '环境',
+      tips: '横移或缓推拍一张干净的门店环境（堂食区/明档/招牌），停在「有烟火气但不乱」的画面上 2 秒。结尾用它压定位字幕，观众一眼知道在哪。',
+    },
+    {
+      code: 'make_ingredient',
+      name: '新鲜原料',
+      category: '原料',
+      tips: '把当天采购的原料平铺或摆盘，俯拍一张全景再逐个特写。强调「当天到货、现切现用」，可用手拿起展示纹理，让新鲜看得见。',
+    },
+    {
+      code: 'make_process',
+      name: '制作过程',
+      category: '制作',
+      tips: '从备料到下锅一条完整动作线，中间不要停机。拍之前先想清楚 3 个关键动作（下料/翻炒/调味），每步各给 1~2 秒，节奏比时长重要。',
+    },
   ]
   for (const it of items) {
     await prisma.shotLibrary.upsert({
@@ -367,7 +596,135 @@ async function seedShotLibrary() {
       update: { name: it.name, category: it.category, tips: it.tips, enabled: true },
     })
   }
-  console.log(`[seed] 镜头库: ${items.length} 条拍摄技巧（6 类）`)
+  const categories = new Set(items.map((it) => it.category))
+  console.log(`[seed] 镜头库: ${items.length} 条拍摄技巧（${categories.size} 类）`)
+}
+
+// ================= 首页优秀作品（运营内容，带同款配方） =================
+// 说明：这里只种「配方 + 分类 + 标签」，封面/视频由运营在后台补齐（cover_key / video_key 留空）。
+// 前端对没有封面的作品展示中性占位块，不假装成真封面。
+// 配方里的 track / complexity 与 creation 的取值一一对应，「生成同款」直接拿它预填创作流。
+
+/** 镜头骨架模板：shotType / shotSize 取值与 creation/edit 的下拉选项一致 */
+const WORK_SHOT_TEMPLATES: Record<string, Array<Record<string, unknown>>> = {
+  溯源纪实: [
+    { shotType: '开场', shotSize: '全景', durationSuggest: 3, visualReq: '凌晨的进货口或后厨备料，竖拍一镜到底，1 秒内喊出招牌菜' },
+    { shotType: '原料', shotSize: '特写', durationSuggest: 4, visualReq: '手拿起当天原料展示纹理，背景虚化，强调「当天到货」' },
+    { shotType: '制作', shotSize: '中景', durationSuggest: 5, visualReq: '侧后方 45° 拍关键动作，一镜不停机，突出火候与手法' },
+    { shotType: '收尾', shotSize: '全景', durationSuggest: 3, visualReq: '成品端上桌，定位字幕停留 2 秒引导到店' },
+  ],
+  前后对比: [
+    { shotType: '开场', shotSize: '近景', durationSuggest: 3, visualReq: '先给「改造前」的真实状态，不加修饰，制造反差预期' },
+    { shotType: '制作', shotSize: '中景', durationSuggest: 5, visualReq: '记录处理过程的关键一步，动作干脆，节奏放快' },
+    { shotType: '特写', shotSize: '大特写', durationSuggest: 4, visualReq: '「改造后」的细节特写，侧逆光让质感更明显' },
+    { shotType: '卖点', shotSize: '全景', durationSuggest: 3, visualReq: '前后同机位对比 + 价格/套餐字幕停留 2 秒' },
+  ],
+  教程教学: [
+    { shotType: '开场', shotSize: '中景', durationSuggest: 3, visualReq: '一句话说清「看完能学会什么」，直接给结果' },
+    { shotType: '制作', shotSize: '近景', durationSuggest: 6, visualReq: '分步骤演示，每个关键动作给 1~2 秒，手部入镜' },
+    { shotType: '口播', shotSize: '中景', durationSuggest: 4, visualReq: '正面口播讲清要点，镜头与眼睛齐平' },
+    { shotType: '收尾', shotSize: '全景', durationSuggest: 3, visualReq: '成果展示 + 引导到店体验' },
+  ],
+  情怀叙事: [
+    { shotType: '开场', shotSize: '近景', durationSuggest: 3, visualReq: '老板的手部动作或老物件特写，先给情绪不给人脸' },
+    { shotType: '口播', shotSize: '中景', durationSuggest: 5, visualReq: '老板正面讲一句「为什么坚持这么多年」，语速放慢' },
+    { shotType: '制作', shotSize: '中景', durationSuggest: 5, visualReq: '传统手法的完整动作，保留环境音，不要配乐盖住' },
+    { shotType: '试吃', shotSize: '特写', durationSuggest: 3, visualReq: '出锅瞬间的蒸汽/拉丝特写，收在招牌菜上' },
+  ],
+  探店实拍: [
+    { shotType: '开场', shotSize: '全景', durationSuggest: 3, visualReq: '门头 + 人气画面，第一秒就把招牌菜名喊出来' },
+    { shotType: '环境', shotSize: '全景', durationSuggest: 4, visualReq: '横移或缓推拍干净的环境，停在有烟火气但不乱的画面' },
+    { shotType: '特写', shotSize: '大特写', durationSuggest: 4, visualReq: '招牌菜出锅或爆汁瞬间，凑近到 20cm，锁焦在食物上' },
+    { shotType: '卖点', shotSize: '近景', durationSuggest: 4, visualReq: '价目牌或套餐组合展示，手指划过重点一行，停 2 秒' },
+  ],
+}
+
+const WORK_STYLE_NOTES: Record<string, string> = {
+  溯源纪实: '靠「过程可信」打动人：把看不见的辛苦拍出来，比夸好吃有用。',
+  前后对比: '反差就是钩子：前 3 秒必须让人看到「有多糟」，后面才有惊喜。',
+  教程教学: '用户为「学会」停留：先给结果，再拆步骤，最后引导到店。',
+  情怀叙事: '卖的不是菜是坚持：老板本人出镜讲一句真心话，完播率最高。',
+  探店实拍: '主打「馋」：出锅瞬间 + 价目牌，两个画面决定要不要到店。',
+}
+
+const WORK_STYLES = ['溯源纪实', '前后对比', '教程教学', '情怀叙事', '探店实拍'] as const
+
+/** 28 条作品：分类 / 二级分类 / 标签 / 采用的镜头风格模板 */
+const excellentWorks = [
+  { title: '郴州 34 年老卤味 · 24 载坚守地道味', category: '餐饮', subCategory: '卤味', tags: ['素材智能成片', '卤味'], style: '情怀叙事' },
+  { title: '温州茶山阿海 · 5 小时慢煨一罐汤', category: '餐饮', subCategory: '汤馆', tags: ['爆款文案', '餐饮其他'], style: '情怀叙事' },
+  { title: '成都小面馆 · 凌晨四点熬的一锅红油', category: '餐饮', subCategory: '面馆', tags: ['AI 配音', '面馆'], style: '情怀叙事' },
+  { title: '重庆老火锅 · 现炒底料香到隔壁街', category: '餐饮', subCategory: '火锅', tags: ['口播种草', '火锅'], style: '探店实拍' },
+  { title: '潮汕牛肉店 · 现宰三小时就上桌', category: '餐饮', subCategory: '牛肉', tags: ['探店实拍', '牛肉'], style: '探店实拍' },
+  { title: '巷子口早餐铺 · 一笼包子卖了 20 年', category: '餐饮', subCategory: '早餐', tags: ['情怀叙事', '早餐'], style: '情怀叙事' },
+  { title: '海鲜大排档 · 老板凌晨去码头抢货', category: '餐饮', subCategory: '海鲜', tags: ['溯源纪实', '海鲜'], style: '溯源纪实' },
+  { title: '社区烧烤摊 · 夏天第一口五花肉', category: '餐饮', subCategory: '烧烤', tags: ['夜宵场景', '烧烤'], style: '探店实拍' },
+  { title: '江南糖水铺 · 手作桂圆莲子羹', category: '餐饮', subCategory: '甜品', tags: ['慢生活', '甜品'], style: '情怀叙事' },
+  { title: '川味小炒 · 三分钟一道家常菜', category: '餐饮', subCategory: '小炒', tags: ['教程教学', '小炒'], style: '教程教学' },
+  { title: '少儿编程体验课 · 8 岁孩子自己做出小游戏', category: '教培', subCategory: '编程', tags: ['效果展示', '编程'], style: '前后对比' },
+  { title: '少儿美术 · 一节课画完一幅水彩', category: '教培', subCategory: '美术', tags: ['作品展示', '美术'], style: '前后对比' },
+  { title: '英语口语班 · 30 天敢开口说', category: '教培', subCategory: '英语', tags: ['学员见证', '英语'], style: '前后对比' },
+  { title: '舞蹈教室 · 零基础也能跟上第一节课', category: '教培', subCategory: '舞蹈', tags: ['课堂实录', '舞蹈'], style: '教程教学' },
+  { title: '书法课堂 · 从握笔到写出第一幅作品', category: '教培', subCategory: '书法', tags: ['过程记录', '书法'], style: '教程教学' },
+  { title: '篮球训练营 · 周末两小时练出基本功', category: '教培', subCategory: '体育', tags: ['训练剪影', '体育'], style: '教程教学' },
+  { title: '社区理发店 · 剪完像换了个人', category: '美业', subCategory: '美发', tags: ['前后对比', '美发'], style: '前后对比' },
+  { title: '独立美甲工作室 · 把春天留在指尖', category: '美业', subCategory: '美甲', tags: ['作品特写', '美甲'], style: '前后对比' },
+  { title: '皮肤管理 · 做完全脸透亮', category: '美业', subCategory: '护肤', tags: ['效果对比', '护肤'], style: '前后对比' },
+  { title: '养生 SPA · 肩颈按完睡了个好觉', category: '美业', subCategory: '养生', tags: ['体验记录', '养生'], style: '探店实拍' },
+  { title: '家电清洗 · 洗完空调吹出的风都干净', category: '生活服务', subCategory: '清洗', tags: ['前后对比', '清洗'], style: '前后对比' },
+  { title: '搬家公司 · 全屋打包两小时搞定', category: '生活服务', subCategory: '搬家', tags: ['流程记录', '搬家'], style: '教程教学' },
+  { title: '家政保洁 · 三小时让家焕然一新', category: '生活服务', subCategory: '保洁', tags: ['效果展示', '保洁'], style: '前后对比' },
+  { title: '管道疏通 · 半夜上门 20 分钟解决', category: '生活服务', subCategory: '维修', tags: ['应急响应', '维修'], style: '教程教学' },
+  { title: '台球厅 · 一杆清台的爽感', category: '休闲娱乐', subCategory: '台球', tags: ['高光时刻', '台球'], style: '探店实拍' },
+  { title: '密室逃脱 · 吓到尖叫的第一视角', category: '休闲娱乐', subCategory: '密室', tags: ['沉浸体验', '密室'], style: '探店实拍' },
+  { title: '露营基地 · 城市边上的星空营地', category: '休闲娱乐', subCategory: '露营', tags: ['场景展示', '露营'], style: '探店实拍' },
+  { title: 'KTV 新店 · 音响一开就停不下来', category: '休闲娱乐', subCategory: 'KTV', tags: ['氛围展示', 'KTV'], style: '探店实拍' },
+] as const
+
+async function seedExcellentWorks() {
+  // 幂等：以 title 作为业务键，重复 seed 只更新配方与分类，不新增重复作品
+  for (let i = 0; i < excellentWorks.length; i++) {
+    const w = excellentWorks[i]
+    if (!w) continue
+    const recipe = {
+      track: (w.style === '教程教学' ? 'INTRO' : w.style === '前后对比' ? 'QUALITY' : w.style === '探店实拍' ? 'RECOMMEND' : 'TRAFFIC') as
+        | 'TRAFFIC'
+        | 'INTRO'
+        | 'QUALITY'
+        | 'RECOMMEND',
+      complexity: (w.style === '探店实拍' || w.style === '溯源纪实' ? 'COMPLEX' : 'FINE') as
+        | 'SIMPLE'
+        | 'COMPLEX'
+        | 'FINE',
+      titleHint: w.title,
+      shotSkeleton: WORK_SHOT_TEMPLATES[w.style] ?? [],
+      notes: WORK_STYLE_NOTES[w.style] ?? '',
+    }
+    const data = {
+      category: w.category,
+      subCategory: w.subCategory,
+      tags: [...w.tags],
+      recipeJson: recipe,
+      sort: i,
+    }
+    const existing = await prisma.excellentWork.findFirst({ where: { title: w.title, deletedAt: null } })
+    if (existing) {
+      await prisma.excellentWork.update({ where: { id: existing.id }, data })
+    } else {
+      await prisma.excellentWork.create({
+        data: {
+          title: w.title,
+          ...data,
+          // 封面/视频留空，由运营在后台补齐；未补素材前前端展示中性占位
+          enabled: true,
+          sourceType: 'MANUAL',
+          publishedAt: new Date(),
+        },
+      })
+    }
+  }
+  const categories = new Set(excellentWorks.map((w) => w.category))
+  console.log(`[seed] 优秀作品: ${excellentWorks.length} 条（${categories.size} 个分类，${WORK_STYLES.length} 套镜头模板）`)
 }
 
 // ================= 后台管理员（单角色全权限，密码 scrypt 哈希） =================
@@ -472,6 +829,7 @@ async function main() {
   await seedAi()
   await seedTtsProviders()
   await seedShotLibrary()
+  await seedExcellentWorks()
   await seedAdminUser()
   await seedDemoMerchant()
 }

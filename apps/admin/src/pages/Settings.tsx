@@ -1,5 +1,7 @@
 import { useEffect, useState, useMemo } from 'react'
-import { Table, Button, Tag, Dialog, Form, Input, InputNumber, Select, Switch, message } from 'tdesign-react'
+import { Button, Tag, Dialog, Input, InputNumber, Select, Switch, message } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -83,7 +85,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <Table
+      <DataTable
         rowKey="id"
         data={filtered}
         columns={[
@@ -106,18 +108,18 @@ export default function SettingsPage() {
       />
 
       <Dialog header={editing ? '编辑配置' : '新增配置'} visible={open} onClose={() => setOpen(false)} onConfirm={submit} width={600}>
-        <Form labelWidth={120}>
-          <Form.FormItem label="分组"><Input value={form.groupKey} onChange={(v) => setForm((f) => ({ ...f, groupKey: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="键"><Input value={form.settingKey} onChange={(v) => setForm((f) => ({ ...f, settingKey: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="值"><Input value={form.settingVal} onChange={(v) => setForm((f) => ({ ...f, settingVal: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="类型">
+        <FieldGroup labelWidth={120}>
+          <Field label="分组"><Input value={form.groupKey} onChange={(v) => setForm((f) => ({ ...f, groupKey: v as string }))} /></Field>
+          <Field label="键"><Input value={form.settingKey} onChange={(v) => setForm((f) => ({ ...f, settingKey: v as string }))} /></Field>
+          <Field label="值"><Input value={form.settingVal} onChange={(v) => setForm((f) => ({ ...f, settingVal: v as string }))} /></Field>
+          <Field label="类型">
             <Select value={form.valueType} onChange={(v) => setForm((f) => ({ ...f, valueType: v as Setting['valueType'] }))} options={TYPES.map((t) => ({ label: t, value: t }))} />
-          </Form.FormItem>
-          <Form.FormItem label="显示名"><Input value={form.displayName} onChange={(v) => setForm((f) => ({ ...f, displayName: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="描述"><Input value={form.description} onChange={(v) => setForm((f) => ({ ...f, description: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="排序"><InputNumber value={form.sort} onChange={(v) => setForm((f) => ({ ...f, sort: v as number }))} /></Form.FormItem>
-          <Form.FormItem label="小程序端可见"><Switch value={form.isPublic} onChange={(v) => setForm((f) => ({ ...f, isPublic: v as boolean }))} /></Form.FormItem>
-        </Form>
+          </Field>
+          <Field label="显示名"><Input value={form.displayName} onChange={(v) => setForm((f) => ({ ...f, displayName: v as string }))} /></Field>
+          <Field label="描述"><Input value={form.description} onChange={(v) => setForm((f) => ({ ...f, description: v as string }))} /></Field>
+          <Field label="排序"><InputNumber value={form.sort} onChange={(v) => setForm((f) => ({ ...f, sort: v as number }))} /></Field>
+          <Field label="小程序端可见"><Switch value={form.isPublic} onChange={(v) => setForm((f) => ({ ...f, isPublic: v as boolean }))} /></Field>
+        </FieldGroup>
       </Dialog>
     </div>
   )

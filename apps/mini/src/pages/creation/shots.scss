@@ -1,131 +1,265 @@
+// 拍摄上传素材：整体进度 + 每镜「怎么拍」指导 + 已上传缩略图 / 未上传虚线框
 .cshots {
   min-height: 100vh;
   background: var(--td-bg-color-page);
-  padding: 24rpx 24rpx 60rpx;
+  padding: 24rpx 36rpx 220rpx;
 
   &__tip {
     text-align: center;
     color: var(--td-text-color-placeholder);
-    padding: 100rpx 0;
-    font-size: 28rpx;
+    padding: 120rpx 0;
+    font-size: 26rpx;
   }
-  &__hint {
-    font-size: 24rpx;
-    color: var(--ds-bean);
-    background: var(--ds-warning-soft);
-    border: 1rpx solid #eddfc3;
-    border-radius: var(--td-radius-default);
-    padding: 20rpx 24rpx;
-    margin-bottom: 20rpx;
-    line-height: 1.6;
+
+  &__stage { margin-bottom: 24rpx; padding: 28rpx 28rpx 30rpx; border-radius: var(--td-radius-large); background: #211514; }
+  &__stage-kicker { display: block; color: #ffaaa3; font-size: 20rpx; font-weight: 700; letter-spacing: .1em; }
+  &__stage-title { display: block; margin-top: 12rpx; color: #fff; font-size: 38rpx; font-weight: 700; letter-spacing: -.025em; }
+  &__stage-desc { display: block; margin-top: 10rpx; color: rgba(255,255,255,.68); font-size: 23rpx; line-height: 1.6; }
+
+  /* ── 整体进度 ── */
+  &__progress {
+    padding: 8rpx 4rpx 28rpx;
   }
+  &__progress-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 16rpx;
+  }
+  &__progress-title {
+    font-size: 34rpx;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--td-text-color-primary);
+  }
+  &__progress-num {
+    font-size: 34rpx;
+    font-weight: 700;
+    color: var(--td-brand-color);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── 分镜卡片 ── */
   &__card {
     background: var(--td-bg-color-container);
-    border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-large);
-    padding: 28rpx;
-    margin-bottom: 18rpx;
+    padding: 30rpx;
+    margin-bottom: 22rpx;
     box-shadow: var(--ds-shadow-card);
   }
+  &__card--todo {
+    border: 2rpx solid var(--td-brand-color-light);
+  }
+
   &__head {
     display: flex;
-    gap: 16rpx;
     align-items: center;
-    margin-bottom: 14rpx;
+    gap: 20rpx;
   }
   &__seq {
-    width: 44rpx;
-    height: 44rpx;
-    line-height: 44rpx;
+    width: 48rpx;
+    height: 48rpx;
+    line-height: 48rpx;
     text-align: center;
     font-size: 24rpx;
-    font-weight: 600;
+    font-weight: 700;
     color: #fff;
     background: var(--td-brand-color);
     border-radius: 50%;
+    flex: none;
+  }
+  &__headmain {
+    flex: 1;
+    min-width: 0;
   }
   &__type {
-    font-size: 24rpx;
-    color: var(--td-text-color-secondary);
-  }
-  &__line {
-    font-size: 26rpx;
-    color: var(--td-text-color-secondary);
     display: block;
-    margin-bottom: 14rpx;
-    line-height: 1.6;
+    font-size: 30rpx;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--td-text-color-primary);
   }
-  &__prog {
-    font-size: 26rpx;
-    color: var(--td-brand-color);
+  &__chips {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10rpx;
+    margin-top: 10rpx;
   }
-  &__ok {
-    font-size: 26rpx;
-    color: var(--ds-success);
-  }
-  &__up {
-    background: var(--td-brand-color-soft);
-    color: var(--td-brand-color);
-    border: 1rpx solid var(--td-brand-color-light);
-    border-radius: 999rpx;
-    font-size: 24rpx;
-    font-weight: 500;
-  }
-  &__tipsbox {
+  &__chip {
+    font-size: 21rpx;
+    color: var(--td-text-color-secondary);
     background: var(--td-bg-color-secondary);
-    border: 1rpx solid #f3e6c8;
+    border-radius: var(--td-radius-small);
+    padding: 4rpx 14rpx;
+  }
+  &__badge {
+    flex: none;
+  }
+
+  &__line {
+    display: block;
+    margin-top: 20rpx;
+    font-size: 28rpx;
+    color: var(--td-text-color-secondary);
+    line-height: 1.7;
+  }
+  &__visual {
+    display: block;
+    margin-top: 8rpx;
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+    line-height: 1.7;
+  }
+
+  /* ── 怎么拍 ── */
+  &__tips {
+    margin-top: 22rpx;
+    padding: 22rpx 24rpx;
     border-radius: var(--td-radius-default);
-    padding: 20rpx 22rpx;
-    margin-bottom: 16rpx;
-  }
-  &__tipslabel {
-    display: inline-block;
-    font-size: 22rpx;
-    font-weight: 600;
-    color: var(--ds-warning);
-    letter-spacing: 2rpx;
-    margin-bottom: 12rpx;
-  }
-  &__tipsitem {
-    margin-bottom: 12rpx;
-    &:last-child {
-      margin-bottom: 0;
-    }
+    background: var(--td-brand-color-soft);
+    border: 1rpx solid var(--td-brand-color-light);
   }
   &__tipshead {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12rpx;
+    gap: 16rpx;
   }
-  &__tipsname {
+  &__tipslabel {
     font-size: 24rpx;
-    font-weight: 500;
-    color: var(--td-text-color-primary);
+    font-weight: 700;
+    color: var(--td-brand-color);
+    flex: 1;
+    min-width: 0;
   }
   &__demo {
-    background: var(--ds-warning-soft);
-    color: var(--ds-warning);
-    border: 1rpx solid #eddfc3;
-    border-radius: 999rpx;
-    font-size: 20rpx;
-    padding: 0 16rpx;
-    line-height: 44rpx;
+    font-size: 24rpx;
+    font-weight: 600;
+    color: var(--td-brand-color);
+    flex: none;
   }
   &__tipstext {
     display: block;
+    margin-top: 10rpx;
     font-size: 24rpx;
     color: var(--td-text-color-secondary);
-    line-height: 1.7;
-    margin-top: 6rpx;
+    line-height: 1.75;
   }
-  &__next {
-    margin-top: 12rpx;
-    background: var(--td-brand-color);
-    box-shadow: var(--ds-glow-red);
-    color: #fff;
+
+  &__uploading {
+    margin-top: 24rpx;
+  }
+
+  /* ── 已上传素材 ── */
+  &__media {
+    position: relative;
+    width: 100%;
+    height: 320rpx;
+    border-radius: var(--td-radius-default);
+    overflow: hidden;
+    background: #22242a;
+    margin-top: 24rpx;
+  }
+  &__thumb {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  &__thumbph {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  &__thumbphtext {
+    font-size: 24rpx;
+    color: rgba(255, 255, 255, 0.6);
+  }
+  &__play {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 88rpx;
+    height: 88rpx;
+    margin: -44rpx 0 0 -44rpx;
+    background: rgba(255, 255, 255, 0.92);
+    border-radius: 50%;
+    &::after {
+      content: '';
+      position: absolute;
+      left: 36rpx;
+      top: 28rpx;
+      width: 0;
+      height: 0;
+      border-left: 22rpx solid var(--td-text-color-primary);
+      border-top: 16rpx solid transparent;
+      border-bottom: 16rpx solid transparent;
+    }
+  }
+  &__dur {
+    position: absolute;
+    right: 16rpx;
+    bottom: 16rpx;
+    font-size: 22rpx;
     font-weight: 600;
-    letter-spacing: 2rpx;
-    border-radius: 999rpx;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.55);
+    border-radius: var(--td-radius-small);
+    padding: 4rpx 14rpx;
+  }
+  &__note {
+    display: block;
+    margin-top: 16rpx;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
+  /* ── 上传 / 重拍 ── */
+  &__acts {
+    margin-top: 24rpx;
+  }
+  &__btn {
+    border-radius: var(--td-radius-small);
+    font-size: 26rpx;
+    font-weight: 600;
+
+    &--ghost {
+      background: var(--td-bg-color-secondary);
+      color: var(--td-text-color-secondary);
+      border: 1rpx solid var(--td-component-stroke);
+    }
+  }
+  &__drop {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10rpx;
+    height: 200rpx;
+    border: 2rpx dashed var(--td-text-color-disabled);
+    border-radius: var(--td-radius-default);
+    background: var(--td-bg-color-container);
+    color: var(--td-brand-color);
+  }
+  &__drop-title {
+    font-size: 28rpx;
+    font-weight: 650;
+    color: var(--td-brand-color);
+  }
+  &__drop-sub {
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
+  /* ── 暂不上传 ── */
+  &__skip {
+    display: block;
+    margin-top: 16rpx;
+    text-align: center;
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
   }
 }

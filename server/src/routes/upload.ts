@@ -9,6 +9,7 @@ import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import * as uploadSvc from '../services/upload.service.js'
+import { generateVideoCover, coverKeyForVideoKey } from '../lib/thumbnail.js'
 import {
   extensionForUpload,
   isLocalStorage,
@@ -33,7 +34,12 @@ const confirmInput = z.object({
   width: z.number().int().optional(),
   height: z.number().int().optional(),
   durationMs: z.number().int().optional(),
+  /** 客户端抽帧得到的封面对象键（COS 模式无法由服务端读文件，改由客户端上报） */
+  coverKey: z.string().min(1).max(512).optional(),
+  /** 素材归属：默认 CREATION（创作素材）；门店主图/门店视频传 STORE，不进创作素材池 */
+  ownerType: z.enum(['CREATION', 'STORE', 'DISH']).optional(),
 })
+
 
 router.post('/sts', async (req, res) => {
   try {
@@ -62,11 +68,23 @@ router.post('/local', localUpload.single('file'), async (req, res) => {
       width: z.coerce.number().int().optional(),
       height: z.coerce.number().int().optional(),
       durationMs: z.coerce.number().int().optional(),
+      // 客户端若已抽好封面可直接带上；本地模式下服务端也会自己抽，二者以服务端为准
+      coverKey: z.string().max(512).optional(),
+      ownerType: z.enum(['CREATION', 'STORE', 'DISH']).optional(),
     }).parse(req.body)
     const key = `uploads/${req.merchantId!.toString()}/${Date.now()}_${randomUUID().replaceAll('-', '')}${extensionForUpload(file.originalname, input.type)}`
     finalPath = localPathForKey(key)
     await mkdir(dirname(finalPath), { recursive: true })
     await rename(file.path, finalPath)
+
+    // 视频：本地文件已在磁盘上，服务端直接抽第 1 帧作为缩略图（失败不影响上传）
+    let coverKey: string | null = input.coverKey ?? null
+    if (input.type === 'VIDEO') {
+      const generated = coverKeyForVideoKey(key)
+      const { ok: coverOk } = await generateVideoCover(finalPath, localPathForKey(generated))
+      if (coverOk) coverKey = generated
+    }
+
     const asset = await uploadSvc.confirmUpload(prisma, req.merchantId!, {
       cosKey: key,
       storeId: BigInt(input.storeId),
@@ -75,6 +93,8 @@ router.post('/local', localUpload.single('file'), async (req, res) => {
       width: input.width,
       height: input.height,
       durationMs: input.durationMs,
+      coverKey,
+      ownerType: input.ownerType,
     })
     return ok(res, asset)
   } catch (e) {

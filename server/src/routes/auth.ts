@@ -3,7 +3,7 @@ import { Router } from 'express'
 import { z } from 'zod'
 import { prisma, redis } from '../db.js'
 import { loginByPhone, loginByWechat, refresh, devLogin, WxLoginFailedError } from '../auth/auth.service.js'
-import { sendCode, SmsSendTooFrequentError, SmsDailyLimitError } from '../auth/sms.js'
+import { sendCode, SmsSendTooFrequentError, SmsDailyLimitError, SmsProviderNotConfiguredError } from '../auth/sms.js'
 import { ok, fail } from '../lib/result.js'
 
 const router = Router()
@@ -18,6 +18,10 @@ router.post('/sms/send', async (req, res) => {
   } catch (e) {
     if (e instanceof SmsSendTooFrequentError || e instanceof SmsDailyLimitError) {
       fail(res, 1003, e.message, 429)
+      return
+    }
+    if (e instanceof SmsProviderNotConfiguredError) {
+      fail(res, 1004, e.message, 503)
       return
     }
     fail(res, 1003, '发送失败', 400)

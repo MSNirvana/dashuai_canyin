@@ -1,25 +1,31 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { View, Text, Button, Slider, Video } from '@tarojs/components'
+import { View, Text, Button, Slider, Video, Image, Switch, Textarea } from '@tarojs/components'
 import Taro, { useDidShow, useDidHide } from '@tarojs/taro'
 import { getCreation, type CreationDetail } from '../../services/creation'
 import {
   submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl,
-  type RenderTask, type RenderGrade, type ColorGrade,
+  type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions, CHATCUT_VOICES,
 } from '../../services/render'
 import { useMerchantStore } from '../../store/merchant'
+import ProgressLine from '../../components/progress-line'
 import './compose.scss'
 
 const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
 const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3 }
+const DEFAULT_CHATCUT: ChatCutOptions = {
+  voiceId: 'warm-female', subtitles: true, subtitleStyle: 'CLEAN', bgm: 'LIGHT',
+  pacing: 'NATURAL', transitions: 'CLEAN', removeSilence: true, normalizeAudio: true, note: '',
+}
 const GRADE_OPTIONS = [
   { key: 'BASIC' as const, title: '基础生成', desc: '粗剪拼接 + 调色' },
-  { key: 'AI' as const, title: 'AI 生成', desc: '能力验收中，暂不可用' },
+  { key: 'AI' as const, title: 'AI 生成', desc: 'AI 配音 + 字幕' },
   { key: 'PREMIUM' as const, title: '精品生成', desc: '剪辑师人工精剪' },
 ]
 const ACTIVE_STATUS = ['QUEUED', 'RUNNING', 'MANUAL_PENDING', 'MANUAL_DOING']
 const STATUS_LABEL: Record<string, string> = {
   QUEUED: '排队中', RUNNING: '合成中', MANUAL_PENDING: '等待接单', MANUAL_DOING: '人工剪辑中',
-  SUCCESS: '已完成', FAILED: '失败', TIMEOUT: '超时', CANCELLED: '已取消', REFUND_PENDING: '退款确认中',
+  SUCCESS: '已完成', FAILED: '失败', TIMEOUT: '超时', CANCELLED: '已取消',
+  REFUND_PENDING: '退款确认中', SETTLEMENT_PENDING: '退款确认中',
 }
 
 // 仅作默认配置参考，不替代服务端实际结算。
@@ -38,6 +44,7 @@ export default function RenderCompose() {
   const [detail, setDetail] = useState<CreationDetail | null>(null)
   const [color, setColor] = useState<ColorGrade>(DEFAULT_COLOR)
   const [grade, setGrade] = useState<RenderGrade>('BASIC')
+  const [chatcut, setChatcut] = useState<ChatCutOptions>(DEFAULT_CHATCUT)
   const [renders, setRenders] = useState<RenderTask[]>([])
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [selectedResult, setSelectedResult] = useState<RenderTask | null>(null)
@@ -48,6 +55,7 @@ export default function RenderCompose() {
   const [resultError, setResultError] = useState('')
   const [pollError, setPollError] = useState('')
   const [pollRetry, setPollRetry] = useState(0)
+  const [refreshingHistory, setRefreshingHistory] = useState(false)
   const submitLock = useRef(false)
   const previewVersion = useRef(0)
   const loadVersion = useRef(0)
@@ -102,6 +110,10 @@ export default function RenderCompose() {
   useEffect(() => () => { loadVersion.current += 1; previewVersion.current += 1 }, [])
 
   useEffect(() => {
+    Taro.setNavigationBarTitle({ title: '合成成片' })
+  }, [])
+
+  useEffect(() => {
     if (!visible || !id || !pendingTask) return
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -147,6 +159,20 @@ export default function RenderCompose() {
     }
   }
 
+  const reloadHistory = async () => {
+    if (!id || refreshingHistory) return
+    setRefreshingHistory(true)
+    try {
+      const tasks = await listRenders(id)
+      setRenders([...tasks].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)))
+      setPollError('')
+    } catch (error) {
+      setPollError((error as Error).message || '任务记录刷新失败，请重试')
+    } finally {
+      setRefreshingHistory(false)
+    }
+  }
+
   const resultUrl = async () => {
     if (!selectedResult?.resultKey) throw new Error('请先选择已完成成片')
     const result = await getResultPlayUrl(selectedResult.resultKey)
@@ -173,7 +199,6 @@ export default function RenderCompose() {
   const doRender = async (mode: 'FULL' | 'RECOLOR') => {
     if (!id || !detail || submitLock.current || pendingTask) return
     if (!materialsReady) { setLoadError('请先补齐全部分镜素材'); return }
-    if (grade === 'AI') return
     submitLock.current = true
     setSubmitting(true)
     try {
@@ -194,7 +219,11 @@ export default function RenderCompose() {
         confirmText: '确认提交',
       })
       if (!confirmed.confirm) return
-      const { task } = await submitRender(id, { mode, grade, color, requestId: Date.now().toString(36) + Math.random().toString(36).slice(2, 8) })
+      const { task } = await submitRender(id, {
+        mode, grade, color,
+        chatcut: grade === 'AI' ? chatcut : undefined,
+        requestId: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+      })
       setRenders((tasks) => [task, ...tasks.filter((item) => item.id !== task.id)])
       if (task.status === 'SUCCESS') void showResult(task)
       void refreshMe().catch(() => setLoadError('任务已提交，账户刷新失败，请刷新查看'))
@@ -206,64 +235,256 @@ export default function RenderCompose() {
 
   if (!detail) return <View className='rcompose__tip'>{loadError || '加载中…'}{loadError && <Button onClick={() => void load()}>重新加载</Button>}</View>
   const cost = estimatePoints(detail.shots, grade)
+  const previewedGrade = selectedResult
+    ? GRADE_OPTIONS.find((option) => option.key === selectedResult.grade)?.title || selectedResult.grade
+    : ''
   return (
     <View className='rcompose'>
+      <View className='rcompose__stage'>
+        <Text className='rcompose__stage-kicker'>STEP 4 OF 4 · FINISH</Text>
+        <Text className='rcompose__stage-title'>把素材剪成一条能发布的视频</Text>
+        <Text className='rcompose__stage-desc'>选择生成方式，确认预计消耗后提交。失败会全额返还积分。</Text>
+      </View>
       <View className='rcompose__head'>
-        <Text className='rcompose__title'>{detail.title || '未命名创作'}</Text>
-        <Text className='rcompose__store'>{detail.store?.name}</Text>
+        <View className='rcompose__headmain'>
+          <Text className='rcompose__title'>{detail.title || '未命名创作'}</Text>
+          <Text className='rcompose__store'>{detail.store?.name}</Text>
+        </View>
+        <Text className={`rcompose__materials ${missingShots.length === 0 ? 'rcompose__materials--ok' : ''}`}>
+          素材 {detail.shots.length - missingShots.length}/{detail.shots.length} {missingShots.length === 0 ? '✓' : ''}
+        </Text>
       </View>
-      {loadError && <View className='rcompose__notice'>{loadError}<Button size='mini' onClick={() => { void load(); void refreshMe().catch(() => setLoadError('账户刷新失败')) }}>刷新</Button></View>}
+
+      {/* ── 预览 ── */}
       <View className='rcompose__preview'>
-        {videoUrl ? <Video className='rcompose__video' src={videoUrl} controls autoplay={false} onError={() => setResultError('播放失败，请重试获取地址')} /> : <View className='rcompose__placeholder'>暂无播放内容</View>}
+        {videoUrl ? (
+          <Video className='rcompose__video' src={videoUrl} controls autoplay={false} onError={() => setResultError('播放失败，请重试获取地址')} />
+        ) : (
+          <View className='rcompose__placeholder'>
+            {selectedResult ? '成片地址暂不可用，请稍后重试' : '点击下方分镜素材可预览视频'}
+          </View>
+        )}
+        {!!previewedGrade && <Text className='rcompose__preview-badge'>{previewedGrade}</Text>}
       </View>
-      {resultError && <View className='rcompose__notice'>{resultError}</View>}
-      {selectedResult && <View className='rcompose__actions'>
-        <Button size='mini' onClick={() => void showResult(selectedResult)}>重新播放</Button>
-        <Button size='mini' loading={saving} disabled={saving} onClick={saveResult}>保存到相册</Button>
-        <Button size='mini' onClick={copyDownload}>复制下载链接</Button>
-      </View>}
-      {renders.length > 0 && <View className='rcompose__sec'>
-        <Text className='rcompose__sectitle'>成片记录</Text>
-        {renders.map((task) => <View className='rcompose__history' key={task.id}>
-          <Text>{GRADE_OPTIONS.find((option) => option.key === task.grade)?.title || task.grade} · {STATUS_LABEL[task.status] || task.status}</Text>
-          <Text>{task.finishAt || task.createdAt} · {task.status === 'SUCCESS' ? '结算' : '任务积分'} {task.beanCharged} 积分</Text>
-          {task.errorMsg && <Text>{task.errorMsg}</Text>}
-          {task.status === 'SUCCESS' && <Button size='mini' onClick={() => void showResult(task)}>播放成片</Button>}
-        </View>)}
-      </View>}
-      <View className='rcompose__sec'>
-        <Text className='rcompose__sectitle'>分镜素材 · 已上传 {detail.shots.length - missingShots.length}/{detail.shots.length}</Text>
-        {!materialsReady && <View className='rcompose__notice'>
-          {detail.shots.length ? `缺少分镜 ${missingShots.map((shot) => shot.seq).join('、')} 的素材` : '尚无分镜'}
-          <Button size='mini' onClick={() => Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })}>去上传素材</Button>
-        </View>}
-        {detail.shots.map((shot) => <View className='rcompose__clip' key={shot.id}>
-          <Text>分镜 {shot.seq} · {shot.assetId ? '已上传' : '缺素材'}</Text>
-          {shot.assetId && <Button size='mini' onClick={() => void previewShot(shot.assetId!)}>预览</Button>}
-        </View>)}
-      </View>
-      <View className='rcompose__sec'>
+
+      {resultError && <View className='ds-notice rcompose__notice'>{resultError}</View>}
+
+      {selectedResult && (
+        <View className='rcompose__actions'>
+          <Button className='rcompose__action' size='mini' onClick={() => void showResult(selectedResult)}>重新播放</Button>
+          <Button className='rcompose__action' size='mini' loading={saving} disabled={saving} onClick={saveResult}>保存到相册</Button>
+          <Button className='rcompose__action' size='mini' onClick={copyDownload}>复制链接</Button>
+        </View>
+      )}
+
+      {loadError && (
+        <View className='ds-notice rcompose__notice'>
+          <Text>{loadError}</Text>
+          <Button size='mini' onClick={() => { void load(); void refreshMe().catch(() => setLoadError('账户刷新失败')) }}>刷新</Button>
+        </View>
+      )}
+
+      {/* ── 生成方式 ── */}
+      <View className='rcompose__card'>
         <Text className='rcompose__sectitle'>生成方式</Text>
         <View className='rcompose__grades'>
-          {GRADE_OPTIONS.map((option) => <View key={option.key} className={`rcompose__grade ${grade === option.key ? 'rcompose__grade--on' : ''} ${option.key === 'AI' ? 'rcompose__grade--disabled' : ''}`} onClick={() => { if (option.key !== 'AI') setGrade(option.key) }}>
-            <Text className='rcompose__gradetitle'>{option.title}</Text><Text className='rcompose__gradedesc'>{option.desc}</Text>
-          </View>)}
+          {GRADE_OPTIONS.map((option) => (
+            <View
+              key={option.key}
+              className={`rcompose__grade ${grade === option.key ? 'rcompose__grade--on' : ''}`}
+              onClick={() => setGrade(option.key)}
+            >
+              <Text className='rcompose__gradetitle'>{option.title}</Text>
+              <Text className='rcompose__gradedesc'>{option.desc}</Text>
+              <Text className='rcompose__graderatio'>{GRADE_RATIO[option.key].toFixed(1)}×</Text>
+            </View>
+          ))}
         </View>
-        <View className='rcompose__notice'>{isMember ? '已订阅' : '未订阅，生成前需开通'} · 可用 {available} 积分。参考预估按默认每秒积分与档位系数计算，实际结算以后端为准。</View>
-        {grade === 'PREMIUM' && <View className='rcompose__premiumtip'>提交后进入人工队列，可在本页查看进度与交付结果。</View>}
+        {grade === 'PREMIUM' && (
+          <View className='ds-notice ds-notice--warn rcompose__premiumtip'>提交后进入人工队列，可在本页查看进度与交付结果。</View>
+        )}
       </View>
-      {grade !== 'PREMIUM' && <View className='rcompose__sec'>
-        <Text className='rcompose__sectitle'>整片调色</Text>
-        {([['brightness', '亮度'], ['contrast', '对比度'], ['saturation', '饱和度'], ['sharpen', '锐化']] as [keyof ColorGrade, string][]).map(([axis, label]) => <View className='rcompose__slider' key={axis}>
-          <Text className='rcompose__slabel'>{label}</Text><Slider className='rcompose__sbar' min={-100} max={100} value={color[axis]} showValue activeColor='#e63946' onChange={(event: { detail: { value: number } }) => setColor((previous) => ({ ...previous, [axis]: event.detail.value }))} />
-        </View>)}
-      </View>}
-      {pendingTask && <View className='rcompose__progress'>{STATUS_LABEL[pendingTask.status]} · {pendingTask.progress}%{pendingTask.deadlineAt && ` · 预计交付 ${pendingTask.deadlineAt}`}</View>}
-      {pollError && <View className='rcompose__notice'>{pollError}<Button size='mini' onClick={() => { setPollRetry((value) => value + 1); void load() }}>重新查询</Button></View>}
-      {lastSuccess && grade === 'BASIC' && <Button className='rcompose__recolor' loading={submitting} disabled={submitting || !!pendingTask || !materialsReady} onClick={() => void doRender('RECOLOR')}>仅调色重生成（参考 {estimatePoints(detail.shots, grade, true)} 积分）</Button>}
-      <View className='rcompose__bar'>
-        <View className='rcompose__cost'><Text className='rcompose__costnum'>约 {cost}</Text><Text className='rcompose__costunit'>积分</Text><Text className='rcompose__balance'>可用 {available}</Text></View>
-        <Button className='rcompose__render' loading={submitting} disabled={submitting || !!pendingTask || !materialsReady} onClick={() => void doRender('FULL')}>{pendingTask ? '任务处理中' : lastSuccess ? '重新生成' : '生成成片'}</Button>
+
+      {grade === 'AI' && (
+        <View className='rcompose__card'>
+          <Text className='rcompose__sectitle'>AI 成片选项</Text>
+          <Text className='rcompose__fieldlabel'>选择配音</Text>
+          <View className='rcompose__voicegrid'>
+            {CHATCUT_VOICES.map((voice) => (
+              <View key={voice.id} className={`rcompose__voice ${chatcut.voiceId === voice.id ? 'rcompose__voice--on' : ''}`} onClick={() => setChatcut((value) => ({ ...value, voiceId: voice.id }))}>
+                <Text className='rcompose__voicename'>{voice.name}</Text>
+                <Text className='rcompose__voicedesc'>{voice.desc}</Text>
+              </View>
+            ))}
+          </View>
+          <View className='rcompose__optionrow'>
+            <View><Text className='rcompose__optiontitle'>显示字幕</Text><Text className='rcompose__optiondesc'>将分镜口播同步到画面</Text></View>
+            <Switch checked={chatcut.subtitles} onChange={(event) => setChatcut((value) => ({ ...value, subtitles: event.detail.value }))} color='#e1251b' />
+          </View>
+          {chatcut.subtitles && <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>字幕样式</Text><View className='rcompose__choices'>{(['CLEAN', 'EMPHASIS', 'SOCIAL'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.subtitleStyle === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, subtitleStyle: value }))}>{value === 'CLEAN' ? '简洁' : value === 'EMPHASIS' ? '重点强调' : '社交风格'}</Text>)}</View></View>}
+          <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>配乐</Text><View className='rcompose__choices'>{(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.bgm === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, bgm: value }))}>{value === 'NONE' ? '无配乐' : value === 'LIGHT' ? '轻柔' : value === 'UPBEAT' ? '活力' : '高级感'}</Text>)}</View></View>
+          <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>剪辑节奏</Text><View className='rcompose__choices'>{(['NATURAL', 'FAST', 'STORY'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.pacing === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, pacing: value }))}>{value === 'NATURAL' ? '自然' : value === 'FAST' ? '明快' : '叙事'}</Text>)}</View></View>
+          <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>转场风格</Text><View className='rcompose__choices'>{(['CLEAN', 'SMOOTH', 'DYNAMIC'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.transitions === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, transitions: value }))}>{value === 'CLEAN' ? '干净利落' : value === 'SMOOTH' ? '平滑自然' : '动感切换'}</Text>)}</View></View>
+          <View className='rcompose__optionrow'><View><Text className='rcompose__optiontitle'>清理停顿</Text><Text className='rcompose__optiondesc'>交给 ChatCut 处理语音空白</Text></View><Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' /></View>
+          <View className='rcompose__optionrow'><View><Text className='rcompose__optiontitle'>统一音量</Text><Text className='rcompose__optiondesc'>平衡配音、原声与配乐响度</Text></View><Switch checked={chatcut.normalizeAudio} onChange={(event) => setChatcut((value) => ({ ...value, normalizeAudio: event.detail.value }))} color='#e1251b' /></View>
+          <Text className='rcompose__fieldlabel'>备注与关键字</Text>
+          <Textarea className='rcompose__note' maxlength={300} placeholder='例如：突出招牌菜、适合小红书种草' value={chatcut.note} onInput={(event) => setChatcut((value) => ({ ...value, note: event.detail.value }))} />
+        </View>
+      )}
+
+      {/* ── 整片调色 ── */}
+      {grade !== 'PREMIUM' && (
+        <View className='rcompose__card'>
+          <Text className='rcompose__sectitle'>整片调色</Text>
+          {([['brightness', '亮度'], ['contrast', '对比度'], ['saturation', '饱和度'], ['sharpen', '锐化']] as [keyof ColorGrade, string][]).map(([axis, label]) => (
+            <View className='rcompose__slider' key={axis}>
+              <Text className='rcompose__slabel'>{label}</Text>
+              <Slider
+                className='rcompose__sbar'
+                min={-100}
+                max={100}
+                value={color[axis]}
+                showValue
+                activeColor='#e1251b'
+                blockSize={22}
+                onChange={(event: { detail: { value: number } }) => setColor((previous) => ({ ...previous, [axis]: event.detail.value }))}
+              />
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* ── 进行中的任务 ── */}
+      {pendingTask && (
+        <View className='rcompose__card'>
+          <ProgressLine
+            percent={pendingTask.progress}
+            label={STATUS_LABEL[pendingTask.status] || pendingTask.status}
+            hint={pendingTask.deadlineAt ? `预计交付 ${pendingTask.deadlineAt}` : '处理中，请保持页面打开'}
+          />
+        </View>
+      )}
+      {pollError && (
+        <View className='ds-notice rcompose__notice'>
+          <Text>{pollError}</Text>
+          <Button size='mini' onClick={() => { setPollRetry((value) => value + 1); void load() }}>重新查询</Button>
+        </View>
+      )}
+
+      {/* ── 成片记录 ── */}
+      {renders.length > 0 && (
+        <View className='rcompose__card'>
+          <View className='rcompose__history-heading'>
+            <Text className='rcompose__sectitle'>成片记录</Text>
+            <Button size='mini' loading={refreshingHistory} disabled={refreshingHistory} onClick={() => void reloadHistory()}>刷新</Button>
+          </View>
+          {renders.map((task) => (
+            <View className='rcompose__history' key={task.id}>
+              <View className='rcompose__history-top'>
+                <Text className='rcompose__history-title'>
+                  {GRADE_OPTIONS.find((option) => option.key === task.grade)?.title || task.grade}
+                </Text>
+                <Text
+                  className={`ds-pill ${
+                    task.status === 'SUCCESS'
+                      ? 'ds-pill--green'
+                      : task.status === 'FAILED' || task.status === 'TIMEOUT'
+                        ? 'ds-pill--red-soft'
+                        : 'ds-pill--gold'
+                  }`}
+                >
+                  {STATUS_LABEL[task.status] || task.status}
+                </Text>
+              </View>
+              <Text className='rcompose__history-meta'>
+                {task.finishAt || task.createdAt} · {task.status === 'SUCCESS' ? '结算' : '任务积分'} {task.beanCharged} 积分
+              </Text>
+              {task.errorMsg && <Text className='rcompose__history-err'>{task.errorMsg}</Text>}
+              {task.status === 'SUCCESS' && (
+                <Button className='rcompose__action' size='mini' onClick={() => void showResult(task)}>播放成片</Button>
+              )}
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* ── 分镜素材 ── */}
+      <View className='rcompose__card'>
+        <Text className='rcompose__sectitle'>分镜素材 · 已上传 {detail.shots.length - missingShots.length}/{detail.shots.length}</Text>
+        {!materialsReady && (
+          <View className='ds-notice rcompose__notice'>
+            <Text>{detail.shots.length ? `缺少分镜 ${missingShots.map((shot) => shot.seq).join('、')} 的素材` : '尚无分镜'}</Text>
+            <Button size='mini' onClick={() => Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })}>去上传素材</Button>
+          </View>
+        )}
+        {detail.shots.map((shot) => (
+          <View className='rcompose__clip' key={shot.id}>
+            {/* 缩略图：有素材则展示，无则占位 */}
+            <View className='rcompose__clipthumbwrap' onClick={() => shot.assetId && previewShot(shot.assetId!)}>
+              {shot.assetId && shot.coverUrl ? (
+                <Image className='rcompose__clipthumb' mode='aspectFill' src={shot.coverUrl} />
+              ) : (
+                <View className='rcompose__clipthumbph'>
+                  <Text className='rcompose__clipthumbno'>{String(shot.seq).padStart(2, '0')}</Text>
+                  <Text className='rcompose__clipthumbtip'>{shot.assetId ? '缩略图生成中' : '缺素材'}</Text>
+                </View>
+              )}
+              {shot.assetId && <View className='rcompose__clipplay' />}
+            </View>
+            {/* 分镜信息 */}
+            <View className='rcompose__clipinfo'>
+              <View className='rcompose__cliphead'>
+                <Text className='rcompose__clipseq'>{shot.seq}</Text>
+                <Text className='rcompose__cliptype'>{shot.shotType || '通用'}</Text>
+                {!!shot.shotSize && <Text className='rcompose__clipmeta'>{shot.shotSize}</Text>}
+                {!!shot.durationSuggest && <Text className='rcompose__clipmeta'>建议 {shot.durationSuggest}s</Text>}
+              </View>
+              {!!shot.line && <Text className='rcompose__clipline'>{shot.line}</Text>}
+              {shot.assetId ? (
+                <Button className='rcompose__action' size='mini' onClick={() => void previewShot(shot.assetId!)}>预览</Button>
+              ) : (
+                <Text className='rcompose__clipstate'>未上传</Text>
+              )}
+            </View>
+          </View>
+        ))}
+      </View>
+
+      {lastSuccess && grade === 'BASIC' && (
+        <Button
+          className='rcompose__recolor'
+          loading={submitting}
+          disabled={submitting || !!pendingTask || !materialsReady}
+          onClick={() => void doRender('RECOLOR')}
+        >
+          仅调色重生成（参考 {estimatePoints(detail.shots, grade, true)} 积分）
+        </Button>
+      )}
+
+      {/* ── 底部：积分预估 + 生成 ── */}
+      <View className='ds-footer'>
+        <View className='rcompose__bar'>
+          <View className='rcompose__cost'>
+            <View className='rcompose__costnum'>
+              <Text className='rcompose__cost-label'>约</Text>
+              <Text className='rcompose__cost-value ds-num'>{cost}</Text>
+              <Text className='rcompose__cost-unit'>积分</Text>
+            </View>
+            <Text className='rcompose__balance'>
+              可用 {available} · {isMember ? '已订阅' : '未订阅，生成前需开通'}
+            </Text>
+          </View>
+          <Button
+            className='ds-btn ds-btn--primary rcompose__render'
+            hoverClass='ds-hover'
+            loading={submitting}
+            disabled={submitting || !!pendingTask || !materialsReady}
+            onClick={() => void doRender('FULL')}
+          >
+            {pendingTask ? '任务处理中' : lastSuccess ? '重新生成' : '生成成片'}
+          </Button>
+        </View>
+        <View className='ds-footer__note'>参考预估按每秒积分与档位系数计算，按实际时长结算，失败全额返还</View>
       </View>
     </View>
   )

@@ -92,7 +92,7 @@ function guideSubscription() {
 
 interface RequestOptions<T> {
   url: string
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE'
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   data?: unknown
   header?: Record<string, string>
   /** 401 时是否自动续期后重试，默认 true */
@@ -159,6 +159,8 @@ export const http = {
     request<T>({ url, method: 'POST', data, ...opt }),
   put: <T>(url: string, data?: unknown, opt?: Partial<RequestOptions<T>>) =>
     request<T>({ url, method: 'PUT', data, ...opt }),
+  patch: <T>(url: string, data?: unknown, opt?: Partial<RequestOptions<T>>) =>
+    request<T>({ url, method: 'PATCH', data, ...opt }),
   del: <T>(url: string, data?: unknown, opt?: Partial<RequestOptions<T>>) =>
     request<T>({ url, method: 'DELETE', data, ...opt }),
 }

@@ -95,15 +95,21 @@ export default function LoginPage() {
       </View>
 
       <View className='login__panel'>
-        <Button
-          className='login__primary'
-          openType='getPhoneNumber'
-          onGetPhoneNumber={onGetPhoneNumber}
-          disabled={submitting}
-        >
-          {submitting ? '登录中…' : '微信一键登录'}
-        </Button>
-        <View className='login__tip'>授权即表示同意《用户协议》和《隐私政策》</View>
+        {devMode ? (
+          <Button className='login__primary' onClick={onDevLogin} disabled={submitting}>
+            {submitting ? '登录中…' : '进入本地开发环境'}
+          </Button>
+        ) : (
+          <Button
+            className='login__primary'
+            openType='getPhoneNumber'
+            onGetPhoneNumber={onGetPhoneNumber}
+            disabled={submitting}
+          >
+            {submitting ? '登录中…' : '微信一键登录'}
+          </Button>
+        )}
+        <View className='login__tip'>{devMode ? '当前使用本地开发账号，不触发微信手机号授权。' : <>授权即表示同意<Text className='login__link' onClick={() => void Taro.showModal({ title: '用户协议', content: '我们仅使用登录所需信息，为你提供门店管理、内容创作与成片服务。具体条款以上线版本为准。', showCancel: false })}>《用户协议》</Text>和<Text className='login__link' onClick={() => void Taro.showModal({ title: '隐私政策', content: '我们仅在提供服务所必需的范围内处理手机号、门店资料和上传素材，不会将其用于无关用途。具体政策以上线版本为准。', showCancel: false })}>《隐私政策》</Text></>}</View>
       </View>
 
       {devMode && (

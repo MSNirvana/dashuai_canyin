@@ -1,0 +1,236 @@
+.work-detail {
+  min-height: 100vh;
+  padding-bottom: 240rpx;
+  background: var(--td-bg-color-page);
+
+  &--state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--td-text-color-placeholder);
+  }
+
+  &__hero {
+    height: 460rpx;
+    background: #111114;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__video {
+    width: 100%;
+    height: 100%;
+  }
+
+  &__cover {
+    width: 100%;
+    height: 100%;
+  }
+
+  &__placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12rpx;
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 26rpx;
+  }
+
+  &__placeholder-sub {
+    font-size: 22rpx;
+    color: rgba(255, 255, 255, 0.5);
+  }
+
+  &__body {
+    margin: 24rpx 36rpx;
+    padding: 32rpx;
+    border-radius: var(--td-radius-large);
+    background: var(--td-bg-color-container);
+    box-shadow: var(--ds-shadow-card);
+  }
+
+  &__title {
+    display: block;
+    font-size: 38rpx;
+    font-weight: 700;
+    line-height: 1.4;
+    letter-spacing: -0.025em;
+  }
+
+  &__meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12rpx;
+    margin-top: 14rpx;
+  }
+
+  &__cat {
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+  }
+
+  &__tag {
+    font-size: 20rpx;
+    padding: 4rpx 14rpx;
+    border-radius: 999rpx;
+    background: var(--td-bg-color-secondary);
+    color: var(--td-text-color-secondary);
+  }
+
+  &__note {
+    margin-top: 24rpx;
+    padding: 20rpx 24rpx;
+    border-radius: var(--td-radius-default);
+    background: var(--td-brand-color-soft);
+    border: 1rpx solid var(--td-brand-color-light);
+  }
+
+  &__note-label {
+    display: block;
+    font-size: 24rpx;
+    font-weight: 600;
+    color: var(--td-brand-color);
+    margin-bottom: 8rpx;
+  }
+
+  &__note-text {
+    font-size: 26rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-secondary);
+  }
+
+  &__label {
+    display: block;
+    margin: 32rpx 0 14rpx;
+    font-size: 26rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+
+  &__rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2rpx;
+    border-radius: var(--td-radius-default);
+    overflow: hidden;
+    background: var(--td-bg-color-secondary);
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 22rpx 24rpx;
+    background: var(--td-bg-color-container);
+  }
+
+  &__row-label {
+    font-size: 26rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
+  &__row-value {
+    font-size: 28rpx;
+    color: var(--td-text-color-primary);
+    font-weight: 500;
+  }
+
+  &__shots {
+    display: flex;
+    flex-direction: column;
+    gap: 16rpx;
+    margin-top: 20rpx;
+  }
+
+  &__shot {
+    padding: 22rpx 24rpx;
+    border-radius: var(--td-radius-default);
+    background: var(--td-bg-color-secondary);
+  }
+
+  &__shot-head {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+  }
+
+  &__shot-seq {
+    width: 40rpx;
+    height: 40rpx;
+    border-radius: 50%;
+    background: var(--td-brand-color);
+    color: #fff;
+    font-size: 22rpx;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__shot-type {
+    font-size: 26rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+
+  &__chip {
+    font-size: 20rpx;
+    padding: 4rpx 12rpx;
+    border-radius: 999rpx;
+    background: var(--td-bg-color-container);
+    color: var(--td-text-color-secondary);
+  }
+
+  &__shot-req {
+    display: block;
+    margin-top: 12rpx;
+    font-size: 24rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-secondary);
+  }
+
+  &__stats {
+    display: block;
+    margin-top: 28rpx;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
+  &__footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    gap: 16rpx;
+    padding: 24rpx 36rpx calc(24rpx + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(20rpx);
+    border-top: 1rpx solid var(--td-component-border);
+  }
+
+  &__btn {
+    flex: 1;
+    height: 96rpx;
+    border-radius: var(--td-radius-default);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 30rpx;
+    font-weight: 600;
+
+    &--primary {
+      background: var(--td-brand-color);
+      color: #fff;
+    }
+
+    &--ghost {
+      background: transparent;
+      color: var(--td-text-color-primary);
+      border: 1rpx solid var(--td-component-border);
+      font-weight: 500;
+    }
+  }
+}

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Tag, Dialog, Form, Input, InputNumber, Switch, message } from 'tdesign-react'
+import { Button, Tag, Dialog, Input, InputNumber, Switch, message } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -89,7 +91,7 @@ export default function MemberPackagesPage() {
         <h2>会员套餐配置</h2>
         <Button theme="primary" onClick={startCreate}>新增套餐</Button>
       </div>
-      <Table
+      <DataTable
         rowKey="id"
         data={list}
         columns={[
@@ -118,17 +120,17 @@ export default function MemberPackagesPage() {
         onConfirm={submit}
         width={560}
       >
-        <Form labelWidth={120}>
-          <Form.FormItem label="编码"><Input value={form.code} onChange={(v) => setForm((f) => ({ ...f, code: v as string }))} placeholder="如 monthly / yearly" /></Form.FormItem>
-          <Form.FormItem label="名称"><Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="有效期(天)"><InputNumber value={form.durationDays} onChange={(v) => setForm((f) => ({ ...f, durationDays: v as number }))} min={1} /></Form.FormItem>
-          <Form.FormItem label="价格(分)"><InputNumber value={form.priceFen} onChange={(v) => setForm((f) => ({ ...f, priceFen: v as number }))} min={1} /></Form.FormItem>
-          <Form.FormItem label="赠豆数"><InputNumber value={form.grantBeans} onChange={(v) => setForm((f) => ({ ...f, grantBeans: v as number }))} min={0} /></Form.FormItem>
-          <Form.FormItem label="权益 JSON"><Input value={form.rightsJson} onChange={(v) => setForm((f) => ({ ...f, rightsJson: v as string }))} placeholder='{"uploadQuotaGb":5}' /></Form.FormItem>
-          <Form.FormItem label="角标"><Input value={form.tag ?? ''} onChange={(v) => setForm((f) => ({ ...f, tag: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="排序"><InputNumber value={form.sort} onChange={(v) => setForm((f) => ({ ...f, sort: v as number }))} /></Form.FormItem>
-          <Form.FormItem label="上架"><Switch value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Form.FormItem>
-        </Form>
+        <FieldGroup labelWidth={120}>
+          <Field label="编码"><Input value={form.code} onChange={(v) => setForm((f) => ({ ...f, code: v as string }))} placeholder="如 monthly / yearly" /></Field>
+          <Field label="名称"><Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} /></Field>
+          <Field label="有效期(天)"><InputNumber value={form.durationDays} onChange={(v) => setForm((f) => ({ ...f, durationDays: v as number }))} min={1} /></Field>
+          <Field label="价格(分)"><InputNumber value={form.priceFen} onChange={(v) => setForm((f) => ({ ...f, priceFen: v as number }))} min={1} /></Field>
+          <Field label="赠豆数"><InputNumber value={form.grantBeans} onChange={(v) => setForm((f) => ({ ...f, grantBeans: v as number }))} min={0} /></Field>
+          <Field label="权益 JSON"><Input value={form.rightsJson} onChange={(v) => setForm((f) => ({ ...f, rightsJson: v as string }))} placeholder='{"uploadQuotaGb":5}' /></Field>
+          <Field label="角标"><Input value={form.tag ?? ''} onChange={(v) => setForm((f) => ({ ...f, tag: v as string }))} /></Field>
+          <Field label="排序"><InputNumber value={form.sort} onChange={(v) => setForm((f) => ({ ...f, sort: v as number }))} /></Field>
+          <Field label="上架"><Switch value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Field>
+        </FieldGroup>
       </Dialog>
     </div>
   )

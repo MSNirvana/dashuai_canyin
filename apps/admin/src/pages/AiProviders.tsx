@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Tag, Dialog, Form, Input, InputNumber, Switch, Select, message, Space } from 'tdesign-react'
+import { Button, Tag, Dialog, Input, InputNumber, Switch, Select, message, Space } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -123,7 +125,7 @@ export default function AiProvidersPage() {
           <Button theme="primary" onClick={startCreate}>新增通道</Button>
         </Space>
       </div>
-      <Table
+      <DataTable
         rowKey="id"
         data={list}
         columns={[
@@ -162,32 +164,32 @@ export default function AiProvidersPage() {
         onConfirm={submit}
         width={600}
       >
-        <Form labelWidth={120}>
-          <Form.FormItem label="编码"><Input value={form.code} onChange={(v) => setForm((s) => ({ ...s, code: v as string }))} placeholder="如 deepseek-main" /></Form.FormItem>
-          <Form.FormItem label="名称"><Input value={form.name} onChange={(v) => setForm((s) => ({ ...s, name: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="类型">
+        <FieldGroup labelWidth={120}>
+          <Field label="编码"><Input value={form.code} onChange={(v) => setForm((s) => ({ ...s, code: v as string }))} placeholder="如 deepseek-main" /></Field>
+          <Field label="名称"><Input value={form.name} onChange={(v) => setForm((s) => ({ ...s, name: v as string }))} /></Field>
+          <Field label="类型">
             <Select value={form.providerType} onChange={(v) => setForm((s) => ({ ...s, providerType: v as string }))}
               options={['OPENAI', 'DEEPSEEK', 'ANTHROPIC', 'QWEN', 'DOUBAO', 'HUNYUAN', 'CUSTOM'].map((v) => ({ label: v, value: v }))} />
-          </Form.FormItem>
-          <Form.FormItem label="协议">
+          </Field>
+          <Field label="协议">
             <Select value={form.protocol} onChange={(v) => setForm((s) => ({ ...s, protocol: v as string }))}
               options={[{ label: 'OPENAI_COMPATIBLE', value: 'OPENAI_COMPATIBLE' }, { label: 'ANTHROPIC_NATIVE', value: 'ANTHROPIC_NATIVE' }]} />
-          </Form.FormItem>
-          <Form.FormItem label="Base URL"><Input value={form.baseUrl} onChange={(v) => setForm((s) => ({ ...s, baseUrl: v as string }))} placeholder="https://api.deepseek.com/v1" /></Form.FormItem>
-          <Form.FormItem label={editing ? '新 API Key（留空不变）' : 'API Key'}>
+          </Field>
+          <Field label="Base URL"><Input value={form.baseUrl} onChange={(v) => setForm((s) => ({ ...s, baseUrl: v as string }))} placeholder="https://api.deepseek.com/v1" /></Field>
+          <Field label={editing ? '新 API Key（留空不变）' : 'API Key'}>
             <Input
               type="password"
               value={form.apiKey}
               onChange={(v) => setForm((s) => ({ ...s, apiKey: v as string }))}
               placeholder={editing ? '不修改请留空' : 'sk-...'}
             />
-          </Form.FormItem>
-          <Form.FormItem label="优先级"><InputNumber value={form.priority} onChange={(v) => setForm((s) => ({ ...s, priority: v as number }))} min={0} /></Form.FormItem>
-          <Form.FormItem label="月预算(分)">
+          </Field>
+          <Field label="优先级"><InputNumber value={form.priority} onChange={(v) => setForm((s) => ({ ...s, priority: v as number }))} min={0} /></Field>
+          <Field label="月预算(分)">
             <InputNumber value={form.monthlyBudgetFen ?? undefined} onChange={(v) => setForm((s) => ({ ...s, monthlyBudgetFen: (v as number) ?? null }))} placeholder="不填=不限" />
-          </Form.FormItem>
-          <Form.FormItem label="启用"><Switch value={!!form.enabled} onChange={(v) => setForm((s) => ({ ...s, enabled: v as boolean }))} /></Form.FormItem>
-        </Form>
+          </Field>
+          <Field label="启用"><Switch value={!!form.enabled} onChange={(v) => setForm((s) => ({ ...s, enabled: v as boolean }))} /></Field>
+        </FieldGroup>
       </Dialog>
     </div>
   )

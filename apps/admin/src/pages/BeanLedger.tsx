@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Input, Select, Button, Dialog, Form, InputNumber, message, Space } from 'tdesign-react'
+import { Input, Select, Button, Dialog, InputNumber, message, Space } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { request } from '../lib/http'
 import dayjs from 'dayjs'
 
@@ -85,7 +87,7 @@ export default function BeanLedgerPage() {
         </Space>
       </div>
 
-      <Table
+      <DataTable
         rowKey="id"
         data={data?.list ?? []}
         loading={loading}
@@ -110,21 +112,21 @@ export default function BeanLedgerPage() {
         onConfirm={doAdjust}
         width={520}
       >
-        <Form labelWidth={120}>
-          <Form.FormItem label="商家 ID">
+        <FieldGroup labelWidth={120}>
+          <Field label="商家 ID">
             <Input value={adjust.merchantId} onChange={(v) => setAdjust((s) => ({ ...s, merchantId: v as string }))} placeholder="必填" />
-          </Form.FormItem>
-          <Form.FormItem label="金额（正数补/负数扣）">
+          </Field>
+          <Field label="金额（正数补/负数扣）">
             <InputNumber value={adjust.amount} onChange={(v) => setAdjust((s) => ({ ...s, amount: v as number }))} />
-          </Form.FormItem>
-          <Form.FormItem label="桶">
+          </Field>
+          <Field label="桶">
             <Select value={adjust.bucket} onChange={(v) => setAdjust((s) => ({ ...s, bucket: v as 'RECHARGE' | 'GRANT' }))}
               options={[{ label: '充值豆', value: 'RECHARGE' }, { label: '赠豆', value: 'GRANT' }]} />
-          </Form.FormItem>
-          <Form.FormItem label="原因">
+          </Field>
+          <Field label="原因">
             <Input value={adjust.remark} onChange={(v) => setAdjust((s) => ({ ...s, remark: v as string }))} placeholder="必填，留作审计" />
-          </Form.FormItem>
-        </Form>
+          </Field>
+        </FieldGroup>
       </Dialog>
     </div>
   )

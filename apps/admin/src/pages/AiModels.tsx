@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Tag, Dialog, Form, Input, InputNumber, Select, Switch, message } from 'tdesign-react'
+import { Button, Tag, Dialog, Input, InputNumber, Select, Switch, message } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -92,43 +94,45 @@ export default function AiModelsPage() {
         <h2>AI 模型 / 价格</h2>
         <Button theme="primary" onClick={startCreate}>新增模型</Button>
       </div>
-      <Table
+      <DataTable
         rowKey="id"
         data={list}
         columns={[
           { colKey: 'displayName', title: '显示名' },
           { colKey: 'modelCode', title: 'modelCode' },
-          { colKey: 'provider', title: '通道', width: 160, render: ({ row }: any) => `${row.provider.code} - ${row.provider.name}` },
+          // 注意：tdesign Table 渲染表头时也会调用 render，此时 row 为空，必须判空（否则整页崩）
+          { colKey: 'provider', title: '通道', width: 160, render: ({ row }: any) => (row?.provider ? `${row.provider.code} - ${row.provider.name}` : '通道') },
           { colKey: 'capability', title: '能力', width: 90 },
           { colKey: 'inputPricePerMtok', title: '输入(分/MTok)', width: 130 },
           { colKey: 'outputPricePerMtok', title: '输出(分/MTok)', width: 130 },
-          { colKey: 'enabled', title: '启用', width: 80, render: ({ row }: any) => row.enabled ? <Tag theme="success">是</Tag> : <Tag>否</Tag> },
+          { colKey: 'enabled', title: '启用', width: 80, render: ({ row }: any) => (row ? (row.enabled ? <Tag theme="success">是</Tag> : <Tag>否</Tag>) : '启用') },
           { colKey: 'op', title: '操作', width: 160, fixed: 'right',
-            render: ({ row }: any) => (
-              <>
-                <Button size="small" variant="text" onClick={() => startEdit(row)}>编辑</Button>
-                <Button size="small" variant="text" theme="danger" onClick={() => remove(row)}>删除</Button>
-              </>
-            ),
+            render: ({ row }: any) =>
+              row?.id ? (
+                <>
+                  <Button size="small" variant="text" onClick={() => startEdit(row)}>编辑</Button>
+                  <Button size="small" variant="text" theme="danger" onClick={() => remove(row)}>删除</Button>
+                </>
+              ) : null,
           },
         ]}
       />
 
       <Dialog header={editing ? '编辑模型' : '新增模型'} visible={open} onClose={() => setOpen(false)} onConfirm={submit} width={560}>
-        <Form labelWidth={120}>
-          <Form.FormItem label="通道">
+        <FieldGroup labelWidth={120}>
+          <Field label="通道">
             <Select value={form.providerId} onChange={(v) => setForm((f) => ({ ...f, providerId: v as string }))}
               options={providers.map((p) => ({ label: `${p.code} - ${p.name}`, value: p.id }))} />
-          </Form.FormItem>
-          <Form.FormItem label="Model Code"><Input value={form.modelCode} onChange={(v) => setForm((f) => ({ ...f, modelCode: v as string }))} placeholder="如 deepseek-v3" /></Form.FormItem>
-          <Form.FormItem label="显示名"><Input value={form.displayName} onChange={(v) => setForm((f) => ({ ...f, displayName: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="能力"><Input value={form.capability} onChange={(v) => setForm((f) => ({ ...f, capability: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="上下文上限(tokens)"><InputNumber value={form.maxContextTokens} onChange={(v) => setForm((f) => ({ ...f, maxContextTokens: v as number }))} min={0} /></Form.FormItem>
-          <Form.FormItem label="最大输出(tokens)"><InputNumber value={form.maxOutputTokens} onChange={(v) => setForm((f) => ({ ...f, maxOutputTokens: v as number }))} min={0} /></Form.FormItem>
-          <Form.FormItem label="输入(分/MTok)"><InputNumber value={form.inputPricePerMtok} onChange={(v) => setForm((f) => ({ ...f, inputPricePerMtok: v as number }))} min={0} /></Form.FormItem>
-          <Form.FormItem label="输出(分/MTok)"><InputNumber value={form.outputPricePerMtok} onChange={(v) => setForm((f) => ({ ...f, outputPricePerMtok: v as number }))} min={0} /></Form.FormItem>
-          <Form.FormItem label="启用"><Switch value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Form.FormItem>
-        </Form>
+          </Field>
+          <Field label="Model Code"><Input value={form.modelCode} onChange={(v) => setForm((f) => ({ ...f, modelCode: v as string }))} placeholder="如 deepseek-v3" /></Field>
+          <Field label="显示名"><Input value={form.displayName} onChange={(v) => setForm((f) => ({ ...f, displayName: v as string }))} /></Field>
+          <Field label="能力"><Input value={form.capability} onChange={(v) => setForm((f) => ({ ...f, capability: v as string }))} /></Field>
+          <Field label="上下文上限(tokens)"><InputNumber value={form.maxContextTokens} onChange={(v) => setForm((f) => ({ ...f, maxContextTokens: v as number }))} min={0} /></Field>
+          <Field label="最大输出(tokens)"><InputNumber value={form.maxOutputTokens} onChange={(v) => setForm((f) => ({ ...f, maxOutputTokens: v as number }))} min={0} /></Field>
+          <Field label="输入(分/MTok)"><InputNumber value={form.inputPricePerMtok} onChange={(v) => setForm((f) => ({ ...f, inputPricePerMtok: v as number }))} min={0} /></Field>
+          <Field label="输出(分/MTok)"><InputNumber value={form.outputPricePerMtok} onChange={(v) => setForm((f) => ({ ...f, outputPricePerMtok: v as number }))} min={0} /></Field>
+          <Field label="启用"><Switch value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Field>
+        </FieldGroup>
       </Dialog>
     </div>
   )

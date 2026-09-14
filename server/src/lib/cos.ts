@@ -59,6 +59,26 @@ export function downloadToFile(key: string, localPath: string): Promise<void> {
 }
 
 /** 上传本地文件到桶，返回字节数 */
+/** 生成对象临时签名 URL，供 ChatCut 等外部处理服务拉取私有素材。 */
+export async function signedObjectUrl(key: string, expiresSeconds = 3600): Promise<string> {
+  if (isLocalStorage()) throw new Error('ChatCut 仅支持可公网访问的 COS 素材，不能使用本地存储模式')
+  const c = getClient()
+  if (!c) throw new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）')
+  return await new Promise<string>((resolve, reject) => {
+    c.getObjectUrl({
+      Bucket: process.env.COS_BUCKET!,
+      Region: process.env.COS_REGION!,
+      Key: key,
+      Sign: true,
+      Expires: expiresSeconds,
+    }, (error, data) => {
+      if (error) return reject(error)
+      if (!data.Url) return reject(new Error('COS 未返回对象地址'))
+      resolve(data.Url)
+    })
+  })
+}
+
 export async function uploadFile(localPath: string, key: string, contentType = 'video/mp4'): Promise<number> {
   if (isLocalStorage()) return copyFileToLocalObject(localPath, key)
   const c = getClient()

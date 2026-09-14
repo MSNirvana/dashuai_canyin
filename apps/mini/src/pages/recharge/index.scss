@@ -1,68 +1,52 @@
+// 订阅与积分：余额卡 + 分段控件（订阅/加油包）+ 推荐档红描边角标 + 底部规则
 .recharge {
   min-height: 100vh;
   background: var(--td-bg-color-page);
-  padding: 24rpx 24rpx 40rpx;
+  padding: 24rpx 36rpx 60rpx;
   box-sizing: border-box;
 
+  &__confirming {
+    margin-bottom: 24rpx;
+  }
+
+  // ── 余额卡（浅底 + 红描边，去大红实心） ──
   &__balance {
-    background: var(--td-brand-color);
-    border: 1rpx solid rgba(255, 255, 255, 0.12);
-    border-radius: var(--td-radius-extra);
-    padding: 40rpx 32rpx;
-    color: #fff;
-    display: flex;
-    flex-direction: column;
-    box-shadow: var(--ds-glow-red);
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-brand-color-light);
+    border-radius: var(--td-radius-large);
+    padding: 36rpx 32rpx;
+    box-shadow: var(--ds-shadow-card);
   }
   &__balabel {
+    display: block;
     font-size: 24rpx;
-    opacity: 0.9;
-    letter-spacing: 1rpx;
+    color: var(--td-text-color-secondary);
   }
   &__banum {
-    font-size: 72rpx;
-    font-weight: 800;
-    line-height: 1.2;
-    margin-top: 8rpx;
-    letter-spacing: 1rpx;
+    display: block;
+    font-size: 68rpx;
+    font-weight: 700;
+    line-height: 1.15;
+    margin-top: 12rpx;
+    letter-spacing: -0.04em;
+    color: var(--td-text-color-primary);
+    font-variant-numeric: tabular-nums;
   }
   &__bagrant {
-    font-size: 22rpx;
-    opacity: 0.85;
-    margin-top: 4rpx;
+    display: block;
+    margin-top: 12rpx;
   }
 
   &__tabs {
-    display: flex;
-    background: var(--td-bg-color-container);
-    border: 1rpx solid var(--td-component-stroke);
-    border-radius: 999rpx;
-    margin: 28rpx 0;
-    overflow: hidden;
-    padding: 6rpx;
-    gap: 6rpx;
-  }
-  &__tab {
-    flex: 1;
-    text-align: center;
-    padding: 18rpx 0;
-    font-size: 28rpx;
-    color: var(--td-text-color-secondary);
-    border-radius: 999rpx;
-    transition: background 0.15s ease, color 0.15s ease;
-    &--on {
-      color: #fff;
-      font-weight: 700;
-      background: var(--td-brand-color);
-      box-shadow: var(--ds-glow-red);
-    }
+    margin: 24rpx 0;
   }
 
   &__list {
     display: flex;
     flex-direction: column;
-    gap: 20rpx;
+    gap: 22rpx;
   }
+
   &__empty,
   &__hint {
     text-align: center;
@@ -75,97 +59,127 @@
   }
   &__locktip {
     text-align: center;
-    color: var(--ds-bean);
+    color: var(--ds-member);
     font-size: 24rpx;
     padding: 28rpx 0;
     background: var(--ds-warning-soft);
-    border: 1rpx dashed #eddfc3;
+    border: 1rpx dashed #f0e3c8;
     border-radius: var(--td-radius-default);
     line-height: 1.6;
   }
 
+  // ── 套餐卡 ──
   &__card {
+    position: relative;
     background: var(--td-bg-color-container);
     border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-large);
-    padding: 32rpx 28rpx;
-    display: flex;
-    align-items: center;
-    position: relative;
-    overflow: hidden;
+    padding: 30rpx;
     box-shadow: var(--ds-shadow-card);
+
+    &--rec {
+      border: 2rpx solid var(--td-brand-color);
+      background: var(--td-brand-color-soft);
+    }
     &--off {
-      opacity: 0.5;
+      opacity: 0.55;
     }
   }
-  &__tag {
+  // 「最超值」角标
+  &__badge {
     position: absolute;
-    top: 0;
-    left: 0;
-    background: var(--ds-warning);
-    color: var(--td-text-color-anti);
+    top: -16rpx;
+    left: 30rpx;
+    background: var(--td-brand-color);
+    color: #fff;
     font-size: 20rpx;
-    font-weight: 600;
-    padding: 6rpx 18rpx;
-    border-radius: 0 0 20rpx 0;
-    letter-spacing: 1rpx;
+    font-weight: 700;
+    padding: 6rpx 20rpx;
+    border-radius: var(--td-radius-pill);
+    letter-spacing: 0.04em;
+  }
+  &__cardtop {
+    display: flex;
+    align-items: flex-start;
+    gap: 20rpx;
   }
   &__cardmain {
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-width: 0;
   }
-  &__beans {
-    font-size: 36rpx;
+  &__name {
+    font-size: 34rpx;
     font-weight: 700;
+    letter-spacing: -0.02em;
     color: var(--td-text-color-primary);
   }
   &__sub {
-    font-size: 22rpx;
-    color: var(--td-text-color-secondary);
-    margin-top: 8rpx;
+    font-size: 23rpx;
+    color: var(--td-text-color-placeholder);
+    margin-top: 10rpx;
+    line-height: 1.5;
   }
   &__price {
     display: flex;
     flex-direction: column;
     align-items: flex-end;
-    margin-right: 20rpx;
+    flex: none;
   }
   &__now {
-    font-size: 36rpx;
-    font-weight: 700;
+    display: flex;
+    align-items: baseline;
+    gap: 2rpx;
     color: var(--td-brand-color);
   }
-  &__origin {
-    font-size: 22rpx;
-    color: var(--td-text-color-disabled);
-    text-decoration: line-through;
+  &__cny {
+    font-size: 24rpx;
+    font-weight: 700;
   }
-  &__vip {
-    font-size: 18rpx;
-    color: var(--ds-bean);
-    margin-top: 4rpx;
+  &__num {
+    font-size: 52rpx;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    font-variant-numeric: tabular-nums;
   }
+  &__tag {
+    margin-top: 8rpx;
+    font-size: 20rpx;
+    font-weight: 600;
+    color: var(--ds-member);
+    background: var(--ds-warning-soft);
+    border: 1rpx solid #f0e3c8;
+    border-radius: var(--td-radius-pill);
+    padding: 4rpx 14rpx;
+  }
+
   &__buy {
+    width: 100%;
+    height: 88rpx;
+    margin: 26rpx 0 0;
     background: var(--td-brand-color);
     color: #fff;
-    font-size: 26rpx;
+    font-size: 30rpx;
     font-weight: 600;
-    border-radius: 999rpx;
-    margin: 0;
-    padding: 0 32rpx;
-    height: 64rpx;
-    line-height: 64rpx;
-
-    &::after {
-      border: none;
-    }
+    border-radius: var(--td-radius-default);
+    line-height: 88rpx;
+    box-shadow: var(--ds-glow-red);
+    &::after { border: none; }
+  }
+  &__buy--rec {
+    box-shadow: var(--ds-glow-red);
   }
 
   &__footer {
-    text-align: center;
-    color: var(--td-text-color-disabled);
+    margin-top: 44rpx;
+    padding: 0 4rpx;
+  }
+  &__rule {
+    display: block;
     font-size: 22rpx;
-    margin-top: 48rpx;
+    color: var(--td-text-color-placeholder);
+    line-height: 1.9;
   }
 }

@@ -2,74 +2,78 @@
   position: relative;
   min-height: 100vh;
   padding: 0 48rpx 80rpx;
-  background: linear-gradient(180deg, #fdecee 0%, #fafbfc 40%, var(--td-bg-color-page) 100%);
+  background: var(--td-bg-color-page);
   overflow: hidden;
 
   // 装饰圆
   &::before { display: none; }
   &::after { display: none; }
 
+  /* 品牌红铺满上半屏，下半屏白色卡片承载行动点 */
   &__brand {
     position: relative;
     text-align: center;
-    padding: 160rpx 0 60rpx;
+    padding: 140rpx 48rpx 90rpx;
+    margin: 0 -48rpx 48rpx;
+    background: var(--td-brand-color);
+    border-radius: 0 0 48rpx 48rpx;
   }
   &__logo {
-    width: 144rpx;
-    height: 144rpx;
+    width: 152rpx;
+    height: 152rpx;
     margin: 0 auto 32rpx;
     display: block;
-    border-radius: 36rpx;
-    box-shadow: 0 8rpx 24rpx rgba(29, 33, 41, 0.08);
-    background: var(--td-bg-color-container);
-    padding: 8rpx;
-    border: 1rpx solid var(--td-component-stroke);
+    border-radius: 40rpx;
+    box-shadow: 0 20rpx 56rpx rgba(17, 17, 20, 0.16);
+    background: #fff;
+    padding: 14rpx;
+    border: none;
   }
   &__title {
-    font-size: 40rpx;
+    font-size: 60rpx;
     font-weight: 700;
-    color: var(--td-text-color-primary);
-    letter-spacing: 2rpx;
-    margin-bottom: 12rpx;
+    color: #fff;
+    letter-spacing: -0.03em;
+    margin-bottom: 16rpx;
   }
   &__sub {
     font-size: 26rpx;
-    color: var(--td-text-color-secondary);
-    letter-spacing: 4rpx;
+    color: rgba(255, 255, 255, 0.86);
+    line-height: 1.7;
   }
   &__sub-tag {
     display: inline-block;
-    margin-top: 16rpx;
-    padding: 6rpx 18rpx;
+    margin-top: 20rpx;
+    padding: 8rpx 20rpx;
     font-size: 20rpx;
-    color: var(--ds-member);
-    background: var(--ds-warning-soft);
-    border: 1rpx solid #eddfc3;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.18);
+    border: 1rpx solid rgba(255, 255, 255, 0.28);
     border-radius: 999rpx;
-    letter-spacing: 1rpx;
+    letter-spacing: 0.04em;
   }
 
   &__panel {
     position: relative;
     background: var(--td-bg-color-container);
-    border: 1rpx solid var(--td-component-stroke);
-    border-radius: 28rpx;
+    border-radius: var(--td-radius-large);
     padding: 40rpx 32rpx 32rpx;
-    box-shadow: 0 8rpx 32rpx rgba(29, 33, 41, 0.06);
+    box-shadow: var(--ds-shadow-card);
   }
 
   &__field {
     display: flex;
     align-items: center;
     height: 96rpx;
-    padding: 0 24rpx;
+    padding: 0 26rpx;
     background: var(--td-bg-color-secondary);
-    border: 1rpx solid var(--td-component-stroke);
-    border-radius: 20rpx;
+    border: 2rpx solid transparent;
+    border-radius: var(--td-radius-default);
     margin-bottom: 20rpx;
-    transition: border-color 0.2s ease;
+    transition: border-color 0.2s ease, background 0.2s ease;
 
     &:focus-within {
+      background: var(--td-bg-color-container);
       border-color: var(--td-brand-color);
     }
   }
@@ -103,10 +107,10 @@
     background: var(--td-brand-color);
     color: #fff;
     font-size: 32rpx;
-    font-weight: 700;
+    font-weight: 600;
     border: none;
-    border-radius: 999rpx;
-    letter-spacing: 4rpx;
+    border-radius: var(--td-radius-default);
+    letter-spacing: 0;
     box-shadow: var(--ds-glow-red);
     text-align: center;
 
@@ -116,6 +120,10 @@
     &[disabled] {
       opacity: 0.5;
     }
+  }
+  &__link {
+    display: inline;
+    color: var(--td-brand-color);
   }
   &__tip {
     margin-top: 20rpx;

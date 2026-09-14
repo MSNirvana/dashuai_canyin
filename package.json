@@ -8,6 +8,8 @@
     "admin:typecheck": "cd apps/admin && npm run typecheck",
     "server:dev": "cd server && npm run dev",
     "server:typecheck": "cd server && npm run typecheck",
-    "mini:typecheck": "cd apps/mini && npm run typecheck"
+    "mini:typecheck": "cd apps/mini && npm run typecheck",
+    "mini:build:prod": "bash scripts/build-weapp-prod.sh",
+    "deploy:server": "bash deploy/deploy.sh"
   }
 }

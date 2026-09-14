@@ -1,10 +1,10 @@
-.dish-detail { min-height: 100vh; padding-bottom: 150rpx; background: var(--td-bg-color-page); }
+.dish-detail { min-height: 100vh; padding-bottom: 200rpx; background: var(--td-bg-color-page); }
 .dish-detail--state { display: flex; align-items: center; justify-content: center; color: var(--td-text-color-placeholder); }
 .dish-detail__hero { height: 460rpx; background: var(--td-bg-color-secondary); }
 .dish-detail__hero image { width: 100%; height: 100%; }
 .dish-detail__placeholder { height: 100%; display: flex; align-items: center; justify-content: center; color: var(--td-text-color-placeholder); }
-.dish-detail__body { margin: 24rpx; padding: 28rpx; border-radius: var(--td-radius-large); background: var(--td-bg-color-container); }
-.dish-detail__name { display: block; font-size: 40rpx; font-weight: 700; margin-bottom: 24rpx; }
+.dish-detail__body { margin: 24rpx 36rpx; padding: 32rpx; border-radius: var(--td-radius-large); background: var(--td-bg-color-container); box-shadow: var(--ds-shadow-card); }
+.dish-detail__name { display: block; font-size: 40rpx; font-weight: 700; letter-spacing: -0.025em; margin-bottom: 24rpx; }
 .dish-detail__section { display: flex; flex-direction: column; gap: 10rpx; margin: 20rpx 0; color: var(--td-text-color-secondary); line-height: 1.6; }
 .dish-detail__label { display: block; margin: 28rpx 0 14rpx; color: var(--td-text-color-primary); font-size: 26rpx; font-weight: 600; }
 .dish-detail__gallery { display: flex; flex-wrap: wrap; gap: 12rpx; }
@@ -12,5 +12,5 @@
 .dish-detail__videos { display: flex; flex-direction: column; gap: 18rpx; }
 .dish-detail__video video { width: 100%; height: 360rpx; border-radius: var(--td-radius-default); }
 .dish-detail__muted { color: var(--td-text-color-placeholder); font-size: 24rpx; }
-.dish-detail__footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 20rpx 32rpx calc(20rpx + env(safe-area-inset-bottom)); background: rgba(255,255,255,.94); border-top: 1rpx solid var(--td-component-border); }
-.dish-detail__footer view { height: 88rpx; border-radius: 999rpx; background: var(--td-brand-color); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 30rpx; font-weight: 600; }
+.dish-detail__footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 24rpx 36rpx calc(24rpx + env(safe-area-inset-bottom)); background: rgba(255,255,255,.96); backdrop-filter: blur(20rpx); border-top: 1rpx solid var(--td-component-border); }
+.dish-detail__footer view { height: 96rpx; border-radius: var(--td-radius-default); background: var(--td-brand-color); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 32rpx; font-weight: 600; }

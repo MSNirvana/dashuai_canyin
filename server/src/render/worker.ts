@@ -2,6 +2,9 @@
 // 与 API 服务解耦：CPU 密集的转码不在请求线程里跑，可独立进程/独立机器部署
 // 计费铁律：submitRender 只 freeze 预留；本 worker 成功才 consume，失败 unfreeze 全额释放
 import { mkdtemp, rm } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -21,9 +24,19 @@ import {
   ffmpegConcat,
   probeDurationMs,
   buildColorFilter,
+  ffmpegSupportsSubtitles,
 } from './ffmpeg.js'
 import { applyAiSynthesis, type SynthesisShot } from './synthesis.js'
 import { activeTtsProvider } from '../services/tts-provider.service.js'
+import { signedObjectUrl } from '../lib/cos.js'
+import {
+  chatCutConfigured,
+  submitChatCutJob,
+  getChatCutJob,
+  DEFAULT_CHATCUT_OPTIONS,
+  type ChatCutOptions,
+  type ChatCutJobResult,
+} from './chatcut.js'
 
 const POLL_MS = Math.max(1000, Number(process.env.FFMPEG_POLL_MS ?? 3000))
 const TASK_TIMEOUT_MS = Math.max(30_000, Number(process.env.FFMPEG_TASK_TIMEOUT_MS ?? 600_000))
@@ -37,6 +50,15 @@ export function startRenderWorker(): void {
   if (!cosReady()) {
     console.warn('[render-worker] 警告：COS 未配置，真实合成无法下载素材/上传成片（FFMPEG_WORKER=true 时务必配 COS_*）')
   }
+  // 字幕烧录依赖 ffmpeg 的 libass（subtitles 滤镜）；精简版 ffmpeg 没有，AI 档会静默降级为无字幕
+  void ffmpegSupportsSubtitles().then((ok) => {
+    if (!ok) {
+      console.warn(
+        '[render-worker] 警告：ffmpeg 未编译 libass（缺少 subtitles 滤镜），AI 档只出配音轨、不烧字幕。' +
+          'macOS：brew install ffmpeg-full 并设 FFMPEG_PATH；Linux：安装带 libass 的 ffmpeg 与 fonts-noto-cjk。',
+      )
+    }
+  })
   console.log(`[render-worker] started (poll=${POLL_MS}ms, taskTimeout=${TASK_TIMEOUT_MS}ms)`)
   void loop()
 }
@@ -64,7 +86,10 @@ async function tick(): Promise<void> {
     where: { status: 'QUEUED', grade: { not: 'PREMIUM' } },
     orderBy: { createdAt: 'asc' },
   })
-  if (!task) return
+  if (!task) {
+    await pollChatCutTasks()
+    return
+  }
 
   const claimed = await prisma.renderTask.updateMany({
     where: { id: task.id, status: 'QUEUED' },
@@ -85,13 +110,24 @@ async function tick(): Promise<void> {
 async function processTask(task: {
   id: bigint
   merchantId: bigint
+  creationId: bigint
   paramsJson: unknown
 }): Promise<void> {
   const p = (task.paramsJson ?? {}) as {
     clips?: RenderClip[]
     color?: ColorGrade
     aiMode?: boolean
+    chatcut?: ChatCutOptions
+    creationId?: string
+    title?: string
     output?: { width: number; height: number; fps: number }
+  }
+  if (p.aiMode && chatCutConfigured()) {
+    await processChatCutTask(task, p)
+    return
+  }
+  if (p.aiMode && !chatCutConfigured()) {
+    throw new Error('AI 档需要先完成 ChatCut MCP 授权和工具映射')
   }
   const clips = p.clips ?? []
   if (clips.length === 0) throw new Error('合成任务没有可用素材')
@@ -169,11 +205,11 @@ async function processTask(task: {
       }
       if (shots.length > 0) {
         const aiPath = join(dir, 'ai.mp4')
-        // 从后台读取当前生效的 TTS 供应商（真实合成尚未实现，此处仅透传配置用于后续 vendor 分支）
-        const tts = await activeTtsProvider(prisma).catch(() => null)
-        if (tts) {
-          console.log(`[render-worker] task ${task.id} 使用 TTS 供应商 ${tts.code}（真实配音尚未实现，暂静音兜底）`)
-        } else {
+      // 兼容历史 AI 任务：新 AI 任务由 ChatCut 处理；旧快照仍可走本地 TTS + 字幕。
+      const tts = await activeTtsProvider(prisma).catch(() => null)
+      if (tts) {
+        console.log(`[render-worker] task ${task.id} 使用 TTS 供应商 ${tts.code}，调用失败时按镜头静音兜底`)
+      } else {
           console.log('[render-worker] 未配置 TTS 供应商，AI 合成以「静音 + 字幕」出片')
         }
         const { subtitled } = await applyAiSynthesis(finalPath, shots, aiPath, TASK_TIMEOUT_MS, tts)
@@ -202,8 +238,129 @@ async function processTask(task: {
   }
 }
 
+async function processChatCutTask(
+  task: { id: bigint; merchantId: bigint; creationId: bigint; paramsJson: unknown },
+  params: {
+    clips?: RenderClip[]
+    chatcut?: ChatCutOptions
+    creationId?: string
+    title?: string
+    output?: { width: number; height: number; fps: number }
+  },
+): Promise<void> {
+  const clips = params.clips ?? []
+  const sourceClips = await Promise.all(clips.map(async (clip) => ({
+    shotId: clip.shotId,
+    assetId: clip.assetId,
+    sourceUrl: await signedObjectUrl(clip.cosKey, 6 * 3600),
+    trimStartMs: clip.trimStartMs,
+    trimEndMs: clip.trimEndMs,
+    durationMs: clip.durationMs,
+    line: clip.line,
+  })))
+  const result = await submitChatCutJob({
+    taskId: task.id.toString(),
+    merchantId: task.merchantId.toString(),
+    creationId: params.creationId ?? task.creationId.toString(),
+    title: params.title?.trim() || `大帅餐饮成片-${task.id.toString()}`,
+    clips: sourceClips,
+    options: params.chatcut ?? DEFAULT_CHATCUT_OPTIONS,
+    output: params.output ?? { width: 1080, height: 1920, fps: 30 },
+  })
+  await storeChatCutState(task.id, result)
+  if (result.status === 'FAILED') throw new Error(result.errorMessage || 'ChatCut 提交任务失败')
+  if (result.status === 'SUCCESS') await finishChatCutTask(task, result)
+}
+
+async function storeChatCutState(taskId: bigint, result: ChatCutJobResult): Promise<void> {
+  const task = await prisma.renderTask.findUnique({ where: { id: taskId } })
+  if (!task) return
+  const params = (task.paramsJson ?? {}) as Record<string, unknown>
+  await prisma.renderTask.update({
+    where: { id: taskId },
+    data: {
+      // 外部任务已受理后，本地固定为 RUNNING，避免下一轮 Worker 重复提交。
+      status: result.status === 'FAILED' ? 'FAILED' : 'RUNNING',
+      progress: result.status === 'RUNNING' ? 45 : result.status === 'QUEUED' ? 30 : 20,
+      paramsJson: {
+        ...params,
+        chatcutJob: {
+          externalJobId: result.externalJobId,
+          projectId: result.projectId,
+          editorUrl: result.editorUrl,
+        },
+      } as never,
+    },
+  })
+}
+
+async function pollChatCutTasks(): Promise<void> {
+  if (!chatCutConfigured()) return
+  const tasks = await prisma.renderTask.findMany({
+    where: { status: { in: ['QUEUED', 'RUNNING'] }, grade: 'AI' },
+    orderBy: { createdAt: 'asc' },
+    take: 5,
+  })
+  for (const task of tasks) {
+    const params = (task.paramsJson ?? {}) as { chatcutJob?: { externalJobId?: string } }
+    const externalJobId = params.chatcutJob?.externalJobId
+    if (!externalJobId) continue
+    try {
+      const result = await getChatCutJob(externalJobId)
+      if (result.status === 'FAILED') {
+        await failRender(prisma, task.id, 'CHATCUT_FAILED', result.errorMessage || 'ChatCut 处理失败')
+      } else if (result.status === 'SUCCESS') {
+        await finishChatCutTask(task, result)
+      } else {
+        await prisma.renderTask.update({
+          where: { id: task.id },
+          data: { status: 'RUNNING', progress: result.status === 'RUNNING' ? 60 : 30 },
+        })
+      }
+    } catch (error) {
+      console.warn(`[render-worker] ChatCut 任务 ${task.id} 查询失败:`, (error as Error).message)
+    }
+  }
+}
+
+async function finishChatCutTask(
+  task: { id: bigint; merchantId: bigint },
+  result: ChatCutJobResult,
+): Promise<void> {
+  let resultKey = result.resultKey
+  let resultSize: bigint | undefined
+  let durationMs: number | null | undefined
+  if (!resultKey) {
+    if (!result.resultUrl) throw new Error('ChatCut 已完成但未返回成片地址')
+    const dir = await mkdtemp(join(tmpdir(), 'dashuai-chatcut-'))
+    try {
+      const target = join(dir, 'result.mp4')
+      const response = await fetch(result.resultUrl, { signal: AbortSignal.timeout(TASK_TIMEOUT_MS) })
+      if (!response.ok || !response.body) throw new Error(`下载 ChatCut 成片失败：HTTP ${response.status}`)
+      await pipeline(Readable.fromWeb(response.body as never), createWriteStream(target))
+      resultKey = `renders/${task.merchantId.toString()}/${task.id.toString()}.mp4`
+      resultSize = BigInt(await uploadFile(target, resultKey, 'video/mp4'))
+      durationMs = await probeDurationMs(target)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  }
+  await prisma.$transaction((tx) => completeRender(tx, task.merchantId, task.id, {
+    resultKey: resultKey!,
+    resultSize,
+    durationMs,
+    cacheHit: false,
+  }))
+}
+
 /**
- * 中间产物缓存键：(assetId, trim 起止, 输出尺寸) → sha1
+ * 中间产物缓存版本：**归一化产出语义变化时必须递增**，否则会命中旧产物。
+ *   v1 → v2：归一化从「丢弃原声挂静音轨」改为「保留原声」，v1 缓存全是静音片段，必须失效。
+ */
+const INTERMEDIATE_CACHE_VERSION = 'v2'
+
+/**
+ * 中间产物缓存键：(缓存版本, assetId, trim 起止, 输出尺寸) → sha1
  * 不含调色参数，因此「仅改调色重合成」能命中缓存，只跑一遍调色+拼接（对应 10 豆计费）
  */
 function intermediateKey(
@@ -212,7 +369,7 @@ function intermediateKey(
   endMs: number,
   output: { width: number; height: number },
 ): string {
-  const raw = `${clip.assetId}:${startMs}:${endMs}:${output.width}x${output.height}`
+  const raw = `${INTERMEDIATE_CACHE_VERSION}:${clip.assetId}:${startMs}:${endMs}:${output.width}x${output.height}`
   return createHash('sha1').update(raw).digest('hex')
 }
 

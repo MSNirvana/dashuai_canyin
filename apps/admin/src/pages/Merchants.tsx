@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Table, Input, Select, Tag, Space, Button } from 'tdesign-react'
+import { Input, Select, Tag, Space, Button } from 'tdesign-react'
+import DataTable from '../lib/table'
 import { Link } from 'react-router-dom'
 import { request } from '../lib/http'
 import dayjs from 'dayjs'
@@ -79,7 +80,7 @@ export default function MerchantsPage() {
         </Space>
       </div>
 
-      <Table
+      <DataTable
         rowKey="id"
         data={data?.list ?? []}
         loading={loading}
@@ -108,12 +109,12 @@ export default function MerchantsPage() {
           {
             colKey: 'member', title: '会员',
             render: ({ row }: { row: MerchantRow }) => {
-              const m = row.memberships[0]
+              const m = row.memberships?.[0]
               return m ? <Tag theme="primary">{m.package.name}</Tag> : <span className="muted">非会员</span>
             },
           },
-          { colKey: 'stores', title: '门店数', width: 90, render: ({ row }: { row: MerchantRow }) => row._count.stores },
-          { colKey: 'creations', title: '创作', width: 80, render: ({ row }: { row: MerchantRow }) => row._count.creations },
+          { colKey: 'stores', title: '门店数', width: 90, render: ({ row }: { row: MerchantRow }) => row._count?.stores },
+          { colKey: 'creations', title: '创作', width: 80, render: ({ row }: { row: MerchantRow }) => row._count?.creations },
           { colKey: 'createdAt', title: '注册时间', width: 170, render: ({ row }: { row: MerchantRow }) => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm') },
           {
             colKey: 'op', title: '操作', width: 90, fixed: 'right',

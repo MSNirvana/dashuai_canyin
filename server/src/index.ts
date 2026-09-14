@@ -18,6 +18,7 @@ import payRouter from './routes/pay.js'
 import adminRouter from './routes/admin.js'
 import personaRouter from './routes/persona.js'
 import shotLibraryRouter from './routes/shot-library.js'
+import worksRouter from './routes/works.js'
 import accountRouter from './routes/account.js'
 import previewCollageRouter from './routes/preview-collage.js'
 import systemSettingsRouter from './routes/system-settings.js'
@@ -57,6 +58,8 @@ app.use('/api/v1/orders', orderRouter)
 // 本轮补全：人设（门店级，挂 stores 子路由）/ 镜头库 / 账户查询 / 免费预览 / 公开系统设置
 app.use('/api/v1/stores/:storeId/persona', personaRouter)
 app.use('/api/v1/shot-library', shotLibraryRouter)
+// 首页「优秀作品」（运营内容，只读）
+app.use('/api/v1/works', worksRouter)
 app.use('/api/v1/account', accountRouter)
 app.use('/api/v1/render', previewCollageRouter)
 // 公开（不鉴权）系统配置
@@ -112,6 +115,15 @@ async function bootstrap() {
       process.once('SIGTERM', m.stopPremiumSweeper)
     })
     .catch((e) => console.error('[premium-sweeper] 启动失败:', (e as Error).message))
+
+  // 会员到期提醒：7/3/1 天窗口内创建站内提醒，唯一键保证幂等
+  void import('./services/membership-reminder.service.js')
+    .then((m) => {
+      m.startMembershipReminderSweeper(prisma)
+      process.once('SIGINT', () => m.stopMembershipReminderSweeper())
+      process.once('SIGTERM', () => m.stopMembershipReminderSweeper())
+    })
+    .catch((e) => console.error('[membership-reminder] 启动失败:', (e as Error).message))
 
   // 机器任务卡死恢复 sweeper：worker 崩溃后 RUNNING 卡死 / QUEUED 长期无人处理的任务
   // 超时自动退款 + FAILED，常驻 API 进程不依赖 FFMPEG_WORKER（worker 独立部署挂掉也能兜底）

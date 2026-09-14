@@ -1,8 +1,13 @@
 // 管理后台 - AI 通道 / 模型 / 场景 CRUD 与联通性测试
 // 通道密钥：写入用 AES-256-GCM 加密；读出仅返回脱敏掩码
-import type { PrismaClient, Prisma } from '@prisma/client'
+//
+// ⚠ 序列化铁律：AiModel / AiScene 含 BigInt 主键与外键（id / providerId / defaultModelId / beanPrice），
+// 直接 res.json() 会抛 `TypeError: Do not know how to serialize a BigInt`，导致接口 500、后台列表全空。
+// 所有对外返回必须经过 modelView() / sceneView() 转换成「BigInt → string、Date → ISO」的纯 JSON 结构。
+import type { PrismaClient, Prisma, AiModel, AiScene } from '@prisma/client'
 import { encryptSecret, decryptSecret, maskSecret } from '../lib/secret.js'
 import { getAdapter } from '../ai/adapters.js'
+import { LIVE_SCENE_CODES } from '../ai/scene-codes.js'
 
 export class AdminAiNotFoundError extends Error {
   constructor(readonly what: string) {
@@ -281,12 +286,48 @@ export async function testAiProvider(
 
 // ──────────────────────── Model ────────────────────────
 
+export interface AiModelView {
+  id: string
+  providerId: string
+  modelCode: string
+  displayName: string
+  capability: string
+  maxContextTokens: number | null
+  maxOutputTokens: number | null
+  inputPricePerMtok: number
+  outputPricePerMtok: number
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+  provider?: { code: string; name: string }
+}
+
+/** 把 Prisma AiModel（含 BigInt / Date）转成可 JSON 序列化的视图对象 */
+export function modelView(m: AiModel & { provider?: { code: string; name: string } }): AiModelView {
+  return {
+    id: m.id.toString(),
+    providerId: m.providerId.toString(),
+    modelCode: m.modelCode,
+    displayName: m.displayName,
+    capability: m.capability,
+    maxContextTokens: m.maxContextTokens,
+    maxOutputTokens: m.maxOutputTokens,
+    inputPricePerMtok: m.inputPricePerMtok,
+    outputPricePerMtok: m.outputPricePerMtok,
+    enabled: m.enabled,
+    createdAt: m.createdAt.toISOString(),
+    updatedAt: m.updatedAt.toISOString(),
+    ...(m.provider ? { provider: { code: m.provider.code, name: m.provider.name } } : {}),
+  }
+}
+
 export async function listAiModels(prisma: PrismaClient, providerId?: bigint) {
-  return prisma.aiModel.findMany({
+  const rows = await prisma.aiModel.findMany({
     where: providerId ? { providerId } : undefined,
     orderBy: [{ providerId: 'asc' }, { modelCode: 'asc' }],
     include: { provider: { select: { code: true, name: true } } },
   })
+  return rows.map(modelView)
 }
 
 export async function upsertAiModel(
@@ -304,35 +345,22 @@ export async function upsertAiModel(
     enabled?: boolean
   },
 ) {
-  if (id) {
-    return prisma.aiModel.update({
-      where: { id },
-      data: {
-        providerId: input.providerId,
-        modelCode: input.modelCode,
-        displayName: input.displayName,
-        capability: input.capability ?? 'TEXT',
-        maxContextTokens: input.maxContextTokens ?? null,
-        maxOutputTokens: input.maxOutputTokens ?? null,
-        inputPricePerMtok: input.inputPricePerMtok,
-        outputPricePerMtok: input.outputPricePerMtok,
-        enabled: input.enabled ?? true,
-      },
-    })
+  const data = {
+    providerId: input.providerId,
+    modelCode: input.modelCode,
+    displayName: input.displayName,
+    capability: input.capability ?? 'TEXT',
+    maxContextTokens: input.maxContextTokens ?? null,
+    maxOutputTokens: input.maxOutputTokens ?? null,
+    inputPricePerMtok: input.inputPricePerMtok,
+    outputPricePerMtok: input.outputPricePerMtok,
+    enabled: input.enabled ?? true,
   }
-  return prisma.aiModel.create({
-    data: {
-      providerId: input.providerId,
-      modelCode: input.modelCode,
-      displayName: input.displayName,
-      capability: input.capability ?? 'TEXT',
-      maxContextTokens: input.maxContextTokens ?? null,
-      maxOutputTokens: input.maxOutputTokens ?? null,
-      inputPricePerMtok: input.inputPricePerMtok,
-      outputPricePerMtok: input.outputPricePerMtok,
-      enabled: input.enabled ?? true,
-    },
-  })
+  const include = { provider: { select: { code: true, name: true } } } as const
+  if (id) {
+    return modelView(await prisma.aiModel.update({ where: { id }, data, include }))
+  }
+  return modelView(await prisma.aiModel.create({ data, include }))
 }
 
 export async function removeAiModel(prisma: PrismaClient, id: bigint) {
@@ -345,8 +373,102 @@ export async function removeAiModel(prisma: PrismaClient, id: bigint) {
 
 // ──────────────────────── Scene ────────────────────────
 
+export interface AiSceneView {
+  id: string
+  code: string
+  name: string
+  promptTemplate: string
+  fallbackTemplate: string | null
+  defaultModelId: string
+  fallbackModelIds: string[]
+  beanPrice: string
+  timeoutMs: number
+  maxRetries: number
+  temperature: number | null
+  maxOutputTokens: number | null
+  enabled: boolean
+  createdAt: string
+  updatedAt: string
+  /** 代码里是否有业务调用方（true=已接入，false=待接入）；列表接口返回 */
+  hasCaller?: boolean
+  /** 历史上被调用的次数（来自 ai_call_log）；列表接口返回 */
+  callCount?: number
+  /** 附带的模型展示信息，避免前端拿裸 ID 展示（列表接口返回） */
+  defaultModel?: AiModelView | null
+  fallbackModels?: AiModelView[]
+}
+
+/** 把 Prisma AiScene（含 BigInt / Decimal / Json）转成可 JSON 序列化的视图对象 */
+export function sceneView(s: AiScene): AiSceneView {
+  return {
+    id: s.id.toString(),
+    code: s.code,
+    name: s.name,
+    promptTemplate: s.promptTemplate,
+    fallbackTemplate: s.fallbackTemplate,
+    defaultModelId: s.defaultModelId.toString(),
+    fallbackModelIds: Array.isArray(s.fallbackModelIds)
+      ? (s.fallbackModelIds as unknown[]).map((v) => String(v))
+      : [],
+    beanPrice: s.beanPrice.toString(),
+    timeoutMs: s.timeoutMs,
+    maxRetries: s.maxRetries,
+    temperature: s.temperature === null || s.temperature === undefined ? null : Number(s.temperature),
+    maxOutputTokens: s.maxOutputTokens,
+    enabled: s.enabled,
+    createdAt: s.createdAt.toISOString(),
+    updatedAt: s.updatedAt.toISOString(),
+  }
+}
+
+/** 安全地把 Json 字段里的一项转成 BigInt（非法值返回 null） */
+function toBigIntOrNull(v: unknown): bigint | null {
+  try {
+    return BigInt(v as string | number)
+  } catch {
+    return null
+  }
+}
+
 export async function listAiScenes(prisma: PrismaClient) {
-  return prisma.aiScene.findMany({ orderBy: { code: 'asc' } })
+  const rows = await prisma.aiScene.findMany({ orderBy: { code: 'asc' } })
+  // 收集所有被引用的模型 id（默认 + 备用），一次查询补齐展示信息
+  const ids = new Set<bigint>()
+  for (const s of rows) {
+    ids.add(s.defaultModelId)
+    if (Array.isArray(s.fallbackModelIds)) {
+      for (const v of s.fallbackModelIds as unknown[]) {
+        const id = toBigIntOrNull(v)
+        if (id !== null) ids.add(id)
+      }
+    }
+  }
+  const [models, callStats] = await Promise.all([
+    ids.size
+      ? prisma.aiModel.findMany({
+          where: { id: { in: [...ids] } },
+          include: { provider: { select: { code: true, name: true } } },
+        })
+      : Promise.resolve([]),
+    prisma.aiCallLog.groupBy({
+      by: ['sceneCode'],
+      _count: { sceneCode: true },
+    }),
+  ])
+  const modelMap = new Map(models.map((m) => [m.id.toString(), modelView(m)]))
+  const callMap = new Map(callStats.map((c) => [c.sceneCode, c._count.sceneCode]))
+  return rows.map((s) => {
+    const v = sceneView(s)
+    return {
+      ...v,
+      hasCaller: (LIVE_SCENE_CODES as readonly string[]).includes(s.code),
+      callCount: callMap.get(s.code) ?? 0,
+      defaultModel: modelMap.get(v.defaultModelId) ?? null,
+      fallbackModels: v.fallbackModelIds
+        .map((id) => modelMap.get(id))
+        .filter((m): m is AiModelView => m !== undefined),
+    }
+  })
 }
 
 export async function upsertAiScene(
@@ -381,8 +503,8 @@ export async function upsertAiScene(
     maxOutputTokens: input.maxOutputTokens ?? null,
     enabled: input.enabled ?? true,
   }
-  if (id) return prisma.aiScene.update({ where: { id }, data })
-  return prisma.aiScene.create({ data })
+  if (id) return sceneView(await prisma.aiScene.update({ where: { id }, data }))
+  return sceneView(await prisma.aiScene.create({ data }))
 }
 
 export async function removeAiScene(prisma: PrismaClient, id: bigint) {
@@ -414,7 +536,7 @@ export async function adminListAiCallLogs(
     ...(q.sceneCode ? { sceneCode: q.sceneCode } : {}),
     ...(q.status ? { status: q.status } : {}),
   }
-  const [list, total] = await Promise.all([
+  const [rows, total] = await Promise.all([
     prisma.aiCallLog.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -428,5 +550,60 @@ export async function adminListAiCallLogs(
     }),
     prisma.aiCallLog.count({ where }),
   ])
-  return { list, total, page, pageSize }
+  return { list: rows.map(callLogView), total, page, pageSize }
+}
+
+/** AiCallLog 含多个 BigInt 字段，必须转成 string 才能被 res.json() 序列化 */
+function callLogView(l: {
+  id: bigint
+  merchantId: bigint | null
+  sceneCode: string
+  requestId: string
+  providerId: bigint
+  modelId: bigint
+  isFallback: boolean
+  fallbackFromModelId: bigint | null
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  costFen: number
+  beanCharged: bigint
+  beanBucket: string | null
+  latencyMs: number
+  status: string
+  errorCode: string | null
+  errorMsg: string | null
+  promptSnapshot: string | null
+  responseSnapshot: string | null
+  createdAt: Date
+  merchant?: { phone: string; nickname: string | null } | null
+  provider?: { code: string; name: string }
+  model?: { modelCode: string; displayName: string }
+}) {
+  return {
+    id: l.id.toString(),
+    merchantId: l.merchantId?.toString() ?? null,
+    sceneCode: l.sceneCode,
+    requestId: l.requestId,
+    providerId: l.providerId.toString(),
+    modelId: l.modelId.toString(),
+    isFallback: l.isFallback,
+    fallbackFromModelId: l.fallbackFromModelId?.toString() ?? null,
+    promptTokens: l.promptTokens,
+    completionTokens: l.completionTokens,
+    totalTokens: l.totalTokens,
+    costFen: l.costFen,
+    beanCharged: l.beanCharged.toString(),
+    beanBucket: l.beanBucket,
+    latencyMs: l.latencyMs,
+    status: l.status,
+    errorCode: l.errorCode,
+    errorMsg: l.errorMsg,
+    promptSnapshot: l.promptSnapshot,
+    responseSnapshot: l.responseSnapshot,
+    createdAt: l.createdAt.toISOString(),
+    merchant: l.merchant ?? null,
+    provider: l.provider ?? null,
+    model: l.model ?? null,
+  }
 }

@@ -1,0 +1,19 @@
+<svg width="750" height="260" viewBox="0 0 750 260" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFF8F6"/>
+      <stop offset="1" stop-color="#FDECEA"/>
+    </linearGradient>
+    <radialGradient id="warm" cx="82%" cy="18%" r="72%">
+      <stop offset="0" stop-color="#F8B8A8" stop-opacity="0.42"/>
+      <stop offset="1" stop-color="#F8B8A8" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="750" height="260" rx="36" fill="url(#paper)"/>
+  <rect width="750" height="260" rx="36" fill="url(#warm)"/>
+  <circle cx="646" cy="58" r="58" fill="#E1251B" opacity="0.07"/>
+  <circle cx="696" cy="188" r="90" fill="#E1251B" opacity="0.045"/>
+  <path d="M58 194 C180 216 322 202 456 211" fill="none" stroke="#E1251B" stroke-width="5" stroke-linecap="round" opacity="0.2"/>
+  <path d="M60 201 C190 224 330 210 466 218" fill="none" stroke="#E1251B" stroke-width="2" stroke-linecap="round" opacity="0.13"/>
+  <text x="58" y="148" fill="#111114" font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif" font-size="46" font-weight="700" letter-spacing="1">让餐饮门店轻松拍视频！</text>
+</svg>

@@ -16,6 +16,7 @@ apps/mini/.swc/
 vite.config.ts.timestamp-*.mjs
 project.private.config.json
 .workbuddy/
+.workbuddy-ai/
 apps/mini/.npm-cache/
 apps/mini/npm-cache/
 apps/admin/.npm-cache/

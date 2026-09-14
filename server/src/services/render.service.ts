@@ -13,6 +13,7 @@ import { getCreation, CreationNotFoundError } from './creation.service.js'
 import { requireSubscription } from './subscription.service.js'
 import { getNumber } from '../lib/settings.js'
 import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } from '../domain/request.js'
+import { ChatCutOptionsSchema, DEFAULT_CHATCUT_OPTIONS, type ChatCutOptions } from '../render/chatcut.js'
 
 // 计费点数（后台可配置化见 docs/05，此处为默认值）
 export const RENDER_BEAN_FULL = 30n
@@ -83,6 +84,8 @@ export interface SubmitRenderInput {
   aiMode?: boolean
   /** 产品档位；未传时按 aiMode 推导（false→BASIC，true/缺省→AI） */
   grade?: RenderGrade
+  /** AI 档 ChatCut 编辑选项；BASIC/PREMIUM 忽略 */
+  chatcut?: Partial<ChatCutOptions>
 }
 
 export interface RenderTaskView {
@@ -107,6 +110,8 @@ export interface RenderTaskView {
   finishAt: string | null
   assignedAt: string | null
   deadlineAt: string | null
+  chatcut?: ChatCutOptions
+  chatcutJob?: { externalJobId?: string; projectId?: string; editorUrl?: string }
 }
 
 function toView(row: {
@@ -129,7 +134,14 @@ function toView(row: {
   assignedAt?: Date | null
   deadlineAt?: Date | null
 }): RenderTaskView {
-  const p = (row.paramsJson ?? {}) as { mode?: RenderMode; aiMode?: boolean; color?: ColorGrade; clips?: RenderClip[] }
+  const p = (row.paramsJson ?? {}) as {
+    mode?: RenderMode
+    aiMode?: boolean
+    color?: ColorGrade
+    clips?: RenderClip[]
+    chatcut?: ChatCutOptions
+    chatcutJob?: { externalJobId?: string; projectId?: string; editorUrl?: string }
+  }
   return {
     id: row.id.toString(),
     creationId: row.creationId.toString(),
@@ -152,6 +164,8 @@ function toView(row: {
     finishAt: row.finishAt?.toISOString() ?? null,
     assignedAt: row.assignedAt?.toISOString() ?? null,
     deadlineAt: row.deadlineAt?.toISOString() ?? null,
+    chatcut: p.chatcut,
+    chatcutJob: p.chatcutJob,
   }
 }
 
@@ -220,7 +234,8 @@ export async function submitRender(
   })
   if (shots.length === 0) throw new RenderNoAssetError()
 
-  const assetIds = shots.map((s) => s.assetId!)
+  // 多个分镜可复用同一段素材，按 id 去重后再校验归属，避免重复计数导致误判越权
+  const assetIds = [...new Set(shots.map((s) => s.assetId!))]
   const assets = await prisma.mediaAsset.findMany({
     where: { id: { in: assetIds }, merchantId, storeId: creation.storeId, deletedAt: null },
   })
@@ -250,6 +265,7 @@ export async function submitRender(
   // 档位：新客户端传 grade；旧客户端只传 aiMode → 推导（false→BASIC，其余→AI）
   const grade: RenderGrade = input.grade ?? (input.aiMode === false ? 'BASIC' : 'AI')
   const aiMode = grade !== 'BASIC' // BASIC 纯粗剪；AI/PREMIUM 含配音字幕管线（PREMIUM 由人工执行）
+  const chatcut = ChatCutOptionsSchema.parse({ ...DEFAULT_CHATCUT_OPTIONS, ...(input.chatcut ?? {}) })
 
   // 计费时长 = 各分镜有效时长之和；任一分镜时长未知则拒绝（无法正确计价会少扣豆）
   let totalMs = 0
@@ -259,7 +275,7 @@ export async function submitRender(
     totalMs += dur
   }
 
-  const requestPayload = { creationId: creationId.toString(), mode, color, grade, aiMode, clips }
+  const requestPayload = { creationId: creationId.toString(), mode, color, grade, aiMode, clips, chatcut }
   // 创建任务 + 并发拦截 + 业务请求占用 + freeze 放在同一事务并对创作行加锁：
   // 防止两个并发请求同时通过「无进行中任务」检查、创建出两个任务双重扣豆
   const pointPerSec = await getNumber(prisma, 'render', 'point_per_sec', 1)
@@ -303,7 +319,16 @@ export async function submitRender(
         grade,
         beanCharged: amount, // 计划扣豆额：演示模式立即结算，真实模式由 worker / 人工交付结算
         deadlineAt,
-        paramsJson: { mode, aiMode, color, output: { width: 1080, height: 1920, fps: 30 }, clips } as unknown as Prisma.InputJsonValue,
+        paramsJson: {
+          mode,
+          aiMode,
+          color,
+          chatcut,
+          creationId: creationId.toString(),
+          title: creation.title ?? `大帅餐饮成片-${creationId.toString()}`,
+          output: { width: 1080, height: 1920, fps: 30 },
+          clips,
+        } as unknown as Prisma.InputJsonValue,
         requestId: reqId,
       },
     })

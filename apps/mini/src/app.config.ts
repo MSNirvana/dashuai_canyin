@@ -4,6 +4,7 @@ export default defineAppConfig({
     'pages/home/index',
     'pages/store/list',
     'pages/store/edit',
+    'pages/store/detail',
     'pages/dish/list',
     'pages/dish/edit',
     'pages/dish/detail',
@@ -12,6 +13,7 @@ export default defineAppConfig({
     'pages/creation/edit',
     'pages/creation/shots',
     'pages/render/compose',
+    'pages/work/detail',
     'pages/recharge/index',
     'pages/mine/index',
   ],
@@ -36,9 +38,10 @@ export default defineAppConfig({
   },
 
   // 底部导航栏（白底 + 品牌红选中态）
+  // 色值与 src/styles/theme.scss 的品牌红 #e1251b / 占位灰 #8e939a 保持一致
   tabBar: {
-    color: '#9a9ea5',
-    selectedColor: '#e63946',
+    color: '#8e939a',
+    selectedColor: '#e1251b',
     backgroundColor: '#ffffff',
     borderStyle: 'white',
     list: [

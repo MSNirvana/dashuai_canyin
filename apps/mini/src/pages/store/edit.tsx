@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { View, Text, Input, Textarea, Switch, Picker, Image } from '@tarojs/components'
+import { View, Text, Input, Textarea, Switch, Picker, Image, Video } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import { useRouter } from '@tarojs/taro'
-import { createStore, updateStore, getStore, getStoreCoverUrl, type StoreInput, type StoreItem } from '../../services/store'
+import { createStore, updateStore, getStore, getStoreMediaUrl, type StoreInput, type StoreItem } from '../../services/store'
 import { uploadMediaFile } from '../../services/upload'
 import { cityOptions, districtOptions, provinceOptions, resolveAreaNames } from '../../services/area'
+import { useMerchantStore } from '../../store/merchant'
 import './edit.scss'
 
 interface FormState {
@@ -17,6 +18,8 @@ interface FormState {
   contact: string
   isDefault: boolean
   coverKey: string
+  intro: string
+  videoKey: string
 }
 
 const EMPTY: FormState = {
@@ -29,16 +32,22 @@ const EMPTY: FormState = {
   contact: '',
   isDefault: false,
   coverKey: '',
+  intro: '',
+  videoKey: '',
 }
 
 export default function StoreEditPage() {
   const router = useRouter()
   const id = router.params.id
+  const loadStores = useMerchantStore((s) => s.loadStores)
   const [form, setForm] = useState<FormState>(EMPTY)
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
   const [pendingImage, setPendingImage] = useState<{ path: string; size: number } | null>(null)
   const [coverPreview, setCoverPreview] = useState('')
+  const [pendingVideo, setPendingVideo] = useState<{ path: string; size: number; durationMs?: number; thumb?: string } | null>(null)
+  const [videoPreview, setVideoPreview] = useState('')
+  const [uploadingVideo, setUploadingVideo] = useState(false)
 
   useEffect(() => {
     if (!id) {
@@ -58,9 +67,14 @@ export default function StoreEditPage() {
           contact: s.contact ?? '',
           isDefault: s.isDefault,
           coverKey: s.coverKey ?? '',
+          intro: s.intro ?? '',
+          videoKey: s.videoKey ?? '',
         })
         if (s.coverKey) {
-          getStoreCoverUrl(s.coverKey).then((r) => setCoverPreview(r.url ?? '')).catch(() => undefined)
+          getStoreMediaUrl(s.coverKey).then((r) => setCoverPreview(r.url ?? '')).catch(() => undefined)
+        }
+        if (s.videoKey) {
+          getStoreMediaUrl(s.videoKey).then((r) => setVideoPreview(r.url ?? '')).catch(() => undefined)
         }
       })
       .catch(() => {
@@ -100,8 +114,38 @@ export default function StoreEditPage() {
     set('coverKey', '')
   }
 
+  const pickVideo = async () => {
+    if (saving || uploadingVideo) return
+    try {
+      const r = await Taro.chooseMedia({
+        count: 1,
+        mediaType: ['video'],
+        sourceType: ['album', 'camera'],
+        maxDuration: 60,
+      })
+      const file = r.tempFiles[0]
+      if (!file) return
+      setPendingVideo({
+        path: file.tempFilePath,
+        size: file.size,
+        durationMs: file.duration ? Math.round(file.duration * 1000) : undefined,
+        thumb: file.thumbTempFilePath,
+      })
+      setVideoPreview(file.tempFilePath)
+      set('videoKey', '')
+    } catch {
+      // 用户取消选择时不提示错误
+    }
+  }
+
+  const removeVideo = () => {
+    setPendingVideo(null)
+    setVideoPreview('')
+    set('videoKey', '')
+  }
+
   const onSubmit = async () => {
-    if (saving) return
+    if (saving || uploadingVideo) return
     if (!form.name.trim()) {
       Taro.showToast({ title: '请填写门店名称', icon: 'none' })
       return
@@ -109,6 +153,7 @@ export default function StoreEditPage() {
     setSaving(true)
     let storeId = id
     let uploadedCoverKey = form.coverKey || null
+    let uploadedVideoKey = form.videoKey || null
     try {
       const basePayload: StoreInput = {
         name: form.name.trim(),
@@ -118,23 +163,58 @@ export default function StoreEditPage() {
         district: form.district || undefined,
         address: form.address || undefined,
         contact: form.contact || undefined,
+        intro: form.intro.trim() || null,
         isDefault: form.isDefault || undefined,
       }
       if (storeId) {
         if (pendingImage) {
-          const asset = await uploadMediaFile({ filePath: pendingImage.path, storeId, type: 'IMAGE', sizeBytes: pendingImage.size })
+          const asset = await uploadMediaFile({ filePath: pendingImage.path, storeId, type: 'IMAGE', sizeBytes: pendingImage.size, ownerType: 'STORE' })
           uploadedCoverKey = asset.cosKey
         }
-        await updateStore(storeId, { ...basePayload, coverKey: uploadedCoverKey })
+        if (pendingVideo) {
+          setUploadingVideo(true)
+          const asset = await uploadMediaFile({
+            filePath: pendingVideo.path,
+            storeId,
+            type: 'VIDEO',
+            sizeBytes: pendingVideo.size,
+            durationMs: pendingVideo.durationMs,
+            thumbFilePath: pendingVideo.thumb,
+            ownerType: 'STORE',
+          })
+          setUploadingVideo(false)
+          uploadedVideoKey = asset.cosKey
+        }
+        await updateStore(storeId, { ...basePayload, coverKey: uploadedCoverKey, videoKey: uploadedVideoKey })
       } else {
         const created = await createStore(basePayload)
         storeId = created.id
+        const patch: StoreInput = { ...basePayload }
         if (pendingImage) {
-          const asset = await uploadMediaFile({ filePath: pendingImage.path, storeId, type: 'IMAGE', sizeBytes: pendingImage.size })
-          await updateStore(storeId, { ...basePayload, coverKey: asset.cosKey })
+          const asset = await uploadMediaFile({ filePath: pendingImage.path, storeId, type: 'IMAGE', sizeBytes: pendingImage.size, ownerType: 'STORE' })
+          patch.coverKey = asset.cosKey
+        }
+        if (pendingVideo) {
+          setUploadingVideo(true)
+          const asset = await uploadMediaFile({
+            filePath: pendingVideo.path,
+            storeId,
+            type: 'VIDEO',
+            sizeBytes: pendingVideo.size,
+            durationMs: pendingVideo.durationMs,
+            thumbFilePath: pendingVideo.thumb,
+            ownerType: 'STORE',
+          })
+          setUploadingVideo(false)
+          patch.videoKey = asset.cosKey
+        }
+        if (patch.coverKey !== undefined || patch.videoKey !== undefined) {
+          await updateStore(storeId, patch)
         }
       }
       Taro.showToast({ title: '已保存', icon: 'success' })
+      // 刷新全局门店缓存：切换器/各页立即看到新门店或新名称
+      await loadStores(true).catch(() => undefined)
       Taro.navigateBack()
     } catch {
       if (!id && storeId) {
@@ -144,6 +224,7 @@ export default function StoreEditPage() {
       else Taro.showToast({ title: '保存失败，请重试', icon: 'none' })
     } finally {
       setSaving(false)
+      setUploadingVideo(false)
     }
   }
 
@@ -167,6 +248,24 @@ export default function StoreEditPage() {
               <Text>上传门店主图</Text>
             </View>
           )}
+        </View>
+
+        <View className='field'>
+          <Text className='field__label'>门店视频</Text>
+          {videoPreview ? (
+            <View className='store-video'>
+              <Video className='store-video__player' src={videoPreview} controls showCenterPlayBtn={false} />
+              <View className='store-video__actions'>
+                <View className='store-video__action' onClick={pickVideo}>更换</View>
+                <View className='store-video__action store-video__action--danger' onClick={removeVideo}>删除</View>
+              </View>
+            </View>
+          ) : (
+            <View className='store-video store-video--empty' onClick={pickVideo}>
+              <Text>{uploadingVideo ? '上传中…' : '上传门店视频（选填）'}</Text>
+            </View>
+          )}
+          <Text className='field__hint'>用于门店详情页展示，最长 60 秒，不会混入创作素材</Text>
         </View>
 
         <View className='field'>
@@ -239,14 +338,26 @@ export default function StoreEditPage() {
           <Input className='field__input' placeholder='顾客可联系的电话' value={form.contact} onInput={(e) => set('contact', e.detail.value)} maxlength={64} />
         </View>
 
+        <View className='field'>
+          <Text className='field__label'>门店介绍</Text>
+          <Textarea
+            className='field__textarea'
+            placeholder='一两句话说明门店特色，如：开了 12 年的社区烧烤店，招牌是炭烤羊排（可换行）'
+            value={form.intro}
+            onInput={(e) => set('intro', e.detail.value)}
+            maxlength={500}
+            autoHeight
+          />
+        </View>
+
         <View className='field field--switch'>
           <Text className='field__label'>设为默认门店</Text>
-          <Switch checked={form.isDefault} onChange={(e) => set('isDefault', e.detail.value)} color='#e63946' />
+          <Switch checked={form.isDefault} onChange={(e) => set('isDefault', e.detail.value)} color='#e1251b' />
         </View>
       </View>
 
       <View className='store-edit__footer'>
-        <View className={`store-edit__save ${saving ? 'store-edit__save--disabled' : ''}`} onClick={onSubmit}>
+        <View className={`store-edit__save ${saving || uploadingVideo ? 'store-edit__save--disabled' : ''}`} onClick={onSubmit}>
           <Text>{id ? '保存修改' : '创建门店'}</Text>
         </View>
       </View>

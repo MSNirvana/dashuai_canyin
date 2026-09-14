@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Tag, Dialog, Form, Input, InputNumber, Select, Switch, message } from 'tdesign-react'
+import { Button, Tag, Dialog, Input, InputNumber, Select, Switch, message } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -69,7 +71,7 @@ export default function ShotLibraryPage() {
         <h2>镜头库（拍摄手法）</h2>
         <Button theme="primary" onClick={startCreate}>新增</Button>
       </div>
-      <Table
+      <DataTable
         rowKey="id"
         data={list}
         columns={[
@@ -92,18 +94,18 @@ export default function ShotLibraryPage() {
       />
 
       <Dialog header={editing ? '编辑镜头' : '新增镜头'} visible={open} onClose={() => setOpen(false)} onConfirm={submit} width={600}>
-        <Form labelWidth={120}>
-          <Form.FormItem label="编码"><Input value={form.code} onChange={(v) => setForm((f) => ({ ...f, code: v as string }))} placeholder="如 food_steam_closeup" /></Form.FormItem>
-          <Form.FormItem label="名称"><Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="分类">
+        <FieldGroup labelWidth={120}>
+          <Field label="编码"><Input value={form.code} onChange={(v) => setForm((f) => ({ ...f, code: v as string }))} placeholder="如 food_steam_closeup" /></Field>
+          <Field label="名称"><Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} /></Field>
+          <Field label="分类">
             <Select value={form.category} onChange={(v) => setForm((f) => ({ ...f, category: v as string }))} options={CATEGORIES.map((c) => ({ label: c, value: c }))} />
-          </Form.FormItem>
-          <Form.FormItem label="拍摄要点"><Input value={form.tips ?? ''} onChange={(v) => setForm((f) => ({ ...f, tips: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="示范视频 Key"><Input value={form.demoVideoKey ?? ''} onChange={(v) => setForm((f) => ({ ...f, demoVideoKey: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="示范封面 Key"><Input value={form.demoCoverKey ?? ''} onChange={(v) => setForm((f) => ({ ...f, demoCoverKey: v as string }))} /></Form.FormItem>
-          <Form.FormItem label="排序"><InputNumber value={form.sort} onChange={(v) => setForm((f) => ({ ...f, sort: v as number }))} /></Form.FormItem>
-          <Form.FormItem label="启用"><Switch value={!!form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Form.FormItem>
-        </Form>
+          </Field>
+          <Field label="拍摄要点"><Input value={form.tips ?? ''} onChange={(v) => setForm((f) => ({ ...f, tips: v as string }))} /></Field>
+          <Field label="示范视频 Key"><Input value={form.demoVideoKey ?? ''} onChange={(v) => setForm((f) => ({ ...f, demoVideoKey: v as string }))} /></Field>
+          <Field label="示范封面 Key"><Input value={form.demoCoverKey ?? ''} onChange={(v) => setForm((f) => ({ ...f, demoCoverKey: v as string }))} /></Field>
+          <Field label="排序"><InputNumber value={form.sort} onChange={(v) => setForm((f) => ({ ...f, sort: v as number }))} /></Field>
+          <Field label="启用"><Switch value={!!form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Field>
+        </FieldGroup>
       </Dialog>
     </div>
   )

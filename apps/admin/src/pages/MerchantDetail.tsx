@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
-import { Card, Descriptions, Table, Tag, Button, message } from 'tdesign-react'
+import { Card, Descriptions, Tag, Button, message } from 'tdesign-react'
+import DataTable from '../lib/table'
 import { request } from '../lib/http'
 import dayjs from 'dayjs'
 
@@ -109,7 +110,7 @@ export default function MerchantDetailPage() {
       </Card>
 
       <Card title={`门店 (${data.stores.length})`} style={{ marginBottom: 16 }}>
-        <Table
+        <DataTable
           rowKey="id"
           data={data.stores}
           columns={[
@@ -121,7 +122,7 @@ export default function MerchantDetailPage() {
       </Card>
 
       <Card title="最近流水（50 条）" style={{ marginBottom: 16 }}>
-        <Table
+        <DataTable
           rowKey="id"
           data={data.ledgers}
           columns={[
@@ -135,7 +136,7 @@ export default function MerchantDetailPage() {
       </Card>
 
       <Card title="最近订单（20 条）">
-        <Table
+        <DataTable
           rowKey="id"
           data={data.orders}
           columns={[

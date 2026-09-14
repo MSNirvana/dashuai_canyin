@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Button, Tag, Dialog, Form, Input, InputNumber, Switch, message } from 'tdesign-react'
+import { Button, Tag, Dialog, Input, InputNumber, Switch, message } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -96,7 +98,7 @@ export default function BeanPackagesPage() {
         <h2>加油包配置</h2>
         <Button theme="primary" onClick={startCreate}>新增加油包</Button>
       </div>
-      <Table
+      <DataTable
         rowKey="id"
         data={list}
         columns={[
@@ -125,32 +127,32 @@ export default function BeanPackagesPage() {
         onConfirm={submit}
         width={560}
       >
-        <Form labelWidth={120}>
-          <Form.FormItem label="名称">
+        <FieldGroup labelWidth={120}>
+          <Field label="名称">
             <Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} />
-          </Form.FormItem>
-          <Form.FormItem label="基础豆数">
+          </Field>
+          <Field label="基础豆数">
             <InputNumber value={form.beans} onChange={(v) => setForm((f) => ({ ...f, beans: v as number }))} min={0} />
-          </Form.FormItem>
-          <Form.FormItem label="赠送豆数">
+          </Field>
+          <Field label="赠送豆数">
             <InputNumber value={form.bonusBeans} onChange={(v) => setForm((f) => ({ ...f, bonusBeans: v as number }))} min={0} />
-          </Form.FormItem>
-          <Form.FormItem label="原价（分）">
+          </Field>
+          <Field label="原价（分）">
             <InputNumber value={form.priceFen} onChange={(v) => setForm((f) => ({ ...f, priceFen: v as number }))} min={1} />
-          </Form.FormItem>
-          <Form.FormItem label="会员价（分）">
+          </Field>
+          <Field label="会员价（分）">
             <InputNumber value={form.memberPriceFen} onChange={(v) => setForm((f) => ({ ...f, memberPriceFen: v as number }))} min={1} />
-          </Form.FormItem>
-          <Form.FormItem label="角标">
+          </Field>
+          <Field label="角标">
             <Input value={form.tag ?? ''} onChange={(v) => setForm((f) => ({ ...f, tag: v as string }))} placeholder="如「热卖」「超值」" />
-          </Form.FormItem>
-          <Form.FormItem label="排序">
+          </Field>
+          <Field label="排序">
             <InputNumber value={form.sort} onChange={(v) => setForm((f) => ({ ...f, sort: v as number }))} />
-          </Form.FormItem>
-          <Form.FormItem label="上架">
+          </Field>
+          <Field label="上架">
             <Switch value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} />
-          </Form.FormItem>
-        </Form>
+          </Field>
+        </FieldGroup>
       </Dialog>
     </div>
   )

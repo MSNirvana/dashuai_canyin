@@ -1,0 +1,1766 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="c3qPaVZ8oGGRYrGrAZPj5X">
+<head data-page-node-id="SskQtnUxrdsHn4fsqEwwab">
+<meta charset="UTF-8" data-page-node-id="oO1QWzB9IvqiGpS7jiWxqI">
+<meta name="viewport" content="width=device-width, initial-scale=1.0" data-page-node-id="zemA5QKZe9pr9rONDz7dFR">
+<title>大帅餐饮 · 小程序 UI 设计方案 v1</title>
+<style>
+/* ============================================================
+   大帅餐饮 · UI 设计方案
+   设计语言：Logo 红单点强调 + 白底灰阶层次 + iOS 式留白与克制
+   ============================================================ */
+:root{
+  /* —— 品牌色（取自 Logo 主红 #D02018，屏幕增艳至 #E1251B） —— */
+  --red:#E1251B;
+  --red-hover:#F03A30;
+  --red-press:#C21B12;
+  --red-light:#FDECEA;
+  --red-soft:#FEF6F5;
+  --red-ring:rgba(225,37,27,.16);
+
+  /* —— 中性色阶（去暖调，近 iOS System Gray） —— */
+  --ink:#111114;
+  --ink-2:#5C6066;
+  --ink-3:#8E939A;
+  --ink-4:#BFC3C9;
+  --line:#EDEEF0;
+  --line-2:#F4F5F6;
+
+  /* —— 背景层次 —— */
+  --bg:#F5F6F8;
+  --card:#FFFFFF;
+  --fill:#F2F3F5;
+
+  /* —— 语义色 —— */
+  --amber:#C4892C;
+  --amber-bg:#FBF4E7;
+  --amber-deep:#A8741F;
+  --green:#2BA471;
+  --green-bg:#EAF7F1;
+
+  /* —— 圆角 —— */
+  --r-xs:6px; --r-sm:10px; --r-md:14px; --r-lg:18px; --r-xl:24px; --r-pill:999px;
+
+  /* —— 阴影（极轻，只做层次） —— */
+  --sh-1:0 1px 2px rgba(17,17,20,.04);
+  --sh-2:0 1px 3px rgba(17,17,20,.04), 0 8px 24px rgba(17,17,20,.05);
+  --sh-3:0 12px 40px rgba(17,17,20,.10);
+  --sh-red:0 6px 18px rgba(225,37,27,.22);
+}
+
+*{box-sizing:border-box;-webkit-font-smoothing:antialiased;}
+html,body{margin:0;padding:0;}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,"SF Pro SC","PingFang SC","Helvetica Neue",Arial,sans-serif;
+  background:var(--bg); color:var(--ink); line-height:1.5;
+  letter-spacing:-.005em;
+}
+img{display:block;}
+
+/* ---------- 页面骨架 ---------- */
+.wrap{max-width:1340px;margin:0 auto;padding:0 32px 120px;}
+
+/* ---------- 顶部 Hero ---------- */
+.hero{
+  background:#fff;border-bottom:1px solid var(--line);
+  padding:64px 0 56px;margin-bottom:56px;
+}
+.hero__inner{max-width:1340px;margin:0 auto;padding:0 32px;}
+.hero__brand{display:flex;align-items:center;gap:14px;margin-bottom:28px;}
+.hero__logo{width:52px;height:52px;border-radius:13px;object-fit:cover;box-shadow:var(--sh-1);}
+.hero__brandname{font-size:17px;font-weight:600;letter-spacing:.02em;}
+.hero__brandsub{font-size:13px;color:var(--ink-3);margin-top:1px;}
+.hero__title{font-size:46px;font-weight:700;letter-spacing:-.03em;line-height:1.12;margin:0 0 16px;}
+.hero__title em{font-style:normal;color:var(--red);}
+.hero__desc{font-size:16px;color:var(--ink-2);max-width:640px;line-height:1.65;margin:0;}
+.hero__meta{display:flex;flex-wrap:wrap;gap:10px;margin-top:28px;}
+.chip{
+  display:inline-flex;align-items:center;gap:6px;
+  font-size:13px;font-weight:500;color:var(--ink-2);
+  background:var(--fill);border-radius:var(--r-pill);padding:7px 14px;
+}
+.chip--red{background:var(--red-light);color:var(--red);}
+.chip__dot{width:6px;height:6px;border-radius:50%;background:var(--red);}
+
+/* ---------- 章节 ---------- */
+.sec{margin-bottom:72px;}
+.sec__eyebrow{
+  font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--red);margin-bottom:10px;
+}
+.sec__title{font-size:30px;font-weight:700;letter-spacing:-.025em;margin:0 0 10px;}
+.sec__desc{font-size:15px;color:var(--ink-2);max-width:720px;margin:0 0 32px;line-height:1.7;}
+
+/* ---------- 设计原则 ---------- */
+.principles{display:grid;grid-template-columns:repeat(4,1fr);gap:18px;}
+.pcard{
+  background:#fff;border-radius:var(--r-lg);padding:26px 24px;border:1px solid var(--line);
+  box-shadow:var(--sh-1);
+}
+.pcard__no{font-size:12px;font-weight:700;color:var(--red);letter-spacing:.1em;margin-bottom:16px;}
+.pcard__t{font-size:17px;font-weight:650;margin:0 0 8px;letter-spacing:-.01em;}
+.pcard__d{font-size:13.5px;color:var(--ink-2);line-height:1.65;margin:0;}
+
+/* ---------- 色板 ---------- */
+.swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;}
+.sw{border-radius:var(--r-md);overflow:hidden;border:1px solid var(--line);background:#fff;}
+.sw__c{height:88px;display:flex;align-items:flex-end;padding:10px;}
+.sw__c span{font-size:11px;font-weight:600;color:#fff;mix-blend-mode:normal;opacity:.9;}
+.sw__m{padding:10px 12px 12px;}
+.sw__n{font-size:12.5px;font-weight:600;}
+.sw__h{font-size:11px;color:var(--ink-3);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:2px;}
+.sw__u{font-size:10.5px;color:var(--ink-4);margin-top:4px;}
+
+/* ---------- 字阶 ---------- */
+.type{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;}
+.trow{display:flex;align-items:baseline;gap:24px;padding:18px 26px;border-bottom:1px solid var(--line-2);}
+.trow:last-child{border-bottom:none;}
+.trow__meta{width:200px;flex:none;}
+.trow__name{font-size:13px;font-weight:600;}
+.trow__spec{font-size:11px;color:var(--ink-3);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin-top:3px;}
+.trow__demo{flex:1;letter-spacing:-.02em;}
+
+/* ---------- 组件规范 ---------- */
+.comps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;}
+.comp{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);padding:24px;}
+.comp__t{font-size:14px;font-weight:650;margin:0 0 4px;}
+.comp__d{font-size:12.5px;color:var(--ink-3);margin:0 0 20px;line-height:1.6;}
+.comp__demo{display:flex;flex-wrap:wrap;gap:12px;align-items:center;}
+
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+  border:none;cursor:default;font-family:inherit;
+  font-size:16px;font-weight:600;letter-spacing:-.01em;
+  border-radius:var(--r-md);padding:13px 22px;transition:none;
+}
+.btn--pri{background:var(--red);color:#fff;box-shadow:var(--sh-red);}
+.btn--sec{background:var(--red-light);color:var(--red);}
+.btn--ghost{background:#fff;color:var(--ink);border:1px solid var(--line);}
+.btn--gray{background:var(--fill);color:var(--ink);}
+.btn--sm{font-size:14px;padding:9px 16px;border-radius:var(--r-sm);}
+.btn--pill{border-radius:var(--r-pill);}
+.btn--block{width:100%;}
+.btn--dis{background:var(--fill);color:var(--ink-4);}
+
+.tagline{display:flex;flex-wrap:wrap;gap:8px;}
+.tag{font-size:12px;font-weight:600;padding:5px 11px;border-radius:var(--r-pill);}
+.tag--red{background:var(--red-light);color:var(--red);}
+.tag--amber{background:var(--amber-bg);color:var(--amber-deep);}
+.tag--gray{background:var(--fill);color:var(--ink-2);}
+.tag--green{background:var(--green-bg);color:var(--green);}
+.tag--outline{border:1px solid var(--line);color:var(--ink-2);background:#fff;}
+
+.seg{display:inline-flex;background:var(--fill);border-radius:var(--r-sm);padding:3px;gap:2px;}
+.seg__i{font-size:14px;font-weight:550;color:var(--ink-2);padding:7px 18px;border-radius:7px;}
+.seg__i--on{background:#fff;color:var(--ink);font-weight:650;box-shadow:var(--sh-1);}
+
+.inp{
+  width:100%;background:var(--fill);border:1.5px solid transparent;border-radius:var(--r-sm);
+  padding:13px 15px;font-size:15px;color:var(--ink);font-family:inherit;
+}
+.inp--ph{color:var(--ink-3);}
+.inp--focus{background:#fff;border-color:var(--red);box-shadow:0 0 0 3.5px var(--red-ring);}
+
+.swatchbar{display:flex;height:12px;border-radius:var(--r-pill);overflow:hidden;width:100%;}
+
+/* ---------- iPhone 画框 ---------- */
+.screens{display:flex;flex-wrap:wrap;gap:44px 34px;}
+.screen{width:375px;}
+.screen__cap{display:flex;align-items:center;gap:9px;margin-bottom:14px;}
+.screen__no{
+  width:24px;height:24px;border-radius:50%;background:var(--red);color:#fff;
+  font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;flex:none;
+}
+.screen__name{font-size:15px;font-weight:650;letter-spacing:-.01em;}
+.screen__note{font-size:12px;color:var(--ink-3);margin:-6px 0 14px 33px;line-height:1.55;}
+
+.phone{
+  width:375px;height:812px;border-radius:52px;background:#0B0B0D;
+  padding:11px;box-shadow:var(--sh-3);position:relative;
+}
+.phone__scr{
+  width:100%;height:100%;border-radius:42px;background:var(--bg);
+  overflow:hidden;position:relative;display:flex;flex-direction:column;
+}
+/* 灵动岛 */
+.island{
+  position:absolute;top:11px;left:50%;transform:translateX(-50%);
+  width:112px;height:30px;border-radius:var(--r-pill);background:#0B0B0D;z-index:60;
+}
+/* 状态栏 */
+.sbar{
+  height:56px;flex:none;display:flex;align-items:flex-end;justify-content:space-between;
+  padding:0 26px 7px;font-size:14.5px;font-weight:650;letter-spacing:0;position:relative;z-index:50;
+}
+.sbar--light{color:#fff;}
+.sbar__r{display:flex;align-items:center;gap:5px;}
+.sbar svg{display:block;}
+/* 导航栏 */
+.nav{
+  flex:none;height:46px;display:flex;align-items:center;gap:12px;padding:0 16px;
+  position:relative;z-index:40;
+}
+.nav__title{font-size:17px;font-weight:650;letter-spacing:-.015em;}
+.nav__back{width:30px;height:30px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;box-shadow:var(--sh-1);flex:none;}
+.nav__right{margin-left:auto;display:flex;gap:8px;align-items:center;}
+/* 内容区 */
+.body{flex:1;overflow:hidden;padding:0 18px 12px;}
+/* 底部 tabbar */
+.tabbar{
+  flex:none;height:82px;background:rgba(255,255,255,.94);backdrop-filter:blur(20px);
+  border-top:1px solid var(--line);display:flex;padding:9px 0 0;
+}
+.tabbar__i{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;color:var(--ink-3);font-size:10.5px;font-weight:550;}
+.tabbar__i--on{color:var(--red);font-weight:650;}
+.homebar{
+  position:absolute;bottom:8px;left:50%;transform:translateX(-50%);
+  width:134px;height:5px;border-radius:var(--r-pill);background:#111114;opacity:.85;z-index:70;
+}
+.homebar--light{background:#fff;opacity:.9;}
+
+/* ---------- 通用手机内组件 ---------- */
+.card{background:#fff;border-radius:var(--r-lg);box-shadow:var(--sh-1);}
+.card--pad{padding:16px;}
+.row{display:flex;align-items:center;gap:12px;}
+.spacer{flex:1;}
+.t{font-size:15px;font-weight:600;letter-spacing:-.01em;}
+.t--lg{font-size:17px;}
+.t--sm{font-size:13px;}
+.t--xs{font-size:11.5px;}
+.c2{color:var(--ink-2);}
+.c3{color:var(--ink-3);}
+.mono{font-variant-numeric:tabular-nums;letter-spacing:-.03em;}
+.hr{height:1px;background:var(--line-2);margin:14px 0;}
+.icobox{
+  width:44px;height:44px;border-radius:13px;background:var(--red-light);color:var(--red);
+  display:flex;align-items:center;justify-content:center;flex:none;
+}
+.icobox--gray{background:var(--fill);color:var(--ink-2);}
+.icobox--amber{background:var(--amber-bg);color:var(--amber-deep);}
+.chev{color:var(--ink-4);flex:none;}
+
+/* 大数字 */
+.bignum{font-size:36px;font-weight:700;letter-spacing:-.04em;line-height:1;font-variant-numeric:tabular-nums;}
+
+/* 步骤条 */
+.steps{display:flex;align-items:center;gap:0;margin:4px 0 16px;}
+.step{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--ink-3);font-weight:550;}
+.step__d{width:18px;height:18px;border-radius:50%;background:var(--fill);color:var(--ink-3);font-size:10.5px;font-weight:700;display:flex;align-items:center;justify-content:center;}
+.step--on{color:var(--red);}
+.step--on .step__d{background:var(--red);color:#fff;}
+.step--done .step__d{background:var(--red-light);color:var(--red);}
+.step__line{flex:1;height:1.5px;background:var(--line);margin:0 6px;border-radius:2px;}
+.step__line--on{background:var(--red-light);}
+
+/* 分镜行 */
+.shot{display:flex;gap:12px;}
+.shot__idx{
+  width:24px;height:24px;border-radius:50%;background:var(--red);color:#fff;font-size:12px;font-weight:700;
+  display:flex;align-items:center;justify-content:center;flex:none;margin-top:2px;
+}
+.shot__idx--gray{background:var(--fill);color:var(--ink-2);}
+.shot__box{flex:1;min-width:0;}
+.chiprow{display:flex;flex-wrap:wrap;gap:6px;margin:7px 0 0;}
+.minichip{font-size:10.5px;font-weight:600;padding:3px 8px;border-radius:6px;background:var(--fill);color:var(--ink-2);}
+.minichip--red{background:var(--red-light);color:var(--red);}
+.minichip--amber{background:var(--amber-bg);color:var(--amber-deep);}
+
+/* 上传占位 */
+.drop{
+  border:1.5px dashed var(--ink-4);border-radius:var(--r-md);background:#fff;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;
+  padding:20px;color:var(--ink-3);
+}
+.thumb{
+  position:relative;border-radius:var(--r-md);overflow:hidden;background:#22242A;
+  display:flex;align-items:center;justify-content:center;
+}
+.thumb__play{
+  width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.92);
+  display:flex;align-items:center;justify-content:center;color:var(--ink);
+}
+.thumb__dur{
+  position:absolute;bottom:7px;right:7px;font-size:10.5px;font-weight:600;color:#fff;
+  background:rgba(0,0,0,.55);border-radius:5px;padding:2px 6px;
+}
+.thumb__ok{
+  position:absolute;top:7px;left:7px;font-size:10.5px;font-weight:650;color:#fff;
+  background:var(--green);border-radius:5px;padding:3px 8px;
+}
+
+/* iOS 分组列表 */
+.glist{background:#fff;border-radius:var(--r-lg);overflow:hidden;box-shadow:var(--sh-1);}
+.gitem{display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--line-2);}
+.gitem:last-child{border-bottom:none;}
+
+/* slider */
+.sl{position:relative;height:26px;display:flex;align-items:center;flex:1;}
+.sl__track{height:3.5px;border-radius:2px;background:var(--line);width:100%;position:relative;}
+.sl__fill{position:absolute;left:0;top:0;height:100%;border-radius:2px;background:var(--red);}
+.sl__knob{
+  position:absolute;top:50%;transform:translate(-50%,-50%);
+  width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.18),0 0 0 .5px rgba(0,0,0,.05);
+}
+
+/* 底部固定条 */
+.bottombar{
+  flex:none;background:rgba(255,255,255,.96);backdrop-filter:blur(20px);
+  border-top:1px solid var(--line);padding:12px 18px 26px;
+}
+
+/* 视频预览 */
+.video{
+  border-radius:var(--r-md);background:linear-gradient(150deg,#26282E,#15161A);
+  position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;
+}
+.video__badge{
+  position:absolute;top:9px;left:9px;font-size:10.5px;font-weight:600;color:#fff;
+  background:rgba(0,0,0,.45);border-radius:5px;padding:3px 8px;backdrop-filter:blur(8px);
+}
+
+/* 底部弹层 */
+.sheet{
+  position:absolute;left:0;right:0;bottom:0;background:#fff;
+  border-radius:26px 26px 0 0;box-shadow:0 -8px 40px rgba(0,0,0,.14);
+  padding:10px 22px 34px;z-index:80;
+}
+.sheet__grab{width:38px;height:5px;border-radius:3px;background:var(--ink-4);margin:0 auto 18px;}
+.scrim{position:absolute;inset:0;background:rgba(17,17,20,.42);z-index:75;}
+
+/* ---------- 交互说明表 ---------- */
+.rules{background:#fff;border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden;}
+.rtable{width:100%;border-collapse:collapse;font-size:13.5px;}
+.rtable th{
+  text-align:left;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-3);padding:16px 22px;border-bottom:1px solid var(--line);background:#FAFAFB;
+}
+.rtable td{padding:15px 22px;border-bottom:1px solid var(--line-2);vertical-align:top;color:var(--ink-2);}
+.rtable tr:last-child td{border-bottom:none;}
+.rtable td:first-child{color:var(--ink);font-weight:600;width:190px;}
+.rtable code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;background:var(--fill);padding:2px 6px;border-radius:5px;color:var(--ink);}
+
+/* ---------- 首页手绘字标 ---------- */
+.home-handmark{position:relative;height:76px;display:flex;align-items:flex-start;overflow:hidden;pointer-events:none;}
+.home-handmark__text{
+  position:relative;z-index:2;color:var(--red);
+  font-family:"STKaiti","KaiTi","Kaiti SC","FZKai-Z03",serif;
+  font-size:38px;font-weight:800;line-height:1.18;letter-spacing:-.055em;
+  transform:rotate(-1.5deg);transform-origin:left center;
+  text-shadow:1px 1px 0 rgba(225,37,27,.10);white-space:nowrap;
+}
+.home-handmark__stroke{
+  position:absolute;left:3px;z-index:1;height:3.5px;border-radius:70% 25% 65% 30%;
+  background:var(--red);transform-origin:left center;
+}
+.home-handmark__stroke--main{bottom:15.5px;width:268px;opacity:.78;transform:rotate(-1.8deg) skewX(-14deg);}
+.home-handmark__stroke--echo{bottom:9.5px;left:11px;width:219px;height:1.5px;opacity:.32;transform:rotate(-.5deg) skewX(18deg);}
+.home-handmark__dot{position:absolute;border-radius:50%;background:var(--red);}
+.home-handmark__dot--one{right:35px;top:8.5px;width:4.5px;height:3.5px;opacity:.34;transform:rotate(24deg);}
+.home-handmark__dot--two{right:22.5px;top:17.5px;width:2.5px;height:2.5px;opacity:.22;}
+
+/* ---------- 优秀作品（首页两列） ---------- */
+.wk-sec{display:flex;align-items:center;gap:8px;}
+.wk-ai{
+  font-size:11px;font-weight:700;letter-spacing:.04em;color:#fff;background:var(--red);
+  border-radius:var(--r-pill);padding:2px 7px;
+}
+.wk-tabs{display:flex;gap:8px;overflow-x:auto;margin-top:6px;padding-bottom:2px;scrollbar-width:none;}
+.wk-tabs::-webkit-scrollbar{display:none;}
+.wk-tab{
+  flex:none;font-size:13px;font-weight:550;padding:6px 14px;
+  border-radius:var(--r-pill);background:var(--fill);color:var(--ink-2);
+}
+.wk-tab--on{background:var(--red);color:#fff;font-weight:600;box-shadow:var(--sh-red);}
+/* 两列网格（一行两个，纵向排布，页面整体上拉加载更多） */
+.wk-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px;}
+.wk-card{
+  position:relative;width:100%;height:292px;border-radius:var(--r-md);
+  overflow:hidden;color:#fff;box-shadow:var(--sh-2);
+}
+.wk-empty{
+  grid-column:1/-1;height:120px;border-radius:var(--r-md);
+  border:1.5px dashed var(--ink-4);background:var(--fill);
+  display:flex;align-items:center;justify-content:center;
+  font-size:12px;color:var(--ink-3);
+}
+.wk-more{display:flex;align-items:center;justify-content:center;height:44px;font-size:12px;color:var(--ink-3);}
+.wk-more--link{color:var(--red);font-weight:600;}
+/* 封面策略：真实后台封面优先；实现层缺图时按分类使用本地 AI 商业摄影 JPG，最后才显示封面待补 */
+.wk-card--fallback{background:#3a1713;}
+.wk-card__top{position:absolute;top:10px;left:10px;right:10px;display:flex;flex-wrap:wrap;gap:5px;}
+.wk-card__tag{
+  font-size:10px;font-weight:550;color:#fff;background:rgba(0,0,0,.42);
+  border-radius:var(--r-pill);padding:2px 7px;backdrop-filter:blur(3px);
+}
+.wk-card__play{
+  position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.92);
+  display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px rgba(0,0,0,.18);
+}
+.wk-card__tri{
+  width:0;height:0;margin-left:3px;
+  border-left:10px solid #111114;border-top:6.5px solid transparent;border-bottom:6.5px solid transparent;
+}
+.wk-card__btm{position:absolute;left:10px;right:10px;bottom:10px;}
+.wk-card__tt{
+  font-size:13px;font-weight:650;line-height:1.4;letter-spacing:-.01em;color:#fff;
+  text-shadow:0 1px 3px rgba(0,0,0,.45);margin-bottom:9px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.wk-card__cta{
+  display:inline-flex;align-items:center;height:26px;padding:0 11px;background:var(--red);
+  color:#fff;font-size:11px;font-weight:600;border-radius:var(--r-pill);box-shadow:var(--sh-red);
+}
+
+/* ---------- 落地变量块 ---------- */
+.codeblock{
+  background:#0F1014;color:#D9DBE0;border-radius:var(--r-lg);padding:26px 28px;overflow-x:auto;
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;line-height:1.85;
+}
+.codeblock .c{color:#6B7280;}
+.codeblock .k{color:#FF8A80;}
+.codeblock .v{color:#9CDCFE;}
+.codeblock .s{color:#CE9178;}
+
+.footer{margin-top:80px;padding-top:28px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink-3);}
+
+@media(max-width:1200px){
+  .principles{grid-template-columns:repeat(2,1fr);}
+  .swatches{grid-template-columns:repeat(3,1fr);}
+  .comps{grid-template-columns:1fr;}
+}
+</style>
+</head>
+<body data-page-node-id="JJKVahSLIBiO1cesf7IApp">
+
+<!-- ================= HERO ================= -->
+<header class="hero" data-page-node-id="hAYNRl4uIWcIW5dt9SONmH">
+  <div class="hero__inner" data-page-node-id="c0C88ffoqbXqnB7dApHapb">
+    <div class="hero__brand" data-page-node-id="W2FBCa4UO7GYP4MYkb1TZ7">
+      <img class="hero__logo" src="./logo.png" alt="大帅餐饮" data-page-node-id="1Caf5OEVmG0oF8B3ex3oPh">
+      <div data-page-node-id="XBGEh7lhVcOrHS8l3EyuRQ">
+        <div class="hero__brandname" data-page-node-id="k8CogsRFcchyTuc7t7CroV">大帅餐饮 · 商家短视频创作</div>
+        <div class="hero__brandsub" data-page-node-id="nGpDbJaMpaXoRVGFemepXi">微信小程序 · 界面设计方案 v1</div>
+      </div>
+    </div>
+    <h1 class="hero__title" data-page-node-id="DjOWUTiu3B5OENIdM2PxyN">把复杂的创作流程，<br data-page-node-id="IhcPp2Z3D98flXqFBn2wzW">做成<em data-page-node-id="n3gSz0p78LatAvwzpfCp6u">一眼就会用</em>的界面。</h1>
+    <p class="hero__desc" data-page-node-id="BEYizTt9GmuQNnNstO5r3B">
+      以 Logo 红为唯一强调色，白底灰阶构建层次，用 iOS 式的留白、克制与层级感，
+      把「门店资料 → AI 文案 → 分镜脚本 → 拍摄上传 → 合成成片」这条长链路，
+      压缩成商家在店里抽空就能完成的四步操作。
+    </p>
+    <div class="hero__meta" data-page-node-id="BacECJqogamYorCJvQZ1wq">
+      <span class="chip chip--red" data-page-node-id="sSBy5CGF63zOhqlGZljk5y"><i class="chip__dot" data-page-node-id="f0dB8TPBbrN2oFy7S0s8Bm"></i>主题色 #E1251B · 取自 Logo</span>
+      <span class="chip" data-page-node-id="NsTPuQjai5ezvuvV1I5UqG">iOS 式简约大气</span>
+      <span class="chip" data-page-node-id="8jQttWYxUh1ZGr7GtiU57d">10 个核心界面高保真</span>
+      <span class="chip" data-page-node-id="c0yjaTz5B7nKjfAf2ORhlQ">44px 触控 · 单手可达</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap" data-page-node-id="ZIKFeNF7jftBNukCpV52L2">
+
+  <!-- ================= 1. 设计原则 ================= -->
+  <section class="sec" data-page-node-id="F88rL9majOqVjOUGuF41UT">
+    <div class="sec__eyebrow" data-page-node-id="CrjJQASjyEhUUNcUAOV14e">Design Principles</div>
+    <h2 class="sec__title" data-page-node-id="x98d4ObESjerWGRa7v0SUU">四条设计原则</h2>
+    <p class="sec__desc" data-page-node-id="qpID1esAlOUKd0apiBLFjI">
+      商家用户不是设计师。他们在后厨、在收银台、在等菜的间隙掏出手机。界面必须比他们的注意力更快。
+    </p>
+    <div class="principles" data-page-node-id="yCOP2FnBmGLC64Cywi26Pe">
+      <div class="pcard" data-page-node-id="wVuFTW4HqV7ZCHClp1TXuD">
+        <div class="pcard__no" data-page-node-id="k0TwviZWSR6xJWx862A7mf">01</div>
+        <h3 class="pcard__t" data-page-node-id="vU7GxXqiXur8L1mnCL2xJG">一屏一件事</h3>
+        <p class="pcard__d" data-page-node-id="gbzU6As4BFrOIqboEBQe01">每屏只有一个主行动点（红色实心按钮）。其余操作降为文字链或浅底按钮，用颜色权重区分优先级，而不是用位置。</p>
+      </div>
+      <div class="pcard" data-page-node-id="EnHVrI20CGBeYMHhubsZLt">
+        <div class="pcard__no" data-page-node-id="sRYHJ3JX6lfm5ABG5j6WUF">02</div>
+        <h3 class="pcard__t" data-page-node-id="SHkLAAnG9jYpzWdn6ObzO2">红色只给下一步</h3>
+        <p class="pcard__d" data-page-node-id="UmC6KRS1zRzfsxDK61bU1P">Logo 红是稀缺资源。只出现在「当前选中态」「主行动按钮」「进度与状态」三处。滥用红色等于没有重点。</p>
+      </div>
+      <div class="pcard" data-page-node-id="ZSy5UPvQ995TQKoUkEORgg">
+        <div class="pcard__no" data-page-node-id="lQcx9VCFOHH2ZxGxG8IvHR">03</div>
+        <h3 class="pcard__t" data-page-node-id="Ai2B46vCJcE87HG9HAPtXw">状态永远可见</h3>
+        <p class="pcard__d" data-page-node-id="Aqye5y9XnPt5XcRJqd1nbt">AI 在生成、视频在上传、成片在合成 —— 每一步都有明确的进度、耗时预期与失败后的重试入口，绝不让用户盯着空白猜。</p>
+      </div>
+      <div class="pcard" data-page-node-id="v6CAyFt3pL7O7O0lnBjkUB">
+        <div class="pcard__no" data-page-node-id="5hN6suQNf7C8KHoXho2s1A">04</div>
+        <h3 class="pcard__t" data-page-node-id="RZwwRAXoqAERcHmpjrzdtX">花的是积分，先说清楚</h3>
+        <p class="pcard__d" data-page-node-id="zExfNiDbqP9qJTMeIEyxWE">任何消耗积分的动作，按钮旁常驻「约 XX 积分 / 可用 XXXX」。不制造账单惊喜，是这个工具能被信任的前提。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 2. 色彩系统 ================= -->
+  <section class="sec" data-page-node-id="xpKXGqBHuY6mkTlAy3uGgb">
+    <div class="sec__eyebrow" data-page-node-id="JuKlZt447ZsBVenseNsfGT">Color System</div>
+    <h2 class="sec__title" data-page-node-id="tMuuNQuptCB7qqtsEBAiVV">色彩系统</h2>
+    <p class="sec__desc" data-page-node-id="WxKIhJ4DSJtTlsPrQUPNqy">
+      主色直接从 Logo 取样（实测主色约 <code data-page-node-id="6UraMCjV8j5fNhWqTrx8OA">#D02018</code>）。考虑到小尺寸屏幕与白色背景下的观感，
+      将品牌红统一到 <b data-page-node-id="3wxdCpLrvN1qKChbKX9vEZ">#E1251B</b> —— 与 Logo 同色相、略提亮度，保证在按钮和图标上足够醒目且不发暗。
+      中性色去掉了暖调，改用近 iOS System Gray 的冷灰阶，这是「高级感」的主要来源。
+    </p>
+    <div class="swatches" data-page-node-id="VAyn73MsZaKoYSTFO28BlG">
+      <div class="sw" data-page-node-id="fglokGjd6tLyyEokhOW1M3"><div class="sw__c" style="background:#E1251B" data-page-node-id="wOjCmBeddTlQ2VWSkFHTqg"><span data-page-node-id="dVwsM3gKmxksX8CATkJ2LJ">#E1251B</span></div>
+        <div class="sw__m" data-page-node-id="8zY5D3dU05nBopoHwTbgFB"><div class="sw__n" data-page-node-id="xJ4CivQQ3bRAN6D586JWHP">品牌红</div><div class="sw__h" data-page-node-id="VNNfXcnd2FtvPn435B4DFX">--red</div><div class="sw__u" data-page-node-id="j7mG0tFoEjRFrZSFQDWn6w">主按钮 / 选中 / 强调</div></div></div>
+      <div class="sw" data-page-node-id="Id42o2KaE04zumEyIFY7k2"><div class="sw__c" style="background:#C21B12" data-page-node-id="yi9DauGuR01EHSRCDjCiRC"><span data-page-node-id="OKmanmd5mhpNOllBrzbc8i">#C21B12</span></div>
+        <div class="sw__m" data-page-node-id="GLzNTF7X8WQIddYZPdDWyB"><div class="sw__n" data-page-node-id="qTAYFf4Q7W3Vha4Zbsnm5z">按下态</div><div class="sw__h" data-page-node-id="xqhUKbY7YZP6E5uxOjOOAM">--red-press</div><div class="sw__u" data-page-node-id="SDdEq7lrwq6uA69rtBfx2w">点击瞬间 / 深色强调</div></div></div>
+      <div class="sw" data-page-node-id="zW5Bh3h9bCXYvkEVomXuFA"><div class="sw__c" style="background:#FDECEA" data-page-node-id="B4O49hIDUIBcCZIVDUY4A4"><span style="color:#E1251B" data-page-node-id="99fmSkmlKPo2uzvJgLd5vO">#FDECEA</span></div>
+        <div class="sw__m" data-page-node-id="ZZ8PHpAondwoX4z3bIagva"><div class="sw__n" data-page-node-id="m517Yi73H79hjnMjzRwF8F">红浅底</div><div class="sw__h" data-page-node-id="pQH9vLPHlr2fthCCRuSnjl">--red-light</div><div class="sw__u" data-page-node-id="jcm9GKzRm7ejj2UKbg4zYZ">图标容器 / 选中背景</div></div></div>
+      <div class="sw" data-page-node-id="ciLZXhA7rYEZUhmaNg1lDn"><div class="sw__c" style="background:#111114" data-page-node-id="mKhGgCXVSJHfXhrvautXav"><span data-page-node-id="MqV6i3wO87vALGs9ZmkmKo">#111114</span></div>
+        <div class="sw__m" data-page-node-id="xDANxraniJH4Axi3E7XuTi"><div class="sw__n" data-page-node-id="1mTYInyoq6pu8Iy8Ahn8EO">主文字</div><div class="sw__h" data-page-node-id="Fn3kFHCmC1KFx9hRc9Yyr1">--ink</div><div class="sw__u" data-page-node-id="Lz3ZINbtXbgPmwSg6UCeFh">标题 / 正文</div></div></div>
+      <div class="sw" data-page-node-id="KkFnUrFN6uvCQGecXJck8w"><div class="sw__c" style="background:#5C6066" data-page-node-id="7KaB0lrcKvivh9Wc4RE2Gf"><span data-page-node-id="T4zXHgRBFBoGrASPLSHccN">#5C6066</span></div>
+        <div class="sw__m" data-page-node-id="5hDO7RlxWbZUrkJKOGjc3G"><div class="sw__n" data-page-node-id="HBIw382XtNUQe9vMTxx78Y">次文字</div><div class="sw__h" data-page-node-id="1fKLw6I0o1EU3f4EX6sKQ9">--ink-2</div><div class="sw__u" data-page-node-id="qQFs1p6iinXDl6nMIpjhTa">说明 / 副信息</div></div></div>
+      <div class="sw" data-page-node-id="IUNOBatCzvCVP9EImaQIEY"><div class="sw__c" style="background:#F5F6F8" data-page-node-id="HlJbxMc26yx0cEORBrTibr"><span style="color:#8E939A" data-page-node-id="C45a3vYUPsmOmOoDduCoI9">#F5F6F8</span></div>
+        <div class="sw__m" data-page-node-id="6t2S8tXAg4n11cSnKmC3zd"><div class="sw__n" data-page-node-id="uOhAjcPp3FkTu1RnG1L3Yd">页面底</div><div class="sw__h" data-page-node-id="2KtaYR5SoliX24oB5qQWaV">--bg</div><div class="sw__u" data-page-node-id="2HgHEhGjjEDwqZHU1MGOmp">承载白色卡片</div></div></div>
+      <div class="sw" data-page-node-id="79Fud4PDmb8UijuJmdCnLd"><div class="sw__c" style="background:#C4892C" data-page-node-id="D7T8MXlfPts4v5O6P5Ln2Q"><span data-page-node-id="u6Z2FeLz0NPWd9GVxF97he">#C4892C</span></div>
+        <div class="sw__m" data-page-node-id="g1cJerOqmUWlmniZCbybIc"><div class="sw__n" data-page-node-id="gXAHPe7wM3Zo7ZgO9WZW4i">积分金</div><div class="sw__h" data-page-node-id="IV7YWVaxexUUcYa7xzRmOj">--amber</div><div class="sw__u" data-page-node-id="bpQF77CfAK3kDHVDYFuVUG">积分 / 会员权益</div></div></div>
+      <div class="sw" data-page-node-id="h38Qy3lljoy0kjAV8F53Lp"><div class="sw__c" style="background:#FBF4E7" data-page-node-id="14x4VLTX5tAyVCPSDEKV34"><span style="color:#A8741F" data-page-node-id="QEHW7mGNqbYIvWxECmhUcF">#FBF4E7</span></div>
+        <div class="sw__m" data-page-node-id="W9oy5VqHH9CEilfF8w8MGs"><div class="sw__n" data-page-node-id="ImvzPbgYZ0rRVoTFAMWqP5">金浅底</div><div class="sw__h" data-page-node-id="dbNObIj8NL8PyDCNtLXpcS">--amber-bg</div><div class="sw__u" data-page-node-id="Y2UowUGFuStsvJVPwq678y">权益标签底</div></div></div>
+      <div class="sw" data-page-node-id="aaQAvIxQPuPKP36FyYf2zT"><div class="sw__c" style="background:#2BA471" data-page-node-id="HtrThyLa9Q3JwMTccUzOkh"><span data-page-node-id="9zSHKPH2PxlZJPZaxBnTjV">#2BA471</span></div>
+        <div class="sw__m" data-page-node-id="xIo5ZQAqYEeUNV5tJDSIDD"><div class="sw__n" data-page-node-id="YJjge7UhAkRUyg4aA4Ixmc">成功</div><div class="sw__h" data-page-node-id="YfOrE7Zf6Zl9edgOrGSNGw">--green</div><div class="sw__u" data-page-node-id="olxMk14xLLMuQxt4cNVNag">已上传 / 已完成</div></div></div>
+      <div class="sw" data-page-node-id="reNu4DHHgARn6apHm6lW9U"><div class="sw__c" style="background:#EDEEF0" data-page-node-id="hG6RE5rUiEBdaBRCmHbFMw"><span style="color:#8E939A" data-page-node-id="1EsivMlAf6fnk5qJMgjmt2">#EDEEF0</span></div>
+        <div class="sw__m" data-page-node-id="kTinZupg6wvRsHJQnGUUk0"><div class="sw__n" data-page-node-id="44cbCeFqkIfsF3z4FPGY7A">描边</div><div class="sw__h" data-page-node-id="9f0His1T69EzZBsmE4qHMU">--line</div><div class="sw__u" data-page-node-id="xMYtSm6P9YYQksXwd1ElMN">卡片边 / 分隔线</div></div></div>
+      <div class="sw" data-page-node-id="rCcCPbnnFeHf9F9820pGHj"><div class="sw__c" style="background:#FFFFFF;border-bottom:1px solid #EDEEF0" data-page-node-id="ugtlOFZG2LhI8VyQoAvVOx"><span style="color:#8E939A" data-page-node-id="sEIyOa73nZRzH0XRiTI7jo">#FFFFFF</span></div>
+        <div class="sw__m" data-page-node-id="ctoBbR1FLcIqYSFDHJVrpN"><div class="sw__n" data-page-node-id="8zZz0HgYwfAUhi1jP7rAmR">卡片底</div><div class="sw__h" data-page-node-id="HNIwqeUESVzP4QuISG2ujv">--card</div><div class="sw__u" data-page-node-id="UvPfNJqt1AwhByc5PnjbYL">内容容器</div></div></div>
+      <div class="sw" data-page-node-id="xPmcCUEyjrqn6AJxgm7J6x"><div class="sw__c" style="background:#F2F3F5" data-page-node-id="bfnVRMJCogcxao9xUAW3zL"><span style="color:#8E939A" data-page-node-id="6c7zwxW4pb1Wujg5NCFMYv">#F2F3F5</span></div>
+        <div class="sw__m" data-page-node-id="Eid3mrFovNbLIJdwNW7xuY"><div class="sw__n" data-page-node-id="vB1UOSAVzijs6h8Cn199G4">填充灰</div><div class="sw__h" data-page-node-id="PviqvmrJAmZJ2V4O4WBXIb">--fill</div><div class="sw__u" data-page-node-id="UXkNjN3hNmXoyefTHUMOtq">输入框 / 分段控件底</div></div></div>
+    </div>
+  </section>
+
+  <!-- ================= 3. 字体与字阶 ================= -->
+  <section class="sec" data-page-node-id="zE8alhZ8AyOqDzESvIKU5g">
+    <div class="sec__eyebrow" data-page-node-id="1BnJ9FHxyRDiknO3lU9eFD">Typography</div>
+    <h2 class="sec__title" data-page-node-id="IPGfTgRVUsntAY2CHBGe0C">字体与字阶</h2>
+    <p class="sec__desc" data-page-node-id="D1PmR311Fkh9jLeRtwEm2e">
+      字体栈与 iOS 保持一致（SF Pro / 苹方），全局收紧字距 <code data-page-node-id="dnPJdHQGQEOhJ69CnJL1Nr">-0.01em ~ -0.04em</code>，大标题收得更紧 —— 这是 Apple 式排版的关键细节。
+      小程序内 1px = 2rpx，下表同时给出两端数值。
+    </p>
+    <div class="type" data-page-node-id="hA0sNnMMCjLTE9KicXamNj">
+      <div class="trow" data-page-node-id="FrZBgIakyI0QJHz0hFJ1ie">
+        <div class="trow__meta" data-page-node-id="YUVrcuWylZ5EDYrkRjafyw"><div class="trow__name" data-page-node-id="v7I8gsrpCwhKaxMSRRqUnf">Large Title</div><div class="trow__spec" data-page-node-id="TiUHJizFeO3TsKMyFkRsgO">34 / 41 · Bold · 68rpx</div></div>
+        <div class="trow__demo" style="font-size:34px;font-weight:700;letter-spacing:-.035em;" data-page-node-id="JDOuvOnITWTciKEzmnxUJx">创作工作台</div>
+      </div>
+      <div class="trow" data-page-node-id="GBmT461NGkiQuWaQrJL9EM">
+        <div class="trow__meta" data-page-node-id="O26gLhpnDaIyjXsiGXj5jX"><div class="trow__name" data-page-node-id="O5svlXr7N4HlVP2K8Jckrg">Title 1</div><div class="trow__spec" data-page-node-id="4h67RxLHUniXIPu3dLmwcB">28 / 34 · Bold · 56rpx</div></div>
+        <div class="trow__demo" style="font-size:28px;font-weight:700;letter-spacing:-.03em;" data-page-node-id="F7yLESmJ2nPhMSEWB1I4Nx">口播文案</div>
+      </div>
+      <div class="trow" data-page-node-id="v2IdbTSF7IAT5KMUd7rWtI">
+        <div class="trow__meta" data-page-node-id="LGCGjuRYY5pDqYx98AtmaV"><div class="trow__name" data-page-node-id="n6wLUTKPD1pxfCZS1CFLex">Title 2</div><div class="trow__spec" data-page-node-id="Qf0IDeuUMlkQJiotYMwAZj">22 / 28 · Semibold · 44rpx</div></div>
+        <div class="trow__demo" style="font-size:22px;font-weight:650;letter-spacing:-.025em;" data-page-node-id="mqHjVpUbn1DwPohhhACPDh">分镜脚本（5）</div>
+      </div>
+      <div class="trow" data-page-node-id="eeVCbiBWnZXCvLCF4GzJek">
+        <div class="trow__meta" data-page-node-id="smoRTNNKitIo33U2AZzKDO"><div class="trow__name" data-page-node-id="MvzWv1StdKHAdxaqDUduv9">Headline</div><div class="trow__spec" data-page-node-id="H2VH30yfEPgFSy4H935xeZ">17 / 22 · Semibold · 34rpx</div></div>
+        <div class="trow__demo" style="font-size:17px;font-weight:650;" data-page-node-id="GB1xbk2hnYmbXY2rBpgW8Q">招牌毛肚 · 现杀现涮</div>
+      </div>
+      <div class="trow" data-page-node-id="MJRwnmP2eDBQACzzVMw2NC">
+        <div class="trow__meta" data-page-node-id="x70Y4omnwhGaSUkwFPQhJx"><div class="trow__name" data-page-node-id="SHjNn8pxONguD1r05gKZnZ">Body</div><div class="trow__spec" data-page-node-id="aIsrsE1mu6lJo2p9HoA9cD">15 / 24 · Regular · 30rpx</div></div>
+        <div class="trow__demo" style="font-size:15px;" data-page-node-id="iqABZEgMEUuZyyFOit4Kzq">今天带你们看看我们家每天早上现杀的毛肚，脆得很。</div>
+      </div>
+      <div class="trow" data-page-node-id="vIshS1JUtvToXveq1OkmHM">
+        <div class="trow__meta" data-page-node-id="fJTahG0jsuobFwpXEm22MA"><div class="trow__name" data-page-node-id="fCjt5XAz1UDQmOzAaaF1hO">Subhead</div><div class="trow__spec" data-page-node-id="W360OgULKGAcTGEEZFdGtB">13 / 20 · Regular · 26rpx</div></div>
+        <div class="trow__demo" style="font-size:13px;color:var(--ink-2);" data-page-node-id="TlboOZaBjpGASsthK4Dt30">门店资料 · 口播文案 · 分镜素材 · 成片</div>
+      </div>
+      <div class="trow" data-page-node-id="NUb3QYHIJeQBed1Qf6HG0M">
+        <div class="trow__meta" data-page-node-id="1WqGyuk4SNK7n95WxhTn8y"><div class="trow__name" data-page-node-id="tPfjPnZLDk91VPCCS9ngjB">Caption</div><div class="trow__spec" data-page-node-id="MWPhdIveRQTVAIYhmQDYKC">11.5 / 16 · Medium · 23rpx</div></div>
+        <div class="trow__demo" style="font-size:11.5px;color:var(--ink-3);font-weight:550;" data-page-node-id="bDsY60wid04HVo75rr8Cw8">可用 1,280 积分 · 本次约消耗 32 积分</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 4. 组件规范 ================= -->
+  <section class="sec" data-page-node-id="QW3iXGzwkBEnghfjZ0TF4n">
+    <div class="sec__eyebrow" data-page-node-id="wMkjViy55FlygeVV8rwWsP">Components</div>
+    <h2 class="sec__title" data-page-node-id="tEb8Kk2phcWWQNYeXlFZSJ">组件规范</h2>
+    <p class="sec__desc" data-page-node-id="kpXIxQgFFszrtE5HRUnVHE">统一 18px 卡片圆角、1px 极浅描边、几乎不可见的阴影。层次靠「留白 + 灰阶」建立，不靠投影和渐变。</p>
+    <div class="comps" data-page-node-id="masVEHhVAt1VJHQKZH9BnX">
+      <div class="comp" data-page-node-id="T7FyqLpFxIGqDtTciikZml">
+        <h3 class="comp__t" data-page-node-id="Hu2kXRGUFQAPPlBIEShDNR">按钮层级</h3>
+        <p class="comp__d" data-page-node-id="k4GGgS8gGU5fVUm5T6pxXL">一屏最多一个红色实心按钮。次要动作用浅红底，第三级用白底描边。</p>
+        <div class="comp__demo" data-page-node-id="wrpWi9BQUEH0M7s34BNi5b">
+          <span class="btn btn--pri" data-page-node-id="Yrqyrr4EAD1e5ylePvMKqm">生成成片</span>
+          <span class="btn btn--sec btn--sm" data-page-node-id="5ahBQkt399fh6XbkhqiJ9W">重新生成</span>
+          <span class="btn btn--ghost btn--sm" data-page-node-id="nCVDUIelcvrww8rtevCjHY">复制</span>
+          <span class="btn btn--gray btn--sm" data-page-node-id="o5r3CqecRuON5uWBGqGeVQ">取消</span>
+          <span class="btn btn--dis btn--sm" data-page-node-id="CFmE8P8ia3wD1G774AbxQ0">AI 生成 · 未开放</span>
+        </div>
+      </div>
+      <div class="comp" data-page-node-id="mx7HgL7RYhdFjW0LMskvXF">
+        <h3 class="comp__t" data-page-node-id="WhFRWTlZWqhPZtgPaXodd1">状态标签</h3>
+        <p class="comp__d" data-page-node-id="g1s7vQjYwMRbRhryCtVCbW">文案款式、镜头复杂度、任务状态全部用胶囊标签，语义靠颜色区分。</p>
+        <div class="comp__demo tagline" data-page-node-id="EPZfCpS0EoNnWPyROvHPxr">
+          <span class="tag tag--red" data-page-node-id="qoagMrCLLPTDhAO0QaEUpJ">流量款</span>
+          <span class="tag tag--gray" data-page-node-id="wgsVVAEsEOQHXiMaKQxxvn">精细 · 9 镜</span>
+          <span class="tag tag--green" data-page-node-id="4hdcmDsXZrSfSHL2EvBEEH">已完成</span>
+          <span class="tag tag--amber" data-page-node-id="yZftVYXYvGc37Gag6Ko43J">合成中 62%</span>
+          <span class="tag tag--outline" data-page-node-id="0m0IBUhMVvOAfZeTFX38sd">未订阅</span>
+        </div>
+      </div>
+      <div class="comp" data-page-node-id="HJIWarLRzDUNAKxab7l2sU">
+        <h3 class="comp__t" data-page-node-id="UI1k4yca20qEmEwqWXSCLa">分段控件</h3>
+        <p class="comp__d" data-page-node-id="aV4NjUolzVshkwqS1vOGKG">取代原生 Picker。文案款式、镜头复杂度、订阅/加油包统一用 iOS 分段控件，选中即生效。</p>
+        <div class="comp__demo" style="flex-direction:column;align-items:stretch;gap:10px;" data-page-node-id="bLkRLKnGCTZpJj0XG4a15B">
+          <span class="seg" style="display:flex;" data-page-node-id="fCBbtitQCmSErAjGE1qKxF">
+            <span class="seg__i seg__i--on" style="flex:1;text-align:center;" data-page-node-id="IKicY5A3Dx63ECw8gDPppd">流量款</span>
+            <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="3xD5R42BzAD0twvVh1rcIn">介绍款</span>
+            <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="GYPUNPfSBm01sH9hdQbX1t">质量款</span>
+          </span>
+          <span class="seg" style="display:flex;" data-page-node-id="xQsyZIEqQ3mC4UN9PQ5TFH">
+            <span class="seg__i seg__i--on" style="flex:1;text-align:center;" data-page-node-id="A5aXjUaHTZdOxNIQKvHbAL">订阅</span>
+            <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="ri9yD9wEF36WIskVRiz6HU">加油包</span>
+          </span>
+        </div>
+      </div>
+      <div class="comp" data-page-node-id="dpOOr8EQNkdIVHKg0VqSvS">
+        <h3 class="comp__t" data-page-node-id="7SZsvUEJ3SVFqBCARdzS7M">输入框</h3>
+        <p class="comp__d" data-page-node-id="G1YKRNCkpa5lwsSCBSZnBm">默认浅灰填充、无边框；聚焦时变白底 + 红色描边 + 3.5px 红色光环。</p>
+        <div class="comp__demo" style="flex-direction:column;align-items:stretch;gap:10px;" data-page-node-id="QeUGfblqnBOfREl02XNZ4F">
+          <span class="inp inp--ph" data-page-node-id="ZEy01yjyZ5XgowjLl4mdza">例如：老灶火锅 · 望京店</span>
+          <span class="inp inp--focus" data-page-node-id="McxcoEzR42RxXUQt8YC2hj">老灶火锅 · 望京店</span>
+        </div>
+      </div>
+      <div class="comp" data-page-node-id="amNcHyBK2Oko13IVhV2aK3">
+        <h3 class="comp__t" data-page-node-id="1VHuqB3hinHtbKk9i1uUnk">积分条</h3>
+        <p class="comp__d" data-page-node-id="BEd6aKaZYiZyWsZe3YBF4h">可用 / 赠送 / 冻结三色分段，一眼看清余额构成。</p>
+        <div class="comp__demo" style="flex-direction:column;align-items:stretch;gap:12px;" data-page-node-id="haDfWq2vF3G47qBbCIPzsh">
+          <span class="swatchbar" data-page-node-id="R7wlXNgWkfdqpGxH0yWs1O">
+            <i style="flex:72;background:var(--red)" data-page-node-id="56LiyStMVftDfwn414SAI3"></i>
+            <i style="flex:20;background:var(--amber)" data-page-node-id="etYF3fGBL0MgCSgdYnPBF4"></i>
+            <i style="flex:8;background:var(--ink-4)" data-page-node-id="pvPKJ81R4mXj037Rbq6Ut9"></i>
+          </span>
+          <span class="tagline" data-page-node-id="erBWZ41zpQ4GEKhjTg4zdw">
+            <span class="tag tag--red" data-page-node-id="hoYSJZ3g0BNvgHEL6QfSKv">可用 1,280</span>
+            <span class="tag tag--amber" data-page-node-id="gDKQk2DJHjpG470eaKLVEx">赠 300</span>
+            <span class="tag tag--gray" data-page-node-id="zEU9WJL98pVbCS0mvaLhgN">冻结 40</span>
+          </span>
+        </div>
+      </div>
+      <div class="comp" data-page-node-id="ciM6It2DT9SMP6g8KJUqND">
+        <h3 class="comp__t" data-page-node-id="jS7eUTBA8UVVboQbQcFwXq">进度与加载</h3>
+        <p class="comp__d" data-page-node-id="Nj08mSGSwd63rowtG8Eedb">AI 生成 / 视频上传 / 成片合成统一使用「红色细进度条 + 百分比 + 文案」，禁止无反馈的转圈。</p>
+        <div class="comp__demo" style="flex-direction:column;align-items:stretch;gap:14px;" data-page-node-id="kgjZobBIy8Yw2goSr1Glt2">
+          <div data-page-node-id="GAup4CIcVntDNank01vUsv">
+            <div class="row" style="margin-bottom:7px;" data-page-node-id="oXXVwoERWbLAQx7rBfFz6S"><span class="t--xs c2" style="font-weight:600;" data-page-node-id="nwFZcILC5OQUxnLEmkeT3q">分镜 3 上传中</span><span class="spacer" data-page-node-id="SxXtWs1kyRLGHMAhXXgqlD"></span><span class="t--xs mono" style="color:var(--red);font-weight:700;" data-page-node-id="u4rokJumsHiksLHzfV6fUA">68%</span></div>
+            <span class="swatchbar" style="height:6px;background:var(--line);" data-page-node-id="OyvIRv8nrQvl2t2fGbgzX9"><i style="flex:68;background:var(--red)" data-page-node-id="hezkH7nVNH0zSk2xCOkdB6"></i></span>
+          </div>
+          <div data-page-node-id="5jagpCywu4Nnz88Bv2mDKK">
+            <div class="row" style="margin-bottom:7px;" data-page-node-id="dIVpOMRlFaqex6m1az8RNX"><span class="t--xs c2" style="font-weight:600;" data-page-node-id="X3xefipmuDaPin78OKjch7">成片合成中 · 预计 2 分钟</span><span class="spacer" data-page-node-id="oAH1Gv8EdaoicZGo7X9HQB"></span><span class="t--xs mono" style="color:var(--red);font-weight:700;" data-page-node-id="cAIOanq6M8jZVSSSW7No5y">42%</span></div>
+            <span class="swatchbar" style="height:6px;background:var(--line);" data-page-node-id="R6UgqCrhXUIUyFobXk7J4j"><i style="flex:42;background:var(--red)" data-page-node-id="Qtl37SNiA5cBlLDz066I9o"></i></span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 5. 核心界面 ================= -->
+  <section class="sec" data-page-node-id="aS2CK0DJooJsFD67Zuy1Bk">
+    <div class="sec__eyebrow" data-page-node-id="GN5ACNIGpXHOzaY0cXg1E5">Key Screens</div>
+    <h2 class="sec__title" data-page-node-id="gR1ODPjt1gpHAl5EgKtAFj">九个核心界面</h2>
+    <p class="sec__desc" data-page-node-id="E0uHZKukQp0yv2bRVUBBrR">
+      覆盖主链路：登录 → 首页工作台 → 创作列表 → 文案 → 分镜 → 拍摄上传 → 合成成片，以及账号与商业化两页。
+      所有尺寸按 iPhone 15（375 × 812pt）绘制，底部操作条与 Tab 均留出安全区。
+    </p>
+
+    <div class="screens" data-page-node-id="g5ImZcbmuCP8u1OTkEGpJP">
+
+      <!-- ========== 1. 登录 ========== -->
+      <div class="screen" data-page-node-id="qJUJd1etbiqHr49z6FTb0i">
+        <div class="screen__cap" data-page-node-id="LUpnsLG80aePiygLt8k1AT"><span class="screen__no" data-page-node-id="ssAPyHYhB2ny6DYDlE8MBD">1</span><span class="screen__name" data-page-node-id="UT38ELiWJCoDCdysihxnyu">登录</span></div>
+        <div class="screen__note" data-page-node-id="R2taAzECkU9KKv4Mifecsj">品牌红铺满上半屏，下半屏白色卡片承载唯一行动点。</div>
+        <div class="phone" data-page-node-id="lABDxPIBDtOTOodMHfCtzF">
+          <div class="phone__scr" data-page-node-id="liHgCXQTfLDvLEZa5dqjkd">
+            <div class="island" data-page-node-id="cz4rpW5oPlXkAtokfTbRCP"></div>
+            <div class="sbar sbar--light" data-page-node-id="8A74Gxy5vAo0kOSqe6iqB5">
+              <span class="mono" data-page-node-id="4w0kKuLTaXTdAUFmCbpB97">9:41</span>
+              <span class="sbar__r" data-page-node-id="uvTDuTpv79Y7GcLVTWRSRN">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#fff" data-page-node-id="EFB4IHAYHRccbtAtRFa2ZO"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="ESDfyj3I3cDIqBges1Etsf"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="0cRYgPxEblAL2kJrqH8lSh"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="v4vFXzfoEulZ46xTU1MKZP"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="3c2DKXECEMorGhH0NQrIj3"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#fff" data-page-node-id="cJegiCeoZGh8AfYVQSpyXB"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="pKHh8Cr3WIVmxMphFAvrIv"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="gBfSkfnxl6gdU7M9vxDRRJ"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#fff" stroke-opacity=".45" data-page-node-id="j99YGBuUlKGaH1arWeckXm"/><rect x="2" y="2" width="15" height="8" rx="2" fill="#fff" data-page-node-id="O7RHy9hUbFsYS031Yh04E4"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#fff" fill-opacity=".5" data-page-node-id="tTJ3BYN3CXlDpUnjjNs5oh"/></svg>
+              </span>
+            </div>
+
+            <div style="flex:none;padding:26px 30px 46px;background:var(--red);border-radius:0 0 34px 34px;color:#fff;" data-page-node-id="qiCki90p8kTjXtcugtpyqY">
+              <img src="./logo.png" alt="" style="width:76px;height:76px;border-radius:19px;background:#fff;padding:7px;box-sizing:border-box;box-shadow:0 10px 28px rgba(0,0,0,.16);" data-page-node-id="Pa2v85PAVaPirpv4JS0z2O">
+              <div style="font-size:30px;font-weight:700;letter-spacing:-.03em;margin-top:22px;line-height:1.2;" data-page-node-id="LTcPFMKInLn3XF4kppk1HD">大帅餐饮</div>
+              <div style="font-size:14.5px;opacity:.86;margin-top:8px;line-height:1.6;" data-page-node-id="Ug1VDOjIteWAyENVgKJzUM">门店资料 · 口播文案 · 分镜素材 · 成片<br data-page-node-id="e0rtgJ6dedA4pHBXrDBrLr">一部手机，把店里的招牌菜拍成短视频</div>
+            </div>
+
+            <div class="body" style="padding-top:34px;" data-page-node-id="HaBH0zrGDt96msJVVEvIGb">
+              <div style="background:#fff;border-radius:var(--r-lg);padding:24px 20px 20px;box-shadow:var(--sh-2);" data-page-node-id="qQTYslrMKqFggyUVMcoulp">
+                <div class="t t--lg" style="text-align:center;" data-page-node-id="0YlNhO3r4YBppAuBXCBdrO">登录后开始创作</div>
+                <div class="t--sm c3" style="text-align:center;margin-top:7px;" data-page-node-id="N8eDi5p0SwxLMTGfy9ASIz">微信一键登录，无需注册</div>
+                <div class="btn btn--pri btn--block" style="margin-top:22px;" data-page-node-id="pDhmDma8eBKVM6H8P6WuOD">
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="#fff" data-page-node-id="2Tbck4rdjgnKoj4ZUeECjt"><path d="M8.7 3C4.9 3 1.8 5.6 1.8 8.8c0 1.8 1 3.4 2.6 4.5l-.7 2 2.3-1.2c.8.2 1.6.4 2.5.4h.5a5.6 5.6 0 0 1-.2-1.5c0-3.1 3-5.6 6.7-5.6h.6C15.4 4.8 12.4 3 8.7 3Zm-2.3 3.1a.9.9 0 1 1 0 1.8.9.9 0 0 1 0-1.8Zm4.6 0a.9.9 0 1 1 0 1.8.9.9 0 0 1 0-1.8Z" data-page-node-id="2d3C9FLcEfEGgUFhGP2kqM"/><path d="M22.2 13c0-2.7-2.6-4.9-5.8-4.9s-5.8 2.2-5.8 4.9 2.6 4.9 5.8 4.9c.7 0 1.4-.1 2-.3l1.9 1-.5-1.7c1.5-.9 2.4-2.3 2.4-3.9Zm-7.7-1.5a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6Zm3.8 0a.8.8 0 1 1 0 1.6.8.8 0 0 1 0-1.6Z" data-page-node-id="90UJ92CQAeI3uvgrdwHXO2"/></svg>
+                  微信一键登录
+                </div>
+                <div class="t--xs c3" style="text-align:center;margin-top:15px;line-height:1.6;" data-page-node-id="oWYM3MshQicmA0jSjefhrN">
+                  授权即表示同意 <span style="color:var(--red);font-weight:600;" data-page-node-id="Kv2xLIlCmJpHHCQ9urv7mG">《用户协议》</span> 和 <span style="color:var(--red);font-weight:600;" data-page-node-id="7zvHGFAekczU7xkdpYDAEq">《隐私政策》</span>
+                </div>
+              </div>
+              <div style="margin-top:22px;display:flex;gap:10px;justify-content:center;" data-page-node-id="5ikmMjUvtA6djSv3glkIuU">
+                <span class="tag tag--gray" data-page-node-id="jtWPLR6xBITDa8ny8eJCBi">本地联调：开发登录</span>
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="a9UN0VASJkxKgJ5Av3wjnW"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 2. 首页 / 工作台 ========== -->
+      <div class="screen" data-page-node-id="GFcZ4eq59xECO6CAk2alER">
+        <div class="screen__cap" data-page-node-id="PRaU0TZYZa3YSHhtTKAoOj"><span class="screen__no" data-page-node-id="M87oD4q8KozOyGek4JYRMW">2</span><span class="screen__name" data-page-node-id="bpoTDrBvLVrp5FtmUNhSwB">首页 · 创作工作台</span></div>
+        <div class="screen__note" data-page-node-id="W32w73w6us8gJ6bFJsjGys">门店切换常驻左上角；顶部只保留手绘字标「餐饮门店·轻松拍」，下滑可见「AI 优秀作品」两列网格（见 2B）。</div>
+        <div class="phone" data-page-node-id="sG5OJ39DvA5z4KV4O1ABuA">
+          <div class="phone__scr" data-page-node-id="Q1s5hFC0ZpMwKKeegnnIJx">
+            <div class="island" data-page-node-id="2Yak7LThcGrcOt6DCFlfD0"></div>
+            <div class="sbar" data-page-node-id="HypGHcIwGtKC43wbWpSWse">
+              <span class="mono" data-page-node-id="SWRM9hjUNVwAhLOQDjcZFR">9:41</span>
+              <span class="sbar__r" data-page-node-id="lM4Tl9uq629T5BoOU5cjIG">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="sKT3lhmSDBHDVhjohIluEn"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="lXCLcijaR0O0AZLbKedCoy"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="DAW6RGUWuyUhLnF0YdE157"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="59zU7me8Is2XzuDBESsofF"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="DYu3q7CO4PRytBxUjQlX09"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="niIgNQYuSIQEW2BhHCTP7X"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="bVqDG9uiRTBCobVVsyqXCn"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="ikeh4UfsvOjNqtERRiiJ0q"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="xcSYQb7r7M94EqmmJgeKeo"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="eK3b3Ej46gOwpslfeA8bwU"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="M6Lkj1tadaFBqlEikiw59S"/></svg>
+              </span>
+            </div>
+
+            <div style="flex:none;padding:4px 18px 0;position:relative;" data-page-node-id="2xJqLYoTZAZnCa1ALG3GFD">
+              <div class="row" style="padding:4px 0 14px;" data-page-node-id="79BElOeOiAQW1pROZ0QrYk">
+                <span class="row" style="gap:8px;background:#fff;border-radius:var(--r-pill);padding:6px 12px 6px 6px;box-shadow:var(--sh-1);" data-page-node-id="SjEqEBittucfvOkYfSXu5T">
+                  <img src="./logo.png" alt="" style="width:26px;height:26px;border-radius:8px;" data-page-node-id="HHSZQLD9GCir8qCEMBlch2">
+                  <span class="t--sm" style="font-weight:650;" data-page-node-id="RtorBSAKeMR2M6Y8zVAoOV">老灶火锅 · 望京店</span>
+                  <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="PU6LOKmFpW8SXzooOZHuqz"><path d="m6 9 6 6 6-6" data-page-node-id="BfD8JVN99pHYBI0xf0wPws"/></svg>
+                </span>
+                <span class="spacer" data-page-node-id="7F8gmckABQLHfMLUDIBoGt"></span>
+                <span class="icobox" style="width:36px;height:36px;border-radius:50%;background:#fff;box-shadow:var(--sh-1);" data-page-node-id="VTyGXVB3ddcgGIxpZfc2gT">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111114" stroke-width="1.9" stroke-linecap="round" data-page-node-id="xCQivVRrZqtF9QGWhLshLF"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" data-page-node-id="fgAsoGLaqebAEpIwu56e30"/><path d="M13.7 21a2 2 0 0 1-3.4 0" data-page-node-id="9CJOOSzNQsJUQTnrjY6Xww"/></svg>
+                </span>
+              </div>
+
+              <div class="home-handmark" data-page-node-id="HOMEhandmark">
+                <div class="home-handmark__text" data-page-node-id="HOMEhandmarkText">餐饮门店·轻松拍</div>
+                <div class="home-handmark__stroke home-handmark__stroke--main" data-page-node-id="HOMEhandmarkStrokeMain"></div>
+                <div class="home-handmark__stroke home-handmark__stroke--echo" data-page-node-id="HOMEhandmarkStrokeEcho"></div>
+                <i class="home-handmark__dot home-handmark__dot--one" data-page-node-id="HOMEhandmarkDotOne"></i>
+                <i class="home-handmark__dot home-handmark__dot--two" data-page-node-id="HOMEhandmarkDotTwo"></i>
+              </div>
+            </div>
+
+            <div class="body" style="padding-top:18px;" data-page-node-id="92nP0Nx36n6u32UUBKuhd8">
+
+              <!-- 今日创作主视觉：真实商业摄影 + 单一主行动 -->
+              <div class="card" style="position:relative;height:188px;overflow:hidden;border:0;background:#3a1713;box-shadow:var(--sh-2);" data-page-node-id="xmvVT1LQfOI0H47VObAkf7">
+                <img src="../../apps/mini/src/assets/home/create-hero.jpg" alt="餐饮老板正在装盘招牌菜" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;" data-page-node-id="HOMEcreateHeroImage">
+                <div style="position:absolute;inset:0;background:linear-gradient(90deg,rgba(31,13,11,.88) 0%,rgba(31,13,11,.58) 48%,rgba(31,13,11,.08) 100%);" data-page-node-id="HOMEcreateHeroScrim"></div>
+                <div style="position:absolute;left:20px;right:20px;bottom:18px;color:#fff;" data-page-node-id="HOMEcreateHeroCopy">
+                  <div style="font-size:11px;font-weight:700;color:#ffd4cf;" data-page-node-id="HOMEcreateHeroKicker">从一道菜开始</div>
+                  <div style="margin-top:5px;width:210px;font-size:23px;line-height:1.22;font-weight:750;" data-page-node-id="HOMEcreateHeroTitle">做一条能带来客人的视频</div>
+                  <div style="margin-top:7px;width:225px;font-size:12px;line-height:1.55;color:rgba(255,255,255,.78);" data-page-node-id="HOMEcreateHeroDesc">AI 帮你想文案、排分镜，现场拍完就能出片</div>
+                  <div class="btn btn--pri" style="display:inline-flex;margin-top:12px;padding:9px 16px;font-size:13px;box-shadow:none;" data-page-node-id="wBrG6ECNdR1xOPNiuBwUZT">开始创作</div>
+                </div>
+              </div>
+
+              <!-- 首页不重复承载管理功能；项目入口和资产管理分别在底部导航/我的页 -->
+
+              <!-- 接着上次拍：承接项目，不与首页主行动竞争 -->
+              <div class="row" style="margin:22px 2px 10px;" data-page-node-id="EchvwCLUG8JI1yLtjKYGYy">
+                <span class="t" style="font-weight:700;" data-page-node-id="gFEXypToEBnejV2O7kul0b">接着上次拍</span>
+                <span class="spacer" data-page-node-id="ARDDKY4JA3vlKkSWNi5zEn"></span>
+                <span class="t--xs c3" data-page-node-id="VAd4XdE6qaXbrIQ3cCDEbt">全部 ›</span>
+              </div>
+              <div class="card" style="overflow:hidden;" data-page-node-id="1Vu9qdASPvEjy5Fj1ispa8">
+                <div class="gitem" data-page-node-id="X7F1xawp0867TOQkQlaOtu">
+                  <span class="thumb" style="width:52px;height:52px;flex:none;" data-page-node-id="84Z1T9U467e3yFnVG8LRGi">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="#fff" fill-opacity=".9" data-page-node-id="aymdGOcZx5XCIDOvn8gwxm"><path d="M8 5.5v13l11-6.5-11-6.5Z" data-page-node-id="qTZtcOeiKEutu5TNg7Q5zk"/></svg>
+                  </span>
+                  <span style="flex:1;min-width:0;" data-page-node-id="ltYihCjOX5SWZ5ZP0Ls5V6">
+                    <div class="t--sm" style="font-weight:650;" data-page-node-id="Eu94aDrlOVFbIG1d8emDcU">招牌毛肚 · 现杀现涮</div>
+                    <div class="row" style="gap:6px;margin-top:5px;" data-page-node-id="keUhR1kaHH3uH78wqj82nc">
+                      <span class="tag tag--red" style="font-size:10px;padding:2px 7px;" data-page-node-id="hS439PgcLg2CDCoQSUaFIB">流量款</span>
+                      <span class="t--xs c3" data-page-node-id="sxAcLcqYH6ZUDnFVxaM5fd">分镜 5 · 2 小时前</span>
+                    </div>
+                  </span>
+                  <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="Q68nXANLpklFaf5xhdFNKV"><path d="m9 18 6-6-6-6" data-page-node-id="VHt21WAuZKjYVaBUPP3b3N"/></svg>
+                </div>
+                <div class="gitem" data-page-node-id="ik4GrdA25ybhvR8C4ZbZoK">
+                  <span class="thumb" style="width:52px;height:52px;flex:none;background:#2C2E34;" data-page-node-id="j6LdGG1C9qzGiUaQmwGBmd">
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="#fff" fill-opacity=".9" data-page-node-id="e96O9IqbDJPohwTvR1XZgZ"><path d="M8 5.5v13l11-6.5-11-6.5Z" data-page-node-id="NJ0vey5mr2uib4SDK2oFf9"/></svg>
+                  </span>
+                  <span style="flex:1;min-width:0;" data-page-node-id="L8mp3HMigatg2CrD4B7BTc">
+                    <div class="t--sm" style="font-weight:650;" data-page-node-id="VWRFzNJ8CfeIDIfa3QdXN1">周三会员日 · 全场 8 折</div>
+                    <div class="row" style="gap:6px;margin-top:5px;" data-page-node-id="ZbNIex87s5Cc9dhCCF4Pvg">
+                      <span class="tag tag--green" style="font-size:10px;padding:2px 7px;" data-page-node-id="oQKahweG5osAkBBDNUdjhC">已完成</span>
+                      <span class="t--xs c3" data-page-node-id="kcyU5GoyExfFUAafnfzbrs">分镜 3 · 昨天</span>
+                    </div>
+                  </span>
+                  <svg class="chev" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="2R31RgTOFfmUVJ5066SgEJ"><path d="m9 18 6-6-6-6" data-page-node-id="GGZ0heKh1dX0QrjTxNs8Cx"/></svg>
+                </div>
+              </div>
+            </div>
+
+            <div class="tabbar" data-page-node-id="Qdn1HJxmPutRBIN7ND8WYj">
+              <div class="tabbar__i tabbar__i--on" data-page-node-id="k520zH4ua4kLYVMEJh4Al8">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="ZjHIJQHJBXNwyoESQfieC7"><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9Z" data-page-node-id="tOuFQrpPZjYesu2h0flvnC"/><path d="M9 21v-8h6v8" data-page-node-id="xtS3CYJ4i9p0QTNN2W1q1e"/></svg>
+                首页
+              </div>
+              <div class="tabbar__i" data-page-node-id="pJSeRORrAraBp4iYAhRXVR">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="gBllZXmHUNVf1eFDWMPr9T"><rect x="2.5" y="4" width="19" height="16" rx="3" data-page-node-id="pnKQ7Be16OrtL3Z6wm3qCU"/><path d="M2.5 9h19M7 4v5M17 4v5" data-page-node-id="sV7q30lKfN2fdgSwFHmEqc"/></svg>
+                创作
+              </div>
+              <div class="tabbar__i" data-page-node-id="mHiWYUo58oOJB3H6wixnig">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="PrNAK3fHegNvkozeVCdaIJ"><circle cx="12" cy="8" r="4" data-page-node-id="cRhWFzcQJCBFCUMNAoOMJH"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" data-page-node-id="KRh9dva7gBxXit1ZxXpMLd"/></svg>
+                我的
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="RtDC7Gzot4qtLcP9jtNE3d"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 2B. 首页下滑 · 优秀作品 ========== -->
+      <div class="screen" data-page-node-id="SC2BexcellentWorksRoot">
+        <div class="screen__cap" data-page-node-id="SC2BexcellentWorksCap"><span class="screen__no" style="font-size:11px;letter-spacing:0;" data-page-node-id="SC2BexcellentWorksNo">2B</span><span class="screen__name" data-page-node-id="SC2BexcellentWorksName">首页下滑 · 优秀作品</span></div>
+        <div class="screen__note" data-page-node-id="SC2BexcellentWorksNote">紧跟「接着上次拍」。作品来自独立运营内容接口；后台真实封面优先，无图时按分类使用 AI 商业摄影 JPG。一行两个、每页 6 条，上拉分页；点「生成同款」把作品配方预填进创作流。</div>
+        <div class="phone" data-page-node-id="SC2BexcellentWorksPhone">
+          <div class="phone__scr" data-page-node-id="SC2BexcellentWorksScr">
+            <div class="island" data-page-node-id="SC2BexcellentWorksIsland"></div>
+            <div class="sbar" data-page-node-id="SC2BexcellentWorksSbar">
+              <span class="mono" data-page-node-id="SC2BexcellentWorksTime">9:41</span>
+              <span class="sbar__r" data-page-node-id="SC2BexcellentWorksSbarR">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="SC2BexcellentWorksSig"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="SC2BexcellentWorksSig1"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="SC2BexcellentWorksSig2"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="SC2BexcellentWorksSig3"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="SC2BexcellentWorksSig4"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="SC2BexcellentWorksWifi"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="SC2BexcellentWorksWifiP"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="SC2BexcellentWorksBatt"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="SC2BexcellentWorksBatt1"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="SC2BexcellentWorksBatt2"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="SC2BexcellentWorksBatt3"/></svg>
+              </span>
+            </div>
+
+            <div style="flex:none;padding:4px 18px 0;" data-page-node-id="SC2BexcellentWorksHead">
+              <div class="row" style="padding:4px 0 14px;" data-page-node-id="SC2BexcellentWorksHeadRow">
+                <span class="row" style="gap:8px;background:#fff;border-radius:var(--r-pill);padding:6px 12px 6px 6px;box-shadow:var(--sh-1);" data-page-node-id="SC2BexcellentWorksStore">
+                  <img src="./logo.png" alt="" style="width:26px;height:26px;border-radius:8px;" data-page-node-id="SC2BexcellentWorksLogo">
+                  <span class="t--sm" style="font-weight:650;" data-page-node-id="SC2BexcellentWorksStoreName">老灶火锅 · 望京店</span>
+                  <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="SC2BexcellentWorksChev"><path d="m6 9 6 6 6-6" data-page-node-id="SC2BexcellentWorksChevP"/></svg>
+                </span>
+                <span class="spacer" data-page-node-id="SC2BexcellentWorksSpacer"></span>
+                <span class="icobox" style="width:36px;height:36px;border-radius:50%;background:#fff;box-shadow:var(--sh-1);" data-page-node-id="SC2BexcellentWorksBell">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#111114" stroke-width="1.9" stroke-linecap="round" data-page-node-id="SC2BexcellentWorksBellIco"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" data-page-node-id="SC2BexcellentWorksBellIcoA"/><path d="M13.7 21a2 2 0 0 1-3.4 0" data-page-node-id="SC2BexcellentWorksBellIcoB"/></svg>
+                </span>
+              </div>
+            </div>
+
+            <div class="body" style="padding-top:0;" data-page-node-id="SC2BexcellentWorksBody">
+
+              <!-- 优秀作品 -->
+              <div class="row" style="margin:18px 2px 0;" data-page-node-id="SC2BexcellentWorksSecCap">
+                <span class="wk-ai" data-page-node-id="SC2BexcellentWorksSecAi">AI</span>
+                <span class="t" style="font-weight:700;" data-page-node-id="SC2BexcellentWorksSecT">优秀作品</span>
+                <span class="spacer" data-page-node-id="SC2BexcellentWorksSecSp"></span>
+                <span class="t--xs c3" data-page-node-id="SC2BexcellentWorksSecMore">10 个作品</span>
+              </div>
+
+              <div class="wk-tabs" data-page-node-id="SC2BexcellentWorksTabs">
+                <span class="wk-tab wk-tab--on" data-page-node-id="SC2BexcellentWorksTab1">餐饮</span>
+                <span class="wk-tab" data-page-node-id="SC2BexcellentWorksTab2">教培</span>
+                <span class="wk-tab" data-page-node-id="SC2BexcellentWorksTab3">美业</span>
+                <span class="wk-tab" data-page-node-id="SC2BexcellentWorksTab4">生活服务</span>
+                <span class="wk-tab" data-page-node-id="SC2BexcellentWorksTab5">休闲娱乐</span>
+              </div>
+
+              <div class="wk-grid" data-page-node-id="SC2BexcellentWorksRow">
+                <div class="wk-card wk-card--warm" data-page-node-id="SC2BexcellentWorksCard1">
+                  <div class="wk-card__top" data-page-node-id="SC2BexcellentWorksCard1Top">
+                    <span class="wk-card__tag" data-page-node-id="SC2BexcellentWorksCard1Tag1">素材智能成片</span>
+                    <span class="wk-card__tag" data-page-node-id="SC2BexcellentWorksCard1Tag2">卤味</span>
+                  </div>
+                  <div class="wk-card__play" data-page-node-id="SC2BexcellentWorksCard1Play"><span class="wk-card__tri" data-page-node-id="SC2BexcellentWorksCard1Tri"></span></div>
+                  <div class="wk-card__btm" data-page-node-id="SC2BexcellentWorksCard1Btm">
+                    <div class="wk-card__tt" data-page-node-id="SC2BexcellentWorksCard1Tt">郴州 34 年老卤味 · 24 载坚守地道味</div>
+                    <span class="wk-card__cta" data-page-node-id="SC2BexcellentWorksCard1Cta">生成同款</span>
+                  </div>
+                </div>
+
+                <div class="wk-card wk-card--earth" data-page-node-id="SC2BexcellentWorksCard2">
+                  <div class="wk-card__top" data-page-node-id="SC2BexcellentWorksCard2Top">
+                    <span class="wk-card__tag" data-page-node-id="SC2BexcellentWorksCard2Tag1">爆款文案</span>
+                    <span class="wk-card__tag" data-page-node-id="SC2BexcellentWorksCard2Tag2">餐饮其他</span>
+                  </div>
+                  <div class="wk-card__play" data-page-node-id="SC2BexcellentWorksCard2Play"><span class="wk-card__tri" data-page-node-id="SC2BexcellentWorksCard2Tri"></span></div>
+                  <div class="wk-card__btm" data-page-node-id="SC2BexcellentWorksCard2Btm">
+                    <div class="wk-card__tt" data-page-node-id="SC2BexcellentWorksCard2Tt">温州茶山阿海 · 5 小时慢煨一罐汤</div>
+                    <span class="wk-card__cta" data-page-node-id="SC2BexcellentWorksCard2Cta">生成同款</span>
+                  </div>
+                </div>
+
+                <div class="wk-card wk-card--gold" data-page-node-id="SC2BexcellentWorksCard3">
+                  <div class="wk-card__top" data-page-node-id="SC2BexcellentWorksCard3Top">
+                    <span class="wk-card__tag" data-page-node-id="SC2BexcellentWorksCard3Tag1">AI 配音</span>
+                    <span class="wk-card__tag" data-page-node-id="SC2BexcellentWorksCard3Tag2">面馆</span>
+                  </div>
+                  <div class="wk-card__play" data-page-node-id="SC2BexcellentWorksCard3Play"><span class="wk-card__tri" data-page-node-id="SC2BexcellentWorksCard3Tri"></span></div>
+                  <div class="wk-card__btm" data-page-node-id="SC2BexcellentWorksCard3Btm">
+                    <div class="wk-card__tt" data-page-node-id="SC2BexcellentWorksCard3Tt">成都小面馆 · 凌晨四点熬的一锅红油</div>
+                    <span class="wk-card__cta" data-page-node-id="SC2BexcellentWorksCard3Cta">生成同款</span>
+                  </div>
+                </div>
+
+                <div class="wk-card wk-card--cool" data-page-node-id="SC2BexcellentWorksCard4">
+                  <div class="wk-card__top" data-page-node-id="SC2BexcellentWorksCard4Top">
+                    <span class="wk-card__tag" data-page-node-id="SC2BexcellentWorksCard4Tag1">溯源纪实</span>
+                    <span class="wk-card__tag" data-page-node-id="SC2BexcellentWorksCard4Tag2">海鲜</span>
+                  </div>
+                  <div class="wk-card__play" data-page-node-id="SC2BexcellentWorksCard4Play"><span class="wk-card__tri" data-page-node-id="SC2BexcellentWorksCard4Tri"></span></div>
+                  <div class="wk-card__btm" data-page-node-id="SC2BexcellentWorksCard4Btm">
+                    <div class="wk-card__tt" data-page-node-id="SC2BexcellentWorksCard4Tt">海鲜大排档 · 老板凌晨去码头抢货</div>
+                    <span class="wk-card__cta" data-page-node-id="SC2BexcellentWorksCard4Cta">生成同款</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="tabbar" data-page-node-id="SC2BexcellentWorksTabbar">
+              <div class="tabbar__i tabbar__i--on" data-page-node-id="SC2BexcellentWorksTabHome">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="SC2BexcellentWorksTabHomeIco"><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9Z" data-page-node-id="SC2BexcellentWorksTabHomeIcoA"/><path d="M9 21v-8h6v8" data-page-node-id="SC2BexcellentWorksTabHomeIcoB"/></svg>
+                首页
+              </div>
+              <div class="tabbar__i" data-page-node-id="SC2BexcellentWorksTabCreate">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="SC2BexcellentWorksTabCreateIco"><rect x="2.5" y="4" width="19" height="16" rx="3" data-page-node-id="SC2BexcellentWorksTabCreateIcoA"/><path d="M2.5 9h19M7 4v5M17 4v5" data-page-node-id="SC2BexcellentWorksTabCreateIcoB"/></svg>
+                创作
+              </div>
+              <div class="tabbar__i" data-page-node-id="SC2BexcellentWorksTabMine">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="SC2BexcellentWorksTabMineIco"><circle cx="12" cy="8" r="4" data-page-node-id="SC2BexcellentWorksTabMineIcoA"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" data-page-node-id="SC2BexcellentWorksTabMineIcoB"/></svg>
+                我的
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="SC2BexcellentWorksHomebar"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 3. 创作列表 ========== -->
+      <div class="screen" data-page-node-id="GHoz8Hi0fYVCsoXVCNmNuz">
+        <div class="screen__cap" data-page-node-id="LVU42tEGCSHM7vZbkL3hkE"><span class="screen__no" data-page-node-id="HtkeeyLHDqMViuIlzOLcH7">3</span><span class="screen__name" data-page-node-id="dICXRRJW7r8Sz3NdChcd9D">我的创作 · 列表</span></div>
+        <div class="screen__note" data-page-node-id="supSAg487xmdKJT2bNQJgI">顶部保留门店切换；用分段控件按状态筛选，卡片直接给出进度而不是状态码。</div>
+        <div class="phone" data-page-node-id="mCDrPIK6ODRtEDFHds6eGq">
+          <div class="phone__scr" data-page-node-id="HjTGFkeFu5QC3QD3I5lVbB">
+            <div class="island" data-page-node-id="N0j7oIBj0AsYvUVZDlMaw9"></div>
+            <div class="sbar" data-page-node-id="d0n8pSRhWFKe5Ejfvuo8ks">
+              <span class="mono" data-page-node-id="bmMTcVq4KENUFofZdAV8ft">9:41</span>
+              <span class="sbar__r" data-page-node-id="PCIMZZ4ImIqoDEg8JzFsuw">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="G8UpySGsZy7N7VMHayejVN"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="G6v1gDbVRsrHpIGHi9Puc2"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="5bTdGW1NeFMuMXSWmq0C2h"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="YtJB3Ax5lVEGjeW38oKqdC"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="x70a479U81spVmbWK5tbgD"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="8bwRmRn9fIayytoJSDtqAu"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="UxE1MROMH4XLDgE4NdX9R3"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="PHxlNlVwLrpbU7LeHHISOB"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="jf9JdEWmZkAPTk7ZrPmsv5"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="rJZDDpvKk03Zbdr29Y5ttU"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="O9zJWomjfO3dqiO10tol6f"/></svg>
+              </span>
+            </div>
+
+            <div class="nav" style="height:auto;padding:4px 18px 0;" data-page-node-id="vsUefkENuna4CFXbG7lDB9">
+              <span style="font-size:28px;font-weight:700;letter-spacing:-.03em;" data-page-node-id="Hgw74tb0gPHMmqZhC5CVhI">我的创作</span>
+              <span class="spacer" data-page-node-id="KDIMA2OPG0Rh5TLKBNfkmF"></span>
+              <span class="icobox" style="width:34px;height:34px;border-radius:50%;background:var(--red);color:#fff;box-shadow:var(--sh-red);" data-page-node-id="ThiSbChuDUvGsKFnxg5mMG">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.8" stroke-linecap="round" data-page-node-id="HnvnDsqOprPpMEMNcH7uoj"><path d="M12 5v14M5 12h14" data-page-node-id="qfrsunhYM2N38iaz5oljcL"/></svg>
+              </span>
+            </div>
+
+            <div style="flex:none;padding:12px 18px 0;" data-page-node-id="FAPlef6AkAYaTd8cFItkaK">
+              <div class="row" style="gap:7px;" data-page-node-id="bhFbP4yUkdxQ40cubiF3qH">
+                <span class="tag tag--outline" style="display:inline-flex;align-items:center;gap:5px;" data-page-node-id="uuDrebNfHgn4Z5BR6PHsFJ">
+                  <img src="./logo.png" alt="" style="width:15px;height:15px;border-radius:5px;" data-page-node-id="vW3rWoVDf6zUdioIj7TsAR">老灶火锅 · 望京店
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" data-page-node-id="LaG0LfZEBW1F6HbtpUGeL4"><path d="m6 9 6 6 6-6" data-page-node-id="2eAjwuawr6ZIbXZLrSDMNU"/></svg>
+                </span>
+              </div>
+              <div class="seg" style="display:flex;margin-top:12px;width:100%;" data-page-node-id="t3XBKm2Qc9HBsfIDlHjkBr">
+                <span class="seg__i seg__i--on" style="flex:1;text-align:center;" data-page-node-id="K4I7iMMBAXW8sTdXSBTQKD">全部 8</span>
+                <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="RxyEluAJgiwez5sEueAmiq">进行中 2</span>
+                <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="dgR7nUZAkq9SJn8FqGkOKD">已就绪 6</span>
+              </div>
+            </div>
+
+            <div class="body" style="padding-top:14px;overflow:hidden;" data-page-node-id="dvIwk1g5ejyPAW9TRWFvDa">
+
+              <div class="card" style="padding:14px;margin-bottom:11px;box-shadow:var(--sh-2);" data-page-node-id="9JWIDyMqbDIGv1hhPtuACZ">
+                <div class="row" style="align-items:flex-start;" data-page-node-id="35oKPQSxF7e4BjMM2r7Uf8">
+                  <span class="thumb" style="width:74px;height:74px;flex:none;" data-page-node-id="du4OXCfRd0e8IZyYWSg90r">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff" fill-opacity=".9" data-page-node-id="xwjv24dFwwAqaCN8iUwCM5"><path d="M8 5.5v13l11-6.5-11-6.5Z" data-page-node-id="eHdaNqTmWRxdErGA5C3E7B"/></svg>
+                    <span class="thumb__dur" data-page-node-id="cBSVNGR3kKBQXfdsxemqwH">0:38</span>
+                  </span>
+                  <span style="flex:1;min-width:0;" data-page-node-id="GGLp3xTvEPBYloBNJG0WqC">
+                    <div class="t" style="font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" data-page-node-id="Ifn14WrJ5bVqZnhkafl3W3">招牌毛肚 · 现杀现涮</div>
+                    <div class="chiprow" data-page-node-id="NWOCKmlcOhGcJs2XtTKA0d">
+                      <span class="minichip minichip--red" data-page-node-id="EGBWr5cTPPnvPwkHjqX8LJ">流量款</span>
+                      <span class="minichip" data-page-node-id="Up6QGAoMa50UqqSFVu5dHc">精细 · 5 镜</span>
+                    </div>
+                    <div class="row" style="margin-top:11px;" data-page-node-id="19muu9pbWIz1ecg7zsClMV">
+                      <span class="tag tag--amber" style="font-size:10.5px;padding:3px 9px;" data-page-node-id="FmpbXgZfOMSuwVUjzNpP1J">成片合成中 62%</span>
+                    </div>
+                  </span>
+                </div>
+                <div style="margin-top:12px;" data-page-node-id="5acHA8uAJYuqCCXzwK4S6T">
+                  <span class="swatchbar" style="height:5px;background:var(--line);" data-page-node-id="7MwuAhYszeq3ofGB8Tj2nh"><i style="flex:62;background:var(--red)" data-page-node-id="nbqEpfrXuvgl8oxDxTHG60"></i></span>
+                  <div class="row" style="margin-top:8px;" data-page-node-id="7m71ukHLMYPD29EOjnBERe">
+                    <span class="t--xs c3" data-page-node-id="0AKhPBONCkLAP0m0dpMATY">预计还需 2 分钟</span>
+                    <span class="spacer" data-page-node-id="6rGZKcfvsmOSMIwUmdEUmI"></span>
+                    <span class="t--xs" style="color:var(--red);font-weight:650;" data-page-node-id="vYmeCo4wZoBjEgPz0nbmRv">查看进度 ›</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card" style="padding:14px;margin-bottom:11px;" data-page-node-id="FkqEU1Ce3BmNRkfQBh4uLr">
+                <div class="row" style="align-items:flex-start;" data-page-node-id="OnQO56Px9kwPPW7oz8IqO8">
+                  <span class="drop" style="width:74px;height:74px;flex:none;padding:0;gap:3px;" data-page-node-id="KvFmgKZDcA4VP2ZXgKB6Eb">
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="PuoFamw7RAjsKkCAhfpV7r"><path d="M12 5v14M5 12h14" data-page-node-id="ZogF4mCzIa6VZ5DZgunfmm"/></svg>
+                    <span class="t--xs" data-page-node-id="EpmAJla5XStGgF9Dz7yM6L">待上传</span>
+                  </span>
+                  <span style="flex:1;min-width:0;" data-page-node-id="WEUy5olLFrEfEVJ7lFwbnz">
+                    <div class="t" style="font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" data-page-node-id="bzOmhaVnOvLXO3e9vxyZwO">新店开业 · 三天免费尝</div>
+                    <div class="chiprow" data-page-node-id="QoWQDAHFsJ5vDTcquVwMUQ">
+                      <span class="minichip minichip--red" data-page-node-id="whEOzv0HGwB6zs2YJMuaWS">介绍款</span>
+                      <span class="minichip" data-page-node-id="f3StDTKWeAhpFXHkf1B3Sn">标准 · 3 镜</span>
+                    </div>
+                    <div class="row" style="margin-top:11px;" data-page-node-id="oQbZXWCbZJKfdt8uvB3Wpq">
+                      <span class="t--xs c3" data-page-node-id="0KgriZzJ0wIQXGCqAlQsF8">已完成 2/3 分镜素材</span>
+                    </div>
+                  </span>
+                </div>
+              </div>
+
+              <div class="card" style="padding:14px;" data-page-node-id="oMF78Wvg7pK4X3ZSgjgy6I">
+                <div class="row" style="align-items:flex-start;" data-page-node-id="ejtQGh5ceUn4kVAmnWLWvy">
+                  <span class="thumb" style="width:74px;height:74px;flex:none;background:#2C2E34;" data-page-node-id="ryz3CuG6sCMjzJuToHILB5">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="#fff" fill-opacity=".9" data-page-node-id="pIR4KjcsFHq4KWnf7NSbhf"><path d="M8 5.5v13l11-6.5-11-6.5Z" data-page-node-id="anSIbeqOrTy0fjDcGbqybB"/></svg>
+                    <span class="thumb__dur" data-page-node-id="pLeu5CN1UvenLeJS7AiXZY">0:22</span>
+                  </span>
+                  <span style="flex:1;min-width:0;" data-page-node-id="6LUYNHXsV00B9mEpBxIhTl">
+                    <div class="t" style="font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" data-page-node-id="EX1pNm6TxAFJoUiKy0XlTZ">周三会员日 · 全场 8 折</div>
+                    <div class="chiprow" data-page-node-id="CvPdGByGLSDgFnYr3Ei9Kt">
+                      <span class="minichip minichip--red" data-page-node-id="dcYlS8vMDkLezFQg1IE7FV">质量款</span>
+                      <span class="minichip" data-page-node-id="oOoHw7385bQfbeKxBuHZVC">简洁 · 2 镜</span>
+                    </div>
+                    <div class="row" style="margin-top:11px;" data-page-node-id="LMKLnaFjSAYEaCLfRh2T1E">
+                      <span class="tag tag--green" style="font-size:10.5px;padding:3px 9px;" data-page-node-id="LwN9f6hHGEGAz6dRFkYUe5">✓ 已完成 · 可发布</span>
+                    </div>
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div class="tabbar" data-page-node-id="ZdG1qVB5DTXtcLZxkACis9">
+              <div class="tabbar__i" data-page-node-id="aWPpNxiCTxsAT5MWJDeQyR">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="HvYlkJ3Z7BAzy5BoZs14BX"><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9Z" data-page-node-id="1uX3mYkN9JK7jMVX1uHVQD"/><path d="M9 21v-8h6v8" data-page-node-id="y8wandL5NOIfPUnHdg9Bea"/></svg>
+                首页
+              </div>
+              <div class="tabbar__i tabbar__i--on" data-page-node-id="GoSEhdDABxJO8phaUjMwKH">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="lS5Z1FoUX8NqSbq1aHm2bH"><rect x="2.5" y="4" width="19" height="16" rx="3" data-page-node-id="GyUskHomHULpF5vdAtTywt"/><path d="M2.5 9h19M7 4v5M17 4v5" data-page-node-id="dNq6F2vfStaA478QLfgvXQ"/></svg>
+                创作
+              </div>
+              <div class="tabbar__i" data-page-node-id="Tx4GZSVbD1NxEACCOPJyvW">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="mtlhmsvCYWA5fTRUCdNfem"><circle cx="12" cy="8" r="4" data-page-node-id="w09vsUNo6tKLoTsB0IlCEc"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" data-page-node-id="a1YlqlDBaUHwJmo01bEqrD"/></svg>
+                我的
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="Le7JOPjyru7VCEELsKhOEu"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 4. 文案生成 ========== -->
+      <div class="screen" data-page-node-id="tSU4NUGfTD9sChB54QhTHE">
+        <div class="screen__cap" data-page-node-id="SAEq8HNlL6f6YDvDDIJGZn"><span class="screen__no" data-page-node-id="KrGHfnhvAyqAUKTzX2ppOa">4</span><span class="screen__name" data-page-node-id="takBf8YC3VdKKuQlO0AApD">创作 · 口播文案</span></div>
+        <div class="screen__note" data-page-node-id="BNRBpSU0GDQ1IikHB8tXxd">四步流程条固定在顶部，让用户始终知道「我在第几步、还剩几步」。</div>
+        <div class="phone" data-page-node-id="znerlRyM05PgvFTHUX70im">
+          <div class="phone__scr" data-page-node-id="kVK5FFNG2nDiSOltJxYOrR">
+            <div class="island" data-page-node-id="cTAEC7az1d1bhVixHAit5K"></div>
+            <div class="sbar" data-page-node-id="62I8GoQxJ2yX4FvCoDa5Si">
+              <span class="mono" data-page-node-id="IOzFaKeTHj8UNBjAj2mItO">9:41</span>
+              <span class="sbar__r" data-page-node-id="IfEgvytmUIF2XHv45vOlkf">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="KZQyaYImew9pS0FDifRcGQ"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="HvD00mddu3Gyj1aFJ74Ntd"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="hIYTfAuKE3x8CXJF7ZWg3U"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="QlvxpCi8IYMaDTXuLKXtWv"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="2UBDZUBCz8XGocyZXOhDMm"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="fQmAqMDGGyMmeZnmQBoCVF"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="xQ2E9ANO2g512YX2DpJQea"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="sDSgz81N9WE1evKZFsI8tB"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="MI7hV3Qa2p6AhmWi343eKF"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="f5nPZqRV1mTGIfC6lFrnDW"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="D5L1IclaEdbns8rIFX2ylK"/></svg>
+              </span>
+            </div>
+
+            <div class="nav" data-page-node-id="assw3t7UqCeaFzAzQUzFKa">
+              <span class="nav__back" data-page-node-id="Yh53Jx1Y1laIAMhnZq8CyG"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#111114" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="NAuCCsT8VRXmpML15XlCxH"><path d="m15 18-6-6 6-6" data-page-node-id="Qh9yCdpAWdSrVgHS2qAPkw"/></svg></span>
+              <span class="nav__title" data-page-node-id="Pp1riSOVxrqtSG4r0JRdfU">招牌毛肚 · 现杀现涮</span>
+              <span class="nav__right" data-page-node-id="Pdo9Ly6NSXM0gfLLlYVPcP"><span class="t--xs c3" data-page-node-id="bAN4C9Mzr4uvBMKmDdGCmP">草稿已存</span></span>
+            </div>
+
+            <div style="flex:none;padding:0 18px;" data-page-node-id="JmZzhgl0CKMU9eAXzGEnI5">
+              <div class="steps" data-page-node-id="bwCaqqnbo4YHwmK4MFjiFD">
+                <span class="step step--on" data-page-node-id="0eV7QFAUtA4sMc0fE76A3Z"><span class="step__d" data-page-node-id="6qmx7GyTFKWCJ6hNGOG5OA">1</span>文案</span>
+                <span class="step__line" data-page-node-id="9cdhupcMVtDcgsceXPOoRS"></span>
+                <span class="step" data-page-node-id="L50fRaTqHRjkLAFzpI8KGE"><span class="step__d" data-page-node-id="bvHKMDZrbEg2KE929NqxoT">2</span>分镜</span>
+                <span class="step__line" data-page-node-id="10QuDlpkqpxMaZzckdCwwF"></span>
+                <span class="step" data-page-node-id="fKrxVILGhXOmdHAsWbK3L2"><span class="step__d" data-page-node-id="IRZ18quADtVYbQnW8bKvno">3</span>素材</span>
+                <span class="step__line" data-page-node-id="Cxv52GmWXdeixHAQZ4XD2U"></span>
+                <span class="step" data-page-node-id="pH4877TiFDmkDMPFh4e1bZ"><span class="step__d" data-page-node-id="LZL4alPqjlCCkJaXLMNfqP">4</span>成片</span>
+              </div>
+            </div>
+
+            <div class="body" style="padding-top:4px;" data-page-node-id="eQA72LZFxVqOrl745XLYxk">
+              <div class="t--xs c3" style="font-weight:600;margin:0 2px 9px;" data-page-node-id="unfPtrjFkqEx0EA0egp6cu">选择文案款式</div>
+              <div class="seg" style="display:flex;width:100%;" data-page-node-id="Tej6A2TXCNdYFAECBr1QlN">
+                <span class="seg__i seg__i--on" style="flex:1;text-align:center;" data-page-node-id="kb01pQJ8NY9lbYiyytoQxG">流量款</span>
+                <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="i69GlUR7JqphphMYpQt4of">介绍款</span>
+                <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="V9EDIdsVeh9ZX9QdQTWDmV">质量款</span>
+              </div>
+              <div class="t--xs c3" style="margin:9px 2px 16px;line-height:1.55;" data-page-node-id="hxaiQSqFVKc3uJFDC0JCVz">流量款 · 前三秒抓眼球，适合投流拉新</div>
+
+              <div class="card card--pad" style="box-shadow:var(--sh-2);" data-page-node-id="UyjLTDVCHJObe0Hk2rSdly">
+                <div class="row" style="margin-bottom:12px;" data-page-node-id="lrkfZOCyzhmENBzaOrl9IM">
+                  <span class="tag tag--red" data-page-node-id="F5xMzMght55ZiK7DCcJzNr">流量款</span>
+                  <span class="spacer" data-page-node-id="4J26NuAHAoo3WmQczbFr4x"></span>
+                  <span class="t--xs c3" data-page-node-id="hAuOMbd3xI1uSXlQezS9aD">已生成 · 142 字</span>
+                </div>
+                <div style="font-size:15px;line-height:1.72;color:var(--ink);" data-page-node-id="M84PqcVV5FcrV24wsWR0yE">
+                  别再点那种冻毛肚了。<br data-page-node-id="bj1aH1agQtvGqRNLECEUYY">
+                  我们家每天早上五点现杀现送，你看这毛肚，毛刺根根立起来，一涮就卷，脆得能听见声。<br data-page-node-id="zHl5PmfH5J6H4u1yowFMn7">
+                  八秒，就八秒，多一秒都老。<br data-page-node-id="22klY8erblctiEQ4JzQKN6">
+                  今天进店报「视频来的」，送你一份招牌酸梅汤。
+                </div>
+                <div class="hr" data-page-node-id="whRdgLou8ymr5NqDHS7SR1"></div>
+                <div class="row" style="gap:9px;" data-page-node-id="T1avXXsb5UfP4qMS8gJXir">
+                  <span class="btn btn--ghost btn--sm" style="flex:1;" data-page-node-id="17ljs9ZoKL6CBsAfTdHpqp">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="sWFZGPEQigtHlMeVU4TpI8"><rect x="9" y="9" width="12" height="12" rx="2.4" data-page-node-id="OqlArVpiDX7j2o8xjCmZHy"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" data-page-node-id="FX4tFtYiGe3CnWXkCB7y8Y"/></svg>
+                    复制
+                  </span>
+                  <span class="btn btn--ghost btn--sm" style="flex:1;" data-page-node-id="4DZo9cs8H5D0W1zoO5EGJc">编辑</span>
+                  <span class="btn btn--sec btn--sm" style="flex:1.2;" data-page-node-id="rFMtE5oveC20mLCekTVND5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="UW0q6CboYk0BHil6EvL4Bg"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1" data-page-node-id="Zz0L1MeMiC1Y8glPnapOTz"/><path d="M20.5 4v5h-5" data-page-node-id="RhZDGYOx70Ltq8rbsM3ppY"/></svg>
+                    重新生成
+                  </span>
+                </div>
+              </div>
+
+              <div class="card card--pad" style="margin-top:14px;background:var(--red-soft);border:1px solid var(--red-light);" data-page-node-id="GDTohPI1U4EMC26KeNno0q">
+                <div class="row" data-page-node-id="ifkao2GGGDqr8dJSMfzKug">
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" data-page-node-id="0atmEa9vk4tqlEnHLUAIvf"><circle cx="12" cy="12" r="9.2" data-page-node-id="fB7hgwJzPR1XqbZErJGIyB"/><path d="M12 11v5.5M12 7.8h.01" stroke-width="2.4" data-page-node-id="YUzSHkmIETJbKUB9RkHZR1"/></svg>
+                  <span class="t--xs" style="color:var(--red-press);line-height:1.55;font-weight:550;" data-page-node-id="kNT5cclM1N4qPAs1lzzbpm">文案由 AI 结合「门店 + 菜品卖点 + 老板人设」生成，越完善门店资料越贴你的店。</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="bottombar" data-page-node-id="uUEWYXq5yX5eNEmPQIf1E9">
+              <div class="btn btn--pri btn--block" style="padding:15px;" data-page-node-id="NFTrnGXeYdW665awyUep5U">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="VUnSDa7PuEFvv7e5g0guXt"><path d="m12 3 2.2 5.6L20 10.5l-4.4 3.7 1.2 6.1L12 17.2 7.2 20.3l1.2-6.1L4 10.5l5.8-1.9L12 3Z" data-page-node-id="ur0ZDJBO87JSooTiPHFQDV"/></svg>
+                下一步 · 生成分镜
+              </div>
+              <div class="row" style="justify-content:center;margin-top:9px;" data-page-node-id="ENnoGPhD6fDU3L8mCnAGJ7">
+                <span class="t--xs c3" data-page-node-id="jSIc4PrLA8X0sKliw8LGee">可用 1,280 积分 · 本次约消耗 6 积分</span>
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="wZCFaHgq5jBKacNDFxpJaC"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 5. 分镜脚本 ========== -->
+      <div class="screen" data-page-node-id="3ZtlD8E6rYalKaT4L3hsxd">
+        <div class="screen__cap" data-page-node-id="jow4CCv1Ls7fsXVFG89cP8"><span class="screen__no" data-page-node-id="CGwGjJsOeCd69PzDqQQLit">5</span><span class="screen__name" data-page-node-id="Eu1KCFmamx1cQrRwQnhKSB">创作 · 分镜脚本</span></div>
+        <div class="screen__note" data-page-node-id="crz9OAgTjCKZkAVSAVBUs8">分镜按「序号 + 镜头类型 + 景别 + 时长」结构化呈现，台词与画面要求分行，一眼看懂怎么拍。</div>
+        <div class="phone" data-page-node-id="wCFOP9cMidDX8V8oU9LA6G">
+          <div class="phone__scr" data-page-node-id="oeSCWAa6y8fHZA9Jo9T90A">
+            <div class="island" data-page-node-id="8e8Baa9rL6EuzA5DrbWYss"></div>
+            <div class="sbar" data-page-node-id="9wrC9HSa5nUjv62B3gPd3z">
+              <span class="mono" data-page-node-id="3bvcddRf16IJ7NHaTVq3cG">9:41</span>
+              <span class="sbar__r" data-page-node-id="MaYqR6Ibz6Y3RgDqOS9NEI">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="NmINB4NzdyANHCFO3JtMIl"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="nSaHgsjHGqg70KPROph0VL"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="tTbFRR3jHuSjroUpXHY0tS"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="NZKXhkhrdIsZHQ5HAU2R8c"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="m2tVa8WuHnODEA1yhMHPEm"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="4yNxIVIqSdKcf9xRHzAPo5"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="baZJQRO7I1BSF9tgXP7WKh"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="4RObjPnbsZB8g12ScAqfhs"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="G7Wtvi2XON3eW62hUNY3dN"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="iC1c9HAhdpySZsLFO03oYF"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="xVV4U7NcwjF6K3C3KXghEg"/></svg>
+              </span>
+            </div>
+
+            <div class="nav" data-page-node-id="DqdVFbp2Is9BqzcM24GmC4">
+              <span class="nav__back" data-page-node-id="0rqHUFVyBFuGjChptsDFTY"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#111114" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="5N1g4YT5J6gK6v7hS3hpAO"><path d="m15 18-6-6 6-6" data-page-node-id="5noBFNiqTYQS2YBqREi3E1"/></svg></span>
+              <span class="nav__title" data-page-node-id="e7vqWqXgB3eoLtnJPsf5Aw">分镜脚本（5）</span>
+              <span class="nav__right" data-page-node-id="yAQZuFkuk93LFyeEVtjclK"><span class="t--xs" style="color:var(--red);font-weight:600;" data-page-node-id="h0EuFAFfYEDbtoPBL7a8xN">一键复制</span></span>
+            </div>
+
+            <div style="flex:none;padding:0 18px;" data-page-node-id="a46apCf6HC0tLVcPKZHJLb">
+              <div class="steps" data-page-node-id="oc0EvUELKS0AvGoFwwokqB">
+                <span class="step step--done" data-page-node-id="OlP2VAiBkJ54tCQaPQcrnQ"><span class="step__d" data-page-node-id="SkP5E9tnfBMgCpdVTf0iAR">✓</span>文案</span>
+                <span class="step__line step__line--on" data-page-node-id="2C7ZrTGr8kW6bQWBky1CPS"></span>
+                <span class="step step--on" data-page-node-id="LencVgXBT7n8K3YiidbkfY"><span class="step__d" data-page-node-id="38yCgaZlxQiFMGjOd1vrL9">2</span>分镜</span>
+                <span class="step__line" data-page-node-id="mYSfODCKyL7jGHSkxPKuoa"></span>
+                <span class="step" data-page-node-id="mKKZ4GXyR6f2UGXf4eAYsx"><span class="step__d" data-page-node-id="fnnuoT4CtfcwjU5HwnFHvy">3</span>素材</span>
+                <span class="step__line" data-page-node-id="T4rjgu1Eimgg96hMUFZTSP"></span>
+                <span class="step" data-page-node-id="TCcGCx8EgzWlbYbEsdcboX"><span class="step__d" data-page-node-id="Yn6ANh8N5Al9xYf2dKzWF9">4</span>成片</span>
+              </div>
+            </div>
+
+            <div class="body" style="padding-top:4px;" data-page-node-id="UDqinP97oFNCLGSCFLQ0Ze">
+              <div class="t--xs c3" style="font-weight:600;margin:0 2px 9px;" data-page-node-id="MCMDcDNApBHgqISJSdfig3">镜头复杂度 · 自动决定分镜数量</div>
+              <div class="seg" style="display:flex;width:100%;" data-page-node-id="GC5LBl1ztwBEIV1maFoVNE">
+                <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="AtOClr9CTHYicNM3W1s56a">简洁 · 2-3</span>
+                <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="XFrKEjlGroCveU0Ac4NhFi">标准 · 4-6</span>
+                <span class="seg__i seg__i--on" style="flex:1;text-align:center;" data-page-node-id="3tiyz5Bw3aTizLwR3AbgaE">精细 · 7-9</span>
+              </div>
+
+              <div class="card" style="padding:15px;margin-top:14px;" data-page-node-id="DHCOK5gxnCBxS7TcjZob45">
+                <div class="shot" data-page-node-id="YYNcFhLY3gIwBd8aneFALq">
+                  <span class="shot__idx" data-page-node-id="5uJMGpIegaHyPG8yJTHpwl">1</span>
+                  <span class="shot__box" data-page-node-id="RLAAFVPbdMGgpAYkdvcFab">
+                    <div class="row" data-page-node-id="Hc1hXD8TY1fcbfAxl51FmZ"><span class="t--sm" style="font-weight:650;" data-page-node-id="MOMaV1wMGApXBdR40Thq58">开场 · 悬念</span><span class="spacer" data-page-node-id="hhgJfYSoqPJN9csYC2SpA5"></span><span class="t--xs c3" data-page-node-id="DU1DxNjfkIk947fa6lWSIK">3s</span></div>
+                    <div class="chiprow" data-page-node-id="bbzbauWkuWmyElQgexOAi8"><span class="minichip" data-page-node-id="5if06nAEHbJufLRlbTMzpa">近景</span><span class="minichip minichip--red" data-page-node-id="r1ZTgH9FFD9Edj100kfbID">开场</span></div>
+                    <div class="t--sm c2" style="margin-top:9px;line-height:1.6;" data-page-node-id="oWYQZGQ2HCvNaaiLddo9im">别再点那种冻毛肚了。</div>
+                    <div class="t--xs c3" style="margin-top:6px;line-height:1.6;" data-page-node-id="aC0NkKNLAdIX1wst10PsQi">画面：老板直视镜头，手拿一盘毛肚举起，背景是忙碌的后厨</div>
+                  </span>
+                </div>
+              </div>
+
+              <div class="card" style="padding:15px;margin-top:11px;" data-page-node-id="0joMFwPyIo0k44rGBFhvAE">
+                <div class="shot" data-page-node-id="NsLFEQGx9wfJ6DhOHt4L2i">
+                  <span class="shot__idx" data-page-node-id="DI7V7HkdE4wyhaFpcPAXAb">2</span>
+                  <span class="shot__box" data-page-node-id="yHE0xbxWAOGRLHo001OVXv">
+                    <div class="row" data-page-node-id="aUXsGOBDbr15VBDOpTgcfa"><span class="t--sm" style="font-weight:650;" data-page-node-id="eccy9mNDd9QGiBUGTFXE81">原料 · 现杀现送</span><span class="spacer" data-page-node-id="QkV8QHjqAD9pTRmAcPZNdH"></span><span class="t--xs c3" data-page-node-id="HSteO65GlgoFc6jpVfAUFl">5s</span></div>
+                    <div class="chiprow" data-page-node-id="seqXfEeRmBl6WAXhclMZ6z"><span class="minichip" data-page-node-id="eUQGjcsImqFWAg8W8wzVrR">大特写</span><span class="minichip minichip--red" data-page-node-id="JCWTeHlKZIJ0wXVKdsLEau">原料</span></div>
+                    <div class="t--sm c2" style="margin-top:9px;line-height:1.6;" data-page-node-id="kosi06mrMcH185ilsQF41G">我们家每天早上五点现杀现送。</div>
+                    <div class="t--xs c3" style="margin-top:6px;line-height:1.6;" data-page-node-id="TMl4cJGaluTIKE6WcRKCxq">画面：毛肚特写，毛刺根根立起，手指轻按回弹</div>
+                  </span>
+                </div>
+              </div>
+
+              <div class="card" style="padding:15px;margin-top:11px;" data-page-node-id="x4YgdJixQ1Sz4J9eHVHezB">
+                <div class="shot" data-page-node-id="5LGfwvyiPxNJnNcHhUHymM">
+                  <span class="shot__idx" data-page-node-id="VvjystTwXPyCORjyIKWuuX">3</span>
+                  <span class="shot__box" data-page-node-id="UtSkI5eRFvC3NGyzcFg3m9">
+                    <div class="row" data-page-node-id="UmBYajDiAO5tdmMghVp022"><span class="t--sm" style="font-weight:650;" data-page-node-id="h0ZyozzLDGCIKFmqcuJxx0">制作 · 八秒出锅</span><span class="spacer" data-page-node-id="PasnoYI4ySNKklxz1KbTZf"></span><span class="t--xs c3" data-page-node-id="JpJL0r3BYiBpeV36Yosb1d">6s</span></div>
+                    <div class="chiprow" data-page-node-id="vqtVBYrgyrc8FSvbwrMpRX"><span class="minichip" data-page-node-id="I26jSEIGpbrjQIRHHcrA4D">中景</span><span class="minichip minichip--red" data-page-node-id="gKyNBoHITxt1WBzlA3mk64">制作</span><span class="minichip minichip--amber" data-page-node-id="628k0m0aJJbr3zMfwfG7UX">手法：慢动作涮煮</span></div>
+                    <div class="t--sm c2" style="margin-top:9px;line-height:1.6;" data-page-node-id="Z6Djob4bMRVBbjMvFqt8nK">八秒，就八秒，多一秒都老。</div>
+                    <div class="t--xs c3" style="margin-top:6px;line-height:1.6;" data-page-node-id="6H0tZNfJJ2i9hAKHfFtzHj">画面：筷子夹毛肚入红汤，慢镜头，计时器叠字 8s</div>
+                  </span>
+                </div>
+              </div>
+
+            </div>
+
+            <div class="bottombar" data-page-node-id="LYNGlXzaSD5HuB3u7a7OwN">
+              <div class="btn btn--pri btn--block" style="padding:15px;" data-page-node-id="KJWiEmHOcBAn94BZMr7d1a">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="tv774oX3Z2iNA3nMHsNSMc"><path d="M12 3v12M7 11l5 5 5-5M5 21h14" data-page-node-id="sTdpaEJpnTCgRT3JbVbvAY"/></svg>
+                下一步 · 拍摄上传素材
+              </div>
+              <div class="row" style="justify-content:center;margin-top:9px;" data-page-node-id="DxH89phZeohVxfJvqxQ18l">
+                <span class="t--xs c3" data-page-node-id="879q1f5k6wutrgz4scymMM">约消耗 9 积分 · 生成后可逐条编辑</span>
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="deeknEJB8nRnJBdI4glOLs"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 6. 拍摄上传 ========== -->
+      <div class="screen" data-page-node-id="xyuGfWZPivkVqMfh70cGAv">
+        <div class="screen__cap" data-page-node-id="tYrck0zSynwmUZFjGRwas9"><span class="screen__no" data-page-node-id="5JxvOdl6OxX4LwYPtATKgD">6</span><span class="screen__name" data-page-node-id="8oT2clYP89YfSvBE5WXnd6">拍摄 · 上传素材</span></div>
+        <div class="screen__note" data-page-node-id="fwBekCgS1i6IyOnrWDWPMB">每个分镜卡片自带「怎么拍」拍摄指导，未上传状态用虚线框引导点击，降低「不知道拍什么」的焦虑。</div>
+        <div class="phone" data-page-node-id="F3y4j6Ei4uwRP9e7EcuuDd">
+          <div class="phone__scr" data-page-node-id="hCSvThdVijNz8cMBMZumTn">
+            <div class="island" data-page-node-id="5ThX2yn8pYV1zyIRhAhxse"></div>
+            <div class="sbar" data-page-node-id="17bkBiaA6rQwB0h0XtM5d6">
+              <span class="mono" data-page-node-id="fCpa8iDqP6ckh4r5qsRRin">9:41</span>
+              <span class="sbar__r" data-page-node-id="5hJSzzkCxywUjpXNsFPWZj">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="XHDk90xoytY9nGuLOHzHjO"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="s0yML6eYtCzRzf3DRFcipz"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="lZE4hLwIGD2kyCE0iGC0tM"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="2NVfCNdICpBfjhBXeEgX4I"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="WTB83aSfvyGZGM41HL2QGA"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="GyjNzolJvSIBUQmiH0waLo"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="0HnYk6sEu1te6lnszU7LJt"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="EjgSGJocObjQwNsESjl5eF"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="5KBYodTuYV0NdTOXAtE79E"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="IvgxWBNM2Er6yQ5v6eu1XO"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="OMiNbNEVLYJbRY0BcCyImK"/></svg>
+              </span>
+            </div>
+
+            <div class="nav" data-page-node-id="whiNgROzZMzsWXDDH2ejIV">
+              <span class="nav__back" data-page-node-id="0qesGv9uw9ReJ4qcog0TNq"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#111114" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="HEzFFsGGpQ0UM5ljggDPBa"><path d="m15 18-6-6 6-6" data-page-node-id="1k8AEJxN6Bli5zUMAgjWOD"/></svg></span>
+              <span class="nav__title" data-page-node-id="saewGCAt3ssCvnQ8veegx7">拍摄素材</span>
+              <span class="nav__right" data-page-node-id="sx6rRm5mB1jNgdd2HxjCGH"><span class="t--xs mono" style="color:var(--red);font-weight:700;" data-page-node-id="UWjhbOWiwq9xJJnXzDeYSk">2 / 5</span></span>
+            </div>
+
+            <div style="flex:none;padding:0 18px 12px;" data-page-node-id="RULYJkRBEII1Swx1WppEsz">
+              <span class="swatchbar" style="height:5px;background:var(--line);" data-page-node-id="UB30i2HoTzIsQpGjP0MQID"><i style="flex:40;background:var(--red)" data-page-node-id="8YhilSOhpXscSqCh1gj4Dq"></i></span>
+              <div class="t--xs c3" style="margin-top:8px;" data-page-node-id="rxbgWZ82PGPQFHiSUmpDqi">按分镜顺序拍摄，单个视频建议 ≤ 1 分钟、≤ 500MB</div>
+            </div>
+
+            <div class="body" style="padding-top:2px;" data-page-node-id="FDVHGUkiSalPerZyey4U6T">
+
+              <div class="card" style="padding:14px;margin-bottom:11px;" data-page-node-id="vti8VPqZBD9jrGgoeHTAbb">
+                <div class="row" style="margin-bottom:11px;" data-page-node-id="twAiAO0qdknTdlw5HIMe2J">
+                  <span class="shot__idx" style="margin:0;width:22px;height:22px;font-size:11px;" data-page-node-id="7RBUVHrWjQB2okTn859tdJ">1</span>
+                  <span class="t--sm" style="font-weight:650;" data-page-node-id="keroakBrOBpHTtnwbo1kW6">开场 · 悬念</span>
+                  <span class="spacer" data-page-node-id="ixeDKcPfevsFDrFba6rdBm"></span>
+                  <span class="minichip" data-page-node-id="ExPpOA5ke2gaKFAtdEh0lb">近景 · 3s</span>
+                </div>
+                <div class="thumb" style="height:158px;" data-page-node-id="D0enmuK9YAKMGBHWdgszjK">
+                  <div class="thumb__play" data-page-node-id="OwVtFCJwUGiMZ7S26Aj68Q"><svg width="18" height="18" viewBox="0 0 24 24" fill="#111114" data-page-node-id="aHsOTg8HTCBOWOedDpZ98R"><path d="M8 5.5v13l11-6.5-11-6.5Z" data-page-node-id="MPB0YYSGSlR8WgIN6GPik6"/></svg></div>
+                  <span class="thumb__ok" data-page-node-id="DFNFW6CPw9sITX7ZRXd9fA">✓ 已上传</span>
+                  <span class="thumb__dur" data-page-node-id="9w74YYYRuq12suAha5IePC">0:06</span>
+                </div>
+                <div class="row" style="margin-top:11px;" data-page-node-id="DbsKJ0Nez3jBoCSFEhSOMP">
+                  <span class="t--xs c3" data-page-node-id="aDHKfuhpezutkeibQpy4dD">素材时长 6s · 计费按实际时长</span>
+                  <span class="spacer" data-page-node-id="AAMPcefubVdcVZrwkhSYEu"></span>
+                  <span class="btn btn--gray btn--sm" data-page-node-id="ZDfwu15qkhooBOnW3qM15b">重新拍摄</span>
+                </div>
+              </div>
+
+              <div class="card" style="padding:14px;margin-bottom:11px;border:1.5px solid var(--red-light);" data-page-node-id="9I86cZggZpdoUBV08TsuYj">
+                <div class="row" style="margin-bottom:11px;" data-page-node-id="OklTYOSxdDhyUmkcYUJGkq">
+                  <span class="shot__idx" style="margin:0;width:22px;height:22px;font-size:11px;" data-page-node-id="GcSLA44TgpvC2KdX4ZFA3h">3</span>
+                  <span class="t--sm" style="font-weight:650;" data-page-node-id="rmj4vIUjPqBNxooOObOajC">制作 · 八秒出锅</span>
+                  <span class="spacer" data-page-node-id="1WgjRydsxVrH16A0niPrgT"></span>
+                  <span class="minichip" data-page-node-id="mYTJTJDuR4FKuAzYvKtlxz">中景 · 6s</span>
+                </div>
+
+                <div style="background:var(--red-soft);border-radius:var(--r-sm);padding:12px 13px;margin-bottom:12px;" data-page-node-id="TgQUyQvoNsdALWeWARgN3D">
+                  <div class="row" style="margin-bottom:6px;" data-page-node-id="RS7xssBX7Jqp7pDIZbxQHj">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="B26EiCJ2puSHYb5xOIovxH"><path d="M9 18h6M10 21h4" data-page-node-id="l4r1nvEbU1rTuD7EE7EfdJ"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.5.9 1.2.9 2h5.2c0-.8.3-1.5.9-2A6 6 0 0 0 12 3Z" data-page-node-id="BcsosbrYgIPBMAp4Sf0ddh"/></svg>
+                    <span class="t--xs" style="font-weight:700;color:var(--red-press);" data-page-node-id="jFIKtjL3X0hgtfoYm7R0w7">怎么拍 · 慢动作涮煮</span>
+                    <span class="spacer" data-page-node-id="dznirNKqYKtSRDEferC7IA"></span>
+                    <span class="t--xs" style="color:var(--red);font-weight:600;" data-page-node-id="kio2o2iCRC6CzfGsHMiiBN">看示范 ›</span>
+                  </div>
+                  <div class="t--xs c2" style="line-height:1.65;" data-page-node-id="ZblD2zcQGCE1kfCahHdQ3f">手机贴近锅边，用慢动作模式拍毛肚入锅到卷起的全过程，重点拍气泡和卷曲瞬间。</div>
+                </div>
+
+                <div class="drop" style="height:112px;" data-page-node-id="xS6QpxHu24qTjWDt0sLzyK">
+                  <span class="icobox" style="width:40px;height:40px;border-radius:12px;" data-page-node-id="rmpWh91wnBanIZwLDxXiTO"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="9FoTzvvDfdZwwXNO88YIAs"><path d="M15 3.5h-4L9.5 5.5H5.5A1.5 1.5 0 0 0 4 7v11a1.5 1.5 0 0 0 1.5 1.5h13A1.5 1.5 0 0 0 20 18V7a1.5 1.5 0 0 0-1.5-1.5h-4L15 3.5Z" data-page-node-id="FHHndBk8IcajKxQCNO17R4"/><circle cx="12" cy="12.5" r="3.3" data-page-node-id="dhFGWov0AKZJ5ojhpbTsve"/></svg></span>
+                  <span class="t--sm" style="font-weight:600;color:var(--red);" data-page-node-id="tV2WAMlAEcSSkwBDvpS41D">拍摄 / 选择视频</span>
+                  <span class="t--xs c3" data-page-node-id="Hs3hZ3FoSgEFkzyWPMhgYW">时长建议 6 秒左右</span>
+                </div>
+              </div>
+
+            </div>
+
+            <div class="bottombar" data-page-node-id="SAGDDKzyl0uiyAQPP6wMFq">
+              <div class="btn btn--dis btn--block" style="padding:15px;cursor:default;" data-page-node-id="HDk5CMJjFgAnXVx11AfQwP">
+                还差 3 个分镜，补齐后可合成
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="b0mdzgJHXHMVXsZvlcL8BW"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 7. 合成成片 ========== -->
+      <div class="screen" data-page-node-id="qsN7tZzNIGcJdpeBPw7XPY">
+        <div class="screen__cap" data-page-node-id="ZQjev6meGdPAM41Gx0nGVn"><span class="screen__no" data-page-node-id="RBJNWsvWdPrhlCuADV6zCP">7</span><span class="screen__name" data-page-node-id="FSZkCeR8FwcAIlwUPrn2nG">合成成片</span></div>
+        <div class="screen__note" data-page-node-id="3l6BCq6gSAmQUt22PG6KlB">三档生成用卡片单选（基础 / AI 配音+字幕 / 精品人工），档位系数直接标在卡片上；底部常驻「约 XX 积分 / 可用 XXXX」。</div>
+        <div class="phone" data-page-node-id="6YFVfpuMqEmG74FR5sp1wH">
+          <div class="phone__scr" data-page-node-id="GiMNBVHZGR2unq3ny9lIFz">
+            <div class="island" data-page-node-id="CBMor1DTDo0FEg2FwKuAJl"></div>
+            <div class="sbar" data-page-node-id="0MPbx2khtNCTu60DEMNzsE">
+              <span class="mono" data-page-node-id="5pR8jiFAMHVejklaIBPJXT">9:41</span>
+              <span class="sbar__r" data-page-node-id="rc9bTnOeBJ8vtOYbw8hvEZ">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="iIv68iNEerqgSOtRvLBA9i"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="MnijfTDpaiPBePpJb3fKnr"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="7urcF9zDJUHvEXtWUUpIfc"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="KXct8EadST0b3gAVWpR05N"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="vetLjVo9LJicsolUQYzqCH"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="vTJHJfJjfvcMhxFeKD4Rvh"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="ZjLciw9M9h8d6c6G86yImY"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="AMosyvWHkIhmMZL8R25Foj"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="RTPtcHyDHnp1TqSgPFNkd9"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="Qq3DzXCZoTbD6jSOOGkYXf"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="K08llkkcFugB34ecTbUk5h"/></svg>
+              </span>
+            </div>
+
+            <div class="nav" data-page-node-id="qBqDEMwuR6YXsKqcOp2W4d">
+              <span class="nav__back" data-page-node-id="7wpjDTmqHlqlE69vqaMUYf"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#111114" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="DRIY1k2QqMiXqwBJ5RCUQn"><path d="m15 18-6-6 6-6" data-page-node-id="9Vy1ePsVBZbzNuzL8hJJFF"/></svg></span>
+              <span class="nav__title" data-page-node-id="2NR3rlrlVpEl3YcMSnXyG0">合成成片</span>
+              <span class="nav__right" data-page-node-id="MruXItus6ZW4ORODgkSQ64"><span class="t--xs c3" data-page-node-id="C7AtLc9GX4LPuWnoo7WqfU">素材 5/5 ✓</span></span>
+            </div>
+
+            <div class="body" style="padding-top:2px;" data-page-node-id="D9A4SV5GEWGXnMAvlTq2AH">
+              <div class="video" style="height:176px;" data-page-node-id="ex1PcKRMi8jEFEh5Qb5Kh9">
+                <div class="thumb__play" style="width:52px;height:52px;" data-page-node-id="nFY2RKAqS7iaGzDU4IGG3s">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="#111114" data-page-node-id="K9JqPVvMoA8vVHpt9O2e4v"><path d="M8 5.5v13l11-6.5-11-6.5Z" data-page-node-id="GHuAxp1yclCjL9SejaKGP8"/></svg>
+                </div>
+                <span class="video__badge" data-page-node-id="LXn03osEk1c32wTwcD7KFy">上次成片 · 基础生成 · 0:38</span>
+                <span class="thumb__dur" data-page-node-id="yN2X9MXszvpCxNFGxQfIeS">0:38</span>
+              </div>
+              <div class="row" style="gap:9px;margin-top:11px;" data-page-node-id="opDEIcZbA9WqbBrEsuzNJJ">
+                <span class="btn btn--ghost btn--sm" style="flex:1;" data-page-node-id="PZqen7fNFQhoR8OTW5PuXr">重新播放</span>
+                <span class="btn btn--ghost btn--sm" style="flex:1;" data-page-node-id="nYBqQ6ABXLAUTkUAASo6pF">保存相册</span>
+                <span class="btn btn--ghost btn--sm" style="flex:1;" data-page-node-id="vZBhSP7eGGH6fx6ZLeEfbw">复制链接</span>
+              </div>
+
+              <div class="t--xs c3" style="font-weight:600;margin:20px 2px 9px;" data-page-node-id="I3WZ2UsHtdPMUmf7RQHFMe">生成方式</div>
+
+              <div class="row" style="gap:10px;align-items:stretch;" data-page-node-id="OR0MIcGxJqgnGqEW3pCUDz">
+                <div class="card" style="flex:1;padding:13px 11px;border:1.8px solid var(--red);background:var(--red-soft);position:relative;" data-page-node-id="syVBEmK9PjK8hJcSb07Jlc">
+                  <div class="t--sm" style="font-weight:700;color:var(--red-press);" data-page-node-id="uIjS6V7Vcosmb5CouSH19M">基础生成</div>
+                  <div class="t--xs c3" style="margin-top:5px;line-height:1.5;" data-page-node-id="O9MYZwXU0tFBKHDRlcASKB">粗剪拼接 + 调色</div>
+                  <div class="t--xs" style="margin-top:9px;font-weight:700;color:var(--red-press);" data-page-node-id="X6MMq2LcAGTxJnJJrHtpKq">1.0×</div>
+                </div>
+                <div class="card" style="flex:1;padding:13px 11px;background:var(--card);border:1.8px solid var(--line);" data-page-node-id="vy7v2MkVRHZ9oVHblG2RVP">
+                  <div class="t--sm" style="font-weight:700;" data-page-node-id="X9VzzD9eviI2fnzTWD7Ev9">AI 生成</div>
+                  <div class="t--xs c3" style="margin-top:5px;line-height:1.5;" data-page-node-id="vXek7yu4BNZobiRdrEgE7i">AI 配音 + 字幕</div>
+                  <div class="t--xs" style="margin-top:9px;font-weight:700;" data-page-node-id="zDohdU8JDuNT8IQxLeU4UC">1.5×</div>
+                </div>
+                <div class="card" style="flex:1;padding:13px 11px;border:1.8px solid var(--line);" data-page-node-id="WWgTpRaD9pZ0NODtGC6HsV">
+                  <div class="t--sm" style="font-weight:700;" data-page-node-id="usCUmcluiuiOE1RMC4S93W">精品生成</div>
+                  <div class="t--xs c3" style="margin-top:5px;line-height:1.5;" data-page-node-id="jqVlCZG55TKuq6e1Zd6bWO">剪辑师人工精剪</div>
+                  <div class="t--xs" style="margin-top:9px;font-weight:700;" data-page-node-id="vUZadQyFtjbCgLjIrucyXE">3.0×</div>
+                </div>
+              </div>
+
+              <div class="t--xs c3" style="font-weight:600;margin:20px 2px 10px;" data-page-node-id="1ZY5wHeDBs6Wz60060xUYd">整片调色</div>
+              <div class="card" style="padding:6px 16px;" data-page-node-id="5qA9VotmUEQFBVD94reZcd">
+                <div class="row" style="padding:9px 0;border-bottom:1px solid var(--line-2);" data-page-node-id="KxeP7DpvKK1tQj1pe8Pmrg">
+                  <span class="t--sm c2" style="width:52px;flex:none;" data-page-node-id="0BW8UrpeTugt8wnOrWwQYP">亮度</span>
+                  <span class="sl" data-page-node-id="U9sjTOnWa7XfNxdePgu8d4"><span class="sl__track" data-page-node-id="KKodQv7KikkwqAAg128fO7"><i class="sl__fill" style="width:58%" data-page-node-id="Vw5vkC556ErdikGoPoL4jR"></i><i class="sl__knob" style="left:58%" data-page-node-id="ILXAmnXqjtCnpHVgEw7Hop"></i></span></span>
+                  <span class="t--xs mono c3" style="width:30px;text-align:right;flex:none;" data-page-node-id="JyKkuy0MXSfX5tndGDxYBS">+16</span>
+                </div>
+                <div class="row" style="padding:9px 0;border-bottom:1px solid var(--line-2);" data-page-node-id="DyLsamh0SqdG2oHDzcRSvz">
+                  <span class="t--sm c2" style="width:52px;flex:none;" data-page-node-id="lMdbgdnBE3ejlJMfGsipqi">对比度</span>
+                  <span class="sl" data-page-node-id="zFdOOA2fN061fQ8Mchwbur"><span class="sl__track" data-page-node-id="97APAxhf67udAGHSVnFKbZ"><i class="sl__fill" style="width:52%" data-page-node-id="GaGKlwplLtkNzQU66mPtSB"></i><i class="sl__knob" style="left:52%" data-page-node-id="nreTPKtAFWOymSQT9gIWb8"></i></span></span>
+                  <span class="t--xs mono c3" style="width:30px;text-align:right;flex:none;" data-page-node-id="fWLSPqCAyD4wcKcBsBobzI">+4</span>
+                </div>
+                <div class="row" style="padding:9px 0;" data-page-node-id="HqM83OFKdXlFMefEA9vVD1">
+                  <span class="t--sm c2" style="width:52px;flex:none;" data-page-node-id="V0AhK3XcN0h9NWthSIVN7C">饱和度</span>
+                  <span class="sl" data-page-node-id="IxgWAX6Na0rUaAP2254tfq"><span class="sl__track" data-page-node-id="jnmyWVhPlyUjp7WXFrOMct"><i class="sl__fill" style="width:62%" data-page-node-id="7h6X8VLkzT1AAdqAZPB9nM"></i><i class="sl__knob" style="left:62%" data-page-node-id="CDkysm2EzpCxFFOjaa7FE4"></i></span></span>
+                  <span class="t--xs mono c3" style="width:30px;text-align:right;flex:none;" data-page-node-id="ZtnFdyE5RjVLBm5EqYIvPm">+24</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="bottombar" data-page-node-id="a02PU0nb9I5oepWcjP8EmH">
+              <div class="row" data-page-node-id="BeQstPgWEWLiHEmzd5QHkC">
+                <span style="flex:none;" data-page-node-id="sAtciGCaVE3mDz3Pnzu6rl">
+                  <div class="row" style="gap:3px;align-items:baseline;" data-page-node-id="WPFvfBFhNYrku0Ettktuw2">
+                    <span class="t--xs c3" data-page-node-id="nfZI0Dx4BgpGJRjqWFfyYZ">约</span>
+                    <span style="font-size:24px;font-weight:700;letter-spacing:-.03em;" class="mono" data-page-node-id="firbDjT3t2J9Nvpz6G74ZP">32</span>
+                    <span class="t--xs c3" data-page-node-id="vKeeh5FO3t1fyof9epBf32">积分</span>
+                  </div>
+                  <div class="t--xs c3" style="margin-top:1px;" data-page-node-id="J50Ttrm5CyHP699FpDrFKA">可用 1,280</div>
+                </span>
+                <span class="spacer" data-page-node-id="fDpj14kLAPFlVtFMeHo1Gm"></span>
+                <span class="btn btn--pri" style="padding:15px 26px;font-size:16px;" data-page-node-id="E8aCqTlDt5PntfXGmwIRMF">生成成片</span>
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="ZIhjeeaxEJ7TGzkdKanNNE"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 8. 我的 ========== -->
+      <div class="screen" data-page-node-id="GDMbaj6x1iA8On47dE5PUD">
+        <div class="screen__cap" data-page-node-id="g78Iv3Ju0BU7PZKy5tD1YV"><span class="screen__no" data-page-node-id="xC6WpGOAfaWQB5du40vy66">8</span><span class="screen__name" data-page-node-id="CVjB4ipQJCkpzmA15epxpV">我的</span></div>
+        <div class="screen__note" data-page-node-id="p1FOP3R3jjjBoKLxtMjhnJ">账户与权益中心：头像区、会员与积分入口、门店资料入口、隐私信任提示。首页不再重复展示创作项目、门店、菜品和老板人设管理。</div>
+        <div class="phone" data-page-node-id="Fokk54CBfGnR3Fve9Bzvjr">
+          <div class="phone__scr" data-page-node-id="iSkAmjIKN2PoxHQoo2VjDT">
+            <div class="island" data-page-node-id="SAjvpyMO4VqeCStZWVirGm"></div>
+            <div class="sbar" data-page-node-id="nijsQbL2tywModdEAJXRFH">
+              <span class="mono" data-page-node-id="RMBUl11lPcvb92E9wfM4zY">9:41</span>
+              <span class="sbar__r" data-page-node-id="AF9y10VvK2thYxENeEdpCG">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="zD4iQKNszGbHkBJHf17x0o"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="gGF3W1z8KaG5gonPAbWgdb"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="iNGYeCbh6eQjZiqtF9YpDO"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="rgbLCCcZtIH4lyrittBUaF"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="400C9TtAFFixY7MCguPmem"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="1DDgc11M2KaZeagZeXjAMM"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="g3uaZhKZ6DVo3Tde3JRjhM"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="A09yt1mDMHmMmDUhPoP3gS"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="hOCyYmAQAvRpZZXOG2ZH8r"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="V4QOZYXEwHjxa54upQ7fSC"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="KsrAKXfOK0MYXNCOYzhyIA"/></svg>
+              </span>
+            </div>
+
+            <div style="flex:none;padding:6px 18px 0;" data-page-node-id="gu8T1s4MjYY80NeaAcBi3s">
+              <div class="row" data-page-node-id="0lYHXIMbCkRsiATDSGfGXq">
+                <span style="width:58px;height:58px;border-radius:50%;background:var(--red);color:#fff;font-size:23px;font-weight:600;display:flex;align-items:center;justify-content:center;flex:none;box-shadow:var(--sh-red);" data-page-node-id="zVijddy6OYDef1eLmnE9Ly">大</span>
+                <span style="flex:1;min-width:0;" data-page-node-id="JRbfXrXFPIdbvlgq1DGwCa">
+                  <div style="font-size:22px;font-weight:700;letter-spacing:-.025em;" data-page-node-id="bJAolfiEj3K76ChD6mEiJy">大帅</div>
+                  <div class="row" style="gap:7px;margin-top:6px;" data-page-node-id="Q9GxVQE2FJKu9X3nfaBxKo">
+                    <span class="tag tag--amber" data-page-node-id="09yqcxuJpLFF47cWg2or4n">金牌会员</span>
+                    <span class="t--xs c3" data-page-node-id="e8tDCAawi2pIJHteTfXqdv">至 2026-10-12</span>
+                  </div>
+                </span>
+              </div>
+            </div>
+
+            <div class="body" style="padding-top:18px;" data-page-node-id="OAre3u1ccv3a4rErpPDX7C">
+
+              <div class="card card--pad" style="box-shadow:var(--sh-2);" data-page-node-id="nk1XfyEnDD4fPMvBsTVwRz">
+                <div class="row" data-page-node-id="342PUDbHYGp47BeCXR1oB7">
+                  <span style="flex:1;" data-page-node-id="xfzJwWEMt6mNBABKVZzwqL">
+                    <div class="t--xs c3" data-page-node-id="pJuKw4mmtGYcpRzcY0D75m">可用积分</div>
+                    <div class="mono" style="font-size:26px;font-weight:700;letter-spacing:-.035em;margin-top:3px;" data-page-node-id="ijQ0Kmdlq8im6OObvWrOCi">1,280</div>
+                  </span>
+                  <span style="width:1px;height:34px;background:var(--line);" data-page-node-id="qE0W1ghzMROIF9BX1DREBC"></span>
+                  <span style="flex:1;padding-left:18px;" data-page-node-id="XYWHCG0hTfJYTLJZUUtHUZ">
+                    <div class="t--xs c3" data-page-node-id="GSx6J2jZvxRCulsBfj7qlV">赠积分</div>
+                    <div class="mono" style="font-size:26px;font-weight:700;letter-spacing:-.035em;margin-top:3px;color:var(--amber-deep);" data-page-node-id="ctLof5UwbEU2B3CjtCO0ev">300</div>
+                  </span>
+                </div>
+                <div class="btn btn--sec btn--block btn--sm" style="margin-top:14px;padding:11px;" data-page-node-id="Khug0L1wdsDbwYRmyHxT9X">订阅 / 加油包</div>
+              </div>
+
+              <div class="card card--pad" style="margin-top:12px;" data-page-node-id="OfYdrMWkg4HVkGNoLjsDR2">
+                <div class="row" data-page-node-id="hM4MAKvTePy4ekjyVQ8H2W">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="var(--ink-2)" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="zavCYAnEh9HCopxkvUy3uH"><path d="M17.5 18.5h-11A4.5 4.5 0 0 1 6 9.6a5.5 5.5 0 0 1 10.7-1.4 4.5 4.5 0 0 1 .8 10.3Z" data-page-node-id="MHr4CvxG99TJ7p8XoCHfiR"/></svg>
+                  <span class="t--sm c2" style="font-weight:600;" data-page-node-id="6ufQ41CuHcBzjio4D7wJv8">上传空间 · 订阅 5GB</span>
+                  <span class="spacer" data-page-node-id="qy51ZHYFHZcY2h3X8d50o0"></span>
+                  <span class="t--xs c3 mono" data-page-node-id="ip3KykBzwe4OTJtdlMOgrv">1.2GB / 5GB</span>
+                </div>
+                <span class="swatchbar" style="height:5px;background:var(--line);margin-top:10px;" data-page-node-id="TRj4GDopsAlgqFIdwtfUQX"><i style="flex:24;background:var(--red)" data-page-node-id="LRNodDidKg7L3uH0jO33ev"></i></span>
+              </div>
+
+              <div class="t--xs c3" style="font-weight:700;letter-spacing:.06em;margin:22px 2px 9px;" data-page-node-id="mhDahEXHZ47rQBwGx2JpQo">常用功能</div>
+              <div class="glist" data-page-node-id="6i48QA2HzJ3BpWLEqxynlU">
+                <div class="gitem" data-page-node-id="QkGiMhxP0UX8FvBQtHj7BG">
+                  <span class="icobox" style="width:32px;height:32px;border-radius:10px;" data-page-node-id="egfGyYMDkA7HySxM0uMmfJ"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="sJeXhkKedczYlxOO5Qf8LR"><rect x="2.5" y="4" width="19" height="14" rx="2.5" data-page-node-id="7GIplo5wEEVvQsyHLBb2ID"/><path d="m2.5 8 7 4.5 7-4.5" data-page-node-id="RKwthmdPvylmicxQHwM8n1"/></svg></span>
+                  <span class="t--sm" style="font-weight:600;" data-page-node-id="MthW3OImyBdzN2aQcsGqyb">我的创作</span>
+                  <span class="spacer" data-page-node-id="bGawXpp8VMAHtAqRK8FWFs"></span>
+                  <span class="t--xs c3" data-page-node-id="pDGixQQYfYFa0ALUB7TBZa">8 个</span>
+                  <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="vaUmJhNulmpdZr9r9tj7Fu"><path d="m9 18 6-6-6-6" data-page-node-id="QtGiN6k2EEIGyCsdL4xr4t"/></svg>
+                </div>
+                <div class="gitem" data-page-node-id="ly3pvv1mQeFxO0nAUdaBMc">
+                  <span class="icobox" style="width:32px;height:32px;border-radius:10px;" data-page-node-id="C03BEHjTFEJoliWTsRPGzP"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="rWFAKW607O9GuhKHFwzIZ1"><path d="M3 9.5 4.5 4h15L21 9.5" data-page-node-id="q7RTYVOHFeVgVfjh8caEpn"/><path d="M3 9.5h18v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 19V9.5Z" data-page-node-id="DUGubaKceKWssNsCDFGgGC"/><path d="M9 14h6" data-page-node-id="51eFfAw2MdAzLbBI0Eg8Qk"/></svg></span>
+                  <span class="t--sm" style="font-weight:600;" data-page-node-id="G9GAHPV62g0oXNRkwgqNd3">我的门店</span>
+                  <span class="spacer" data-page-node-id="1lG11RQ34PKIxkm0t7PGsg"></span>
+                  <span class="t--xs c3" data-page-node-id="5Cv3r8FlYbAuJVEFUjycru">2 家</span>
+                  <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="M7xt29U6oZH8UQNSKj5nHm"><path d="m9 18 6-6-6-6" data-page-node-id="S4KBRFunlXdEu0froGvlOt"/></svg>
+                </div>
+                <div class="gitem" data-page-node-id="xY1tbwEF64v1cmTi5uInke">
+                  <span class="icobox icobox--amber" style="width:32px;height:32px;border-radius:10px;" data-page-node-id="H5ozPboN0o097qYTZWvh8n"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" data-page-node-id="lIZ6ymbEbnsHSlco6qoPra"><circle cx="12" cy="12" r="9.2" data-page-node-id="w83NzOddcV3nOn4u6WgSlB"/><path d="M8.5 14.5a4.5 4.5 0 0 0 7 0" data-page-node-id="YZAGBfJWwLwLXi05Chi2iC"/><path d="M9 9.8h.01M15 9.8h.01" stroke-width="2.4" data-page-node-id="caKN3eiEsbi5HBvcaxf3pM"/></svg></span>
+                  <span class="t--sm" style="font-weight:600;" data-page-node-id="GRCHqvfuMCKwf97eexgYqI">老板人设</span>
+                  <span class="spacer" data-page-node-id="HouX5e3xRiwGlvXnEGXkJt"></span>
+                  <span class="t--xs c3" data-page-node-id="4GyuDgWZJ0IIXFVle931mL">已完善</span>
+                  <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="z3I2FfTcKy7NtG53FH91Xv"><path d="m9 18 6-6-6-6" data-page-node-id="wy1SJ1UA7k713PiLv3JBns"/></svg>
+                </div>
+                <div class="gitem" data-page-node-id="LHc6I4vra1y1hhy9efZD5v">
+                  <span class="icobox" style="width:32px;height:32px;border-radius:10px;background:var(--fill);color:var(--ink-2);" data-page-node-id="ZD1unn5bHYrD2IWX6RmtO0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="eIxiuF781pYnHMGChNexLb"><path d="M20 12V7.5A2.5 2.5 0 0 0 17.5 5H6a2 2 0 0 0 0 4h14v9.5a2.5 2.5 0 0 1-2.5 2.5H6a2.5 2.5 0 0 1-2.5-2.5V7" data-page-node-id="vtnmW1WrvrW6puzkiNFZhO"/><path d="M16 13h.01" stroke-width="2.4" data-page-node-id="riE2fHZ7rSBZ0E3ya0TE3Q"/></svg></span>
+                  <span class="t--sm" style="font-weight:600;" data-page-node-id="zY6mZhp9cJDvnWPfXx4JgX">订阅与积分</span>
+                  <span class="spacer" data-page-node-id="rcDly7Y5YrxEBSNsH9DImO"></span>
+                  <svg class="chev" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="7eXeYXUmXNWenCsaEyAmEx"><path d="m9 18 6-6-6-6" data-page-node-id="X82Fh19oLXuGFF6HoMm0lE"/></svg>
+                </div>
+              </div>
+
+              <div class="row" style="justify-content:center;margin-top:20px;" data-page-node-id="zF1JrLl5l3zyzWrLDsGN93">
+                <span class="t--xs c3" data-page-node-id="LibeFyj5dIOds1vD1XRocX">用户协议 · 隐私政策 · 退出登录</span>
+              </div>
+            </div>
+
+            <div class="tabbar" data-page-node-id="n9kysS6JsYRbGBNuSFyALn">
+              <div class="tabbar__i" data-page-node-id="ynsFbhRWD97m4JAhXMTFzM">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="Df0d7t6hiDsuNyG2qWNncA"><path d="m3 10 9-7 9 7v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-9Z" data-page-node-id="DFBVPEVPXF3zFs4jNxEwjg"/><path d="M9 21v-8h6v8" data-page-node-id="HamCRoSkaxLObd8I1UsZ1i"/></svg>
+                首页
+              </div>
+              <div class="tabbar__i" data-page-node-id="9WZeET5jDnEVwUjUTFdPeF">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="or6P0NKOHtmtxHCQ0Tt06A"><rect x="2.5" y="4" width="19" height="16" rx="3" data-page-node-id="DyiDXwTUxH2u2lwcRrChDb"/><path d="M2.5 9h19M7 4v5M17 4v5" data-page-node-id="tHFPAimb6oUXlimufDCNLS"/></svg>
+                创作
+              </div>
+              <div class="tabbar__i tabbar__i--on" data-page-node-id="qPJA4SfqJ1zHK8i571wRQE">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="hI35lZCppabP2on3P8tuek"><circle cx="12" cy="8" r="4" data-page-node-id="PYqiUT5WaXCSKy7aprcdz3"/><path d="M4.5 20.5a7.5 7.5 0 0 1 15 0" data-page-node-id="5vTTIeZfxzMrob0hzNVGbF"/></svg>
+                我的
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="mk5YZ5lfeQlW52E3b0yMcF"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ========== 9. 订阅与积分 ========== -->
+      <div class="screen" data-page-node-id="xAcwOOn4K45yPs1TjN2hF0">
+        <div class="screen__cap" data-page-node-id="Si5CUtE33Yb1vypoqyvCCV"><span class="screen__no" data-page-node-id="N1YWzLqUSdpQS0AaaBGvVa">9</span><span class="screen__name" data-page-node-id="tOm4uNr6wSfgCdfYUGGM5u">订阅与积分</span></div>
+        <div class="screen__note" data-page-node-id="IHad2r4AxObRMI0aaTKkch">推荐档位用红色描边 + 「最超值」角标；未订阅时加油包整块置灰并给出跳转，规则写在底部而不是弹窗。</div>
+        <div class="phone" data-page-node-id="84FPAEDop0zMTbbcdxQulC">
+          <div class="phone__scr" data-page-node-id="P4s12Duurf35ez5tMo23o1">
+            <div class="island" data-page-node-id="eHCyNBQaVRHNHcR7SVKQFt"></div>
+            <div class="sbar" data-page-node-id="X3F2WgqkStvWkYJeoXimiM">
+              <span class="mono" data-page-node-id="HPMt8GHxadbLG7zpQEjX3g">9:41</span>
+              <span class="sbar__r" data-page-node-id="4zLaesM27xDsQw6TCCGtaa">
+                <svg width="17" height="11" viewBox="0 0 17 11" fill="#111114" data-page-node-id="APaeDDXFKIA7ZAg4bSBA3H"><rect x="0" y="7" width="3" height="4" rx="1" data-page-node-id="ZYg1vl3r7zulQJ7SYX7MUy"/><rect x="4.5" y="5" width="3" height="6" rx="1" data-page-node-id="5wSxXPbnnhDcHAcBDKIeuY"/><rect x="9" y="2.5" width="3" height="8.5" rx="1" data-page-node-id="u645DKccVkvGM9SH8akzGW"/><rect x="13.5" y="0" width="3" height="11" rx="1" data-page-node-id="HrMtPrQUUVcByGV7pP3abw"/></svg>
+                <svg width="16" height="11" viewBox="0 0 16 11" fill="#111114" data-page-node-id="kTgMF0zAsMT4bDfVNStokt"><path d="M8 9.4 5.6 6.9a3.5 3.5 0 0 1 4.8 0L8 9.4Zm0-4.6a6.4 6.4 0 0 0-4.5 1.9L1.9 5A9.3 9.3 0 0 1 8 2.5 9.3 9.3 0 0 1 14.1 5l-1.6 1.7A6.4 6.4 0 0 0 8 4.8Z" data-page-node-id="24tnz3ce28UqORIRm8NlDq"/></svg>
+                <svg width="25" height="12" viewBox="0 0 25 12" data-page-node-id="n719Y8q8gDQcSGLgAvDGH6"><rect x=".5" y=".5" width="21" height="11" rx="3.2" fill="none" stroke="#111114" stroke-opacity=".35" data-page-node-id="P7opWrA4mr6FtcYPpSH7PG"/><rect x="2" y="2" width="16" height="8" rx="2" fill="#111114" data-page-node-id="xM7KpHk3U5WtpZiOEo0b2l"/><path d="M23 4v4a2.1 2.1 0 0 0 0-4Z" fill="#111114" fill-opacity=".4" data-page-node-id="U56R39XbkuSLYWMHUdxBkC"/></svg>
+              </span>
+            </div>
+
+            <div class="nav" data-page-node-id="Q8DcuvY0JZQa9lFdTWJso3">
+              <span class="nav__back" data-page-node-id="a5EkMCZfoft6NjsWBwjSN9"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#111114" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" data-page-node-id="eDuWBiuI3AidqH0Sb9VIpM"><path d="m15 18-6-6 6-6" data-page-node-id="NnYRcxzBCS0qo9A7PU4hvi"/></svg></span>
+              <span class="nav__title" data-page-node-id="gSnx11hkwCoEzCtIbu4XyR">订阅与积分</span>
+            </div>
+
+            <div class="body" style="padding-top:2px;" data-page-node-id="qUbmEnN8KlakuiPDPujz5P">
+
+              <div class="card" style="padding:18px;background:linear-gradient(180deg,#fff, #FFF9F9);border:1px solid var(--red-light);" data-page-node-id="gKONlyFDEKg1eeV8B2DZhD">
+                <div class="t--xs c3" data-page-node-id="zIl2w3lCIKmLaIH5w5nj0U">当前可用积分</div>
+                <div class="row" style="align-items:baseline;gap:8px;margin-top:6px;" data-page-node-id="gyPKX8mn6E5GHsmLOgJG6L">
+                  <span class="mono" style="font-size:34px;font-weight:700;letter-spacing:-.04em;" data-page-node-id="sFxdYVFMNExTeE1cTV9wyj">1,280</span>
+                  <span class="tag tag--amber" data-page-node-id="hJM83PAIOHHjha42jowVZg">赠积分 300</span>
+                </div>
+              </div>
+
+              <div class="seg" style="display:flex;width:100%;margin-top:14px;" data-page-node-id="kPpuSF8l0zzHW7zKyoGLsx">
+                <span class="seg__i seg__i--on" style="flex:1;text-align:center;" data-page-node-id="C9VrYqtHe00vf3nWGq9kxT">订阅</span>
+                <span class="seg__i" style="flex:1;text-align:center;" data-page-node-id="J751M53omogy5iVj52vvo7">加油包</span>
+              </div>
+
+              <div class="card" style="padding:15px;margin-top:14px;position:relative;border:1.8px solid var(--red);background:var(--red-soft);" data-page-node-id="8PydTCZSzn06KBHo8QzKpH">
+                <span style="position:absolute;top:-9px;left:15px;background:var(--red);color:#fff;font-size:10px;font-weight:700;padding:3px 9px;border-radius:var(--r-pill);letter-spacing:.03em;" data-page-node-id="JkWYMSDsYugK7AEyDX56vp">最超值</span>
+                <div class="row" data-page-node-id="ngs1o4uqOUkFzYFopl7PU6">
+                  <span style="flex:1;" data-page-node-id="DtKwbtS4O2RqHbK8TG8BA8">
+                    <div class="t" style="font-weight:700;" data-page-node-id="HcHj8T9da0tXPq2KP8aPUW">年度会员</div>
+                    <div class="t--xs c3" style="margin-top:5px;" data-page-node-id="mxsiFlOLTaClFs68U4Whij">有效期 365 天 · 赠积分 1,200 · 空间 5GB</div>
+                  </span>
+                  <span style="text-align:right;flex:none;" data-page-node-id="pcAD1z7mTyFLfm3p7Axew4">
+                    <div class="row" style="justify-content:flex-end;align-items:baseline;gap:2px;" data-page-node-id="4umOwMOcFhhsytGsMmiZAn">
+                      <span class="t--xs" style="color:var(--red);font-weight:700;" data-page-node-id="OpEIAyAx3GSGKxtXhjNXD6">¥</span>
+                      <span class="mono" style="font-size:26px;font-weight:700;letter-spacing:-.04em;color:var(--red);" data-page-node-id="T5jVjaTwacKqvrHWHBcTKC">699</span>
+                    </div>
+                    <div class="t--xs c3" style="text-decoration:line-through;" data-page-node-id="H5W4w7IygxsvjNfBMh1nJH">¥1,188</div>
+                  </span>
+                </div>
+                <div class="btn btn--pri btn--block btn--sm" style="margin-top:14px;padding:12px;" data-page-node-id="DxIenGwPCz5jpBxtKJVbK9">立即续费</div>
+              </div>
+
+              <div class="card" style="padding:15px;margin-top:11px;" data-page-node-id="JWFTIrDqaLPzCy0Jpujvck">
+                <div class="row" data-page-node-id="9K9YczGKIZ4Tl5o0WLHZ4K">
+                  <span style="flex:1;" data-page-node-id="YXPKTNIkb4OvozmuN1sSUv">
+                    <div class="t" style="font-weight:650;" data-page-node-id="6QUnMCwHq22T1K0B0x1qVK">季度会员</div>
+                    <div class="t--xs c3" style="margin-top:5px;" data-page-node-id="sxHDWPvlPRKiL9wju9jsBd">有效期 90 天 · 赠积分 300</div>
+                  </span>
+                  <span class="row" style="align-items:baseline;gap:2px;flex:none;" data-page-node-id="lvhBTTGnCZo374rCWERPPX">
+                    <span class="t--xs c2" style="font-weight:600;" data-page-node-id="NvcEI3dV129TQmdDp4WJ7M">¥</span>
+                    <span class="mono" style="font-size:22px;font-weight:700;letter-spacing:-.035em;" data-page-node-id="R2GMhxVVGV7pS4WGQUu6yh">199</span>
+                  </span>
+                  <span class="btn btn--sec btn--sm" style="margin-left:12px;" data-page-node-id="ENt9Ln0t7qLCtHEgG1j9Hq">续费</span>
+                </div>
+              </div>
+
+              <div class="card" style="padding:15px;margin-top:11px;" data-page-node-id="moCwUuz9JljMfTTuCmheue">
+                <div class="row" data-page-node-id="7ShogqYez8mUPxHGG7NCxP">
+                  <span style="flex:1;" data-page-node-id="iE7Dn9AOD1xZ3EOs2dYJ0I">
+                    <div class="t" style="font-weight:650;" data-page-node-id="5rrYlZnuqO2HOJAJUTDJ5N">月度会员</div>
+                    <div class="t--xs c3" style="margin-top:5px;" data-page-node-id="fF8G9TymupmebGqWCHMibk">有效期 30 天 · 赠积分 100</div>
+                  </span>
+                  <span class="row" style="align-items:baseline;gap:2px;flex:none;" data-page-node-id="pYRiIDZRFj36wg4HR6cZwP">
+                    <span class="t--xs c2" style="font-weight:600;" data-page-node-id="6rlweMuRlwR5gGFtJAOcNY">¥</span>
+                    <span class="mono" style="font-size:22px;font-weight:700;letter-spacing:-.035em;" data-page-node-id="RncKUUlAyhzC0evhhwFoXB">79</span>
+                  </span>
+                  <span class="btn btn--sec btn--sm" style="margin-left:12px;" data-page-node-id="jOMSDW8Phtjf9BVcrULjfk">续费</span>
+                </div>
+              </div>
+
+              <div style="margin-top:20px;padding:0 4px;" data-page-node-id="zgJE0zd4ECa8PqGZXVZB7q">
+                <div class="t--xs c3" style="line-height:1.85;" data-page-node-id="YnsBxtic1prdvHisvC5vED">
+                  · 订阅是文案、分镜、合成能力的前置条件<br data-page-node-id="0L32mtnuUYHmgJ6yrpb8SR">
+                  · 1 元 = 100 积分，加油包仅订阅用户可购买<br data-page-node-id="18UnSMYWexNAFrHPkWO8ep">
+                  · 机器合成按素材有效时长计费，失败全额返还<br data-page-node-id="AosEGiBepOZVYy7GMDd7ST">
+                  · 支付以服务端订单状态为准，重复下载不扣积分
+                </div>
+              </div>
+            </div>
+            <div class="homebar" data-page-node-id="myuOsT7nwYzhaeI6JyVaiq"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ================= 6. 交互与可用性 ================= -->
+  <section class="sec" data-page-node-id="ykbXiMLP9DaX1RGhAVTEdF">
+    <div class="sec__eyebrow" data-page-node-id="vlLloQ3EP8Q7UdpEgYrD3n">Interaction &amp; Usability</div>
+    <h2 class="sec__title" data-page-node-id="PwDrD1I3XyF5RXTQW9294c">交互与可用性规范</h2>
+    <p class="sec__desc" data-page-node-id="AgiNP4snsLi9t9ZmD0whRa">面向「非专业用户 + 单手操作 + 店内嘈杂环境」的针对性设计约束。</p>
+    <div class="rules" data-page-node-id="bjg0VVk98L7s8swBeLSuju">
+      <table class="rtable" data-page-node-id="JGWQAkzV4MXfVcVSGCCYGA">
+        <thead data-page-node-id="EWnMH9HzntNSuKCorDmaxT">
+          <tr data-page-node-id="rUZKZG23FRn3KUif11arAe"><th data-page-node-id="lnDkt7TbuHRzuZRA6R4u0D">场景</th><th data-page-node-id="klxOCqr9ZbkaRPQ5Vsxtyq">规范</th></tr>
+        </thead>
+        <tbody data-page-node-id="4oARO9aaSGt0TTDzV26DYo">
+          <tr data-page-node-id="W5w0303uABDD1Sv8bEx8MJ">
+            <td data-page-node-id="qkj2sKfbcmO6bBrCnCOKY9">触控尺寸</td>
+            <td data-page-node-id="TCWMnqPvWSO7GHpqtpweU9">所有可点击元素最小 <code data-page-node-id="Vke7xcEJ3n6S6asp2xKgX5">88rpx × 88rpx</code>（44pt）；主按钮高度 <code data-page-node-id="wibhAJMpKAR0yaGxeMrD4Y">96rpx</code>，底部操作条内的按钮 <code data-page-node-id="QO2IlW2VIsQckKBap0KcoO">104rpx</code>。相邻可点区域间距 ≥ <code data-page-node-id="jDHsXSwtl2A8kgq2Hhjxm9">16rpx</code>，避免误触。</td>
+          </tr>
+          <tr data-page-node-id="pA8VM3CMOvWkwqskXhtcoN">
+            <td data-page-node-id="tz6e00tsd0SeMUpGeRmWSP">拇指热区</td>
+            <td data-page-node-id="6N8TCQKUKjj0SoJtg2NzVV">主行动按钮一律固定在底部操作条或页面下半部；顶部只放导航与门店切换，不放高频操作。</td>
+          </tr>
+          <tr data-page-node-id="auQpsQEjVDehDx3XQvPYP0">
+            <td data-page-node-id="NuVDL6yjtlSg0Zqe0SIqxR">点击反馈</td>
+            <td data-page-node-id="QBlt1549EotgPBsLila7Ti">按下态：实心红 → <code data-page-node-id="shQGrMS5n1Aq6R5ouxMl2W">#C21B12</code>，卡片 → <code data-page-node-id="lKSFCFWpp1B0rDu6igt7Re">scale(.98)</code> + 透明度 0.7，时长 <code data-page-node-id="3yRUEyUHB2HDKaL31Rm8uU">120ms</code>。禁止使用系统默认的灰色遮罩。</td>
+          </tr>
+          <tr data-page-node-id="L0IljZvaQ2iDvSk2bqvT7u">
+            <td data-page-node-id="E8OdrGFFvQqGsVRITfaoMa">AI 等待</td>
+            <td data-page-node-id="2FUNqWUzWRq51hKwfunYKh">生成文案 / 分镜时按钮进入 loading 并锁定，禁止重复提交；超过 8 秒追加文案「AI 正在写，通常 5–15 秒」。</td>
+          </tr>
+          <tr data-page-node-id="oeVGUNKOncqADIKnOBUENO">
+            <td data-page-node-id="MuCNQHcZQSSDNJuwtLJPtK">上传进度</td>
+            <td data-page-node-id="nTaqf9ree8o8L5ScuxIEgO">选完视频立即显示本地缩略图占位（不必等上传完成），叠加红色细进度条与百分比；失败保留卡片并提供「重新拍摄」。</td>
+          </tr>
+          <tr data-page-node-id="PGIaEA6Nc2C7fYDDJFWlQf">
+            <td data-page-node-id="rgiSi1xr9QeCGHclHFrBwx">消耗前置告知</td>
+            <td data-page-node-id="gV8j6BUkyDNPsfHErc0Aou">任何扣积分的按钮，旁边常驻「约 XX 积分 / 可用 XXXX」；提交前用底部弹层二次确认，文案写明「按实际时长结算，失败全额返还」。</td>
+          </tr>
+          <tr data-page-node-id="36H8Elz5oCOE7YXiJZeW6U">
+            <td data-page-node-id="CYMBodaQHngfn4VoIbQD0V">空状态</td>
+            <td data-page-node-id="5MEGEg9pFSZ3IcXwb3Hu5A">不用「暂无数据」。改为「还没有门店 → 去创建」「「XX 店」还没有创作 → 新建创作」，永远给出下一步动作。</td>
+          </tr>
+          <tr data-page-node-id="RnbrBGIQAhiJGfSNfAr29N">
+            <td data-page-node-id="dLZdiWiiQBrFB4BkB5TLvX">错误与重试</td>
+            <td data-page-node-id="J0CBtcfBNFnG7OQAzWSCfZ">失败信息用页面内联提示条（浅红底）而非 Toast；每条错误必须附带一个可点击的恢复动作（重试 / 刷新 / 去充值）。</td>
+          </tr>
+          <tr data-page-node-id="iXkFV8QhnrDGOijH46qLlj">
+            <td data-page-node-id="5BBOsHaXrCXKgu16Ei6mhw">门店上下文</td>
+            <td data-page-node-id="UiCmEV7Ze3ZgRVKRCJCPKS">门店切换器常驻首页 / 创作 / 菜品 / 人设页左上角，切换后当前页数据立即重载，避免「看到的是别家店的数据」。</td>
+          </tr>
+          <tr data-page-node-id="FdgqBznQlgnlmqx8RULBPc">
+            <td data-page-node-id="Q4qGfh4XKMXMsl0mVkwiP5">动效</td>
+            <td data-page-node-id="gJibqUGdkbuwokKtuIZHgC">只用 <code data-page-node-id="PuOTaq2r5erUmtXUHcIXPP">ease-out</code>，时长 <code data-page-node-id="f5g7nSEwTvZVtk5cdZnZoC">200–260ms</code>；仅用于页面转场、弹层升起、进度推进。不做装饰性动画。</td>
+          </tr>
+          <tr data-page-node-id="ypE40piCzOml2Y1Sf2eDDc">
+            <td data-page-node-id="rIHeKqGprKrbbFCvjS5hQo">无障碍与对比度</td>
+            <td data-page-node-id="oqHhxZEX7CNcdyclg3RUYc">正文对比度 ≥ 7:1（<code data-page-node-id="ithbuIprrdRScRrb8qsLw8">#111114</code> on <code data-page-node-id="8usjvGmEJBFEka8QKsHMWi">#FFFFFF</code>）；次要文字 ≥ 4.5:1；红色文字只用于 ≥ 26rpx 的强调文本，小字一律用深红 <code data-page-node-id="sToTGfCL8BuqOy2Zt19IYA">#C21B12</code> 或中性色。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ================= 7. 落地对接 ================= -->
+  <section class="sec" data-page-node-id="GVBj7rpSjhxGEPPLkzqVoP">
+    <div class="sec__eyebrow" data-page-node-id="SNdVJYlsEBPxGLKofI6RyN">Handoff</div>
+    <h2 class="sec__title" data-page-node-id="c8IaOstgBaBA2phqzUAXNd">落地对接</h2>
+    <p class="sec__desc" data-page-node-id="kqTIZnh72q6yoZM6yplmGF">
+      现有主题文件 <code data-page-node-id="62RT74YjfHibjphlqWK4Ns">apps/mini/src/styles/theme.scss</code> 已具备变量体系，只需替换下面这一段即可全站生效。
+      注意：现有 <code data-page-node-id="rTBluhnAuCmH4pKsRwtL6G">#e63946</code> 与 Logo 红存在明显色差（偏玫红），建议本次一并切换。
+    </p>
+    <div class="codeblock" data-page-node-id="SQkiqjLTYy4WXwt4dJUfnq">
+<span class="c" data-page-node-id="dTBSaT1MPE3FgKUKXBEQis">// 大帅餐饮 · 品牌主题 v2（Logo 红 · iOS 简约）</span>
+<span class="c" data-page-node-id="UGyt9zbrZ2UXaLdMrY2ct5">// 替换 apps/mini/src/styles/theme.scss 中的 page 变量块</span>
+page {
+  <span class="c" data-page-node-id="0WIvdzLrtpg8JEi7Tj67EY">/* 品牌主色 —— 取自 Logo 实测 #D02018，屏幕增艳至 #E1251B */</span>
+  <span class="k" data-page-node-id="gNlQ5YNfmsXImYbRlGtqEn">--td-brand-color</span>: <span class="v" data-page-node-id="iW7U3u0qm2nfnG4uUjNALE">#E1251B</span>;          <span class="c" data-page-node-id="aODepV5jkO6KBXWv2KAbxi">// 主按钮 / 选中 / 强调</span>
+  <span class="k" data-page-node-id="YbM3nLUCYHS3VOje029u5I">--td-brand-color-hover</span>: <span class="v" data-page-node-id="Sf9UGmB9nL41bsIhx0i4uF">#F03A30</span>;
+  <span class="k" data-page-node-id="vxYpcqBTdLCyfDf3R95Vlo">--td-brand-color-active</span>: <span class="v" data-page-node-id="aNcCsD3CKoTENFmNRKzeZo">#C21B12</span>;   <span class="c" data-page-node-id="sAYJoPBJ4Kv8giOcS2yKYg">// 按下态</span>
+  <span class="k" data-page-node-id="vV5qFWRZ54kuOVCCZkE5YJ">--td-brand-color-light</span>: <span class="v" data-page-node-id="PAUPiqantZD7IXJcEVxhwu">#FDECEA</span>;    <span class="c" data-page-node-id="84sUG2KRI1ZKNWGYGjAuuj">// 浅底 / 选中背景</span>
+  <span class="k" data-page-node-id="hh7oG2xx5ADW6HC7DOx7HA">--td-brand-color-soft</span>: <span class="v" data-page-node-id="NPpgcKF4xe1WcgV2LSZPyi">#FEF6F5</span>;     <span class="c" data-page-node-id="h6hJ09MKikjDRFHHqKRpZY">// 提示条底</span>
+  <span class="k" data-page-node-id="HsMsfMVBXnx9r5jhlNvzj0">--td-brand-color-disabled</span>: <span class="v" data-page-node-id="6XyFfXGcqF7Y2jaujOTbtC">#F3C0BC</span>;
+
+  <span class="c" data-page-node-id="Qb7BOUF9n7kDgnHLrJXBnW">/* 文字（冷灰阶，对齐 iOS System Gray） */</span>
+  <span class="k" data-page-node-id="zo73zXT7FPMj3DS1wKR8gz">--td-text-color-primary</span>: <span class="v" data-page-node-id="VnDNj721lIas3Q5CTHEQ5s">#111114</span>;
+  <span class="k" data-page-node-id="mQuxH6TddJhAQfc2AH2kd6">--td-text-color-secondary</span>: <span class="v" data-page-node-id="CmeEKvktFTQP8FFV2Opwzn">#5C6066</span>;
+  <span class="k" data-page-node-id="sWOxNFYkhQxTOYWASDaCjS">--td-text-color-placeholder</span>: <span class="v" data-page-node-id="L5U2MqgScCniZFtIWAIHaa">#8E939A</span>;
+  <span class="k" data-page-node-id="pb9TpfjtgAiH8PdADvE3AH">--td-text-color-disabled</span>: <span class="v" data-page-node-id="kuPi43mboldo78YEWi2uYF">#BFC3C9</span>;
+  <span class="k" data-page-node-id="kZNQnyUDxvplzMGSLiiVCn">--td-text-color-anti</span>: <span class="v" data-page-node-id="HbpYju6B0lguHFtNYD6Q79">#FFFFFF</span>;
+
+  <span class="c" data-page-node-id="6Q1RSRbBpPIt85RAIuQy9Y">/* 背景层次 */</span>
+  <span class="k" data-page-node-id="Sv9Laeo2kFJu2hPNtrgkwP">--td-bg-color-page</span>: <span class="v" data-page-node-id="JFezLOksNk9ioRrDePlbmR">#F5F6F8</span>;
+  <span class="k" data-page-node-id="4CIvD6rsrr48SKqnJvMPTO">--td-bg-color-container</span>: <span class="v" data-page-node-id="u9TaHymdOy1sRIeF1Zrv2c">#FFFFFF</span>;
+  <span class="k" data-page-node-id="W4zCcI5UO4ptuNq0BQlEMY">--td-bg-color-secondary</span>: <span class="v" data-page-node-id="p7n9tpTw3wANa6TlrZNoMq">#F2F3F5</span>;   <span class="c" data-page-node-id="a5OWy3JGnzskiPeoKF9G1k">// 输入框 / 分段控件底</span>
+  <span class="k" data-page-node-id="HjnOGLqMk7L8C9JsPrc92o">--td-bg-color-elevated</span>: <span class="v" data-page-node-id="y9TrfvgSlH2L7cUWPhDl2M">#FFFFFF</span>;
+
+  <span class="c" data-page-node-id="w950wKKPA6qHKfKupnZZi0">/* 描边 */</span>
+  <span class="k" data-page-node-id="Ip9eLuEdff8bfZ2KB2VGPo">--td-component-stroke</span>: <span class="v" data-page-node-id="9CWXgdnDjVKnrHLSNytnRA">#EDEEF0</span>;
+  <span class="k" data-page-node-id="8e419Ar0ndzCDlXO9N11fk">--td-component-border</span>: <span class="v" data-page-node-id="nGJlQMPBdsEBADYiBY9Hq7">#F4F5F6</span>;
+
+  <span class="c" data-page-node-id="YU8hQlJl4KrFaS3UdsVaqo">/* 圆角（1px = 2rpx） */</span>
+  <span class="k" data-page-node-id="Wot6zHsQHDeoYCWQr5cISj">--td-radius-small</span>: <span class="v" data-page-node-id="OIVn2IgkKWDx2GKKN1rK28">12rpx</span>;      <span class="c" data-page-node-id="FBuovlfpWwc35ZmW4Y3Jkg">// 6px  · 小标签</span>
+  <span class="k" data-page-node-id="EFmERv896YeR7ODqJDra63">--td-radius-default</span>: <span class="v" data-page-node-id="gUzWRxHac3fKVYUlc5uAwE">20rpx</span>;    <span class="c" data-page-node-id="re3rkUaTjnh9wyfBGAzv2p">// 10px · 按钮 / 输入框</span>
+  <span class="k" data-page-node-id="bWOkwx8Kg949lUBM2scGGJ">--td-radius-large</span>: <span class="v" data-page-node-id="v06fofPyi1yVU3bZmAEM2A">36rpx</span>;      <span class="c" data-page-node-id="kQFRR3G2B0e8y6p6IewXol">// 18px · 卡片</span>
+  <span class="k" data-page-node-id="Zp2XQSehUTPd9UHGg6ro4z">--td-radius-extra</span>: <span class="v" data-page-node-id="po63GJ1EgdmLGatjWkynGN">48rpx</span>;      <span class="c" data-page-node-id="bpyGNlSAoPMDB7skc6PwL3">// 24px · 弹层</span>
+  <span class="k" data-page-node-id="3mGCdq2qGFmFqDahSKyGB3">--td-radius-pill</span>: <span class="v" data-page-node-id="q074SBn6w1pM0rznkpsGEf">999px</span>;
+
+  <span class="c" data-page-node-id="V96DPqGwGvxe8GvI2p3dkr">/* 业务语义色（保留） */</span>
+  <span class="k" data-page-node-id="bHE6pWDURGGQYaZTuIxJK6">--ds-bean</span>: <span class="v" data-page-node-id="ng3J6ZtFIsCKSr78K8BOMK">#C4892C</span>;              <span class="c" data-page-node-id="pI3JSQmzrA6kjldpQhDzTW">// 积分金</span>
+  <span class="k" data-page-node-id="xBTDRIz0N7FSohd1G66iOl">--ds-member</span>: <span class="v" data-page-node-id="SQOTEhkHgZHK49PFabHtk3">#A8741F</span>;            <span class="c" data-page-node-id="flkRYBixmLUXhANiur6xem">// 会员深金</span>
+  <span class="k" data-page-node-id="SWPAgUPRBeSEsfFWZtu0z4">--ds-warning-soft</span>: <span class="v" data-page-node-id="lus5ebpaYLvu55sHgPHQrJ">#FBF4E7</span>;
+  <span class="k" data-page-node-id="OwSDN9iobENYfWyTtBfhJo">--ds-success</span>: <span class="v" data-page-node-id="S8x8GyR5kvuAXscukfMaog">#2BA471</span>;
+  <span class="k" data-page-node-id="2C0FFGFue0lxo0XzDu6Uyo">--ds-danger</span>: <span class="v" data-page-node-id="DpmaEFWtLT5K317krlJ0O5">#C21B12</span>;
+
+  <span class="c" data-page-node-id="B33oOXZxYPIFwaJx8VdagS">/* 阴影（极轻） */</span>
+  <span class="k" data-page-node-id="KrvN0M9ZOWat1m6ez03HNp">--ds-shadow-card</span>: <span class="s" data-page-node-id="Gx6yztXarvzIDTaCfrMpMP">0 2rpx 6rpx rgba(17,17,20,.04), 0 16rpx 48rpx rgba(17,17,20,.05)</span>;
+  <span class="k" data-page-node-id="Xk4Bm7s5RxQaU1uGVLKENH">--ds-glow-red</span>: <span class="s" data-page-node-id="Xl5PilEUIegU8xIHFJRFER">0 12rpx 36rpx rgba(225,37,27,.22)</span>;
+}
+    </div>
+    <p class="sec__desc" style="margin-top:24px;margin-bottom:0;" data-page-node-id="pzUDxApSKAg289vX9inOlK">
+      <b data-page-node-id="HYeHKGYLgmlDOqRd106IC8">同步需要修改的位置：</b>
+      <code data-page-node-id="8c0VHXqYVGfL8soD4CXxKV">app.config.ts</code> 中 tabBar 的 <code data-page-node-id="cRO97OlRBELc4ICxC58cuy">selectedColor</code> 由 <code data-page-node-id="oEzpus4My4QDiX3mAlv13k">#e63946</code> 改为 <code data-page-node-id="edghzuWNcdrlZ6rblmATAQ">#E1251B</code>；
+      <code data-page-node-id="iASl3qHZBEXF2QFUuA1eL3">render/compose.tsx</code> 里 Slider 的 <code data-page-node-id="oO6IjGFO7vIk4SLguvtf13">activeColor</code>、<code data-page-node-id="grgqKl33I6H2b8GHJr74GG">dish/list.tsx</code> 里 <code data-page-node-id="A5KbCov8FM894WeGLxXR37">showModal</code> 的 <code data-page-node-id="SXkzgC3kjkDQ37HpEB5vCp">confirmColor</code> 同步替换。
+      底部 Tab 图标建议一并重绘为「未选中 #8E939A / 选中 #E1251B」的单色线性图标。
+    </p>
+  </section>
+
+  <div class="footer" data-page-node-id="6mzt4mxyRu50tDbbGzJUGk">
+    大帅餐饮 · 小程序 UI 设计方案 v1 &nbsp;|&nbsp; 绘制尺寸 iPhone 15（375 × 812pt）&nbsp;|&nbsp; 主题色 #E1251B 取自品牌 Logo 实测主色 #D02018 &nbsp;|&nbsp; 配套规范见 docs/ui-design/UI设计规范.md
+  </div>
+</div>
+
+</body>
+</html>

@@ -5,6 +5,7 @@ import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import { activeMembership } from '../services/order.service.js'
+import { listMyReminders, markReminderRead } from '../services/membership-reminder.service.js'
 
 const router = Router()
 router.use(auth)
@@ -106,6 +107,32 @@ router.get('/bean/ai-logs', async (req, res) => {
   } catch (e) {
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     return fail(res, 500, '查询失败', 500)
+  }
+})
+
+/** GET /membership/reminders — 会员到期站内提醒 */
+router.get('/membership/reminders', async (req, res) => {
+  try {
+    const list = await listMyReminders(prisma, req.merchantId!, 20)
+    ok(res, list.map((r) => ({
+      id: r.id.toString(),
+      reminderDays: r.reminderDays,
+      status: r.status,
+      scheduledAt: r.scheduledAt.toISOString(),
+      sentAt: r.sentAt?.toISOString() ?? null,
+      endAt: r.membership.endAt.toISOString(),
+    })))
+  } catch {
+    fail(res, 500, '查询失败', 500)
+  }
+})
+
+router.post('/membership/reminders/:id/read', async (req, res) => {
+  try {
+    await markReminderRead(prisma, req.merchantId!, BigInt(req.params.id))
+    ok(res, { ok: true })
+  } catch {
+    fail(res, 500, '操作失败', 500)
   }
 })
 

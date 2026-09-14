@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Table, Select, Tag, Progress, Button, Dialog, Form, Input, InputNumber, message } from 'tdesign-react'
+import { Select, Tag, Progress, Button, Dialog, Input, InputNumber, message } from 'tdesign-react'
+import DataTable from '../lib/table'
+import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 import dayjs from 'dayjs'
@@ -153,7 +155,7 @@ export default function RenderTasksPage() {
         </div>
       </div>
 
-      <Table
+      <DataTable
         rowKey="id"
         data={data?.list ?? []}
         loading={loading}
@@ -201,25 +203,25 @@ export default function RenderTasksPage() {
 
       {/* 交付成片 */}
       <Dialog header={`交付成片 · 任务 #${deliverRow?.id ?? ''}`} visible={!!deliverRow} onClose={() => setDeliverRow(null)} onConfirm={submitDeliver} width={560}>
-        <Form labelWidth={110}>
-          <Form.FormItem label="成片 COS Key" status={deliverForm.resultKey ? undefined : 'error'}>
+        <FieldGroup labelWidth={110}>
+          <Field label="成片 COS Key" status={deliverForm.resultKey ? undefined : 'error'}>
             <Input value={deliverForm.resultKey} onChange={(v) => setDeliverForm((f) => ({ ...f, resultKey: v as string }))}
               placeholder="如 renders/12/35.mp4（剪辑成品上传 COS 后的 Key）" />
-          </Form.FormItem>
-          <Form.FormItem label="封面 Key（可选）">
+          </Field>
+          <Field label="封面 Key（可选）">
             <Input value={deliverForm.previewKey} onChange={(v) => setDeliverForm((f) => ({ ...f, previewKey: v as string }))} />
-          </Form.FormItem>
-          <Form.FormItem label="成片时长（秒，可选）">
+          </Field>
+          <Field label="成片时长（秒，可选）">
             <InputNumber value={deliverForm.durationSec ? Number(deliverForm.durationSec) : undefined}
               onChange={(v) => setDeliverForm((f) => ({ ...f, durationSec: v === undefined ? '' : String(v) }))} min={0} />
-          </Form.FormItem>
-        </Form>
+          </Field>
+        </FieldGroup>
         <div style={{ color: '#999', fontSize: 12 }}>交付后立即结算用户积分（按提交时冻结金额），任务标记完成，用户端即可播放。</div>
       </Dialog>
 
       {/* 素材清单 */}
       <Dialog header={`素材清单 · 任务 #${materials?.row.id ?? ''}`} visible={!!materials} footer={false} onClose={() => setMaterials(null)} width={680}>
-        <Table
+        <DataTable
           rowKey="seq"
           size="small"
           data={materials?.list ?? []}

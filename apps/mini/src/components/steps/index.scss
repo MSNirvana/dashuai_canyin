@@ -1,0 +1,71 @@
+// 四步流程条样式：当前步红色实心，已完成浅红 + 勾，未开始灰
+.steps {
+  display: flex;
+  align-items: center;
+  padding: 8rpx 0 4rpx;
+
+  &__item {
+    display: flex;
+    align-items: center;
+    gap: 8rpx;
+    flex: none;
+  }
+
+  &__dot {
+    width: 36rpx;
+    height: 36rpx;
+    border-radius: 50%;
+    background: var(--td-bg-color-secondary);
+    color: var(--td-text-color-placeholder);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+
+  &__num,
+  &__check {
+    font-size: 20rpx;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  &__label {
+    font-size: 23rpx;
+    font-weight: 500;
+    color: var(--td-text-color-placeholder);
+    white-space: nowrap;
+  }
+
+  &__line {
+    flex: 1;
+    height: 3rpx;
+    margin: 0 12rpx;
+    border-radius: 2rpx;
+    background: var(--td-component-stroke);
+  }
+
+  &__line--on {
+    background: var(--td-brand-color-light);
+  }
+
+  // 当前步
+  &__item--on {
+    .steps__dot {
+      background: var(--td-brand-color);
+      color: #fff;
+    }
+    .steps__label {
+      color: var(--td-brand-color);
+      font-weight: 650;
+    }
+  }
+
+  // 已完成
+  &__item--done {
+    .steps__dot {
+      background: var(--td-brand-color-light);
+      color: var(--td-brand-color);
+    }
+  }
+}

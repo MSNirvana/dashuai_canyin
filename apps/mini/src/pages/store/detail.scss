@@ -1,0 +1,202 @@
+.store-detail {
+  min-height: 100vh;
+  padding-bottom: 240rpx;
+  background: var(--td-bg-color-page);
+
+  &--state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--td-text-color-placeholder);
+  }
+
+  &__hero {
+    position: relative;
+    height: 460rpx;
+    overflow: hidden;
+    background: #241615;
+  }
+
+  &__hero-image {
+    width: 100%;
+    height: 100%;
+  }
+
+  &__placeholder {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 80rpx;
+    text-align: center;
+    color: rgba(255,255,255,.66);
+    font-size: 26rpx;
+  }
+  &__hero-caption { position: absolute; left: 36rpx; right: 36rpx; bottom: 28rpx; padding-top: 72rpx; background: linear-gradient(transparent, rgba(20,8,7,.72)); }
+  &__hero-kicker { display: block; color: #ffb2ab; font-size: 20rpx; font-weight: 700; letter-spacing: .12em; }
+  &__hero-tip { display: block; margin-top: 8rpx; color: #fff; font-size: 22rpx; }
+
+  &__body {
+    margin: 24rpx 36rpx;
+    padding: 32rpx;
+    border-radius: var(--td-radius-large);
+    background: var(--td-bg-color-container);
+    box-shadow: var(--ds-shadow-card);
+  }
+
+  &__title {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    flex-wrap: wrap;
+  }
+
+  &__name {
+    font-size: 40rpx;
+    font-weight: 700;
+    letter-spacing: -0.025em;
+  }
+
+  &__tag {
+    padding: 4rpx 16rpx;
+    border-radius: 999rpx;
+    background: var(--td-bg-color-secondary);
+    color: var(--td-text-color-secondary);
+    font-size: 22rpx;
+
+    &--current {
+      background: var(--td-brand-color-light);
+      color: var(--td-brand-color);
+    }
+  }
+
+  &__meta {
+    display: block;
+    margin-top: 12rpx;
+    color: var(--td-text-color-placeholder);
+    font-size: 24rpx;
+  }
+
+  &__health { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; margin-top: 26rpx; padding: 22rpx 24rpx; border-radius: var(--td-radius-default); background: var(--td-brand-color-light); }
+  &__health-copy { min-width: 0; }
+  &__health-title { display: block; color: var(--td-text-color-primary); font-size: 25rpx; font-weight: 600; }
+  &__health-desc { display: block; margin-top: 6rpx; color: var(--td-text-color-secondary); font-size: 21rpx; }
+  &__health-value { color: var(--td-brand-color); font-size: 34rpx; font-weight: 750; }
+  &__section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20rpx; margin-top: 36rpx; }
+  &__section-no { padding-top: 4rpx; color: var(--td-text-color-disabled); font-size: 22rpx; font-weight: 700; }
+  &__section-desc { display: block; margin-top: 6rpx; color: var(--td-text-color-placeholder); font-size: 21rpx; }
+
+  &__label {
+    display: block;
+    margin: 0;
+    color: var(--td-text-color-primary);
+    font-size: 26rpx;
+    font-weight: 600;
+  }
+
+  &__video {
+    width: 100%;
+  }
+
+  &__video-player {
+    width: 100%;
+    height: 360rpx;
+    border-radius: var(--td-radius-default);
+  }
+
+  &__intro {
+    display: block;
+    color: var(--td-text-color-secondary);
+    font-size: 28rpx;
+    line-height: 1.7;
+    word-break: break-all;
+  }
+
+  &__muted {
+    display: block;
+    color: var(--td-text-color-placeholder);
+    font-size: 24rpx;
+  }
+
+  &__rows {
+    display: flex;
+    flex-direction: column;
+    gap: 2rpx;
+    border-radius: var(--td-radius-default);
+    overflow: hidden;
+    background: var(--td-bg-color-secondary);
+  }
+
+  &__row {
+    display: flex;
+    align-items: flex-start;
+    gap: 24rpx;
+    padding: 22rpx 24rpx;
+    background: var(--td-bg-color-container);
+  }
+
+  &__row-label {
+    width: 140rpx;
+    flex-shrink: 0;
+    color: var(--td-text-color-placeholder);
+    font-size: 26rpx;
+  }
+
+  &__row-value {
+    flex: 1;
+    color: var(--td-text-color-primary);
+    font-size: 28rpx;
+    line-height: 1.6;
+    word-break: break-all;
+  }
+
+  &__footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 24rpx 36rpx calc(24rpx + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.96);
+    backdrop-filter: blur(20rpx);
+    border-top: 1rpx solid var(--td-component-border);
+    display: flex;
+    flex-direction: column;
+    gap: 16rpx;
+  }
+
+  &__btn-row {
+    display: flex;
+    gap: 16rpx;
+  }
+
+  &__btn {
+    height: 96rpx;
+    border-radius: var(--td-radius-default);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32rpx;
+    font-weight: 600;
+    flex: 1;
+
+    &--primary {
+      background: var(--td-brand-color);
+      color: #fff;
+    }
+
+    &--ghost {
+      background: transparent;
+      color: var(--td-text-color-primary);
+      border: 1rpx solid var(--td-component-border);
+      font-weight: 500;
+    }
+
+    // 危险操作：边框与文字都用品牌红，背景透明，整体仍是「次要按钮」以让编辑门店的红底主按钮独占
+    &--danger {
+      background: transparent;
+      color: var(--td-brand-color);
+      border: 1rpx solid var(--td-brand-color);
+      font-weight: 500;
+    }
+  }
+}

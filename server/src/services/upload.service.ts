@@ -146,11 +146,20 @@ export interface ConfirmUploadInput {
   width?: number
   height?: number
   durationMs?: number
+  /** 视频封面缩略图的对象键（客户端抽帧后随视频一起上报；服务端生成时由上传路由写入） */
+  coverKey?: string | null
+  /**
+   * 素材归属：CREATION = 创作素材（默认），STORE = 门店资料（主图/门店视频），DISH = 菜品素材。
+   * 门店资料不参与创作选片，避免污染素材池。
+   */
+  ownerType?: 'CREATION' | 'STORE' | 'DISH'
 }
 
 export async function confirmUpload(prisma: PrismaClient, merchantId: bigint, input: ConfirmUploadInput) {
   // 越权防护：cosKey 必须落在当前商家前缀下，否则拒绝落库
   if (!input.cosKey.startsWith(`uploads/${merchantId}/`)) throw new UploadPrefixError()
+  // 封面同样必须落在当前商家前缀下，避免借用他人对象键
+  if (input.coverKey && !input.coverKey.startsWith(`uploads/${merchantId}/`)) throw new UploadPrefixError()
   const store = await prisma.store.findFirst({
     where: { id: input.storeId, merchantId, deletedAt: null },
   })
@@ -163,7 +172,7 @@ export async function confirmUpload(prisma: PrismaClient, merchantId: bigint, in
     data: {
       merchantId,
       storeId: input.storeId,
-      ownerType: 'CREATION',
+      ownerType: input.ownerType ?? 'CREATION',
       ownerId: null,
       type: input.type,
       cosKey: input.cosKey,
@@ -173,6 +182,7 @@ export async function confirmUpload(prisma: PrismaClient, merchantId: bigint, in
       durationMs: input.durationMs,
       width: input.width,
       height: input.height,
+      coverKey: input.coverKey ?? null,
       status: 'READY',
     },
   })

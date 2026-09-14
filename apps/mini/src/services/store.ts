@@ -11,6 +11,8 @@ export interface StoreItem {
   address: string | null
   contact: string | null
   coverKey: string | null
+  intro: string | null
+  videoKey: string | null
   isDefault: boolean
   createdAt: string
   _count?: { dishes: number }
@@ -25,6 +27,8 @@ export interface StoreInput {
   address?: string
   contact?: string
   coverKey?: string | null
+  intro?: string | null
+  videoKey?: string | null
   isDefault?: boolean
 }
 
@@ -48,6 +52,10 @@ export function deleteStore(id: string) {
   return http.del<{ deleted: boolean }>(`/stores/${id}`)
 }
 
-export function getStoreCoverUrl(key: string) {
+/**
+ * 取门店图片 / 视频的播放地址（私有桶临时签名，有效期 1 小时）。
+ * 原名叫 getStoreCoverUrl，门店加了视频后改名，调用方同步改为 getStoreMediaUrl。
+ */
+export function getStoreMediaUrl(key: string) {
   return http.get<{ url: string | null; dev: boolean }>(`/media/play-url?key=${encodeURIComponent(key)}`)
 }

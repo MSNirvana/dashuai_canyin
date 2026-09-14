@@ -1,55 +1,67 @@
-// 大帅餐饮 · 品牌主题（红白简约 · 大气）
-// 设计语言：白底浅灰层次 + 品牌红单点强调 + 精炼琥珀做权益色；
-// 去渐变、去光晕、去暗色，追求「留白、克制、高级感」
+// 大帅餐饮 · 品牌主题 v2（Logo 红 · iOS 简约）
+// 设计语言：Logo 红单点强调 + 白底冷灰层次 + iOS 式留白与克制
+// 去渐变、去光晕、去暖调，追求「留白、克制、高级感」
+//
+// 主色取自 assets/logo.png 实测主色 #D02018，为小尺寸屏幕与白底观感提亮至 #E1251B
+// 配套规范见 docs/ui-design/UI设计规范.md
 
 page {
   // —— 品牌主色（唯一强调色） ——
-  --td-brand-color: #e63946;          // 品牌红（按钮、icon、强调）
-  --td-brand-color-hover: #ee4d59;
-  --td-brand-color-active: #c1202c;
-  --td-brand-color-light: #fdecee;     // 红浅底（选中态容器）
-  --td-brand-color-disabled: #f2b3b9;
-  --td-brand-color-soft: #fdf4f5;      // 更浅红底（图标容器、提示条）
+  --td-brand-color: #e1251b;           // 主按钮 / 选中 / 强调
+  --td-brand-color-hover: #f03a30;
+  --td-brand-color-active: #c21b12;    // 按下态
+  --td-brand-color-light: #fdecea;     // 红浅底（选中态容器、图标底）
+  --td-brand-color-soft: #fef6f5;      // 更浅红底（提示条）
+  --td-brand-color-disabled: #f3c0bc;
 
-  // —— 文字（中性灰阶，去暖调） ——
-  --td-text-color-primary: #1d2129;    // 主文（近黑）
-  --td-text-color-secondary: #646a73;  // 次要文（中灰）
-  --td-text-color-placeholder: #a9aeb8; // 占位
-  --td-text-color-disabled: #c3c7cf;   // 禁用
+  // —— 文字（冷灰阶，对齐 iOS System Gray） ——
+  --td-text-color-primary: #111114;    // 主文（近黑）
+  --td-text-color-secondary: #5c6066;  // 次要文（中灰）
+  --td-text-color-placeholder: #8e939a; // 占位
+  --td-text-color-disabled: #bfc3c9;   // 禁用
   --td-text-color-anti: #ffffff;       // 反白（红底上的白字）
 
   // —— 背景（白 + 浅灰层级） ——
   --td-bg-color-page: #f5f6f8;         // 页面底（浅灰白）
   --td-bg-color-container: #ffffff;    // 卡片底（纯白）
   --td-bg-color-container-active: #f2f3f5;
-  --td-bg-color-secondary: #f5f6f8;    // 输入框底
+  --td-bg-color-secondary: #f2f3f5;    // 输入框 / 分段控件底
   --td-bg-color-elevated: #ffffff;     // 弹层/浮层
 
   // —— 描边（浅灰细线） ——
-  --td-component-stroke: #e7e8eb;      // 默认描边
-  --td-component-border: #f0f1f3;      // 分隔线（更浅）
+  --td-component-stroke: #edeef0;      // 默认描边
+  --td-component-border: #f4f5f6;      // 分隔线（更浅）
 
-  // —— 圆角 ——
-  --td-radius-small: 8rpx;
-  --td-radius-default: 12rpx;
-  --td-radius-large: 20rpx;
-  --td-radius-extra: 24rpx;
+  // —— 圆角（1px = 2rpx） ——
+  --td-radius-small: 12rpx;            // 6px  · 小标签
+  --td-radius-default: 20rpx;          // 10px · 按钮 / 输入框
+  --td-radius-large: 36rpx;            // 18px · 卡片
+  --td-radius-extra: 48rpx;            // 24px · 弹层
   --td-radius-pill: 999px;
 
   // —— 业务语义色 ——
-  --ds-danger: #d54941;
-  --ds-warning: #cf8a2d;               // 精炼琥珀（积分/权益，替代亮金）
-  --ds-warning-soft: #faf4e8;          // 琥珀浅底
+  --ds-danger: #c21b12;
+  --ds-warning: #c4892c;               // 精炼琥珀（积分/权益，替代亮金）
+  --ds-warning-soft: #fbf4e7;          // 琥珀浅底
   --ds-success: #2ba471;
-  --ds-bean: #cf8a2d;                  // 积分主色（琥珀）
-  --ds-member: #b27c2b;                // 会员标识（深琥珀）
+  --ds-success-soft: #eaf7f1;
+  --ds-bean: #c4892c;                  // 积分主色（琥珀）
+  --ds-member: #a8741f;                // 会员标识（深琥珀）
 
   // —— 阴影（极轻，只做层次不做装饰） ——
-  --ds-glow-red: 0 8rpx 24rpx rgba(230, 57, 70, 0.16);   // 主按钮微投影
-  --ds-glow-gold: 0 6rpx 18rpx rgba(207, 138, 45, 0.16);
-  --ds-shadow-card: 0 2rpx 12rpx rgba(29, 33, 41, 0.04); // 卡片极轻投影
+  --ds-shadow-card: 0 2rpx 6rpx rgba(17, 17, 20, 0.04), 0 16rpx 48rpx rgba(17, 17, 20, 0.05);
+  --ds-glow-red: 0 12rpx 36rpx rgba(225, 37, 27, 0.22);
+  --ds-glow-gold: 0 12rpx 36rpx rgba(196, 137, 44, 0.18);
 
-  font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Helvetica Neue', sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'PingFang SC', 'Helvetica Neue', sans-serif;
   background: var(--td-bg-color-page);
   color: var(--td-text-color-primary);
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+}
+
+// 数字统一等宽对齐（金额 / 积分 / 时长）
+.ds-num {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
 }

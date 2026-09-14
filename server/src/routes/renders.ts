@@ -25,8 +25,19 @@ const submitInput = z.object({
       sharpen: z.number().int().min(-100).max(100),
     })
     .optional(),
-  requestId: z.string().optional(),
+  requestId: z.string().trim().min(8).max(64).optional(),
   aiMode: z.boolean().optional(),
+  chatcut: z.object({
+    voiceId: z.enum(['warm-female', 'bright-female', 'gentle-male', 'magnetic-male', 'energetic-youth']).optional(),
+    subtitles: z.boolean().optional(),
+    subtitleStyle: z.enum(['CLEAN', 'EMPHASIS', 'SOCIAL']).optional(),
+    bgm: z.enum(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM']).optional(),
+    pacing: z.enum(['NATURAL', 'FAST', 'STORY']).optional(),
+    transitions: z.enum(['CLEAN', 'SMOOTH', 'DYNAMIC']).optional(),
+    removeSilence: z.boolean().optional(),
+    normalizeAudio: z.boolean().optional(),
+    note: z.string().trim().max(300).optional(),
+  }).optional(),
 })
 
 router.post('/:id/render', async (req, res) => {
@@ -38,6 +49,7 @@ router.post('/:id/render', async (req, res) => {
       color: body.color,
       requestId: body.requestId ?? randomUUID(),
       aiMode: body.aiMode,
+      chatcut: body.chatcut,
     })
     ok(res, r)
   } catch (e) {

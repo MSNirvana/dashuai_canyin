@@ -44,8 +44,20 @@ http.interceptors.response.use(
     throw new ApiErrorProxy(body?.code ?? -1, body?.message ?? '请求失败', body?.traceId)
   },
   (err: AxiosError<ApiEnvelope>) => {
+    const status = err.response?.status
     const body = err.response?.data
     const msg = body?.message ?? err.message ?? '网络错误'
+    // 登录态失效统一收口：服务端 adminAuth 失效时返回 HTTP 401 + code 1001（登录接口失败是 4001）。
+    // 这里必须清会话并回登录页 —— 只弹 toast 不跳转的话，页面会带着一个失效 token 继续渲染，
+    // 所有请求持续失败且刷新无效，表现就是「后台打不开」。
+    if (status === 401 || body?.code === 1001 || body?.code === 4001) {
+      auth.clear()
+      const onLogin = location.pathname.endsWith('/login')
+      // 登录页本身要显示真实原因（如「用户名或密码错误」），不要覆盖成「登录已过期」
+      message.error(onLogin ? msg : '登录已过期，请重新登录', 2000)
+      if (!onLogin) location.href = '/login'
+      throw new ApiErrorProxy(body?.code ?? 1001, msg, body?.traceId)
+    }
     message.error(msg, 2000)
     throw new ApiErrorProxy(body?.code ?? -1, msg, body?.traceId)
   },

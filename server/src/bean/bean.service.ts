@@ -95,6 +95,13 @@ async function findLedger(tx: Db, merchantId: bigint, bizType: string | undefine
   return tx.beanLedger.findFirst({ where: { merchantId, bizType, requestId, type } })
 }
 
+/**
+ * 查找预留。
+ * 关键约束：只要带了 requestId，就必须按 (merchantId, bizType, requestId) 精确匹配。
+ * 不能再用 bizId 兜底——否则同一创作「重新生成文案/分镜」时会命中上一次的预留，
+ * 导致第二次不再冻结、结算时又拿旧预留去扣（consume/unfreeze exceeds business reservation）。
+ * bizId 兜底仅用于没有 requestId 的历史/匿名流程。
+ */
 async function findReservation(
   tx: Db,
   args: { merchantId: bigint; requestId?: string; bizType?: string; bizId?: string },
@@ -110,6 +117,7 @@ async function findReservation(
       },
     })
     if (row) return row
+    return null
   }
   if (args.bizId && args.bizType) {
     return tx.beanReservation.findFirst({

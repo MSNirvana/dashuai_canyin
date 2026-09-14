@@ -40,7 +40,14 @@ export async function getPlayUrl(
 ): Promise<PlayUrl> {
   const asset = await prisma.mediaAsset.findFirst({ where: { id: assetId, merchantId, deletedAt: null } })
   if (!asset) throw new MediaNotFoundError()
-  return signKey(asset.cosKey, asset.bucket, asset.region, baseUrl)
+  // 历史行的 bucket/region 可能为空：素材是在本地存储模式下上传的，那时这两列留空。
+  // 切到 COS 后用空值签名会直接失败（播放返回 500），故回落到环境变量。
+  return signKey(
+    asset.cosKey,
+    asset.bucket || process.env.COS_BUCKET || '',
+    asset.region || process.env.COS_REGION || '',
+    baseUrl,
+  )
 }
 
 /** 按 key 签播放地址（用于合成产物等无 media_asset 行的文件），须落在当前商家前缀下 */

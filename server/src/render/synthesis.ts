@@ -11,7 +11,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { synthesizeNarration } from './tts.js'
-import { ffmpegConcat } from './ffmpeg.js'
+import { ffmpegBin, ffmpegConcat, ffmpegSupportsSubtitles } from './ffmpeg.js'
 import type { TtsProviderConfig } from '../services/tts-provider.service.js'
 
 const execFileP = promisify(execFile)
@@ -111,13 +111,24 @@ export async function applyAiSynthesis(
     await ffmpegConcat(narrationFiles, narrationPath, timeoutMs)
 
     // 3) 生成字幕并烧录（尽力而为）
+    //    前置条件有两个，缺一不可：① 有可用中文字体 ② ffmpeg 编译了 libass（subtitles 滤镜）。
+    //    只查字体目录存在会误判：精简版 ffmpeg（如 Homebrew 的 `ffmpeg`，libass 被拆到 `ffmpeg-full`）
+    //    根本没有 subtitles 滤镜，硬烧只会白跑一遍必然失败的重编码。
     const srt = buildSrt(shots)
     const font = detectCjkFont()
     let subtitled = false
     if (srt.trim() && font) {
-      const srtPath = join(workDir, 'subs.srt')
-      await writeFile(srtPath, srt, 'utf8')
-      subtitled = await muxWithSubtitles(videoPath, narrationPath, srtPath, font, outPath, timeoutMs)
+      if (await ffmpegSupportsSubtitles()) {
+        const srtPath = join(workDir, 'subs.srt')
+        await writeFile(srtPath, srt, 'utf8')
+        subtitled = await muxWithSubtitles(videoPath, narrationPath, srtPath, font, outPath, timeoutMs)
+      } else {
+        console.warn(
+          '[synthesis] 跳过字幕烧录：当前 ffmpeg 未编译 libass（缺少 subtitles 滤镜）。' +
+            'macOS：brew install ffmpeg-full，再设 FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg；' +
+            'Linux：安装带 libass 的 ffmpeg 与 fonts-noto-cjk 字体。',
+        )
+      }
     }
 
     // 4) 未烧字幕或烧录失败：仅替换配音轨（视频 copy，不重编码）
@@ -133,7 +144,7 @@ export async function applyAiSynthesis(
 /** 生成指定时长的静音轨 */
 async function synthSilence(durMs: number, outPath: string, timeoutMs: number): Promise<void> {
   await execFileP(
-    'ffmpeg',
+    ffmpegBin(),
     [
       '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
       '-t', (durMs / 1000).toFixed(3),
@@ -155,7 +166,7 @@ async function muxWithSubtitles(
   try {
     const vf = `subtitles=${escapeFilterPath(srtPath)}:fontsdir=${escapeFilterPath(font.dir)}:force_style='FontName=${font.family}'`
     await execFileP(
-      'ffmpeg',
+      ffmpegBin(),
       [
         '-i', videoPath, '-i', audioPath,
         '-filter_complex', `[0:v]${vf}[v]`,
@@ -180,7 +191,7 @@ async function muxAudioOnly(
   timeoutMs: number,
 ): Promise<void> {
   await execFileP(
-    'ffmpeg',
+    ffmpegBin(),
     [
       '-i', videoPath, '-i', audioPath,
       '-map', '0:v', '-map', '1:a',

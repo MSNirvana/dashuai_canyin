@@ -25,17 +25,18 @@ model Merchant {
   updatedAt            DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt            DateTime? @map("deleted_at") @db.DateTime(3)
 
-  stores           Store[]
-  personas         Persona[]
-  creations        Creation[]
-  beanAccount      BeanAccount?
-  ledgers          BeanLedger[]
-  orders           Order[]
-  memberships      Membership[]
-  aiCallLogs       AiCallLog[]
-  renderTasks      RenderTask[]
-  businessRequests BusinessRequest[]
-  beanReservations BeanReservation[]
+  stores              Store[]
+  personas            Persona[]
+  creations           Creation[]
+  beanAccount         BeanAccount?
+  ledgers             BeanLedger[]
+  orders              Order[]
+  memberships         Membership[]
+  aiCallLogs          AiCallLog[]
+  renderTasks         RenderTask[]
+  businessRequests    BusinessRequest[]
+  beanReservations    BeanReservation[]
+  membershipReminders MembershipReminder[]
 
   @@map("merchant")
 }
@@ -51,6 +52,10 @@ model Store {
   address    String?   @db.VarChar(255)
   contact    String?   @db.VarChar(64)
   coverKey   String?   @map("cover_key") @db.VarChar(512)
+  // 门店介绍：一两句话说明门店特色，用于门店详情页统一展示
+  intro      String?   @db.VarChar(500)
+  // 门店视频（可选）：门店环境/招牌短视频，仅作门店展示，不进创作素材池
+  videoKey   String?   @map("video_key") @db.VarChar(512)
   isDefault  Boolean   @default(false) @map("is_default")
   status     String    @default("ACTIVE") @db.VarChar(16)
   createdAt  DateTime  @default(now()) @map("created_at") @db.DateTime(3)
@@ -81,7 +86,7 @@ model Dish {
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt     DateTime? @map("deleted_at") @db.DateTime(3)
 
-  store     Store      @relation(fields: [storeId], references: [id])
+  store     Store       @relation(fields: [storeId], references: [id])
   creations Creation[]
   media     DishMedia[]
 
@@ -174,7 +179,10 @@ model Shot {
   id              BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
   creationId      BigInt   @map("creation_id") @db.UnsignedBigInt()
   seq             Int
+  // 镜头分类：开场 / 口播 / 特写 / 原料 / 制作 / 环境 / 试吃 / 卖点 / 收尾
   shotType        String?  @map("shot_type") @db.VarChar(64)
+  // 景别：远景 / 全景 / 中景 / 近景 / 特写 / 大特写
+  shotSize        String?  @map("shot_size") @db.VarChar(16)
   durationSuggest Int?     @map("duration_suggest")
   line            String?  @db.Text
   visualReq       String?  @map("visual_req") @db.Text
@@ -209,6 +217,39 @@ model ShotLibrary {
 
   @@index([category, enabled, sort])
   @@map("shot_library")
+}
+
+// 首页「优秀作品」：运营内容，不挂在商家数据上，避免用户删创作/清素材后作品消失
+model ExcellentWork {
+  id           BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  title        String    @db.VarChar(128)
+  // 一级分类：餐饮 / 教培 / 美业 / 生活服务 / 休闲娱乐
+  category     String    @db.VarChar(32)
+  // 二级分类（如 卤味 / 火锅 / 美甲），用于标签展示与更细的筛选
+  subCategory  String?   @map("sub_category") @db.VarChar(32)
+  // 展示用标签数组，如 ["素材智能成片","卤味"]
+  tags         Json?
+  coverKey     String?   @map("cover_key") @db.VarChar(512)
+  videoKey     String?   @map("video_key") @db.VarChar(512)
+  durationMs   Int?      @map("duration_ms") @db.UnsignedInt
+  // 同款配方：{ track, complexity, titleHint, voiceId, shotSkeleton[], notes }
+  // 「生成同款」把它预填进创作流，这是本模块真正的价值点
+  recipeJson   Json      @map("recipe_json")
+  sort         Int       @default(0)
+  enabled      Boolean   @default(true)
+  // MANUAL = 后台直接上传；RENDER = 从商家成功成片里挑入库
+  sourceType   String    @default("MANUAL") @map("source_type") @db.VarChar(16)
+  sourceTaskId BigInt?   @map("source_task_id") @db.UnsignedBigInt
+  viewCount    Int       @default(0) @map("view_count") @db.UnsignedInt
+  cloneCount   Int       @default(0) @map("clone_count") @db.UnsignedInt
+  publishedAt  DateTime? @map("published_at") @db.DateTime(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  deletedAt    DateTime? @map("deleted_at") @db.DateTime(3)
+
+  @@index([category, enabled, sort])
+  @@index([enabled, sort])
+  @@map("excellent_work")
 }
 
 model RenderTask {
@@ -387,12 +428,34 @@ model Membership {
   status        String    @default("ACTIVE") @db.VarChar(16)
   createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(3)
 
-  merchant Merchant      @relation(fields: [merchantId], references: [id])
-  package  MemberPackage @relation(fields: [packageId], references: [id])
+  merchant  Merchant             @relation(fields: [merchantId], references: [id])
+  package   MemberPackage        @relation(fields: [packageId], references: [id])
+  reminders MembershipReminder[]
 
   @@index([merchantId, endAt])
   @@index([status, endAt])
   @@map("membership")
+}
+
+model MembershipReminder {
+  id           BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  merchantId   BigInt    @map("merchant_id") @db.UnsignedBigInt()
+  membershipId BigInt    @map("membership_id") @db.UnsignedBigInt()
+  reminderDays Int       @map("reminder_days") @db.UnsignedSmallInt()
+  channel      String    @default("WECHAT_SUBSCRIBE_MESSAGE") @db.VarChar(32)
+  status       String    @default("PENDING") @db.VarChar(16)
+  scheduledAt  DateTime  @map("scheduled_at") @db.DateTime(3)
+  sentAt       DateTime? @map("sent_at") @db.DateTime(3)
+  errorMessage String?   @map("error_message") @db.VarChar(500)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+
+  merchant   Merchant   @relation(fields: [merchantId], references: [id])
+  membership Membership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+
+  @@unique([membershipId, reminderDays, channel])
+  @@index([merchantId, status, scheduledAt])
+  @@map("membership_reminder")
 }
 
 model Order {

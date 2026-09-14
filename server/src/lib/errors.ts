@@ -4,7 +4,7 @@ import type { NextFunction, Request, Response } from 'express'
 import { BeanNotEnoughError } from '../bean/bean.service.js'
 import { ScenePendingError } from '../ai/ai.service.js'
 import { WxApiError } from '../auth/wechat.js'
-import { SmsCodeInvalidError, SmsDailyLimitError, SmsSendTooFrequentError } from '../auth/sms.js'
+import { SmsCodeInvalidError, SmsDailyLimitError, SmsSendTooFrequentError, SmsProviderNotConfiguredError } from '../auth/sms.js'
 import { StoreLimitError, StoreDefaultDeleteError } from '../services/store.service.js'
 import { DishStoreMismatchError } from '../services/dish.service.js'
 import { SubscriptionRequiredError, StorageQuotaExceededError } from '../services/subscription.service.js'
@@ -25,6 +25,7 @@ function mapError(e: unknown): MappedError {
   if (e instanceof SmsSendTooFrequentError) return { code: 1003, message: `验证码发送过于频繁，请 ${e.cooldownSec}s 后再试`, httpStatus: 429 }
   if (e instanceof SmsDailyLimitError) return { code: 1003, message: `今日验证码次数已达上限（${e.limit}）`, httpStatus: 429 }
   if (e instanceof SmsCodeInvalidError) return { code: 1002, message: '验证码错误或已过期', httpStatus: 400 }
+  if (e instanceof SmsProviderNotConfiguredError) return { code: 1004, message: e.message, httpStatus: 503 }
   if (e instanceof StoreLimitError) return { code: 2003, message: e.message, httpStatus: 400 }
   if (e instanceof StoreDefaultDeleteError) return { code: 2003, message: e.message, httpStatus: 400 }
   if (e instanceof DishStoreMismatchError) return { code: 2004, message: e.message, httpStatus: 400 }

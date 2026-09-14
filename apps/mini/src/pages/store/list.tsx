@@ -2,11 +2,13 @@ import { useState } from 'react'
 import { View, Text, Image } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
-import { getStoreCoverUrl, listStores, deleteStore, type StoreItem } from '../../services/store'
+import { getStoreMediaUrl, type StoreItem } from '../../services/store'
 import './list.scss'
 
 export default function StoreListPage() {
-  const { currentStoreId, setStore } = useMerchantStore()
+  const currentStoreId = useMerchantStore((s) => s.currentStoreId)
+  const setStore = useMerchantStore((s) => s.setStore)
+  const loadStores = useMerchantStore((s) => s.loadStores)
   const [list, setList] = useState<StoreItem[]>([])
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
@@ -14,19 +16,18 @@ export default function StoreListPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const data = await listStores()
+      // 走全局缓存：切店/建店后全站（首页/创作/菜品/人设）保持一致
+      const data = await loadStores(true)
       setList(data)
       const entries = await Promise.all(data.filter((s) => s.coverKey).map(async (s) => {
         try {
-          const result = await getStoreCoverUrl(s.coverKey!)
+          const result = await getStoreMediaUrl(s.coverKey!)
           return result.url ? [s.id, result.url] as const : null
         } catch {
           return null
         }
       }))
       setCoverUrls(Object.fromEntries(entries.filter((entry): entry is readonly [string, string] => !!entry)))
-      // 没有当前门店时，默认选中首个（通常是默认门店）
-      if (!currentStoreId && data.length) setStore(data[0].id)
     } catch {
       /* 错误已 toast */
     } finally {
@@ -43,39 +44,22 @@ export default function StoreListPage() {
     Taro.showToast({ title: `已切换到「${s.name}」`, icon: 'none' })
   }
 
-  const onEdit = (s: StoreItem) => {
-    Taro.navigateTo({ url: `/pages/store/edit?id=${s.id}` })
-  }
-
-  const onDishes = (s: StoreItem) => {
-    Taro.navigateTo({ url: `/pages/dish/list?storeId=${s.id}&storeName=${encodeURIComponent(s.name)}` })
-  }
-
-  const onDelete = (s: StoreItem) => {
-    if (s.isDefault) {
-      Taro.showToast({ title: '默认门店不可删除', icon: 'none' })
-      return
-    }
-    Taro.showModal({
-      title: '删除门店',
-      content: `确认删除「${s.name}」？该门店下的菜品也会一并隐藏。`,
-      confirmColor: '#e63946',
-    }).then(async (r) => {
-      if (!r.confirm) return
-      try {
-        await deleteStore(s.id)
-        Taro.showToast({ title: '已删除', icon: 'success' })
-        load()
-      } catch {
-        /* 错误已 toast */
-      }
-    })
+  const onEnter = (s: StoreItem) => {
+    Taro.navigateTo({ url: `/pages/store/detail?id=${s.id}` })
   }
 
   const onCreate = () => Taro.navigateTo({ url: '/pages/store/edit' })
 
   return (
     <View className='store-list'>
+      <View className='store-list__head'>
+        <View>
+          <Text className='store-list__eyebrow'>YOUR STORES</Text>
+          <Text className='store-list__title'>门店资料</Text>
+          <Text className='store-list__intro'>把每家店的特色，沉淀成自己的内容资产</Text>
+        </View>
+        <Text className='store-list__count'>{list.length} 家</Text>
+      </View>
       <View className='store-list__hint'>
         <Text>当前创作数据归属所选门店，切换门店不影响其它门店内容</Text>
       </View>
@@ -114,17 +98,11 @@ export default function StoreListPage() {
                   <Text className='store-card__count'>菜品 {s._count?.dishes ?? 0} 道</Text>
                 </View>
                 <View className='store-card__ops'>
-                  <Text className='store-card__op' onClick={(e) => { e.stopPropagation(); onDishes(s) }}>
-                    菜品
-                  </Text>
-                  <Text className='store-card__op' onClick={(e) => { e.stopPropagation(); onEdit(s) }}>
-                    编辑
-                  </Text>
                   <Text
-                    className='store-card__op store-card__op--del'
-                    onClick={(e) => { e.stopPropagation(); onDelete(s) }}
+                    className='store-card__op store-card__op--enter'
+                    onClick={(e) => { e.stopPropagation(); onEnter(s) }}
                   >
-                    删除
+                    进入
                   </Text>
                 </View>
               </View>

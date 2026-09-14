@@ -27,6 +27,10 @@ export interface StoreInput {
   address?: string
   contact?: string
   coverKey?: string | null
+  /** 门店介绍，最多 500 字，门店详情页统一展示 */
+  intro?: string | null
+  /** 门店视频对象键（可选）：仅作门店展示，不进创作素材池 */
+  videoKey?: string | null
 }
 
 export async function listStores(prisma: PrismaClient, merchantId: bigint) {
@@ -43,6 +47,8 @@ export async function listStores(prisma: PrismaClient, merchantId: bigint) {
       address: true,
       contact: true,
       coverKey: true,
+      intro: true,
+      videoKey: true,
       isDefault: true,
       createdAt: true,
       _count: { select: { dishes: true } },
@@ -72,6 +78,7 @@ export async function createStore(prisma: PrismaClient, merchantId: bigint, inpu
       district: input.district,
       address: input.address,
       contact: input.contact,
+      intro: input.intro ?? null,
       isDefault: isFirst, // 首店自动为默认
     },
   })
@@ -86,20 +93,9 @@ export async function updateStore(
   const store = await prisma.store.findFirst({ where: { id: storeId, merchantId, deletedAt: null } })
   if (!store) return null
 
-  if (input.coverKey !== undefined && input.coverKey !== null) {
-    const asset = await prisma.mediaAsset.findFirst({
-      where: {
-        merchantId,
-        storeId,
-        cosKey: input.coverKey,
-        type: 'IMAGE',
-        status: 'READY',
-        deletedAt: null,
-      },
-      select: { id: true },
-    })
-    if (!asset) throw new StoreCoverError()
-  }
+  // 门店图片 / 视频都必须先作为素材落到本门店下，防止借用他人或其它门店的对象键
+  await assertStoreMedia(prisma, merchantId, storeId, input.coverKey, 'IMAGE', () => new StoreCoverError())
+  await assertStoreMedia(prisma, merchantId, storeId, input.videoKey, 'VIDEO', () => new StoreVideoError())
 
   // 设为默认：先把其它门店取消默认，再置当前为默认（事务保证唯一默认）
   if (input.isDefault === true && !store.isDefault) {
@@ -120,14 +116,47 @@ export async function updateStore(
       address: input.address,
       contact: input.contact,
       ...(input.coverKey !== undefined ? { coverKey: input.coverKey } : {}),
+      ...(input.intro !== undefined ? { intro: input.intro } : {}),
+      ...(input.videoKey !== undefined ? { videoKey: input.videoKey } : {}),
     },
   })
+}
+
+/** 校验门店图片 / 视频的对象键确实属于本门店的已就绪素材 */
+async function assertStoreMedia(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  storeId: bigint,
+  cosKey: string | null | undefined,
+  type: 'IMAGE' | 'VIDEO',
+  error: () => Error,
+) {
+  if (cosKey === undefined || cosKey === null) return
+  const asset = await prisma.mediaAsset.findFirst({
+    where: {
+      merchantId,
+      storeId,
+      cosKey,
+      type,
+      status: 'READY',
+      deletedAt: null,
+    },
+    select: { id: true },
+  })
+  if (!asset) throw error()
 }
 
 export class StoreCoverError extends Error {
   constructor() {
     super('门店图片无效或不属于当前门店')
     this.name = 'StoreCoverError'
+  }
+}
+
+export class StoreVideoError extends Error {
+  constructor() {
+    super('门店视频无效或不属于当前门店')
+    this.name = 'StoreVideoError'
   }
 }
 

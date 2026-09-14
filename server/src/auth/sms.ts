@@ -43,7 +43,15 @@ function genCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, '0')
 }
 
-/** 发送验证码；dev 环境下打印到日志 */
+export class SmsProviderNotConfiguredError extends Error {
+  readonly code = 'SMS_PROVIDER_NOT_CONFIGURED'
+  constructor() {
+    super('短信服务未配置，请联系管理员')
+    this.name = 'SmsProviderNotConfiguredError'
+  }
+}
+
+/** 发送验证码；开发环境打印日志，生产环境未配置真实供应商时拒绝发送。 */
 export async function sendCode(prisma: PrismaClient, phone: string, ip?: string): Promise<{ cooldownSec: number }> {
   const since = new Date(Date.now() - RESEND_COOLDOWN_SEC * 1000)
   const recent = await prisma.smsCode.findFirst({
@@ -61,7 +69,7 @@ export async function sendCode(prisma: PrismaClient, phone: string, ip?: string)
   }
 
   const code = genCode()
-  await prisma.smsCode.create({
+  const record = await prisma.smsCode.create({
     data: {
       phone,
       codeHash: hash(code),
@@ -71,8 +79,18 @@ export async function sendCode(prisma: PrismaClient, phone: string, ip?: string)
     },
   })
 
-  // dev 输出；生产替换为腾讯云 / 阿里云 SMS SDK
-  console.log(`[SMS dev] phone=${phone} code=${code} expires=${TTL_MINUTES}min`)
+  const provider = process.env.SMS_PROVIDER?.trim()
+  if (process.env.NODE_ENV === 'production' && !provider) {
+    await prisma.smsCode.delete({ where: { id: record.id } })
+    throw new SmsProviderNotConfiguredError()
+  }
+  if (!provider) {
+    console.log(`[SMS dev] phone=${phone} code=${code} expires=${TTL_MINUTES}min`)
+  } else {
+    // 供应商适配器接入前不允许伪造发送成功；生产由此分支明确失败。
+    await prisma.smsCode.delete({ where: { id: record.id } })
+    throw new SmsProviderNotConfiguredError()
+  }
   return { cooldownSec: RESEND_COOLDOWN_SEC }
 }
 
