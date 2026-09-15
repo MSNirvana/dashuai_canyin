@@ -4,7 +4,7 @@
 //   TB_GPT_KEY=sk-xxx TB_CLAUDE_KEY=sk-xxx TB_DEEPSEEK_KEY=sk-xxx \
 //     npx tsx scripts/setup-ai-channels.ts
 //
-// ══ 做五件事（幂等，可重复跑）══
+// ══ 做六件事（幂等，可重复跑）══
 //   1. 按 code upsert 三个供应商 —— baseUrl 统一 https://tokenbox.you/v1
 //      （实测该中转站是标准 OpenAI 兼容端点；Claude 也支持 openai 端点，
 //        所以三个通道统一走 OPENAI_COMPATIBLE，无需 ANTHROPIC_NATIVE）
@@ -14,7 +14,19 @@
 //        （priority 只影响后台列表排序）
 //   4. 把场景的 max_output_tokens 抬到不低于 SCENE_MIN_OUTPUT_TOKENS（默认 4000）
 //      ⇒ 推理模型需要「思考 + 正文」共用 max_tokens，预算太小会返回空正文
-//   5. 停用其它历史供应商（**不删除** —— 删除会连带清掉 ai_call_log 历史）
+//   5. 商业参数：场景单次上限（TB_SET_CAPS=1）+ 注册赠豆（TB_REGISTER_GRANT=n）
+//      默认都只打印对照，不写库 —— 它们决定用户实付和补贴，属商业决策
+//   6. 停用其它历史供应商（**不删除** —— 删除会连带清掉 ai_call_log 历史），
+//      清熔断状态，打印生效配置
+//
+// ══ 环境变量 ══
+//   TB_GPT_KEY / TB_CLAUDE_KEY / TB_DEEPSEEK_KEY   必填，三个统一 Key
+//   TB_GPT_MODEL / TB_CLAUDE_MODEL / TB_DEEPSEEK_MODEL   模型码覆盖
+//   SCENE_MIN_OUTPUT_TOKENS   场景输出预算下限，默认 4000
+//   TB_SET_PRICES=1           把真实单价写库（否则单价 0 ⇒ 扣 0 豆）
+//   TB_SET_CAPS=1             把场景单次上限写库（否则扣费恒被截断成封顶值）
+//   TB_REGISTER_GRANT=n       注册赠豆（未设 = 不改）
+//   TB_USD_TO_CNY             汇率，默认 7.2
 //
 // ══ 备用是怎么工作的（代码已在 src/ai/ 里实现，本脚本只配数据）══
 //   AiGateway.runScene 按 [defaultModelId, ...fallbackModelIds] 依次尝试：
@@ -54,14 +66,22 @@
 //     · 本脚本 [3/6]：把场景 max_output_tokens 抬到 ≥ SCENE_MIN_OUTPUT_TOKENS
 //
 // ⚠ 计费单价（input_price_per_mtok / output_price_per_mtok，单位：分 / 百万 token）
-//   本脚本已内置从 tokenbox 实际计费表推导出的单价（见下方 PRICES 表），
-//   但**默认不写库** —— 因为一旦写进去，商户的扣费会从「0 豆」变成
-//   「min(按成本算出的豆, 场景单次上限)」。5 豆的上限远小于实际成本
-//   （实测 gpt-5.5 一次 copy 约合 2880 分/百万 输入、17280 分/百万 输出，
-//     单次 copy_intro 约 40 豆），这等于把「平台补贴多少」这个商业决策
-//   变成默认生效。所以默认只打印、不落库。
-//   确认要按真实成本计费时：TB_SET_PRICES=1 重跑本脚本。
+//   本脚本已内置从 tokenbox 实际计费表推导出的单价（见下方 PRICES 表）。
+//   默认不写库 —— 一旦写进去，商户扣费就从「0 豆」变成「按成本算」，
+//   等于把「平台补贴多少」这个商业决策变成默认生效。确认后 TB_SET_PRICES=1。
+//   ⚠ 写了单价**还不够**：`charged = min(应付, 场景单次上限)`，
+//     上限不一起抬，扣费仍是封顶值（见 [4/6]）。所以两个开关要成对使用。
 //   汇率默认 7.2，可用 TB_USD_TO_CNY 覆盖。
+//
+// ══ ★ 2026-09-15 实测：单次成本能差 15 倍，变量是「思考 token」不是文案长度 ══
+//   同一个 copy_intro 提示词、同一个 claude-sonnet-5，连打 3 次：
+//     #1  in=433 out=171    →  5 分  →  20 豆   6.9s   126 字
+//     #2  in=433 out=1979   → 31 分  → 124 豆  54.7s   130 字   ← 思考爆了
+//     #3  deepseek  in=334 out=132  → 2 分 → 8 豆  33.4s   97 字
+//   正文都是 100~130 字，成本差 15 倍。所以：
+//     · 「按字数/按次」定价会亏，必须按 token 成本算（本项目的做法）
+//     · 场景上限只能是**财务安全网**，不能当常规定价用 —— 它一定会被周期性击穿
+//     · 失败重试的 token **不计费也不入账**（只记最终成功那次），但那部分钱平台仍付给了上游
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 import Redis from 'ioredis'
@@ -173,9 +193,12 @@ const SCENE_OVERRIDES: Record<string, { fallbacks?: string[]; timeoutMs?: number
  *   要让「按成本×系数扣」真正成立，上限必须抬到不会截断的水平（上限只是财务安全网）。
  *
  * 下表 = 实测应扣豆 × 2 取整到 10（留一倍余量给输出长度抖动）。
+ * ⚠ 上限只是安全网，**不保证不被击穿**：实测同一提示词、同一通道连打 3 次，
+ *   单次成本 5 / 31 / 2 分（差 15 倍，全看思考 token 花多少），上限一定会周期性被击穿；
+ *   被击穿的那部分记 `absorbedBeans`（平台承担）。这是设计如此，不是 bug。
  * ⚠ 注意副作用：上限同时是**预冻结额**，抬上去后「账户可用豆不足」的门槛也一起抬高
  *   （新用户注册赠豆目前 30，copy_intro 需 80 冻结 ⇒ 新用户一上来用不了）。
- *   所以调上限要连带评估注册赠豆/豆套餐的定价。
+ *   所以调上限必须连带调 `TB_REGISTER_GRANT`，否则新用户注册即「一个 AI 功能都用不了」。
  */
 const SCENE_CAPS: Record<string, number> = {
   copy_generate: 70,
@@ -193,6 +216,21 @@ const SCENE_CAPS: Record<string, number> = {
 
 /** 是否把 SCENE_CAPS 写库。默认 false —— 会改变用户实付，属商业决策。 */
 const SET_CAPS = process.env.TB_SET_CAPS === '1'
+
+/**
+ * 注册赠豆（`system_setting` 的 `bean.register_grant_points`）。
+ * 未设 = 不改。设成数字才写库（`TB_REGISTER_GRANT=600`）。
+ *
+ * ★ 为什么必须和场景上限一起看：
+ *   场景上限同时是**预冻结额**，抬高上限 = 同时抬高「账户可用豆不足」的门槛。
+ *   实测（2026-09-15）：上限抬到 40~250 豆后，**11/11 个场景的上限都 > 注册赠豆 30**
+ *   ⇒ 新用户一注册就「一个 AI 功能都用不了」——
+ *     不是报错扣费，而是**冻结阶段就被拦**：`BeanNotEnoughError: AI豆不足：需要 80，可用 30`。
+ *   旧上限（3/5/10 豆）时不存在这个问题，所以这是「抬上限」引入的连带回归。
+ *   要么把注册赠豆抬到 ≥ 最贵场景的上限（storyboard 250），
+ *   要么把上限压回「新用户能负担」的量级 —— 两者必须一起定。
+ */
+const REGISTER_GRANT = process.env.TB_REGISTER_GRANT ? Number(process.env.TB_REGISTER_GRANT) : null
 
 interface ChannelSpec {
   code: string
@@ -376,7 +414,7 @@ async function main() {
     }
     if (raised === 0) console.log('  （全部已在下限之上，无需调整）')
 
-    console.log(`\n[4/6] 场景单次上限（冻结额）${SET_CAPS ? '' : ' —— 仅对照，未应用'}`)
+    console.log(`\n[4/6] 商业参数（场景单次上限 + 注册赠豆）${SET_CAPS ? '' : ' —— 上限仅对照，未应用'}`)
     // 上限是硬截断线，决定用户实付多少豆。默认只打印对照，不改。
     let capChanged = 0
     console.log(`  ${'场景'.padEnd(22)}${'现上限'.padEnd(9)}建议   说明`)
@@ -404,6 +442,34 @@ async function main() {
         '  ⚠ 未应用（未设 TB_SET_CAPS=1）。上限现在会截断几乎所有场景的真实成本，\n' +
           '    于是实际扣费是「封顶值」而不是「成本 × 系数」。确认后 TB_SET_CAPS=1 重跑。',
       )
+    }
+
+    // 上限 = 预冻结额 ⇒ 抬上限会连带抬高「可用豆不足」的门槛。新用户只有注册赠豆，
+    // 若赠豆 < 最贵场景的上限，他一个 AI 功能都用不了（冻结阶段就被拦，不是扣费问题）。
+    const grantRow = await prisma.systemSetting.findUnique({
+      where: { groupKey_settingKey: { groupKey: 'bean', settingKey: 'register_grant_points' } },
+    })
+    const grantNow = Number(grantRow?.settingVal ?? 0)
+    const maxCap = Math.max(...scenes.map((s) => Number(s.beanPrice)))
+    const affordable = scenes.filter((s) => Number(s.beanPrice) <= grantNow).length
+    console.log(
+      `\n  注册赠豆 = ${grantNow} 豆；最贵场景上限 = ${maxCap} 豆` +
+        ` ⇒ 新用户可用的场景 ${affordable}/${scenes.length}`,
+    )
+    if (REGISTER_GRANT !== null && REGISTER_GRANT !== grantNow) {
+      await prisma.systemSetting.update({
+        where: { groupKey_settingKey: { groupKey: 'bean', settingKey: 'register_grant_points' } },
+        data: { settingVal: String(REGISTER_GRANT) },
+      })
+      console.log(`  ⇒ 注册赠豆 ${grantNow} → ${REGISTER_GRANT} 豆（已写库）`)
+    } else if (REGISTER_GRANT === null) {
+      const need = scenes.filter((s) => Number(s.beanPrice) > grantNow).length
+      if (need > 0) {
+        console.log(
+          `  ⚠ ${need}/${scenes.length} 个场景的上限 > 注册赠豆 ⇒ 新用户注册后冻结就过不去。\n` +
+            `    要改的话：TB_REGISTER_GRANT=<豆数> 重跑本脚本（不会影响老用户已得赠豆）。`,
+        )
+      }
     }
 
     console.log('\n[5/6] 停用历史供应商（保留数据，不删除）')
