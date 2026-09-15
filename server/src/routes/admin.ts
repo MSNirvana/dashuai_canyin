@@ -13,6 +13,7 @@ import * as workSvc from '../services/work.service.js'
 import { getSharedPlayUrlByKey } from '../services/media.service.js'
 import * as ttsSvc from '../services/tts-provider.service.js'
 import { PackageNotFoundError } from '../services/order.service.js'
+import * as payReconcile from '../services/pay-reconcile.service.js'
 import * as premium from '../render/premium.js'
 import { invalidate } from '../lib/settings.js'
 import type { Prisma } from '@prisma/client'
@@ -108,6 +109,27 @@ router.post('/merchants/:id/membership', async (req, res) => {
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     if (e instanceof PackageNotFoundError) return fail(res, 4003, e.message, 400)
     fail(res, 500, (e as Error).message || '开通失败', 500)
+  }
+})
+
+// ──────────────────────── 支付补单（回调丢失的最后兜底） ────────────────────────
+//
+// 微信异步回调可能因 notify_url 不可达（本项目卡在备案上）、网络抖动、重试耗尽而**静默丢失**：
+// 用户钱付了、微信侧 SUCCESS，本地却停在 PENDING。用户端查单 + 低频对账已能覆盖绝大多数情况，
+// 这个接口是前两者都失效时的人工通道。
+//
+// 只读微信查单接口，再走与支付回调**完全相同**的 markOrderPaid() ⇒ 幂等，重复点不会双发权益。
+const orderNoParam = z.string().regex(/^[A-Za-z0-9_-]{4,64}$/, '订单号不合法')
+router.post('/orders/:orderNo/reconcile', async (req, res) => {
+  try {
+    const orderNo = orderNoParam.parse(req.params.orderNo)
+    const r = await payReconcile.queryAndSettle(prisma, orderNo)
+    if (r.status === 'NOT_FOUND') return fail(res, 4049, '订单不存在', 404)
+    ok(res, r)
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    console.error('[admin] 补单异常:', e)
+    fail(res, 500, (e as Error).message || '补单失败', 500)
   }
 })
 

@@ -116,6 +116,20 @@ export function buildPayParams(prepayId: string): PayParams {
   return { timeStamp, nonceStr, package: pkg, signType: 'RSA', paySign }
 }
 
+/**
+ * 构造 APIv3 请求的 Authorization 头（请求签名）。
+ *
+ * 签名串固定五段：`METHOD\nURL_PATH[?QUERY]\nTIMESTAMP\nNONCE\nBODY\n`
+ * —— **GET 没有 body 也要保留最后那个 `\n`**（写漏了就是 401 SIGN_ERROR）。
+ * `urlPathWithQuery` 必须**带 query**（如 `/v3/pay/.../x?mchid=123`），否则签名对不上。
+ */
+function signRequestHeader(method: string, urlPathWithQuery: string, body = ''): string {
+  const timestamp = Math.floor(Date.now() / 1000).toString()
+  const nonce = crypto.randomBytes(16).toString('hex')
+  const signature = sha256RsaSign(`${method}\n${urlPathWithQuery}\n${timestamp}\n${nonce}\n${body}\n`)
+  return `WECHATPAY2-SHA256-RSA2048 mchid="${mchId}",nonce_str="${nonce}",signature="${signature}",timestamp="${timestamp}",serial_no="${serialNo}"`
+}
+
 export interface JsapiOrderInput {
   description: string
   outTradeNo: string
@@ -135,15 +149,11 @@ export async function createJsapiOrder(input: JsapiOrderInput): Promise<{ prepay
     amount: { total: input.amountFen },
     payer: { openid: input.openid },
   })
-  const timestamp = Math.floor(Date.now() / 1000).toString()
-  const nonce = crypto.randomBytes(16).toString('hex')
-  const signature = sha256RsaSign(`POST\n${url}\n${timestamp}\n${nonce}\n${body}\n`)
-  const authorization = `WECHATPAY2-SHA256-RSA2048 mchid="${mchId}",nonce_str="${nonce}",signature="${signature}",timestamp="${timestamp}",serial_no="${serialNo}"`
 
   const resp = await fetch(`${BASE}${url}`, {
     method: 'POST',
     headers: {
-      Authorization: authorization,
+      Authorization: signRequestHeader('POST', url, body),
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
@@ -154,6 +164,82 @@ export async function createJsapiOrder(input: JsapiOrderInput): Promise<{ prepay
     throw new Error(`WeChat Pay JSAPI failed: ${data.code ?? resp.status} ${data.message ?? ''}`)
   }
   return { prepayId: data.prepay_id }
+}
+
+/** 微信查单结果里会出现的 trade_state */
+export type WxTradeState =
+  | 'SUCCESS' // 支付成功
+  | 'REFUND' // 已转入退款
+  | 'NOTPAY' // 未支付
+  | 'CLOSED' // 已关闭（过期未支付 / 主动关单）
+  | 'REVOKED' // 已撤销（付款码支付）
+  | 'USERPAYING' // 用户支付中
+  | 'PAYERROR' // 支付失败
+  | 'NOT_EXIST' // 微信侧查无此单（404 ORDER_NOT_EXIST）
+
+export interface WxQueryResult {
+  tradeState: WxTradeState
+  /** 微信交易号；未支付/查无此单时为 null */
+  transactionId: string | null
+  /** 微信侧记录的金额（分）；查无此单时为 null */
+  amountFen: number | null
+  successTime?: string
+  /** 微信业务错误码，仅查无此单时有值 */
+  wxCode?: string
+}
+
+/**
+ * 【只读】按商户订单号查单 —— `GET /v3/pay/transactions/out-trade-no/{out_trade_no}?mchid=`。
+ *
+ * 存在的意义：**微信的异步回调不是可靠通道**。回调会因 notify_url 不可达（域名未备案被拦）、
+ * 网络抖动、微信重试耗尽而静默丢失；此时用户钱已付、微信侧已是 SUCCESS，
+ * 而我们本地订单永远停在 PENDING ⇒「钱付了没权益」。查单接口是唯一能主动纠正它的手段。
+ *
+ * 安全：**响应必须验签通过才返回**（fail closed）。查单结果会导致发权益，属于可信输入；
+ * 验签失败说明报文不能确定来自微信，此时宁可报错让上层重试，也不能据此发权益。
+ */
+export async function queryOrderByOutTradeNo(outTradeNo: string): Promise<WxQueryResult> {
+  // mchid 必须放进 query 且**参与签名**（签名串里的 URL_PATH 含 query）
+  const pathWithQuery = `/v3/pay/transactions/out-trade-no/${encodeURIComponent(outTradeNo)}?mchid=${mchId}`
+  const resp = await fetch(`${BASE}${pathWithQuery}`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+      // ★ 缺这个头，微信会回一个极具误导性的
+      //   `406 PARAM_ERROR 传入了不支持的Accept-Language`（明明我们没传）。
+      //   Node 的 fetch/undici 默认不发 Accept-Language，所以必须显式带上。
+      'Accept-Language': 'zh-CN',
+      Authorization: signRequestHeader('GET', pathWithQuery),
+    },
+  })
+  const body = await resp.text()
+
+  if (!verifyResponse(resp.headers, body)) {
+    throw new Error('微信查单响应验签失败：已拒绝据此结算（检查 WX_PAY_PLATFORM_CERT 是否为微信侧当前有效的公钥/证书）')
+  }
+
+  const data = JSON.parse(body) as {
+    trade_state?: string
+    transaction_id?: string
+    amount?: { total?: number }
+    success_time?: string
+    code?: string
+    message?: string
+  }
+
+  if (resp.status === 404) {
+    // 微信侧没有这笔单：预下单没成功 / 已超过可查期限。**不是错误**，是正常的业务结果。
+    return { tradeState: 'NOT_EXIST', transactionId: null, amountFen: null, wxCode: data.code }
+  }
+  if (!resp.ok || !data.trade_state) {
+    throw new Error(`微信查单失败: ${data.code ?? resp.status} ${data.message ?? ''}`)
+  }
+  return {
+    tradeState: data.trade_state as WxTradeState,
+    transactionId: data.transaction_id ?? null,
+    amountFen: typeof data.amount?.total === 'number' ? data.amount.total : null,
+    successTime: data.success_time,
+  }
 }
 
 export interface DecryptedNotify {
@@ -193,11 +279,54 @@ export function decryptResource(resource: { ciphertext: string; nonce: string; a
 }
 
 /**
- * 校验回调签名头（未配置微信侧验签凭据时返回 false，调用方在 dev 会放行）。
+ * 验签的公共内核：`{timestamp}\n{nonce}\n{body}\n` → 用微信侧材料验 RSA-SHA256。
  *
  * 平台证书与微信支付公钥**走同一段代码**：`crypto.createVerify().verify()` 的第一个参数
- * 既接受 X.509 证书 PEM，也接受 SPKI 公钥 PEM，且签名算法相同（RSA-SHA256）。
- * 所以支持公钥模式**不需要**在这里分叉。
+ * 既接受 X.509 证书 PEM，也接受 SPKI 公钥 PEM，且签名算法相同。
+ * 所以支持公钥模式**不需要**分叉。
+ *
+ * 时间窗 ±300s 是防重放：微信签发的报文时间戳不会离现在太远。
+ */
+function verifySignedMessage(
+  ts: string | null | undefined,
+  nonce: string | null | undefined,
+  sig: string | null | undefined,
+  body: string,
+  material: string,
+): boolean {
+  if (!material || !ts || !nonce || !sig || !/^\d+$/.test(ts)) return false
+  const timestamp = Number(ts)
+  if (!Number.isSafeInteger(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300) return false
+  try {
+    return crypto
+      .createVerify('RSA-SHA256')
+      .update(`${ts}\n${nonce}\n${body}\n`)
+      .verify(material, Buffer.from(sig, 'base64'))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 校验**主动请求**（下单 / 查单）的微信响应签名头。
+ *
+ * 与 verifyNotify 的区别只是取头方式：主动请求的响应头是 `Headers` 对象（小写取值），
+ * 回调是被 Express 展平成的普通对象。验签算法完全一致。
+ *
+ * 查单结果会直接导致发权益，所以调用方必须 **fail closed**：验签不过就抛错、不结算。
+ */
+export function verifyResponse(headers: Headers, body: string, material: string = platformCert): boolean {
+  return verifySignedMessage(
+    headers.get('wechatpay-timestamp'),
+    headers.get('wechatpay-nonce'),
+    headers.get('wechatpay-signature'),
+    body,
+    material,
+  )
+}
+
+/**
+ * 校验回调签名头（未配置微信侧验签凭据时返回 false，调用方在 dev 会放行）。
  *
  * 关于 `Wechatpay-Serial` 头：微信用它指明「本次签名用的是哪把钥匙」，证书模式下是平台证书
  * 序列号，公钥模式下是公钥 ID（`PUB_KEY_ID_...`）。我们**刻意不强制校验它**：
@@ -213,17 +342,11 @@ export function verifyNotify(
   rawBody: string,
   verifyMaterial: string = platformCert,
 ): boolean {
-  if (!verifyMaterial) return false
-  const ts = headers['wechatpay-timestamp']
-  const nonce = headers['wechatpay-nonce']
-  const sig = headers['wechatpay-signature']
-  if (!ts || !nonce || !sig || !/^\d+$/.test(ts)) return false
-  const timestamp = Number(ts)
-  if (!Number.isSafeInteger(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300) return false
-  const message = `${ts}\n${nonce}\n${rawBody}\n`
-  try {
-    return crypto.createVerify('RSA-SHA256').update(message).verify(verifyMaterial, Buffer.from(sig, 'base64'))
-  } catch {
-    return false
-  }
+  return verifySignedMessage(
+    headers['wechatpay-timestamp'],
+    headers['wechatpay-nonce'],
+    headers['wechatpay-signature'],
+    rawBody,
+    verifyMaterial,
+  )
 }

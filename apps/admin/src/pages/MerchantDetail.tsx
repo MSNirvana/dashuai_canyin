@@ -57,6 +57,14 @@ interface OpenResult {
   endAt: string
   grantPoints: string
 }
+/** 支付补单结果（服务端主动查微信后的结论） */
+interface ReconcileResult {
+  orderNo: string
+  outcome: 'ALREADY_PAID' | 'SETTLED' | 'NOT_PAID' | 'CLOSED' | 'NOT_EXIST' | 'SKIPPED'
+  tradeState: string | null
+  status: string
+  message: string
+}
 
 export default function MerchantDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -65,6 +73,8 @@ export default function MerchantDetailPage() {
   const [plan, setPlan] = useState<MemberPackage | null>(null)
   const [remark, setRemark] = useState('')
   const [opening, setOpening] = useState(false)
+  /** 正在补单的订单号（用于按钮 loading） */
+  const [reconciling, setReconciling] = useState<string | null>(null)
 
   const load = () => {
     if (!id) return
@@ -132,6 +142,36 @@ export default function MerchantDetailPage() {
       // http 层已统一提示
     } finally {
       setOpening(false)
+    }
+  }
+
+  // 支付补单：用户付了钱但权益没到账时的最后兜底。
+  //
+  // 典型场景：微信的支付回调**不是可靠通道** —— notify_url 域名不可达（备案被拦）、
+  // 网络抖动、微信重试耗尽，任何一种都会让回调静默丢失。此时用户钱已付、微信侧是 SUCCESS，
+  // 而这里看到的订单仍然是「待支付」。
+  // 服务端只读微信查单接口，再走与回调**完全相同**的结算链 ⇒ 幂等，重复点不会双发权益。
+  const reconcileOrder = async (orderNo: string) => {
+    setReconciling(orderNo)
+    try {
+      const r = await request<ReconcileResult>({
+        url: `/orders/${encodeURIComponent(orderNo)}/reconcile`,
+        method: 'POST',
+      })
+      if (r.outcome === 'SETTLED') {
+        message.success(`补单成功：${r.message}`)
+        load()
+      } else if (r.outcome === 'ALREADY_PAID') {
+        message.info(r.message)
+      } else {
+        // NOT_PAID / CLOSED / NOT_EXIST / SKIPPED 都要如实说明，别让操作者以为补单生效了
+        message.warning(r.message)
+        if (r.status !== 'PENDING') load()
+      }
+    } catch {
+      // http 层已统一提示
+    } finally {
+      setReconciling(null)
     }
   }
 
@@ -259,6 +299,10 @@ export default function MerchantDetailPage() {
       </Card>
 
       <Card title="最近订单（20 条）">
+        <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>
+          待支付的订单可点「补单」：服务端会去微信查这笔单，确认已支付就当场补发权益。
+          用于微信回调丢失（notify_url 不可达、网络抖动、重试耗尽）导致「钱付了但没到账」的情况。
+        </div>
         <DataTable
           rowKey="id"
           data={data.orders}
@@ -268,6 +312,23 @@ export default function MerchantDetailPage() {
             { colKey: 'amountFen', title: '金额(分)' },
             { colKey: 'status', title: '状态' },
             { colKey: 'paidAt', title: '支付时间', render: ({ row }: any) => row.paidAt ? dayjs(row.paidAt).format('YYYY-MM-DD HH:mm') : '—' },
+            {
+              colKey: 'action',
+              title: '操作',
+              render: ({ row }: any) =>
+                row.status === 'PENDING' ? (
+                  <Button
+                    size='small'
+                    variant='outline'
+                    loading={reconciling === row.orderNo}
+                    onClick={() => void reconcileOrder(row.orderNo)}
+                  >
+                    补单
+                  </Button>
+                ) : (
+                  <span style={{ color: '#bbb' }}>—</span>
+                ),
+            },
           ]}
         />
       </Card>

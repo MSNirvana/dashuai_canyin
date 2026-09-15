@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { verifyNotify, wechatVerifyMode, wxpayEnabled, describeNotifySerial } from '../src/lib/wxpay.js'
+import { verifyNotify, wechatVerifyMode, wxpayEnabled, describeNotifySerial, verifyResponse } from '../src/lib/wxpay.js'
 
 // ── 子进程模式：只回报「真实 wxpayEnabled 常量」的取值 ──
 // 该常量在模块顶层求值，同进程内改 env 不会重算，故用子进程重载模块。
@@ -156,6 +156,33 @@ try {
       check('七项齐备且验签凭据为「微信支付公钥」 → wxpayEnabled 为 true ★核心回归', out.includes('CHILD_WXPAY_ENABLED=true'), true)
     } else {
       console.log('  （未找到本地 tsx 或脚本路径，跳过子进程断言；请用 npm run wxpay:verify 运行）')
+    }
+  }
+
+  // 查单/下单等**主动请求**的响应头是 Headers 对象（取值用 headers.get），
+  // 与回调那条被 Express 展平的普通对象路径不同 —— 两者必须分别锁住，
+  // 否则「回调验签全绿、查单却一直抛错」这种半死状态会逃过测试。
+  console.log('\n=== E. verifyResponse() 主动请求响应验签（Headers 对象路径）===')
+  {
+    const qBody = '{"trade_state":"SUCCESS","out_trade_no":"M0001"}'
+    const toHeaders = (h: Record<string, string>): Headers => {
+      const out = new Headers()
+      for (const [k, v] of Object.entries(h)) out.set(k, v)
+      return out
+    }
+    const okHeaders = () => toHeaders(signHeaders(qBody, wechat.privateKey))
+
+    check('合法签名 → 通过', verifyResponse(okHeaders(), qBody, publicKeyPem), true)
+    check('报文被篡改 → 拒绝', verifyResponse(okHeaders(), `${qBody} `, publicKeyPem), false)
+    check('用另一把私钥签名（伪造） → 拒绝', verifyResponse(toHeaders(signHeaders(qBody, attacker.privateKey)), qBody, publicKeyPem), false)
+    check('时间戳超 5 分钟窗口 → 拒绝', verifyResponse(toHeaders(signHeaders(qBody, wechat.privateKey, -600)), qBody, publicKeyPem), false)
+    check('缺 wechatpay-signature → 拒绝', verifyResponse(toHeaders({
+      'wechatpay-timestamp': String(Math.floor(Date.now() / 1000)),
+      'wechatpay-nonce': 'n',
+    }), qBody, publicKeyPem), false)
+    check('空验签材料 → 拒绝（查单不得据此结算）★fail-closed', verifyResponse(okHeaders(), qBody, ''), false)
+    if (certificatePem) {
+      check('平台证书材料同样可验（向后兼容）', verifyResponse(okHeaders(), qBody, certificatePem), true)
     }
   }
 } finally {

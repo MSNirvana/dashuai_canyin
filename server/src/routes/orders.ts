@@ -6,6 +6,7 @@ import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import * as orderSvc from '../services/order.service.js'
+import * as reconcile from '../services/pay-reconcile.service.js'
 import { PackageNotFoundError, NoOpenidError, PaymentUnavailableError } from '../services/order.service.js'
 import { SubscriptionRequiredError } from '../services/subscription.service.js'
 
@@ -46,6 +47,30 @@ router.get('/:orderNo([A-Za-z0-9_-]+)', async (req, res) => {
     return ok(res, order)
   } catch {
     return fail(res, 500, '查询失败', 500)
+  }
+})
+
+// 支付完成后**主动查单**（微信回调的兜底通道①）。
+//
+// 为什么前端付款成功后不能只轮询 GET /:orderNo：那只读本地库。
+// 一旦回调因为 notify_url 不可达（备案被拦）而丢失，本地订单会永远停在 PENDING，
+// 用户看到的就是「钱付了、积分不到账」。这里改为主动向微信查单，确认已支付就当场补发权益。
+//
+// 幂等与安全：复用 markOrderPaid() 的终态 CAS；金额必须与本地订单一致才结算；
+// 订单归属由 merchantId 限定，别人拿不到你的单号。
+router.post('/:orderNo([A-Za-z0-9_-]+)/query', async (req, res) => {
+  try {
+    const orderNo = req.params.orderNo!
+    const r = await reconcile.queryAndSettle(prisma, orderNo, { merchantId: req.merchantId! })
+    if (r.status === 'NOT_FOUND') return fail(res, 3004, '订单不存在', 404)
+    // 查单可能已把订单改成 PAID/EXPIRED，回读一次给前端最新状态
+    const order = await orderSvc.getOrderForMerchant(prisma, req.merchantId!, orderNo)
+    return ok(res, { ...order, reconcile: { outcome: r.outcome, message: r.message } })
+  } catch (e) {
+    // 查单失败（微信超时 / 响应验签不通过）不当作「未支付」——返回 5xx 让前端继续轮询，
+    // 后台对账 sweeper 也会兜住，绝不因为查不到就吞掉这笔权益。
+    console.error('[orders] 查单异常:', e)
+    return fail(res, 500, '查单失败，请稍后重试', 500)
   }
 })
 

@@ -161,6 +161,18 @@ async function bootstrap() {
       process.once('SIGTERM', m.stopStuckSweeper)
     })
     .catch((e) => console.error('[stuck-sweeper] 启动失败:', (e as Error).message))
+
+  // 支付对账：主动查微信，把「回调丢了 = 钱付了没权益」的单补回来。
+  // 微信回调不是可靠通道（notify_url 域名被备案拦、网络抖动、重试耗尽都会静默丢），
+  // 这是用户端主动查单之外的第二条兜底；两条都复用 markOrderPaid() 的终态 CAS，重复不会双发。
+  // 支付未开启时内部直接跳过，不会产生无意义的外网请求。
+  void import('./services/pay-reconcile.service.js')
+    .then((m) => {
+      m.startPayReconcileSweeper(prisma)
+      process.once('SIGINT', m.stopPayReconcileSweeper)
+      process.once('SIGTERM', m.stopPayReconcileSweeper)
+    })
+    .catch((e) => console.error('[pay-reconcile] 启动失败:', (e as Error).message))
 }
 
 bootstrap().catch((e) => {

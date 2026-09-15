@@ -8,7 +8,7 @@ import {
   createMemberOrder,
   type BeanPackage,
   type MemberPlan,
-  getOrderStatus,
+  queryOrder,
 } from '../../services/order'
 import { useMerchantStore } from '../../store/merchant'
 import Segmented from '../../components/segmented'
@@ -50,8 +50,15 @@ export default function Recharge() {
     if (pollTimer.current) clearTimeout(pollTimer.current)
   }, [])
 
+  // 支付完成后的确认轮询。
+  //
+  // ★ 用 queryOrder（主动查单）而不是 getOrderStatus（只读本地库）：
+  //   本地库在「回调丢了」时会永远停在 PENDING，只读本地等于让用户干等一笔已经付过的钱。
+  //   主动查单会让服务端去微信确认并当场补发权益，正常情况下第 1 次就能到账。
+  //   后端返回 5xx（微信超时/验签不通过）时走 catch 继续重试，绝不把「查不到」当成「没付」。
+  const MAX_CONFIRM_ATTEMPTS = 6
   const confirmOrder = (orderNo: string, attempt = 0): void => {
-    getOrderStatus(orderNo).then((order) => {
+    queryOrder(orderNo).then((order) => {
       if (order.status === 'PAID') {
         setConfirming(false)
         setPendingOrderNo(null)
@@ -65,11 +72,17 @@ export default function Recharge() {
         Taro.showToast({ title: '订单未完成，请勿重复支付', icon: 'none' })
         return
       }
-      if (attempt < 8) {
-        pollTimer.current = setTimeout(() => confirmOrder(orderNo, attempt + 1), 1500)
+      if (attempt < MAX_CONFIRM_ATTEMPTS) {
+        pollTimer.current = setTimeout(() => confirmOrder(orderNo, attempt + 1), 2000)
+      } else {
+        // 已经反复向微信查过单仍未支付成功：交给后台对账兜底，别让用户一直盯着「确认中」
+        setConfirming(false)
+        Taro.showToast({ title: '暂未查到支付结果，到账后会自动开通', icon: 'none' })
       }
     }).catch(() => {
-      if (attempt < 8) pollTimer.current = setTimeout(() => confirmOrder(orderNo, attempt + 1), 2000)
+      if (attempt < MAX_CONFIRM_ATTEMPTS) {
+        pollTimer.current = setTimeout(() => confirmOrder(orderNo, attempt + 1), 2500)
+      }
     })
   }
 
