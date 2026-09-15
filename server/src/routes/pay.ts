@@ -1,13 +1,13 @@
 // 微信支付回调（免鉴权，公网可访问）
 // 微信会 POST 原始 JSON（含 resource 密文）到 WX_PAY_NOTIFY_URL
 // 注意：本路由在 index.ts 中以 express.raw 挂载，req.body 为 Buffer（原始报文）
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
 import { prisma } from '../db.js'
 import { ok, fail } from '../lib/result.js'
 import * as orderSvc from '../services/order.service.js'
 import { verifyNotify, wxpayEnabled } from '../lib/wxpay.js'
 
-const router = Router()
+const router = createRouter()
 
 router.post('/notify', async (req, res) => {
   try {

@@ -1,0 +1,14 @@
+-- P2-1：豆流水补记「赠豆桶实际用量」。
+--
+-- 背景：bean_ledger 的唯一索引是 (merchant_id, biz_type, request_id, type)，
+-- 同一 requestId 只能有一条 CONSUME 行，因此混合消费（赠豆 + 充值豆）无法拆成两条流水。
+-- 原实现只把 bucket 记成 'RECHARGE'，导致「这次消耗里有多少赠豆」永久丢失，
+-- 用户账单明细与赠豆运维统计都会失真。
+--
+-- 本列语义：该行 amount 中来自赠豆桶的**绝对数量**（恒 >= 0）。
+--   consume(amount=-N, 其中 G 来自赠豆)  → grant_amount = G
+--   EXPIRE(amount=-X, 清零赠豆)          → grant_amount = X
+--   GRANT(amount=+X, 赠送)               → grant_amount = X
+--   RECHARGE / ADJUST到充值桶 / FREEZE / UNFREEZE → grant_amount = 0
+-- 历史数据统一回填 0（无法回溯拆分，不做猜测）。
+ALTER TABLE `bean_ledger` ADD COLUMN `grant_amount` BIGINT NOT NULL DEFAULT 0;

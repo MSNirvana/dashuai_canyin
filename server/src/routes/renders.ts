@@ -1,5 +1,6 @@
 // 合成路由：提交合成 / 列表 / 详情
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
+import { InvalidIdParamError, idParam } from '../lib/params.js'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
 import { prisma } from '../db.js'
@@ -11,7 +12,7 @@ import { CreationNotFoundError } from '../services/creation.service.js'
 import { SubscriptionRequiredError } from '../services/subscription.service.js'
 import { RequestConflictError } from '../domain/request.js'
 
-const router = Router()
+const router = createRouter()
 router.use(auth)
 
 const submitInput = z.object({
@@ -43,7 +44,7 @@ const submitInput = z.object({
 router.post('/:id/render', async (req, res) => {
   try {
     const body = submitInput.parse(req.body)
-    const r = await renderSvc.submitRender(prisma, req.merchantId!, BigInt(req.params.id), {
+    const r = await renderSvc.submitRender(prisma, req.merchantId!, idParam(req.params.id, 'id'), {
       mode: body.mode ?? 'FULL',
       grade: body.grade,
       color: body.color,
@@ -53,11 +54,13 @@ router.post('/:id/render', async (req, res) => {
     })
     ok(res, r)
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof BeanNotEnoughError) return fail(res, 2001, 'AI豆不足，请充值', 400)
     if (e instanceof CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
     if (e instanceof renderSvc.RenderNoAssetError) return fail(res, 4003, '请先为分镜上传素材', 400)
     if (e instanceof renderSvc.RenderAlreadyRunningError) return fail(res, 4001, '已有合成任务进行中', 409)
     if (e instanceof renderSvc.RenderDurationUnknownError) return fail(res, 4009, e.message, 400)
+    if (e instanceof renderSvc.RenderGradeUnavailableError) return fail(res, 4013, e.message, 409)
     if (e instanceof SubscriptionRequiredError) return fail(res, 2005, e.message, 403)
     if (e instanceof RequestConflictError) return fail(res, 2007, e.message, 409)
     return fail(res, 500, '提交合成失败', 500)
@@ -66,9 +69,10 @@ router.post('/:id/render', async (req, res) => {
 
 router.get('/:id/renders', async (req, res) => {
   try {
-    const list = await renderSvc.listRenders(prisma, req.merchantId!, BigInt(req.params.id))
+    const list = await renderSvc.listRenders(prisma, req.merchantId!, idParam(req.params.id, 'id'))
     ok(res, list)
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
     return fail(res, 500, '查询失败', 500)
   }
@@ -76,9 +80,10 @@ router.get('/:id/renders', async (req, res) => {
 
 router.get('/:id/render/:taskId', async (req, res) => {
   try {
-    const task = await renderSvc.getRender(prisma, req.merchantId!, BigInt(req.params.taskId))
+    const task = await renderSvc.getRender(prisma, req.merchantId!, idParam(req.params.taskId, 'taskId'))
     ok(res, task)
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof renderSvc.RenderNotFoundError) return fail(res, 4047, '合成任务不存在', 404)
     return fail(res, 500, '查询失败', 500)
   }

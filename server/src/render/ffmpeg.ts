@@ -204,3 +204,67 @@ export async function hasAudioStream(file: string): Promise<boolean> {
     return false
   }
 }
+
+export interface VideoProbe {
+  /** 是否是一个可解码、有时长的视频 */
+  ok: boolean
+  /** 时长（毫秒），探测不到为 null */
+  durationMs: number | null
+  /** 视频编码名（h264 / hevc …） */
+  videoCodec: string | null
+  /** 不通过时的原因（可直接写进 errorMsg 给用户看） */
+  reason?: string
+}
+
+/**
+ * 成片可用性校验：确认输入确实是「能解码、有时长」的视频。
+ *
+ * 为什么必须有它：外部剪辑通道（ChatCut）只要返回 HTTP 200，我们就走 completeRender 扣全额豆。
+ * 但 200 不等于内容正确 —— 上游返回一个 HTML 错误页、一段 JSON、或 0 字节文件时，
+ * 旧代码会把坏文件当真成片入库并扣费。结果：用户付了钱拿到打不开的文件。
+ *
+ * input 可以是本地文件路径，也可以是 http(s) 签名 URL（ffprobe 原生支持网络输入，
+ * 因此远端产物不必先整包下载到本地就能校验）。
+ */
+export async function probeVideo(input: string, timeoutMs = 60_000): Promise<VideoProbe> {
+  try {
+    const { stdout } = await execFileP(ffprobeBin(), [
+      '-v', 'error',
+      // 网络输入读取超时（微秒）：避免上游挂住导致 worker 卡死
+      '-rw_timeout', '15000000',
+      '-show_entries', 'format=duration:stream=codec_type,codec_name',
+      '-of', 'json',
+      input,
+    ], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 })
+
+    const parsed = JSON.parse(String(stdout)) as {
+      format?: { duration?: string }
+      streams?: Array<{ codec_type?: string; codec_name?: string }>
+    }
+    const streams = parsed.streams ?? []
+    const video = streams.find((s) => s.codec_type === 'video')
+    if (!video) {
+      return { ok: false, durationMs: null, videoCodec: null, reason: '文件中没有视频流（可能不是视频）' }
+    }
+    const sec = Number(parsed.format?.duration)
+    const durationMs = Number.isFinite(sec) && sec > 0 ? Math.round(sec * 1000) : null
+    if (!durationMs) {
+      return { ok: false, durationMs: null, videoCodec: video.codec_name ?? null, reason: '视频时长为 0 或无法读取' }
+    }
+    return { ok: true, durationMs, videoCodec: video.codec_name ?? null }
+  } catch (e) {
+    return { ok: false, durationMs: null, videoCodec: null, reason: `无法解析为视频：${conciseProbeError(e)}` }
+  }
+}
+
+/** ffprobe 的报错是一整段带命令行的 stderr，取最后一行有效信息即可（要写进用户可见的 errorMsg） */
+function conciseProbeError(e: unknown): string {
+  const raw = String((e as { stderr?: string; message?: string }).stderr ?? (e as Error).message ?? e)
+  const lines = raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('Command failed:') && !l.startsWith('ffprobe '))
+    .map((l) => l.replace(/^\[[^\]]*\]\s*/, ''))
+  const last = lines[lines.length - 1] ?? '探测失败'
+  return last.slice(0, 200)
+}

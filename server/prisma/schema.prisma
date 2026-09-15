@@ -289,6 +289,10 @@ model RenderTask {
   @@index([creationId, createdAt])
   @@index([status, queueAt])
   @@index([grade, status])
+  // 后台「合成任务」列表按 merchantId 过滤 + createdAt 倒序分页，缺这个索引会全表扫描。
+  // 其余同形态的表（bean_ledger / ai_call_log / `order` / business_request / creation）都已有
+  // [merchantId, createdAt]，此前只有 render_task 漏了。
+  @@index([merchantId, createdAt])
   @@map("render_task")
 }
 
@@ -296,7 +300,12 @@ model BeanAccount {
   id            BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
   merchantId    BigInt   @unique @map("merchant_id") @db.UnsignedBigInt()
   balance       BigInt   @default(0)
+  /// 会员周期赠豆：随会员到期清零（由 grant-expiry 调度）
   grantBalance  BigInt   @default(0) @map("grant_balance")
+  /// 注册赠豆：拉新奖励，**永久有效、不随会员到期清零**
+  /// 与 grantBalance 分开成桶，是因为两者性质不同（拉新承诺 vs 付费周期权益），
+  /// 混在一个桶里会导致「会员到期把注册赠豆一起清掉」，且账务上无法区分来源。
+  grantRegisterBalance BigInt @default(0) @map("grant_register_balance")
   frozen        BigInt   @default(0)
   totalRecharge BigInt   @default(0) @map("total_recharge")
   totalGrant    BigInt   @default(0) @map("total_grant")
@@ -360,6 +369,11 @@ model BeanLedger {
   type         String   @db.VarChar(24)
   bucket       String   @default("RECHARGE") @db.VarChar(16)
   amount       BigInt
+  /// 本行 amount 中来自「赠豆桶」的绝对数量（>=0）。
+  /// bucket 只能标一个主桶，混合消费（赠豆 + 充值豆）时会失真，故单独留一列做精确对账。
+  grantAmount  BigInt   @default(0) @map("grant_amount")
+  /// 上一列中，来自「注册赠豆」桶的部分（会员赠豆用量 = grantAmount - grantRegisterAmount）。
+  grantRegisterAmount BigInt @default(0) @map("grant_register_amount")
   balanceAfter BigInt   @map("balance_after")
   grantAfter   BigInt   @default(0) @map("grant_after")
   frozenAfter  BigInt   @default(0) @map("frozen_after")
@@ -570,6 +584,10 @@ model AiCallLog {
   totalTokens         Int      @default(0) @map("total_tokens") @db.UnsignedInt()
   costFen             Int      @default(0) @map("cost_fen") @db.UnsignedInt()
   beanCharged         BigInt   @default(0) @map("bean_charged")
+  /// 场景单次上限（ai_scene.bean_price）截断掉的豆数 = 应付 − 实收，由平台承担。
+  /// 没有这一列时，上限「是安全网还是常态折扣」完全看不出来 ——
+  /// 实测 copy_intro 10/10 次调用都被截断 3 豆，而日志里毫无痕迹。
+  absorbedBeans       BigInt   @default(0) @map("absorbed_beans")
   beanBucket          String?  @map("bean_bucket") @db.VarChar(16)
   latencyMs           Int      @default(0) @map("latency_ms") @db.UnsignedInt()
   status              String   @db.VarChar(16)
@@ -587,6 +605,8 @@ model AiCallLog {
   @@index([merchantId, createdAt])
   @@index([providerId, createdAt])
   @@index([createdAt, costFen])
+  /// 运营按场景看「平台补贴」用
+  @@index([sceneCode, createdAt])
   @@map("ai_call_log")
 }
 

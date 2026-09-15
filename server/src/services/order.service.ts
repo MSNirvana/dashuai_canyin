@@ -10,6 +10,7 @@ import { randomUUID } from 'crypto'
 import { recharge, grant, getBalance, type Db } from '../bean/bean.service.js'
 import { wxpayEnabled, createJsapiOrder, buildPayParams, decryptResource, type PayParams } from '../lib/wxpay.js'
 import { getNumber } from '../lib/settings.js'
+import { paymentsEnabled } from '../lib/config.js'
 import { activeSubscription, getStorage, SubscriptionRequiredError } from './subscription.service.js'
 
 export class OrderAlreadyPaidError extends Error {
@@ -29,6 +30,30 @@ export class NoOpenidError extends Error {
     super('该账号未绑定微信 openid，无法发起真实支付')
     this.name = 'NoOpenidError'
   }
+}
+/** 支付能力被关闭（PAYMENTS_ENABLED=false）或凭据不全且非演示环境时抛出 */
+export class PaymentUnavailableError extends Error {
+  constructor(message = '支付功能暂未开放') {
+    super(message)
+    this.name = 'PaymentUnavailableError'
+  }
+}
+
+/**
+ * 支付运行态判定 —— 三态，取代原来散落在两个下单函数里的 `NODE_ENV === 'production' || ...` 判断。
+ *
+ *  real     ：真实微信支付可用（开关开启 且 七项凭据齐备）
+ *  demo     ：演示支付（自动置 PAID + 写 TEST 交易号）。**硬性要求非生产 + 显式 PAYMENT_MODE=test**，
+ *             这条约束在任何情况下都不放松，否则等于「缺配置就白送权益」。
+ *  disabled ：直接拒绝下单。
+ *
+ * 与旧行为的关系：PAYMENTS_ENABLED 未设置时 paymentsEnabled() 返回 true，
+ * 本函数退化成 `wxpayEnabled ? real : (非生产且 test ? demo : disabled)` —— 与改动前完全一致。
+ */
+export function resolvePayMode(env: NodeJS.ProcessEnv = process.env): 'real' | 'demo' | 'disabled' {
+  if (paymentsEnabled(env) && wxpayEnabled) return 'real'
+  if (env.NODE_ENV !== 'production' && env.PAYMENT_MODE === 'test') return 'demo'
+  return 'disabled'
 }
 
 export interface MeView {
@@ -116,6 +141,12 @@ export async function createBeanOrder(
   const amountFen = pkg.priceFen // 废除 8 折，统一原价
   const beans = pkg.beans + pkg.bonusBeans
 
+  // 支付可用性检查放在建单之前：支付关闭时不该留下一行注定无法支付的 PENDING 订单。
+  // 错误优先级不变：档位(3006) → 订阅(2005) → 支付(3008)。
+  // 仅允许非生产、显式 PAYMENT_MODE=test 的隔离演示支付；缺真实配置不得隐式发放权益。
+  const payMode = resolvePayMode()
+  if (payMode === 'disabled') throw new PaymentUnavailableError()
+
   const orderNo = `B${Date.now().toString().slice(-10)}${randomUUID().slice(0, 6)}`
   const order = await prisma.order.create({
     data: {
@@ -132,11 +163,7 @@ export async function createBeanOrder(
     },
   })
 
-  // 仅允许非生产、显式 PAYMENT_MODE=test 的隔离演示支付；缺真实配置不得隐式发放权益。
-  if (!wxpayEnabled) {
-    if (process.env.NODE_ENV === 'production' || process.env.PAYMENT_MODE !== 'test') {
-      throw new Error('真实支付未配置，暂不可下单')
-    }
+  if (payMode === 'demo') {
     await markOrderPaid(prisma, orderNo, `TEST${orderNo}`, true)
     return { dev: true, orderNo, amountFen, beans: beans.toString(), memberDiscountApplied: false, payParams: null }
   }
@@ -169,6 +196,10 @@ export async function createMemberOrder(
   const pkg = await prisma.memberPackage.findFirst({ where: { id: packageId, enabled: true } })
   if (!pkg) throw new PackageNotFoundError()
 
+  // 同 createBeanOrder：支付不可用时在建单之前就拒绝，避免悬空 PENDING 订单
+  const payMode = resolvePayMode()
+  if (payMode === 'disabled') throw new PaymentUnavailableError()
+
   const orderNo = `M${Date.now().toString().slice(-10)}${randomUUID().slice(0, 6)}`
   const order = await prisma.order.create({
     data: {
@@ -185,8 +216,7 @@ export async function createMemberOrder(
     },
   })
 
-  if (!wxpayEnabled) {
-    if (process.env.NODE_ENV === 'production' || process.env.PAYMENT_MODE !== 'test') throw new Error('真实支付未配置，暂不可下单')
+  if (payMode === 'demo') {
     await markOrderPaid(prisma, orderNo, `TEST${orderNo}`, true)
     return { dev: true, orderNo, amountFen: pkg.priceFen, beans: '0', memberDiscountApplied: false, payParams: null }
   }
@@ -280,7 +310,12 @@ async function activateMembership(
   }
   // 赠送积分（独立记账，订阅到期清零）
   if (grantPoints > 0n) {
-    await grant(tx, { merchantId, amount: grantPoints, bizId: sourceOrderId.toString() })
+    await grant(tx, {
+      merchantId,
+      amount: grantPoints,
+      bizId: sourceOrderId.toString(),
+      source: 'MEMBERSHIP', // 会员周期赠豆：会随会员到期清零
+    })
   }
 }
 

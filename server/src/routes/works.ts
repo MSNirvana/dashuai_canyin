@@ -1,6 +1,7 @@
 // 首页「优秀作品」：小程序侧只读接口（列表 / 分类 / 详情 / 计数）
 // 后台 CRUD 见 /admin/api/v1/works
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
+import { InvalidIdParamError, idParam } from '../lib/params.js'
 import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
@@ -8,7 +9,7 @@ import { ok, fail } from '../lib/result.js'
 import * as workSvc from '../services/work.service.js'
 import { getSharedPlayUrlByKey } from '../services/media.service.js'
 
-const router = Router()
+const router = createRouter()
 router.use(auth)
 
 const listQuery = z.object({
@@ -49,7 +50,7 @@ router.get('/categories', async (_req, res) => {
 
 router.get('/:id', async (req, res) => {
   try {
-    const work = await workSvc.getWork(prisma, BigInt(req.params.id))
+    const work = await workSvc.getWork(prisma, idParam(req.params.id, 'id'))
     const mediaBase = `${req.protocol}://${req.get('host')}/api/v1/media`
     const [cover, video] = await Promise.all([
       work.coverKey ? getSharedPlayUrlByKey(work.coverKey, mediaBase) : Promise.resolve(null),
@@ -61,6 +62,7 @@ router.get('/:id', async (req, res) => {
       videoUrl: video?.url ?? null,
     })
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof workSvc.WorkNotFoundError) return fail(res, 4048, e.message, 404)
     console.error('[works] 查询作品详情失败:', e)
     return fail(res, 500, '查询失败', 500)
@@ -70,9 +72,10 @@ router.get('/:id', async (req, res) => {
 /** 打开详情即计一次浏览；前端不等待结果 */
 router.post('/:id/view', async (req, res) => {
   try {
-    await workSvc.bumpViewCount(prisma, BigInt(req.params.id))
+    await workSvc.bumpViewCount(prisma, idParam(req.params.id, 'id'))
     ok(res, { counted: true })
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     console.error('[works] 浏览量自增失败:', e)
     fail(res, 500, '计数失败', 500)
   }
@@ -81,9 +84,10 @@ router.post('/:id/view', async (req, res) => {
 /** 点「生成同款」时调用，用于统计哪条作品最带货 */
 router.post('/:id/clone', async (req, res) => {
   try {
-    await workSvc.bumpCloneCount(prisma, BigInt(req.params.id))
+    await workSvc.bumpCloneCount(prisma, idParam(req.params.id, 'id'))
     ok(res, { counted: true })
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     console.error('[works] 同款计数失败:', e)
     fail(res, 500, '计数失败', 500)
   }

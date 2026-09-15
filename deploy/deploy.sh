@@ -35,11 +35,31 @@ command -v ffprobe >/dev/null || warn "未找到 ffprobe，素材探测会失败
 if command -v ffmpeg >/dev/null; then
   echo "    node  : $(node -v)"
   echo "    ffmpeg: $(ffmpeg -version | head -1)"
-  # 字幕烧录依赖 libass，缺了只能降级为「仅配音无字幕」
-  if ffmpeg -hide_banner -filters 2>/dev/null | grep -q ' subtitles '; then
-    echo "    libass: 可用（支持字幕烧录）"
+
+  # 字幕烧录需要两个前置条件，缺一不可（见 src/render/synthesis.ts:applyAiSynthesis）：
+  #   ① ffmpeg 编译了 libass（有 subtitles 滤镜）  ② 系统里有中文字体
+  #
+  # ⚠ 这里**不能**写 `ffmpeg -filters | grep -q ' subtitles '`：
+  #   grep -q 一匹配到就立即退出并关闭管道，ffmpeg 随即收到 SIGPIPE 而异常终止（exit 141），
+  #   在脚本开头的 `set -o pipefail` 下整条管道被判为失败 —— 结果**明明有滤镜也报「不可用」**。
+  #   （2026-09-15 实测踩过：Ubuntu 26.04 的 ffmpeg 8.0.1 编译了 --enable-libass，
+  #     `grep -c` 返回 2，却被这个写法误报成缺 libass。）
+  #   改成先把输出收进变量、再用 case 匹配，绕开管道与 SIGPIPE。
+  FILTERS="$(ffmpeg -hide_banner -filters 2>/dev/null || true)"
+  case "$FILTERS" in
+    *" subtitles "*) echo "    libass: 可用（支持字幕烧录）" ;;
+    *) warn "ffmpeg 不含 subtitles 滤镜（缺 libass），字幕烧录会降级为『仅配音无字幕』" ;;
+  esac
+
+  # 第二个前置条件：字体目录清单必须与 src/render/synthesis.ts:detectCjkFont() 保持一致
+  CJK_FONT_DIR=""
+  for d in /usr/share/fonts/opentype/noto /usr/share/fonts/truetype/wqy /usr/share/fonts/truetype/droid; do
+    if [ -d "$d" ]; then CJK_FONT_DIR="$d"; break; fi
+  done
+  if [ -n "$CJK_FONT_DIR" ]; then
+    echo "    CJK字体: 可用（$CJK_FONT_DIR）"
   else
-    warn "ffmpeg 不含 subtitles 滤镜（缺 libass），字幕烧录会降级"
+    warn "未找到中文字体，字幕烧录会降级为『仅配音无字幕』：apt install -y fonts-noto-cjk"
   fi
 fi
 
@@ -51,8 +71,21 @@ fi
 chmod 600 "$SERVER_DIR/.env"
 ADMIN_API_DOMAIN="$(grep -E '^WX_PAY_NOTIFY_URL=' "$SERVER_DIR/.env" | sed -E 's#.*https://([^/]+)/.*#\1#' || true)"
 echo "    调用域名（来自 WX_PAY_NOTIFY_URL）: ${ADMIN_API_DOMAIN:-未配置}"
-grep -qE '^NODE_ENV=production' "$SERVER_DIR/.env" \
-  && warn "当前 NODE_ENV=production：会强制校验微信支付七项配置，商户号未下来前会启动失败"
+
+# 环境一致性体检：NODE_ENV 与 PAYMENTS_ENABLED 的组合直接决定哪批守卫生效，配错代价很大
+ENV_NODE="$(grep -E '^NODE_ENV=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ')"
+ENV_PAY="$(grep -E '^PAYMENTS_ENABLED=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ')"
+echo "    NODE_ENV=$ENV_NODE  PAYMENTS_ENABLED=${ENV_PAY:-未设置（=开启）}"
+if [ "$ENV_NODE" != "production" ]; then
+  warn "NODE_ENV=$ENV_NODE（非 production）：JWT_SECRET / APP_MASTER_KEY / CORS_ORIGIN / DEV_LOGIN /"
+  warn "  MOCK_AI / FFMPEG_WORKER / STORAGE_MODE / COS_* 这八个守卫全部【不会】生效。"
+  warn "  对外提供服务时这很危险，请改用 NODE_ENV=production + PAYMENTS_ENABLED=false。"
+elif [ "$ENV_PAY" != "false" ]; then
+  warn "NODE_ENV=production 且未显式关闭支付：会强制校验微信支付七项配置，"
+  warn "  商户号未下来前会启动失败。若本意是灰度关闭支付，请在 .env 加 PAYMENTS_ENABLED=false。"
+else
+  log "    支付校验已显式关闭，其余八个生产守卫正常生效"
+fi
 
 # ───────── 3. 起依赖服务 ─────────
 log "[3/7] 启动 MySQL + Redis（docker compose）"
@@ -121,8 +154,10 @@ cat <<'EOF'
 部署完成。接下来手工确认：
 
   1) pm2 logs dashuai-api --lines 50
-     看到 "[server] listening on :3000 (env=staging)" 即正常
-     看到 "Local storage forbidden" / "Missing production payment config" 说明 env 有问题
+     看到 "[server] listening on :3000 (env=production)" 即正常
+     看到 "[config] PAYMENTS_ENABLED=false" 是预期输出（商户号申请期间的灰度关闭）
+     看到 "Local storage forbidden" / "Missing production payment config" / "Unsafe production config"
+       说明 server/.env 有问题，按报错补齐
 
   2) 外网直连验证（把域名换成你的）：
      curl -sS https://api.<域名>/healthz

@@ -10,7 +10,7 @@ import {
   type ShotItem,
 } from '../../services/creation'
 import { listShotLibrary, getShotDemoPlayUrl, type ShotLibraryItem } from '../../services/account'
-import { uploadVideoFile } from '../../services/upload'
+import { uploadVideoFile, UploadAbortedError } from '../../services/upload'
 import ProgressLine from '../../components/progress-line'
 import './shots.scss'
 
@@ -37,6 +37,21 @@ export default function CreationShots() {
   const [coverBusy, setCoverBusy] = useState(false)
   // 补生成封面只在每次进入页面时尝试一轮，避免与刷新互相触发
   const coverTried = useRef(false)
+  /**
+   * 进行中上传的取消句柄（分镜 id → abort）。
+   * 离开页面时要主动中止：否则传输会在后台继续跑完，然后照常调用 /upload/complete
+   * 落一条素材记录 —— 用户以为没传成功，数据里却多了一条。
+   */
+  const uploadAborters = useRef(new Map<string, () => void>())
+  /** 页面已卸载标志：上传服务在各阶段之间检查它，命中后抛 UploadAbortedError 且不落库 */
+  const pageGone = useRef(false)
+  useEffect(() => () => {
+    pageGone.current = true
+    for (const abort of uploadAborters.current.values()) {
+      try { abort() } catch { /* 任务已结束 */ }
+    }
+    uploadAborters.current.clear()
+  }, [])
 
   useEffect(() => {
     Taro.setNavigationBarTitle({ title: '拍摄素材' })
@@ -123,6 +138,8 @@ export default function CreationShots() {
         sizeBytes: file.size,
         thumbFilePath: file.thumbTempFilePath,
         onProgress: (p) => setProgress((m) => ({ ...m, [shot.id]: p })),
+        onTask: (task) => uploadAborters.current.set(shot.id, task.abort),
+        isCancelled: () => pageGone.current,
       })
       const updated = await updateShotAsset(id!, shot.id, { assetId: asset.id })
       // 并发任务各自只回填自己的分镜，避免多个 load() 返回顺序不同、旧响应覆盖新绑定结果。
@@ -140,12 +157,15 @@ export default function CreationShots() {
       // 重新上传后允许页面下一次刷新时再尝试补封面（服务端抽帧失败时可重试）
       coverTried.current = false
     } catch (e: unknown) {
+      // 页面已卸载导致的中止不算失败：既不该弹 toast，也不该在已卸载的组件上 setState
+      if (e instanceof UploadAbortedError) return
       const err = e as { code?: number; errMsg?: string }
       // 用户取消选择不算失败；其他异常保留原错误层 toast，并补一条明确到分镜的提示。
       if (!/cancel/i.test(err?.errMsg ?? '') && err?.code !== 2001) {
         Taro.showToast({ title: `分镜 ${shot.seq} 上传失败`, icon: 'none' })
       }
     } finally {
+      uploadAborters.current.delete(shot.id)
       uploadTasks.current.delete(shot.id)
       setUploading((m) => {
         const next = { ...m }

@@ -1,6 +1,7 @@
 // 后台管理路由（/admin/api/v1，单角色全权限）
 // 范围：管理员登录 / TTS 供应商 / 仪表盘 / 商家 / 套餐 / 账务与调账 / AI 配置 / 镜头库 / 系统配置 / 合成任务
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
+import { InvalidIdParamError, idParam, optionalIdParam } from '../lib/params.js'
 import { z } from 'zod'
 import { prisma } from '../db.js'
 import { ok, fail } from '../lib/result.js'
@@ -15,7 +16,7 @@ import * as premium from '../render/premium.js'
 import { invalidate } from '../lib/settings.js'
 import type { Prisma } from '@prisma/client'
 
-const router = Router()
+const router = createRouter()
 
 // ──────────────────────── 鉴权（无需登录） ────────────────────────
 
@@ -68,8 +69,9 @@ router.get('/merchants', async (req, res) => {
 })
 router.get('/merchants/:id', async (req, res) => {
   try {
-    ok(res, await adminExtra.getMerchantDetail(prisma, BigInt(req.params.id)))
+    ok(res, await adminExtra.getMerchantDetail(prisma, idParam(req.params.id, 'id')))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
     fail(res, 500, '查询失败', 500)
   }
@@ -77,8 +79,9 @@ router.get('/merchants/:id', async (req, res) => {
 router.post('/merchants/:id/status', async (req, res) => {
   try {
     const { status } = z.object({ status: z.enum(['ACTIVE', 'DISABLED']) }).parse(req.body)
-    ok(res, await adminExtra.setMerchantStatus(prisma, BigInt(req.params.id), status))
+    ok(res, await adminExtra.setMerchantStatus(prisma, idParam(req.params.id, 'id'), status))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '操作失败', 500)
@@ -125,7 +128,7 @@ router.put('/bean-packages/:id', async (req, res) => {
     const input = beanPackageInput.parse(req.body)
     ok(
       res,
-      await adminExtra.upsertBeanPackage(prisma, BigInt(req.params.id), {
+      await adminExtra.upsertBeanPackage(prisma, idParam(req.params.id, 'id'), {
         ...input,
         beans: BigInt(input.beans as string | number),
         bonusBeans:
@@ -133,14 +136,16 @@ router.put('/bean-packages/:id', async (req, res) => {
       }),
     )
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '更新失败', 500)
   }
 })
 router.delete('/bean-packages/:id', async (req, res) => {
   try {
-    ok(res, await adminExtra.removeBeanPackage(prisma, BigInt(req.params.id)))
+    ok(res, await adminExtra.removeBeanPackage(prisma, idParam(req.params.id, 'id')))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
     fail(res, 500, '删除失败', 500)
   }
@@ -185,21 +190,23 @@ router.put('/member-packages/:id', async (req, res) => {
     const input = memberPackageInput.parse(req.body)
     ok(
       res,
-      await adminExtra.upsertMemberPackage(prisma, BigInt(req.params.id), {
+      await adminExtra.upsertMemberPackage(prisma, idParam(req.params.id, 'id'), {
         ...input,
         rightsJson: input.rightsJson as Prisma.InputJsonValue | undefined,
         grantBeans: BigInt(input.grantBeans as string | number),
       }),
     )
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '更新失败', 500)
   }
 })
 router.delete('/member-packages/:id', async (req, res) => {
   try {
-    ok(res, await adminExtra.removeMemberPackage(prisma, BigInt(req.params.id)))
+    ok(res, await adminExtra.removeMemberPackage(prisma, idParam(req.params.id, 'id')))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
     fail(res, 500, '删除失败', 500)
   }
@@ -273,8 +280,9 @@ const deliverInput = z.object({
 })
 router.post('/render/tasks/:id/claim', async (req, res) => {
   try {
-    ok(res, await premium.claimPremiumTask(prisma, BigInt(req.params.id)))
+    ok(res, await premium.claimPremiumTask(prisma, idParam(req.params.id, 'id')))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof premium.PremiumTaskStateError) return fail(res, e.code, e.message, e.httpStatus)
     fail(res, 500, '接单失败', 500)
   }
@@ -282,8 +290,9 @@ router.post('/render/tasks/:id/claim', async (req, res) => {
 router.post('/render/tasks/:id/deliver', async (req, res) => {
   try {
     const input = deliverInput.parse(req.body)
-    ok(res, await premium.deliverPremiumTask(prisma, BigInt(req.params.id), input))
+    ok(res, await premium.deliverPremiumTask(prisma, idParam(req.params.id, 'id'), input))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     if (e instanceof premium.PremiumTaskStateError) return fail(res, e.code, e.message, e.httpStatus)
     fail(res, 500, '交付失败', 500)
@@ -292,16 +301,18 @@ router.post('/render/tasks/:id/deliver', async (req, res) => {
 router.post('/render/tasks/:id/fail', async (req, res) => {
   try {
     const reason = String(req.body?.reason ?? '人工标记失败')
-    ok(res, await premium.failPremiumTask(prisma, BigInt(req.params.id), reason))
+    ok(res, await premium.failPremiumTask(prisma, idParam(req.params.id, 'id'), reason))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof premium.PremiumTaskStateError) return fail(res, e.code, e.message, e.httpStatus)
     fail(res, 500, '操作失败', 500)
   }
 })
 router.get('/render/tasks/:id/materials', async (req, res) => {
   try {
-    ok(res, await premium.premiumMaterials(prisma, BigInt(req.params.id)))
+    ok(res, await premium.premiumMaterials(prisma, idParam(req.params.id, 'id')))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof premium.PremiumTaskStateError) return fail(res, e.code, e.message, e.httpStatus)
     fail(res, 500, '查询失败', 500)
   }
@@ -339,8 +350,9 @@ router.post('/ai/providers', async (req, res) => {
 router.put('/ai/providers/:id', async (req, res) => {
   try {
     const input = providerInput.parse(req.body)
-    ok(res, await adminAi.upsertAiProvider(prisma, BigInt(req.params.id), input))
+    ok(res, await adminAi.upsertAiProvider(prisma, idParam(req.params.id, 'id'), input))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '更新失败', 500)
   }
@@ -348,16 +360,18 @@ router.put('/ai/providers/:id', async (req, res) => {
 router.post('/ai/providers/:id/enable', async (req, res) => {
   try {
     const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body)
-    ok(res, await adminAi.setAiProviderEnabled(prisma, BigInt(req.params.id), enabled))
+    ok(res, await adminAi.setAiProviderEnabled(prisma, idParam(req.params.id, 'id'), enabled))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '操作失败', 500)
   }
 })
 router.delete('/ai/providers/:id', async (req, res) => {
   try {
-    ok(res, await adminAi.removeAiProvider(prisma, BigInt(req.params.id)))
-  } catch {
+    ok(res, await adminAi.removeAiProvider(prisma, idParam(req.params.id, 'id')))
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     fail(res, 500, '删除失败', 500)
   }
 })
@@ -365,8 +379,9 @@ const testInput = z.object({ modelCode: z.string().min(1) })
 router.post('/ai/providers/:id/test', async (req, res) => {
   try {
     const { modelCode } = testInput.parse(req.body)
-    ok(res, await adminAi.testAiProvider(prisma, BigInt(req.params.id), modelCode))
+    ok(res, await adminAi.testAiProvider(prisma, idParam(req.params.id, 'id'), modelCode))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     if (e instanceof adminAi.AdminAiNotFoundError) return fail(res, 4049, e.message, 404)
     fail(res, 500, '测试失败', 500)
@@ -394,9 +409,11 @@ router.post('/ai/providers/test-all', async (_req, res) => {
 
 router.get('/ai/models', async (req, res) => {
   try {
-    const providerId = req.query.providerId ? BigInt(req.query.providerId as string) : undefined
+    const providerId = optionalIdParam(req.query.providerId, 'providerId')
     ok(res, await adminAi.listAiModels(prisma, providerId))
-  } catch {
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    console.error('[admin] 查询 AI 模型失败:', e)
     fail(res, 500, '查询失败', 500)
   }
 })
@@ -431,20 +448,22 @@ router.put('/ai/models/:id', async (req, res) => {
     const input = modelInput.parse(req.body)
     ok(
       res,
-      await adminAi.upsertAiModel(prisma, BigInt(req.params.id), {
+      await adminAi.upsertAiModel(prisma, idParam(req.params.id, 'id'), {
         ...input,
         providerId: BigInt(input.providerId as string | number),
       }),
     )
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '更新失败', 500)
   }
 })
 router.delete('/ai/models/:id', async (req, res) => {
   try {
-    ok(res, await adminAi.removeAiModel(prisma, BigInt(req.params.id)))
-  } catch {
+    ok(res, await adminAi.removeAiModel(prisma, idParam(req.params.id, 'id')))
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     fail(res, 500, '删除失败', 500)
   }
 })
@@ -492,7 +511,7 @@ router.put('/ai/scenes/:id', async (req, res) => {
     const input = sceneInput.parse(req.body)
     ok(
       res,
-      await adminAi.upsertAiScene(prisma, BigInt(req.params.id), {
+      await adminAi.upsertAiScene(prisma, idParam(req.params.id, 'id'), {
         ...input,
         defaultModelId: BigInt(input.defaultModelId as string | number),
         fallbackModelIds: adminAi.bigintArray(input.fallbackModelIds),
@@ -500,14 +519,16 @@ router.put('/ai/scenes/:id', async (req, res) => {
       }),
     )
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '更新失败', 500)
   }
 })
 router.delete('/ai/scenes/:id', async (req, res) => {
   try {
-    ok(res, await adminAi.removeAiScene(prisma, BigInt(req.params.id)))
+    ok(res, await adminAi.removeAiScene(prisma, idParam(req.params.id, 'id')))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof adminAi.AdminAiNotFoundError) return fail(res, 4049, e.message, 404)
     fail(res, 500, '删除失败', 500)
   }
@@ -560,16 +581,18 @@ router.post('/shot-library', async (req, res) => {
 })
 router.put('/shot-library/:id', async (req, res) => {
   try {
-    ok(res, await adminExtra.adminUpsertShotLibrary(prisma, BigInt(req.params.id), shotLibInput.parse(req.body)))
+    ok(res, await adminExtra.adminUpsertShotLibrary(prisma, idParam(req.params.id, 'id'), shotLibInput.parse(req.body)))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '更新失败', 500)
   }
 })
 router.delete('/shot-library/:id', async (req, res) => {
   try {
-    ok(res, await adminExtra.adminRemoveShotLibrary(prisma, BigInt(req.params.id)))
+    ok(res, await adminExtra.adminRemoveShotLibrary(prisma, idParam(req.params.id, 'id')))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
     fail(res, 500, '删除失败', 500)
   }
@@ -646,10 +669,11 @@ router.post('/works', async (req, res) => {
 
 router.put('/works/:id', async (req, res) => {
   try {
-    const r = await workSvc.updateWork(prisma, BigInt(req.params.id), workInput.partial().parse(req.body))
+    const r = await workSvc.updateWork(prisma, idParam(req.params.id, 'id'), workInput.partial().parse(req.body))
     if (!r) return fail(res, 4049, '作品不存在', 404)
     ok(res, r)
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     console.error('[admin] 更新优秀作品失败:', e)
     fail(res, 500, '更新失败', 500)
@@ -658,10 +682,11 @@ router.put('/works/:id', async (req, res) => {
 
 router.delete('/works/:id', async (req, res) => {
   try {
-    const okDel = await workSvc.deleteWork(prisma, BigInt(req.params.id))
+    const okDel = await workSvc.deleteWork(prisma, idParam(req.params.id, 'id'))
     if (!okDel) return fail(res, 4049, '作品不存在', 404)
     ok(res, { deleted: true })
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     console.error('[admin] 删除优秀作品失败:', e)
     fail(res, 500, '删除失败', 500)
   }
@@ -670,8 +695,9 @@ router.delete('/works/:id', async (req, res) => {
 /** 按 videoKey 重新抽一帧当封面（首帧不好看 / 自动抽帧上线前入库的作品） */
 router.post('/works/:id/cover', async (req, res) => {
   try {
-    ok(res, await workSvc.regenerateWorkCover(prisma, BigInt(req.params.id)))
+    ok(res, await workSvc.regenerateWorkCover(prisma, idParam(req.params.id, 'id')))
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof workSvc.WorkNotFoundError) return fail(res, 4049, '作品不存在', 404)
     if (e instanceof workSvc.WorkCoverError) return fail(res, 4010, e.message, 400)
     console.error('[admin] 抽取作品封面失败:', e)
@@ -754,22 +780,24 @@ router.put('/settings/:id', async (req, res) => {
   try {
     const r = await adminExtra.adminUpsertSystemSetting(
       prisma,
-      BigInt(req.params.id),
+      idParam(req.params.id, 'id'),
       settingInput.parse(req.body),
     )
     invalidate()
     ok(res, r)
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '更新失败', 500)
   }
 })
 router.delete('/settings/:id', async (req, res) => {
   try {
-    const r = await adminExtra.adminRemoveSystemSetting(prisma, BigInt(req.params.id))
+    const r = await adminExtra.adminRemoveSystemSetting(prisma, idParam(req.params.id, 'id'))
     invalidate()
     ok(res, r)
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
     fail(res, 500, '删除失败', 500)
   }

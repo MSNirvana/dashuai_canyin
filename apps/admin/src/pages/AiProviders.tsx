@@ -113,7 +113,13 @@ export default function AiProvidersPage() {
     void load()
     const ok = r.filter((x) => x.ok).length
     message.success(`测试完成：${ok}/${r.length} 通过`)
-    console.log(r)
+    // 原来这里是一句 console.log(r) 调试残留（r 里含各通道的 errorMsg，可能带敏感信息）。
+    // 但「哪些通道没过」这条信息本身有用，所以改成提示给操作者，而不是删掉了事。
+    const failed = r.filter((x) => !x.ok)
+    if (failed.length) {
+      const names = failed.map((x) => x.code).join('、')
+      message.warning(`${failed.length} 个通道未通过：${names}（鼠标悬停对应行可看具体报错）`)
+    }
   }
 
   return (

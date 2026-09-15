@@ -12,6 +12,7 @@ import { prisma } from '../db.js'
 import {
   completeRender,
   failRender,
+  sweepSettlementPending,
   DEFAULT_COLOR,
   RENDER_BEAN_FULL,
   type ColorGrade,
@@ -23,6 +24,7 @@ import {
   ffmpegApplyColor,
   ffmpegConcat,
   probeDurationMs,
+  probeVideo,
   buildColorFilter,
   ffmpegSupportsSubtitles,
 } from './ffmpeg.js'
@@ -310,7 +312,18 @@ async function pollChatCutTasks(): Promise<void> {
       if (result.status === 'FAILED') {
         await failRender(prisma, task.id, 'CHATCUT_FAILED', result.errorMessage || 'ChatCut 处理失败')
       } else if (result.status === 'SUCCESS') {
-        await finishChatCutTask(task, result)
+        try {
+          await finishChatCutTask(task, result)
+        } catch (e) {
+          if (e instanceof ExternalResultInvalidError) {
+            // 上游报成功但产物不可用：立即退款 + 终态，不让用户为坏片付费，
+            // 也不把任务留在 RUNNING 等 30 分钟 sweeper 兜底
+            const state = await failRender(prisma, task.id, 'EXTERNAL_RESULT_INVALID', `成片校验未通过：${e.detail}`)
+            console.warn(`[render-worker] ChatCut 任务 ${task.id} 成片无效，已退款（结果 ${state}）：${e.detail}`)
+          } else {
+            throw e
+          }
+        }
       } else {
         await prisma.renderTask.update({
           where: { id: task.id },
@@ -318,8 +331,17 @@ async function pollChatCutTasks(): Promise<void> {
         })
       }
     } catch (error) {
+      // 网络抖动 / 查询失败：保持 RUNNING，下一轮重试（超时由 stuck-sweeper 兜底退款）
       console.warn(`[render-worker] ChatCut 任务 ${task.id} 查询失败:`, (error as Error).message)
     }
+  }
+}
+
+/** 外部成片校验不通过：不结算，直接退款并把原因写进任务 */
+export class ExternalResultInvalidError extends Error {
+  constructor(readonly detail: string) {
+    super(detail)
+    this.name = 'ExternalResultInvalidError'
   }
 }
 
@@ -330,21 +352,41 @@ async function finishChatCutTask(
   let resultKey = result.resultKey
   let resultSize: bigint | undefined
   let durationMs: number | null | undefined
+
   if (!resultKey) {
-    if (!result.resultUrl) throw new Error('ChatCut 已完成但未返回成片地址')
+    // 分支 A：上游只给 URL，我们自己下载 + 回传 COS（本地有文件，可直接 ffprobe）
+    if (!result.resultUrl) throw new ExternalResultInvalidError('ChatCut 已完成但未返回成片地址')
     const dir = await mkdtemp(join(tmpdir(), 'dashuai-chatcut-'))
     try {
       const target = join(dir, 'result.mp4')
       const response = await fetch(result.resultUrl, { signal: AbortSignal.timeout(TASK_TIMEOUT_MS) })
       if (!response.ok || !response.body) throw new Error(`下载 ChatCut 成片失败：HTTP ${response.status}`)
       await pipeline(Readable.fromWeb(response.body as never), createWriteStream(target))
+
+      // ★ 扣费前必须校验：HTTP 200 只代表「下载成功」，不代表「内容是视频」。
+      //   上游返回 HTML 错误页 / JSON / 0 字节文件时，旧代码会把坏文件当真成片入库并扣全额豆。
+      const probe = await probeVideo(target)
+      if (!probe.ok) throw new ExternalResultInvalidError(probe.reason ?? '下载到的文件不是可播放视频')
+      durationMs = probe.durationMs
+
       resultKey = `renders/${task.merchantId.toString()}/${task.id.toString()}.mp4`
       resultSize = BigInt(await uploadFile(target, resultKey, 'video/mp4'))
-      durationMs = await probeDurationMs(target)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  } else {
+    // 分支 B：上游已把成片传到我们的 COS，只给 key。
+    //   同样必须校验：objectExists 只证明「有这个对象」，不证明内容可播。
+    //   用签名 URL 让 ffprobe 直接读远端（避免整包下载），失败即判坏片。
+    if (!(await objectExists(resultKey))) {
+      throw new ExternalResultInvalidError(`成片对象不存在：${resultKey}`)
+    }
+    const url = await signedObjectUrl(resultKey, 600)
+    const probe = await probeVideo(url)
+    if (!probe.ok) throw new ExternalResultInvalidError(probe.reason ?? 'COS 上的成片不是可播放视频')
+    durationMs = probe.durationMs
   }
+
   await prisma.$transaction((tx) => completeRender(tx, task.merchantId, task.id, {
     resultKey: resultKey!,
     resultSize,
@@ -418,5 +460,18 @@ async function sweepStuck(): Promise<void> {
     } catch (e) {
       console.error(`[stuck-sweeper] task ${task.id} 回收失败:`, (e as Error).message)
     }
+  }
+
+  // 结算悬空补偿：原 sweeper 只扫 RUNNING/QUEUED，SETTLEMENT_PENDING 会永久卡住、
+  // 预留额度永久占用、用户账上冻结豆永远解不开（前端一直显示「退款确认中」）。
+  try {
+    const r = await sweepSettlementPending(prisma)
+    if (r.scanned > 0) {
+      console.log(
+        `[stuck-sweeper] 结算悬空补偿：扫描 ${r.scanned}，恢复 ${r.recovered}，仍待处理 ${r.stillPending}，已放弃 ${r.gaveUp}`,
+      )
+    }
+  } catch (e) {
+    console.error('[stuck-sweeper] 结算悬空补偿失败:', (e as Error).message)
   }
 }

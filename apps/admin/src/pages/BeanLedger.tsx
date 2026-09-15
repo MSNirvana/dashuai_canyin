@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Input, Select, Button, Dialog, InputNumber, message, Space } from 'tdesign-react'
 import DataTable from '../lib/table'
+import { useListQuery } from '../lib/useListQuery'
 import Field, { FieldGroup } from '../components/Field'
 import { request } from '../lib/http'
 import dayjs from 'dayjs'
@@ -19,31 +20,19 @@ interface LedgerRow {
 }
 
 export default function BeanLedgerPage() {
+  // 商家 ID 是「点了查询才生效」的输入框，不能每敲一个字就重查，所以与生效值分开存
+  const [merchantIdInput, setMerchantIdInput] = useState('')
   const [merchantId, setMerchantId] = useState('')
   const [type, setType] = useState<string | undefined>(undefined)
-  const [data, setData] = useState<{ list: LedgerRow[]; total: number } | null>(null)
-  const [loading, setLoading] = useState(false)
   const [adjustOpen, setAdjustOpen] = useState(false)
   const [adjust, setAdjust] = useState({ merchantId: '', amount: 0, bucket: 'RECHARGE' as 'RECHARGE' | 'GRANT', remark: '' })
 
-  const load = async () => {
-    setLoading(true)
-    try {
-      const r = await request<{ list: LedgerRow[]; total: number; page: number; pageSize: number }>({
-        url: '/bean/ledger',
-        params: {
-          ...(merchantId ? { merchantId } : {}),
-          ...(type ? { type } : {}),
-          pageSize: 50,
-        },
-      })
-      setData({ list: r.list, total: r.total })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { void load() }, [type])
+  // 分页 + 竞态防护：原先只请求第 1 页、pageSize 写死 50，且没有分页控件
+  const { data, loading, pagination, reload: load } = useListQuery<LedgerRow>({
+    url: '/bean/ledger',
+    params: { ...(merchantId ? { merchantId } : {}), ...(type ? { type } : {}) },
+    pageSize: 20,
+  })
 
   const doAdjust = async () => {
     try {
@@ -60,7 +49,7 @@ export default function BeanLedgerPage() {
       message.success('调账成功')
       setAdjustOpen(false)
       setAdjust({ merchantId: '', amount: 0, bucket: 'RECHARGE', remark: '' })
-      void load()
+      load()
     } catch {}
   }
 
@@ -69,7 +58,8 @@ export default function BeanLedgerPage() {
       <div className="page-header">
         <h2>积分流水 · 共 {data?.total ?? 0} 条</h2>
         <Space>
-          <Input placeholder="商家ID" value={merchantId} onChange={(v) => setMerchantId(v as string)} clearable style={{ width: 200 }} />
+          <Input placeholder="商家ID" value={merchantIdInput} onChange={(v) => setMerchantIdInput(v as string)} clearable style={{ width: 200 }}
+            onEnter={() => setMerchantId(merchantIdInput.trim())} />
           <Select placeholder="类型" clearable value={type} onChange={(v) => setType((v as string) || undefined)} style={{ width: 160 }}
             options={[
               { label: 'RECHARGE', value: 'RECHARGE' },
@@ -82,7 +72,7 @@ export default function BeanLedgerPage() {
               { label: 'EXPIRE', value: 'EXPIRE' },
             ]}
           />
-          <Button onClick={load}>查询</Button>
+          <Button onClick={() => setMerchantId(merchantIdInput.trim())}>查询</Button>
           <Button theme="primary" onClick={() => setAdjustOpen(true)}>手动调账</Button>
         </Space>
       </div>
@@ -91,6 +81,7 @@ export default function BeanLedgerPage() {
         rowKey="id"
         data={data?.list ?? []}
         loading={loading}
+        pagination={pagination}
         columns={[
           { colKey: 'createdAt', title: '时间', width: 170, render: ({ row }: any) => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss') },
           { colKey: 'merchant', title: '商家', width: 160, render: ({ row }: any) => row.merchant ? `${row.merchant.phone}` : `ID:${row.merchantId}` },

@@ -32,7 +32,10 @@ module.exports = {
       merge_logs: true,
       time: true,
       env: {
-        NODE_ENV: 'staging',
+        // production 下的八个 fail-closed 守卫（JWT_SECRET / APP_MASTER_KEY / CORS_ORIGIN /
+        // DEV_LOGIN / MOCK_AI / FFMPEG_WORKER / STORAGE_MODE / COS_*）全部生效。
+        // 支付已用 PAYMENTS_ENABLED 单独解耦，该变量放在 server/.env 里（商户号下来后改 true）。
+        NODE_ENV: 'production',
       },
     },
     // {

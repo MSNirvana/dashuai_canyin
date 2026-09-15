@@ -55,14 +55,14 @@ async function main() {
   // copy_generate：文案（默认走 chat 类，mock-chat 兜底）
   const copyScene = await prisma.aiScene.update({
     where: { code: 'copy_generate' },
-    data: { defaultModelId: model.id, fallbackModelIds: [mockChat.id] },
+    data: { defaultModelId: model.id, fallbackModelIds: [Number(mockChat.id)] },
   })
   console.log(`✓ scene copy_generate: default=gpt-5-sol, fallback=mock-chat`)
 
   // storyboard_generate：分镜（reasoner 类，mock-reasoner 兜底）
   const shotScene = await prisma.aiScene.update({
     where: { code: 'storyboard_generate' },
-    data: { defaultModelId: model.id, fallbackModelIds: [mockReasoner.id] },
+    data: { defaultModelId: model.id, fallbackModelIds: [Number(mockReasoner.id)] },
   })
   console.log(`✓ scene storyboard_generate: default=gpt-5-sol, fallback=mock-reasoner`)
 

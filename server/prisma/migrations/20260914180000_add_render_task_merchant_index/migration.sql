@@ -1,0 +1,11 @@
+-- 后台「合成任务」列表按 merchant_id 过滤 + created_at 倒序分页（RenderTasks.tsx），
+-- 原表只有 [creation_id, created_at] / [status, queue_at] / [grade, status]，
+-- 没有以 merchant_id 开头的索引 → 该查询退化为全表扫描 + filesort。
+--
+-- 同形态的表都已有 [merchant_id, created_at]：
+--   bean_ledger / ai_call_log / `order` / business_request / creation
+-- 此前只有 render_task 漏了这一条。
+--
+-- 方向说明：MySQL 可以反向扫描 B-tree，所以 [merchant_id, created_at] 同时支持
+-- ASC / DESC 排序，不需要显式 DESC 索引。
+ALTER TABLE `render_task` ADD INDEX `render_task_merchant_id_created_at_idx` (`merchant_id`, `created_at`);

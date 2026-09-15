@@ -45,6 +45,13 @@ export class CreationNotFoundError extends Error {
     this.name = 'CreationNotFoundError'
   }
 }
+
+export class ShotNotFoundError extends Error {
+  constructor() {
+    super('分镜不存在')
+    this.name = 'ShotNotFoundError'
+  }
+}
 export class CreationStoreMismatchError extends Error {
   constructor() {
     super('创作不属于该门店或商家')
@@ -151,6 +158,36 @@ export async function createCreation(
       complexity: input.complexity ?? DEFAULT_COMPLEXITY,
     },
   })
+}
+
+/** 轻量归属校验：确认创作属于当前商家且未软删。不加载 shots/素材，不签 URL。 */
+export async function assertCreationOwned(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  creationId: bigint,
+): Promise<void> {
+  const c = await prisma.creation.findFirst({
+    where: { id: creationId, merchantId, deletedAt: null },
+    select: { id: true },
+  })
+  if (!c) throw new CreationNotFoundError()
+}
+
+/**
+ * 带归属校验地读取单个分镜。
+ * shot 必须属于「当前商户的 creation」，否则抛 CreationNotFoundError（→ 404），
+ * 信息不区分「创作不存在」与「不属于你」，避免通过 404/403 差异枚举他人资源。
+ */
+export async function readShotOwned(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  creationId: bigint,
+  shotId: bigint,
+): Promise<Shot> {
+  await assertCreationOwned(prisma, merchantId, creationId)
+  const s = await prisma.shot.findFirst({ where: { id: shotId, creationId } })
+  if (!s) throw new ShotNotFoundError()
+  return s
 }
 
 export async function getCreation(
@@ -530,9 +567,13 @@ export async function updateShotContent(
   if (input.durationSuggest !== undefined) data.durationSuggest = input.durationSuggest
   if (input.line !== undefined) data.line = input.line
   if (input.visualReq !== undefined) data.visualReq = input.visualReq
-  if (Object.keys(data).length === 0) return prisma.shot.findFirst({ where: { id: shotId, creationId } })
+  if (Object.keys(data).length === 0) {
+    const s = await prisma.shot.findFirst({ where: { id: shotId, creationId } })
+    if (!s) throw new ShotNotFoundError()
+    return s
+  }
   const upd = await prisma.shot.updateMany({ where: { id: shotId, creationId }, data })
-  if (upd.count === 0) throw new Error('分镜不存在')
+  if (upd.count === 0) throw new ShotNotFoundError()
   return prisma.shot.findUnique({ where: { id: shotId } })
 }
 
@@ -547,7 +588,7 @@ export async function updateShotAsset(
   // 越权防护：shot 必须属于当前 creation（否则可改到他人创作的分镜）
   if (input.assetId !== undefined) {
     const asset = await prisma.mediaAsset.findFirst({ where: { id: input.assetId, merchantId, storeId: creation.storeId, deletedAt: null } })
-    if (!asset) throw new Error('素材不属于当前商家门店')
+    if (!asset) throw new CreationAssetMismatchError()
   }
   const upd = await prisma.shot.updateMany({
     where: { id: shotId, creationId },
@@ -557,8 +598,8 @@ export async function updateShotAsset(
       trimEndMs: input.trimEndMs,
     },
   })
-  if (upd.count === 0) throw new Error('分镜不存在')
+  if (upd.count === 0) throw new ShotNotFoundError()
   const shot = await prisma.shot.findUnique({ where: { id: shotId } })
-  if (!shot) throw new Error('分镜不存在')
+  if (!shot) throw new ShotNotFoundError()
   return shot
 }

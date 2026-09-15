@@ -46,6 +46,12 @@ fi
 npx taro build --type weapp
 
 echo ""
+echo "==> 产物自检（组件引用可解析 / 主包体积 / 联调地址）"
+# 按需拷贝 tdesign 组件后，闭包一旦算漏隐藏依赖，构建仍会成功、只在真机白屏，
+# 所以这里强制做一次机械核对；不通过直接退出（set -e 生效）。
+node scripts/verify-weapp-dist.mjs
+
+echo ""
 echo "==> 构建完成：apps/mini/dist/weapp"
 echo "    下一步：用微信开发者工具打开 apps/mini（miniprogramRoot=dist/weapp），"
 echo "            确认「详情 → 本地设置」里 已勾选 不校验合法域名（仅本地预览用），"

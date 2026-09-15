@@ -21,11 +21,24 @@ import shotLibraryRouter from './routes/shot-library.js'
 import worksRouter from './routes/works.js'
 import accountRouter from './routes/account.js'
 import previewCollageRouter from './routes/preview-collage.js'
+import renderCapabilitiesRouter from './routes/render-capabilities.js'
 import systemSettingsRouter from './routes/system-settings.js'
 import { ensureLocalStorage, isLocalStorage, localStorageRoot } from './lib/local-storage.js'
 
 const app: Express = express()
 const PORT = Number(process.env.PORT ?? 3000)
+
+// ── 进程级兜底（最后一道网）──
+// 路由层已通过 createRouter() 把 async 异常交给 errorHandler（见 lib/async-router.ts），
+// 这里是防止其它来源的异常打死进程：定时器里未 await 的 Promise、sweeper 的异步错误等。
+// 取舍：uncaughtException 不退出进程——体验版期优先保可用性，卡死任务由 stuck-sweeper 兜底回收。
+// 代价是异常后进程状态可能不可信，所以必须打醒目日志，后续接入告警。
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] unhandledRejection（进程继续运行，需排查）:', reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] uncaughtException（进程继续运行，需排查）:', err)
+})
 
 // 每个请求分配 traceId，便于排查
 app.use((_req, res, next) => {
@@ -61,6 +74,10 @@ app.use('/api/v1/shot-library', shotLibraryRouter)
 // 首页「优秀作品」（运营内容，只读）
 app.use('/api/v1/works', worksRouter)
 app.use('/api/v1/account', accountRouter)
+// 公开（不鉴权）合成档位能力探测：客户端据此把不可用档位标灰
+// ⚠ 必须挂在 `app.use('/api/v1/render', ...)` 之前：Express 按注册顺序做前缀匹配，
+//   后注册的更深路径虽然通常能靠 next() 兜到，但依赖它太脆弱，直接把精确路由放前面。
+app.use('/api/v1/render/capabilities', renderCapabilitiesRouter)
 app.use('/api/v1/render', previewCollageRouter)
 // 公开（不鉴权）系统配置
 app.use('/api/v1/system/settings', systemSettingsRouter)
@@ -124,6 +141,16 @@ async function bootstrap() {
       process.once('SIGTERM', () => m.stopMembershipReminderSweeper())
     })
     .catch((e) => console.error('[membership-reminder] 启动失败:', (e as Error).message))
+
+  // 赠豆到期清零：会员到期后把赠送的 AI 豆清零（docs/05 计费规则）
+  // 修复「expireGrant 已实现但零调用」——不跑这个 job，订阅到期后赠豆永久保留，续费失去意义
+  void import('./services/grant-expiry.service.js')
+    .then((m) => {
+      m.startGrantExpirySweeper(prisma)
+      process.once('SIGINT', m.stopGrantExpirySweeper)
+      process.once('SIGTERM', m.stopGrantExpirySweeper)
+    })
+    .catch((e) => console.error('[grant-expiry] 启动失败:', (e as Error).message))
 
   // 机器任务卡死恢复 sweeper：worker 崩溃后 RUNNING 卡死 / QUEUED 长期无人处理的任务
   // 超时自动退款 + FAILED，常驻 API 进程不依赖 FFMPEG_WORKER（worker 独立部署挂掉也能兜底）

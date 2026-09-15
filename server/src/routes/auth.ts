@@ -1,12 +1,12 @@
 // 认证路由：微信一键 / 短信发送 / 手机号登录 / 刷新
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
 import { z } from 'zod'
 import { prisma, redis } from '../db.js'
 import { loginByPhone, loginByWechat, refresh, devLogin, WxLoginFailedError } from '../auth/auth.service.js'
 import { sendCode, SmsSendTooFrequentError, SmsDailyLimitError, SmsProviderNotConfiguredError } from '../auth/sms.js'
 import { ok, fail } from '../lib/result.js'
 
-const router = Router()
+const router = createRouter()
 
 const phoneSchema = z.string().regex(/^1\d{10}$/, 'invalid phone')
 

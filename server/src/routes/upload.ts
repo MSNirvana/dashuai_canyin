@@ -1,5 +1,5 @@
 // 上传路由：取 STS 临时密钥 + 上传完成确认
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
 import { z } from 'zod'
 import multer from 'multer'
 import { mkdir, rename } from 'node:fs/promises'
@@ -18,7 +18,7 @@ import {
   removeLocalFile,
 } from '../lib/local-storage.js'
 
-const router = Router()
+const router = createRouter()
 router.use(auth)
 
 const localUpload = multer({

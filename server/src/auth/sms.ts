@@ -43,6 +43,11 @@ function genCode(): string {
   return String(randomInt(0, 1_000_000)).padStart(6, '0')
 }
 
+/** 手机号脱敏：138****0001。保留前 3 后 4，够定位问题但不泄露完整号码。 */
+function maskPhone(phone: string): string {
+  return phone.length >= 7 ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : '***'
+}
+
 export class SmsProviderNotConfiguredError extends Error {
   readonly code = 'SMS_PROVIDER_NOT_CONFIGURED'
   constructor() {
@@ -85,7 +90,17 @@ export async function sendCode(prisma: PrismaClient, phone: string, ip?: string)
     throw new SmsProviderNotConfiguredError()
   }
   if (!provider) {
-    console.log(`[SMS dev] phone=${phone} code=${code} expires=${TTL_MINUTES}min`)
+    // 本地联调时把验证码打到日志，否则没有短信通道就没法登录。
+    // ⚠ 只在**显式声明这是开发环境**时打印：早先只判断「非 production」，
+    //   而 NODE_ENV 写错（例如 staging）的线上服务器会把验证码打进日志，
+    //   任何能看到日志的人都可冒充任意手机号登录。现在多绑一个开关。
+    // 手机号也做脱敏，日志被转发/截图时不泄露全量号码。
+    const devLogEnabled = process.env.DEV_LOGIN === 'true' || process.env.SMS_LOG_CODE === 'true'
+    if (devLogEnabled) {
+      console.log(`[SMS dev] phone=${maskPhone(phone)} code=${code} expires=${TTL_MINUTES}min`)
+    } else {
+      console.log(`[SMS dev] phone=${maskPhone(phone)} 已生成验证码但未打印（需 DEV_LOGIN=true 或 SMS_LOG_CODE=true 才显示明文）`)
+    }
   } else {
     // 供应商适配器接入前不允许伪造发送成功；生产由此分支明确失败。
     await prisma.smsCode.delete({ where: { id: record.id } })

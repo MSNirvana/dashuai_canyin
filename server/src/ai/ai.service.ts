@@ -6,8 +6,9 @@ import type { PrismaClient } from '@prisma/client'
 import { AiGateway } from './gateway.js'
 import * as bean from '../bean/bean.service.js'
 import { BeanNotEnoughError, type BeanBucket } from '../bean/bean.service.js'
-import { getNumber } from '../lib/settings.js'
+import { getDecimal } from '../lib/settings.js'
 import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } from '../domain/request.js'
+import { decFromNumber, decMulCeil, type Dec } from '../lib/decimal.js'
 
 export interface BilledSceneResult {
   text: string
@@ -28,13 +29,23 @@ export interface BilledSceneParams {
 }
 
 /**
- * 豆 ← 成本 换算：
+ * 豆 ← 成本 换算（纯整数，无浮点）：
  *   costFen 是「分」，beansPerYuan 是「1 元 = 多少豆」
- *   beans = ceil(costFen / 100 * beansPerYuan * costMultiplier)
- *   默认 1 元 = 100 豆时，1 分 = 1 豆，即 beans = ceil(costFen * multiplier)
+ *   beans = ceil(costFen × beansPerYuan × costMultiplier / 100)
+ *   默认 1 元 = 100 豆、乘数 4 时，beans = ceil(costFen × 4)
+ *
+ * 旧实现 `BigInt(Math.ceil((costFen / 100) * beansPerYuan * multiplier))` 有浮点误差：
+ * IEEE754 下 7/100×100×4 = 28.000000000000004 → ceil = 29，凭空多扣 1 豆。
+ * 实测成本 1~20000 分里有 1148 个取值（5.74%）被多扣 1 豆，且只会多扣不会少扣。
  */
-function beansFromCost(costFen: number, beansPerYuan: number, multiplier: number): bigint {
-  return BigInt(Math.ceil(((costFen / 100) * beansPerYuan * multiplier)))
+function beansFromCost(costFen: number, beansPerYuan: Dec, multiplier: Dec): bigint {
+  if (!Number.isSafeInteger(costFen) || costFen < 0) {
+    throw new RangeError(`beansFromCost: costFen 必须是非负安全整数，实际 ${costFen}`)
+  }
+  if (costFen === 0) return 0n
+  const costDec = decFromNumber(costFen)
+  if (!costDec) throw new RangeError(`beansFromCost: costFen 无法解析，实际 ${costFen}`)
+  return decMulCeil([costDec, beansPerYuan, multiplier], 100n)
 }
 
 export async function runBilledScene(
@@ -45,11 +56,11 @@ export async function runBilledScene(
   const scene = await prisma.aiScene.findUnique({ where: { code: params.sceneCode } })
   if (!scene || !scene.enabled) throw new Error(`scene ${params.sceneCode} not available`)
 
-  const [beansPerYuan, multiplierRaw] = await Promise.all([
-    getNumber(prisma, 'bean', 'points_per_yuan', 100),
-    getNumber(prisma, 'bean', 'cost_multiplier', 4),
+  // 计费系数一律用精确十进制读取（getDecimal 直接解析库里的原始字符串，不经 Number()）
+  const [beansPerYuan, multiplier] = await Promise.all([
+    getDecimal(prisma, 'bean', 'points_per_yuan', 100),
+    getDecimal(prisma, 'bean', 'cost_multiplier', 4),
   ])
-  const multiplier = multiplierRaw
 
   // 冻结额 = 场景「单次上限」（财务安全网）。实际按成本×系数结算，恒不超过该上限
   const price = scene.beanPrice
@@ -67,6 +78,15 @@ export async function runBilledScene(
   const settle = async (costFen: number, usedFallback: boolean) => {
     const wantCharge = beansFromCost(costFen, beansPerYuan, multiplier)
     const charged = wantCharge > frozenAmount ? frozenAmount : wantCharge
+    // 被场景单次上限截断的部分由平台承担。必须落库 + 告警，否则「上限是安全网还是
+    // 常态折扣」在账上完全看不出来（实测 copy 系场景 10/10 次调用都被截掉 3 豆）。
+    const absorbed = wantCharge > frozenAmount ? wantCharge - frozenAmount : 0n
+    if (absorbed > 0n) {
+      console.warn(
+        `[ai-billing] 场景 ${params.sceneCode} 成本 ${costFen} 分应付 ${wantCharge} 豆，` +
+          `被单次上限 ${frozenAmount} 豆截断，平台承担 ${absorbed} 豆（requestId=${params.requestId}）`,
+      )
+    }
     return prisma.$transaction(async (tx) => {
       let cr: { charged: bigint; bucket: BeanBucket | null }
       if (charged > 0n) {
@@ -102,7 +122,7 @@ export async function runBilledScene(
       }
       await tx.aiCallLog.updateMany({
         where: { merchantId: params.merchantId, sceneCode: params.sceneCode, requestId: params.requestId },
-        data: { beanCharged: cr.charged, beanBucket: cr.bucket },
+        data: { beanCharged: cr.charged, absorbedBeans: absorbed, beanBucket: cr.bucket },
       })
       await completeBusinessRequest(tx, params.merchantId, operation, params.requestId, params.requestId)
       return cr
@@ -110,6 +130,8 @@ export async function runBilledScene(
   }
 
   // 请求占用与积分预留必须原子完成，进程退出时不会留下无预留的 PENDING 请求。
+  // ★ isolationLevel 必须显式设为 READ COMMITTED：REPEATABLE READ 下并发同 requestId 时，
+  //   claimBusinessRequest 命中 P2002 后的同事务重读会因旧快照返回 null 并重抛 P2002 → 5xx。
   const claim = await prisma.$transaction(async (tx) => {
     const result = await claimBusinessRequest(tx, {
       merchantId: params.merchantId,
@@ -130,7 +152,7 @@ export async function runBilledScene(
       })
     }
     return result
-  })
+  }, { isolationLevel: 'ReadCommitted' })
 
   // 已有相同业务请求时先返回结果或报告进行中，不能再次创建冻结。
   if (!claim.created) {

@@ -39,6 +39,9 @@ export default function Recharge() {
   const [beans, setBeans] = useState<BeanPackage[]>([])
   const [plans, setPlans] = useState<MemberPlan[]>([])
   const [busy, setBusy] = useState(false)
+  // P0-7 同类：`if (busy) return` 依赖异步 state，连点两次会各自下出一笔订单。
+  // 用同步 ref 做真正的闸门。（开发环境的演示支付会自动置 PAID 并发积分，连点等于重复发积分。）
+  const busyLock = useRef(false)
   const [confirming, setConfirming] = useState(false)
   const [pendingOrderNo, setPendingOrderNo] = useState<string | null>(null)
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -89,12 +92,13 @@ export default function Recharge() {
   }, [refreshMe])
 
   const pay = async (kind: Tab, packageId: string) => {
-    if (busy) return
+    if (busyLock.current) return
     // v5：加油包仅订阅用户可买
     if (kind === 'bean' && !isMember) {
       Taro.showToast({ title: '加油包仅订阅用户可购买', icon: 'none' })
       return
     }
+    busyLock.current = true
     setBusy(true)
     try {
       const r = kind === 'bean' ? await createBeanOrder(packageId) : await createMemberOrder(packageId)
@@ -133,6 +137,7 @@ export default function Recharge() {
     } catch {
       /* 2005/3006/3007 已 toast */
     } finally {
+      busyLock.current = false
       setBusy(false)
     }
   }
@@ -187,6 +192,7 @@ export default function Recharge() {
                 <Button
                   className={`recharge__buy ${rec ? 'recharge__buy--rec' : ''}`}
                   loading={busy}
+                  disabled={busy}
                   onClick={() => pay('subscribe', p.id)}
                 >
                   {isMember ? (rec ? '立即续费' : '续费') : (rec ? '立即开通' : '开通')}
@@ -223,7 +229,7 @@ export default function Recharge() {
               <Button
                 className='recharge__buy'
                 loading={busy}
-                disabled={!isMember}
+                disabled={!isMember || busy}
                 onClick={() => pay('bean', p.id)}
               >
                 购买

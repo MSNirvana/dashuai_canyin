@@ -1,12 +1,13 @@
 // 门店路由（需鉴权）。X-Store-Id 由前端在请求头携带，用于上下文切换
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
+import { InvalidIdParamError, idParam } from '../lib/params.js'
 import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import * as storeSvc from '../services/store.service.js'
 
-const router = Router()
+const router = createRouter()
 router.use(auth)
 
 const storeInput = z.object({
@@ -44,7 +45,7 @@ router.post('/', async (req, res) => {
 })
 
 router.get('/:id', async (req, res) => {
-  const store = await storeSvc.getStore(prisma, req.merchantId!, BigInt(req.params.id))
+  const store = await storeSvc.getStore(prisma, req.merchantId!, idParam(req.params.id, 'id'))
   if (!store) return fail(res, 4044, '门店不存在', 404)
   ok(res, store)
 })
@@ -52,10 +53,11 @@ router.get('/:id', async (req, res) => {
 router.put('/:id', async (req, res) => {
   try {
     const input = storeInput.parse(req.body)
-    const store = await storeSvc.updateStore(prisma, req.merchantId!, BigInt(req.params.id), input)
+    const store = await storeSvc.updateStore(prisma, req.merchantId!, idParam(req.params.id, 'id'), input)
     if (!store) return fail(res, 4044, '门店不存在', 404)
     ok(res, store)
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof storeSvc.StoreDefaultDeleteError) fail(res, 2003, e.message, 400)
     else if (e instanceof storeSvc.StoreCoverError) fail(res, 2009, e.message, 400)
     else if (e instanceof storeSvc.StoreVideoError) fail(res, 2010, e.message, 400)
@@ -68,10 +70,11 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   try {
-    const okDel = await storeSvc.deleteStore(prisma, req.merchantId!, BigInt(req.params.id))
+    const okDel = await storeSvc.deleteStore(prisma, req.merchantId!, idParam(req.params.id, 'id'))
     if (!okDel) return fail(res, 4044, '门店不存在', 404)
     ok(res, { deleted: true })
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof storeSvc.StoreDefaultDeleteError) fail(res, 2003, e.message, 400)
     else fail(res, 400, '删除失败', 400)
   }

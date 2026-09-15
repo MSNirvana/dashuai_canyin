@@ -1,10 +1,10 @@
 // 公开系统配置：小程序端启动时拉取，用于客户端 UI/限额常量
 // 仅返回 isPublic=1 的项；分组用于前端折叠展示
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
 import { prisma } from '../db.js'
 import { ok, fail } from '../lib/result.js'
 
-const router = Router()
+const router = createRouter()
 
 router.get('/', async (_req, res) => {
   try {

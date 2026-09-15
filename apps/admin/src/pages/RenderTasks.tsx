@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Select, Tag, Progress, Button, Dialog, Input, InputNumber, message } from 'tdesign-react'
 import DataTable from '../lib/table'
+import { useListQuery } from '../lib/useListQuery'
 import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
@@ -70,29 +71,17 @@ function slaLeft(deadlineAt: string | null): string {
 export default function RenderTasksPage() {
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [grade, setGrade] = useState<string | undefined>(undefined)
-  const [data, setData] = useState<{ list: RenderRow[]; total: number } | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  // 交付弹窗
   const [deliverRow, setDeliverRow] = useState<RenderRow | null>(null)
   const [deliverForm, setDeliverForm] = useState({ resultKey: '', previewKey: '', durationSec: '' })
   // 素材弹窗
   const [materials, setMaterials] = useState<{ row: RenderRow; list: Material[] } | null>(null)
 
-  const load = async () => {
-    setLoading(true)
-    try {
-      const r = await request<{ list: RenderRow[]; total: number; page: number; pageSize: number }>({
-        url: '/render/tasks',
-        params: { status, grade, pageSize: 50 },
-      })
-      setData({ list: r.list, total: r.total })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => { void load() }, [status, grade])
+  // 分页 + 筛选竞态防护统一由 useListQuery 处理（原先 pageSize 写死、分页控件绑常量 current 点不动）
+  const { data, loading, pagination, reload: load } = useListQuery<RenderRow>({
+    url: '/render/tasks',
+    params: { status, grade },
+    pageSize: 20,
+  })
 
   const act = async (row: RenderRow, action: 'claim' | 'fail') => {
     if (action === 'fail') {
@@ -102,7 +91,7 @@ export default function RenderTasksPage() {
     try {
       await request({ url: `/render/tasks/${row.id}/${action}`, method: 'POST', data: action === 'fail' ? { reason: '后台人工标记失败' } : {} })
       message.success(action === 'claim' ? '已接单' : '已标记失败并退款')
-      void load()
+      load()
     } catch {}
   }
 
@@ -130,7 +119,7 @@ export default function RenderTasksPage() {
       })
       message.success('已交付，积分已结算')
       setDeliverRow(null)
-      void load()
+      load()
     } catch {}
   }
 
@@ -159,7 +148,7 @@ export default function RenderTasksPage() {
         rowKey="id"
         data={data?.list ?? []}
         loading={loading}
-        pagination={{ total: data?.total ?? 0, pageSize: 50, current: 1 }}
+        pagination={pagination}
         columns={[
           { colKey: 'createdAt', title: '提交时间', width: 165, render: ({ row }: any) => dayjs(row.createdAt).format('MM-DD HH:mm:ss') },
           { colKey: 'merchant', title: '商家', width: 125, render: ({ row }: any) => row.merchant?.phone ?? '—' },

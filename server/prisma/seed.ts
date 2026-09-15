@@ -606,7 +606,7 @@ async function seedShotLibrary() {
 // 配方里的 track / complexity 与 creation 的取值一一对应，「生成同款」直接拿它预填创作流。
 
 /** 镜头骨架模板：shotType / shotSize 取值与 creation/edit 的下拉选项一致 */
-const WORK_SHOT_TEMPLATES: Record<string, Array<Record<string, unknown>>> = {
+const WORK_SHOT_TEMPLATES: Record<string, Array<Record<string, string | number>>> = {
   溯源纪实: [
     { shotType: '开场', shotSize: '全景', durationSuggest: 3, visualReq: '凌晨的进货口或后厨备料，竖拍一镜到底，1 秒内喊出招牌菜' },
     { shotType: '原料', shotSize: '特写', durationSuggest: 4, visualReq: '手拿起当天原料展示纹理，背景虚化，强调「当天到货」' },

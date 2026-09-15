@@ -66,16 +66,44 @@ export default defineAppConfig({
     ],
   },
 
-  // 分包（页面补齐后开启）
-  // subpackages: [
-  //   { root: 'pages-creation', pages: ['creation/index', 'script/index', 'shoot/index'] },
-  //   { root: 'pages-render',   pages: ['render/index'] },
-  //   { root: 'pages-bean',     pages: ['bean/index'] },
-  //   { root: 'pages-member',   pages: ['member/index'] },
-  //   { root: 'pages-profile',  pages: ['store-list/index', 'store-edit/index', 'dish/index', 'persona/index'] },
+  // ── 分包（当前未启用；主包 1.68MB / 上限 2MB，余量 0.32MB）──────────────────
+  //
+  // 现状：暂不需要。但主包一旦逼近 1.9MB 就该切分包，**而不是继续压图片** ——
+  //       产物自检脚本（scripts/verify-weapp-dist.mjs）会在超过 90% 时给出预警。
+  //
+  // ★ 原注释里的配置路径全是错的（`creation/index`、`render/index`、`bean/index` …），
+  //   对应的是早期规划过但没落地的目录结构，照抄启用只会白屏。
+  //
+  // 三条硬约束（都踩过/核对过，不是推测）：
+  //   1. **分包 root 不能放在主包 pages 目录下**
+  //      —— 见 @tarojs/taro/types/taro.config.d.ts 的 SubPackage.root 注释。
+  //      所以 `root: 'pages/store'` 这种写法是无效的，必须把页面目录**搬出 pages/**
+  //      到 src 下的独立目录（下面的 packageXxx 命名）。
+  //   2. **tabBar 页面必须留在主包** → pages/home、pages/creation/list、pages/mine 三个页面
+  //      不能下放；且 pages/creation 下同时有 list（留主包）与 edit/shots（可下放），
+  //      所以 creation 只能拆一半，拆分成本高于收益，暂不拆。
+  //   3. 分包 root 之间不能互相嵌套。
+  //
+  // 因此启用分包 = **一次真实的重构**（移动文件 + 改所有 Taro.navigateTo 路径），
+  // 不是「取消注释」那么轻。届时按下面结构搬：
+  //
+  //   src/pages/            只留主包：home、creation/list、mine
+  //   src/packageStore/     root: 'packageStore'  → ['list/index','edit/index','detail/index']
+  //   src/packageDish/      root: 'packageDish'   → ['list/index','edit/index','detail/index']
+  //   src/packageRender/    root: 'packageRender' → ['compose/index']
+  //   src/packageMisc/      root: 'packageMisc'   → ['persona/index','work/detail/index','recharge/index']
+  //
+  // 对应配置（Taro 字段名是 subPackages，不是 weapp 原生的小写 subpackages；两者都接受但以 Taro 为准）：
+  //
+  // subPackages: [
+  //   { root: 'packageStore',  pages: ['list/index', 'edit/index', 'detail/index'] },
+  //   { root: 'packageDish',   pages: ['list/index', 'edit/index', 'detail/index'] },
+  //   { root: 'packageRender', pages: ['compose/index'] },
+  //   { root: 'packageMisc',   pages: ['persona/index', 'work/detail/index', 'recharge/index'] },
   // ],
   // preloadRule: {
-  //   'pages/home/index': { network: 'all', packages: ['pages-creation'] },
+  //   // 首页进入时预下载体量最大的一组，避免点进去才加载
+  //   'pages/home/index': { network: 'all', packages: ['packageStore'] },
   // },
 
   style: 'v2',

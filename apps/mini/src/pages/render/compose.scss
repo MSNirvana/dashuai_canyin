@@ -145,6 +145,21 @@
       border-color: var(--td-brand-color);
       background: var(--td-brand-color-soft);
     }
+
+    // P0-5：服务端告知该档位当前不可用（例如外部剪辑通道未配置）→ 标灰且不可选
+    &--off {
+      border-style: dashed;
+      background: var(--td-bg-color-secondary);
+      opacity: 0.72;
+    }
+  }
+  &__grade--off &__gradetitle,
+  &__grade--off &__gradedesc {
+    color: var(--td-text-color-disabled);
+  }
+  &__grade--off &__graderatio {
+    color: var(--td-text-color-placeholder);
+    font-weight: 600;
   }
   &__gradetitle {
     font-size: 28rpx;

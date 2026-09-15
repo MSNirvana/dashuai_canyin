@@ -1,13 +1,14 @@
 // 镜头库公开列表：分镜头拍摄时给前端选/查看用，仅返回启用项
 // 后台 CRUD 见 admin 路由（/admin/api/v1/shot-library）
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
+import { InvalidIdParamError, idParam } from '../lib/params.js'
 import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import * as mediaSvc from '../services/media.service.js'
 
-const router = Router()
+const router = createRouter()
 router.use(auth)
 
 router.get('/', async (req, res) => {
@@ -38,7 +39,7 @@ router.get('/', async (req, res) => {
 router.get('/:id/demo-play-url', async (req, res) => {
   try {
     const lib = await prisma.shotLibrary.findUnique({
-      where: { id: BigInt(req.params.id) },
+      where: { id: idParam(req.params.id, 'id') },
       select: { demoVideoKey: true, enabled: true },
     })
     if (!lib || !lib.enabled || !lib.demoVideoKey) return fail(res, 4048, '示范视频不存在', 404)
@@ -47,7 +48,8 @@ router.get('/:id/demo-play-url', async (req, res) => {
       `${req.protocol}://${req.get('host')}/api/v1/media`,
     )
     ok(res, r)
-  } catch {
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     return fail(res, 500, '获取示范视频失败', 500)
   }
 })

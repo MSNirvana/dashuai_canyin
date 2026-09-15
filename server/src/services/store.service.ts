@@ -51,7 +51,8 @@ export async function listStores(prisma: PrismaClient, merchantId: bigint) {
       videoKey: true,
       isDefault: true,
       createdAt: true,
-      _count: { select: { dishes: true } },
+      // 软删的菜品不该计入：Dish.deletedAt 非空即已删除，不过滤会多算
+      _count: { select: { dishes: { where: { deletedAt: null } } } },
     },
   })
 }
@@ -59,6 +60,12 @@ export async function listStores(prisma: PrismaClient, merchantId: bigint) {
 export async function getStore(prisma: PrismaClient, merchantId: bigint, storeId: bigint) {
   return prisma.store.findFirst({
     where: { id: storeId, merchantId, deletedAt: null },
+    // 门店详情页要展示「菜品 N 道」。原实现没有返回 _count，
+    // 而小程序端写的是 `detail._count?.dishes ?? 0` → 该行永远显示 0 道。
+    // 列表接口 listStores 一直是有 _count 的，只有详情漏了。
+    include: {
+      _count: { select: { dishes: { where: { deletedAt: null } } } },
+    },
   })
 }
 

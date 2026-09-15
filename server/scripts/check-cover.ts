@@ -5,7 +5,7 @@
  * 用法：cd server && npx tsx scripts/check-cover.ts <videoKey>
  * 例：  npx tsx scripts/check-cover.ts renders/1/21.mp4
  *
- * 注意：必须最先 `import '../src/env.js'` 加载 .env，否则读不到 COS_*/STORAGE_MODE，
+ * 注意：必须最先 `import '../src/env.js'` 加载 .env，否则读不到 COS_ 前缀变量与 STORAGE_MODE，
  * storageMode 会误判成 local（默认值），诊断结论会完全跑偏。
  */
 import '../src/env.js'

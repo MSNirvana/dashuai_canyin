@@ -35,17 +35,33 @@ async function ensureDefaultStore(prisma: PrismaClient, merchantId: bigint): Pro
   })
 }
 
-/** 新用户发注册赠豆（一次性） */
+/** 新用户发注册赠豆（一次性）。
+ *
+ * ★ 两个要点：
+ *  1. 走 `source: 'REGISTER'` → 进**注册赠豆桶**，永久有效，不随会员到期被清零。
+ *     以前它和会员赠豆同进一个池子，会员到期时会被一起清掉。
+ *  2. 发放与 `registerGrantGranted` 标记放进**同一个事务**。原实现是先发豆、再更新标记，
+ *     两步之间进程挂掉就会在下次登录重复发放（30 豆虽小，但重复发就是账不平）。
+ *     带上 bizId 后 `grant()` 自身也按 (bizType, requestId, GRANT) 幂等，双保险。
+ */
 async function grantRegisterBeanIfNeeded(prisma: PrismaClient, merchantId: bigint): Promise<void> {
   const m = await prisma.merchant.findUnique({ where: { id: merchantId } })
   if (!m || m.registerGrantGranted) return
   const amount = BigInt(await getNumber(prisma, 'bean', 'register_grant_points', 30))
-  if (amount > 0n) {
-    await prisma.$transaction((tx) => bean.grant(tx, { merchantId, amount, remark: '注册赠豆' }))
-  }
-  await prisma.merchant.update({
-    where: { id: merchantId },
-    data: { registerGrantGranted: true, lastLoginAt: new Date() },
+  await prisma.$transaction(async (tx) => {
+    if (amount > 0n) {
+      await bean.grant(tx, {
+        merchantId,
+        amount,
+        source: 'REGISTER',
+        bizId: merchantId.toString(),
+        remark: '注册赠豆',
+      })
+    }
+    await tx.merchant.update({
+      where: { id: merchantId },
+      data: { registerGrantGranted: true, lastLoginAt: new Date() },
+    })
   })
 }
 

@@ -273,10 +273,21 @@ export class ChatCutToolMappingError extends Error {
   }
 }
 
+/**
+ * 外部剪辑通道是否可用。
+ *
+ * 必须同时满足「有凭证」「提交工具」「查询工具」三项 —— 原来只查了提交工具，
+ * 于是「配了提交、没配查询」的半配置状态会被判为可用：
+ * 提交成功 → 任务进 RUNNING → 每轮轮询都抛 ChatCutToolMappingError → 任务卡到 30 分钟后才被 sweeper 退款。
+ * 真正正确的做法是从一开始就认为「不可用」，让上层直接走本地管线 / 明确告知用户。
+ */
 export function chatCutConfigured(): boolean {
+  // 注意：这里必须读原始环境变量，不能调 submitTool() —— 它缺配置时抛错，
+  // 会让「是否可用」判断变成抛异常，调用方（例如 /system/settings 探测）会 500。
   return Boolean(
     (envAccessToken() || process.env.CHATCUT_OAUTH_REFRESH_TOKEN?.trim()) &&
-      process.env.CHATCUT_MCP_SUBMIT_TOOL?.trim(),
+      process.env.CHATCUT_MCP_SUBMIT_TOOL?.trim() &&
+      process.env.CHATCUT_MCP_STATUS_TOOL?.trim(),
   )
 }
 

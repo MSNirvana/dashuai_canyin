@@ -1,12 +1,13 @@
 // 素材播放路由：返回私有桶临时签名 URL（有效期 1 小时），供小程序 <video> 播放
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
+import { InvalidIdParamError, idParam } from '../lib/params.js'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import * as mediaSvc from '../services/media.service.js'
 import { contentTypeForKey, isLocalStorage, localPathForKey, verifyLocalMediaToken } from '../lib/local-storage.js'
 
-const router = Router()
+const router = createRouter()
 
 // 本地开发播放：URL 自带短期 HMAC 令牌，供小程序 video/downloadFile 直接访问。
 // 放在 auth 之前，避免小程序二次请求视频时还要附带 Bearer 头。
@@ -33,11 +34,12 @@ router.get('/:assetId/play-url', async (req, res) => {
     const r = await mediaSvc.getPlayUrl(
       prisma,
       req.merchantId!,
-      BigInt(req.params.assetId),
+      idParam(req.params.assetId, 'assetId'),
       `${req.protocol}://${req.get('host')}${req.baseUrl}`,
     )
     ok(res, r)
   } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof mediaSvc.MediaNotFoundError) return fail(res, 3002, '素材不存在或未就绪', 404)
     console.error('[media] 按 assetId 获取播放地址失败:', e)
     return fail(res, 500, '获取播放地址失败', 500)

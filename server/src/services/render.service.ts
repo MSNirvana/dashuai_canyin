@@ -11,9 +11,10 @@ import type { PrismaClient, Prisma } from '@prisma/client'
 import { freeze, consume, unfreeze, availableOf, type Db } from '../bean/bean.service.js'
 import { getCreation, CreationNotFoundError } from './creation.service.js'
 import { requireSubscription } from './subscription.service.js'
-import { getNumber } from '../lib/settings.js'
+import { getNumber, getDecimal } from '../lib/settings.js'
+import { decFromNumber, decFromString, decMulCeil } from '../lib/decimal.js'
 import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } from '../domain/request.js'
-import { ChatCutOptionsSchema, DEFAULT_CHATCUT_OPTIONS, type ChatCutOptions } from '../render/chatcut.js'
+import { ChatCutOptionsSchema, DEFAULT_CHATCUT_OPTIONS, chatCutConfigured, type ChatCutOptions } from '../render/chatcut.js'
 
 // 计费点数（后台可配置化见 docs/05，此处为默认值）
 export const RENDER_BEAN_FULL = 30n
@@ -51,6 +52,24 @@ export class RenderDurationUnknownError extends Error {
   constructor() {
     super('素材缺少时长信息，无法计价，请重新上传素材')
     this.name = 'RenderDurationUnknownError'
+  }
+}
+
+/**
+ * 档位当前不可用（提交前拦截，不冻结不扣费）。
+ *
+ * 为什么要在提交前拦：AI 档依赖外部剪辑通道 ChatCut。通道没配好时，
+ * 旧行为是「照常冻结 1.5 倍费用 → worker 抛错 → 再全额退款」。
+ * 用户看到的是「提交成功 → 等半天 → 失败」，账上资金还被锁一会儿；
+ * 对平台则是白跑一轮调度。正确做法是提交时就说清楚，一个字都不扣。
+ */
+export class RenderGradeUnavailableError extends Error {
+  constructor(
+    readonly grade: string,
+    reason: string,
+  ) {
+    super(reason)
+    this.name = 'RenderGradeUnavailableError'
   }
 }
 
@@ -267,6 +286,16 @@ export async function submitRender(
   const aiMode = grade !== 'BASIC' // BASIC 纯粗剪；AI/PREMIUM 含配音字幕管线（PREMIUM 由人工执行）
   const chatcut = ChatCutOptionsSchema.parse({ ...DEFAULT_CHATCUT_OPTIONS, ...(input.chatcut ?? {}) })
 
+  // ★ 提交前档位可用性校验（在 freeze 之前）：
+  //   AI 档的 worker 分支是「p.aiMode && !chatCutConfigured() → 直接抛错」，
+  //   即通道没配好时 AI 档 100% 失败。旧行为会先冻结 1.5 倍费用再退款，用户白等一轮。
+  if (grade === 'AI' && !chatCutConfigured()) {
+    throw new RenderGradeUnavailableError(
+      grade,
+      'AI 智能档暂不可用（外部剪辑通道未配置完整），请先使用基础档',
+    )
+  }
+
   // 计费时长 = 各分镜有效时长之和；任一分镜时长未知则拒绝（无法正确计价会少扣豆）
   let totalMs = 0
   for (const cl of clips) {
@@ -278,18 +307,29 @@ export async function submitRender(
   const requestPayload = { creationId: creationId.toString(), mode, color, grade, aiMode, clips, chatcut }
   // 创建任务 + 并发拦截 + 业务请求占用 + freeze 放在同一事务并对创作行加锁：
   // 防止两个并发请求同时通过「无进行中任务」检查、创建出两个任务双重扣豆
-  const pointPerSec = await getNumber(prisma, 'render', 'point_per_sec', 1)
-  // 档位系数（后台 render.grade_ratio_basic/ai/premium 可配）
-  const gradeRatio = await getNumber(prisma, 'render', `grade_ratio_${grade.toLowerCase()}`, GRADE_RATIO_DEFAULT[grade])
+  // 计价系数一律用精确十进制读取（getDecimal 解析库里原始字符串，不经 Number()）
+  const pointPerSec = await getDecimal(prisma, 'render', 'point_per_sec', 1)
+  // 档位系数（后台 render.grade_ratio_basic/ai/premium 可配）—— 默认值 1 / 1.5 / 3 本身就是小数
+  const gradeRatio = await getDecimal(prisma, 'render', `grade_ratio_${grade.toLowerCase()}`, GRADE_RATIO_DEFAULT[grade])
   // RECOLOR 复用归一化缓存（省掉源解码+缩放），按折扣系数计价，默认 5 折（后台 render.recolor_ratio 可配）
-  const recolorRatio = mode === 'RECOLOR' ? await getNumber(prisma, 'render', 'recolor_ratio', 0.5) : 1
-  const totalSec = totalMs / 1000
-  const amount = BigInt(Math.max(1, Math.ceil(totalSec * pointPerSec * gradeRatio * recolorRatio)))
+  const recolorRatio = mode === 'RECOLOR'
+    ? await getDecimal(prisma, 'render', 'recolor_ratio', 0.5)
+    : decFromString('1')!
+  // 原实现 `Math.max(1, Math.ceil(totalSec * pointPerSec * gradeRatio * recolorRatio))` 有浮点误差：
+  // totalSec = totalMs/1000 本身多数情况下不是精确二进制小数，再连乘 1.5 / 0.5 会放大误差。
+  // 改成：amount = ceil(totalMs × pointPerSec × gradeRatio × recolorRatio / 1000)，全程整数，最低收 1 豆。
+  const amountRaw = decMulCeil([decFromNumber(totalMs)!, pointPerSec, gradeRatio, recolorRatio], 1000n)
+  const amount = amountRaw < 1n ? 1n : amountRaw
 
   // PREMIUM：SLA 截止时间（超时由 sweeper 自动退款）
   const premiumSlaHours = grade === 'PREMIUM' ? await getNumber(prisma, 'render', 'premium_sla_hours', 48) : 0
   const deadlineAt = grade === 'PREMIUM' ? new Date(Date.now() + premiumSlaHours * 3600_000) : null
 
+  // ★ 事务隔离级别必须是 READ COMMITTED（不能用 MySQL 默认的 REPEATABLE READ）：
+  //   并发同 requestId 时，赢家的事务在我们读完之后才提交。REPEATABLE READ 下本事务的
+  //   一致读全部沿用旧快照 —— claimBusinessRequest 的 P2002 重读、以及下面按 requestId
+  //   找 prior 任务的 findFirst 都会返回 null，结果是「数据正确但 7/8 个请求报错」。
+  //   实测：REPEATABLE READ → 1×200 + 7×500「提交合成失败」；READ COMMITTED → 全部拿到同一任务。
   const txResult = await prisma.$transaction(async (tx: Db) => {
     const claim = await claimBusinessRequest(tx, {
       merchantId,
@@ -350,7 +390,7 @@ export async function submitRender(
       data: { resourceId: task.id, resultRef: task.id.toString() },
     })
     return { task: updated, duplicated: false }
-  })
+  }, { isolationLevel: 'ReadCommitted' })
   const task = txResult.task
   // 演示环境保留同步完成；任务创建与预留已原子完成，结算再以终态 CAS 收口。
   if (!txResult.duplicated && simulateWorkerEnabled() === false && grade !== 'PREMIUM') {
@@ -474,7 +514,14 @@ export async function failRender(
         status: 'SETTLEMENT_PENDING',
         errorCode: 'REFUND_PENDING',
         errorMsg: `积分释放失败：${(e as Error).message}`.slice(0, 500),
+        // 记录「本次进入待结算」的时刻。补偿调度用它做两件事：
+        //   ① 判断是否已过 grace（给原事务一点自愈时间）；
+        //   ② 作为重试退避锚点 —— 每次补偿失败都会刷新它，所以重试间隔≈grace，不会每轮猛敲。
+        // 注意：RenderTask 没有 updatedAt，所以只能借用 finishAt。
+        finishAt: new Date(),
       },
+      // 不要在这里重置 retryCount：补偿次数由 sweepSettlementPending 独占管理，
+      // 在这里清零会把「已重试 N 次」抹掉，导致 5 次上限永远不触发、无限重试。
     })
     return 'SETTLEMENT_PENDING'
   }
@@ -488,4 +535,112 @@ export async function getAvailable(prisma: PrismaClient, merchantId: bigint) {
     update: {},
   })
   return availableOf(acc)
+}
+
+// ──────────────────────── SETTLEMENT_PENDING 补偿 ────────────────────────
+//
+// 问题：failRender 的 unfreeze 抛错时，任务落到 SETTLEMENT_PENDING（前端显示「退款确认中」），
+// 但**没有任何出口** —— 原 stuck-sweeper 只扫 RUNNING / QUEUED，所以预留额度被永久占用，
+// 用户账上的冻结豆永远解不开。
+//
+// 补偿方向的选择（重要）：
+//   docs/审计-架构与业务逻辑.md 写了 SETTLEMENT_PENDING → SUCCESS/FAILED 两条路。
+//   本实现只走 **→ FAILED（释放）**，不去「确认交付」。理由：
+//   SETTLEMENT_PENDING 是「账务写入失败」留下的态，通常发生在 RUNNING/MANUAL_DOING 阶段；
+//   此态下我们没有可靠的方式确认成片真的存在且可用（要校验就得下载/探测远端对象），
+//   而猜错的代价不对等：错判 FAILED 只是少收一次钱（用户白拿），
+//   错判 SUCCESS 是收了钱给了坏文件（用户投诉 + 退款）。宁可把钱退回去。
+
+/** 单次补偿尝试的上限；超过则不再自动重试，只告警等人工介入 */
+const SETTLE_MAX_ATTEMPTS = 5
+/** 只有停留超过这个时长的 SETTLEMENT_PENDING 才值得补偿（给原事务一点自愈时间） */
+const SETTLE_GRACE_MS = Math.max(60_000, Number(process.env.RENDER_SETTLE_GRACE_MS ?? 300_000))
+
+export interface SettlementCompensationResult {
+  scanned: number
+  recovered: number
+  stillPending: number
+  gaveUp: number
+}
+
+/**
+ * 补偿一次指定任务。返回 'RECOVERED'（已成功释放并转 FAILED）
+ * 或 'PENDING'（仍失败，留在待补偿态）/ 'SKIPPED'（状态已不是待补偿）。
+ */
+export async function compensateSettlementPending(
+  prisma: PrismaClient,
+  taskId: bigint,
+): Promise<'RECOVERED' | 'PENDING' | 'SKIPPED'> {
+  const task = await prisma.renderTask.findUnique({ where: { id: taskId } })
+  if (!task || task.status !== 'SETTLEMENT_PENDING') return 'SKIPPED'
+
+  // 直接复用 failRender：它的事务里会重新尝试 unfreeze，
+  // 且 unfreeze 自身按 (requestId, UNFREEZE) 幂等，重复调用不会重复释放。
+  const state = await failRender(prisma, taskId, 'REFUND_RECOVERED', '退款补偿成功：预留积分已释放')
+  return state === 'FAILED' || state === 'SUCCESS' ? 'RECOVERED' : 'PENDING'
+}
+
+/**
+ * 扫描并补偿所有卡在 SETTLEMENT_PENDING 的任务。由 stuck-sweeper 每轮调用。
+ * 用 `retryCount` 计次（该列在 schema 中存在但全项目原本零使用），有上限地重试，
+ * 避免某条数据因账务不一致而无限重试刷日志。
+ */
+export async function sweepSettlementPending(
+  prisma: PrismaClient,
+  now = new Date(),
+): Promise<SettlementCompensationResult> {
+  const deadline = new Date(now.getTime() - SETTLE_GRACE_MS)
+  const candidates = await prisma.renderTask.findMany({
+    where: {
+      status: 'SETTLEMENT_PENDING',
+      // 进入待结算的时刻（failRender 兜底分支写入）；历史数据可能没有，用 createdAt 兜底
+      OR: [{ finishAt: { lt: deadline } }, { finishAt: null, createdAt: { lt: deadline } }],
+      retryCount: { lt: SETTLE_MAX_ATTEMPTS },
+    },
+    select: { id: true, errorMsg: true, merchantId: true, beanCharged: true, retryCount: true },
+    orderBy: { finishAt: 'asc' },
+    take: 50,
+  })
+
+  // 已达上限的单独统计（不参与重试，只在首次越线时告警）
+  const exhausted = await prisma.renderTask.count({
+    where: { status: 'SETTLEMENT_PENDING', retryCount: { gte: SETTLE_MAX_ATTEMPTS } },
+  })
+
+  const result: SettlementCompensationResult = {
+    scanned: candidates.length,
+    recovered: 0,
+    stillPending: 0,
+    gaveUp: exhausted,
+  }
+
+  for (const task of candidates) {
+    try {
+      const state = await compensateSettlementPending(prisma, task.id)
+      if (state === 'RECOVERED') {
+        result.recovered += 1
+        console.log(`[settle-compensate] 任务 ${task.id} 补偿成功，已释放冻结 ${task.beanCharged} 豆`)
+        continue
+      }
+      // 仍失败：计一次并保留给下一轮
+      result.stillPending += 1
+      const next = task.retryCount + 1
+      await prisma.renderTask.updateMany({
+        where: { id: task.id, status: 'SETTLEMENT_PENDING' },
+        data: { retryCount: next },
+      })
+      if (next >= SETTLE_MAX_ATTEMPTS) {
+        console.error(
+          `[settle-compensate] ★ 任务 ${task.id}（商户 ${task.merchantId}，冻结 ${task.beanCharged} 豆）` +
+            `连续 ${next} 次补偿失败，已停止自动重试，需要人工对账。原因：${task.errorMsg ?? '-'}`,
+        )
+      } else {
+        console.warn(`[settle-compensate] 任务 ${task.id} 第 ${next} 次补偿失败，将重试`)
+      }
+    } catch (e) {
+      result.stillPending += 1
+      console.error(`[settle-compensate] 任务 ${task.id} 补偿异常:`, (e as Error).message)
+    }
+  }
+  return result
 }

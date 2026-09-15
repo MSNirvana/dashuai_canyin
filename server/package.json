@@ -15,7 +15,17 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "typecheck:all": "tsc -p tsconfig.typecheck.json",
+    "pricing:verify": "tsx scripts/verify-pricing.ts",
+    "grant-expiry:run": "tsx scripts/run-grant-expiry.ts",
+    "frozen:reconcile": "tsx scripts/reconcile-frozen.ts",
+    "payments:verify": "tsx scripts/verify-payments-switch.ts",
+    "request-idempotency:verify": "tsx scripts/verify-request-idempotency.ts",
+    "bean-bucket:verify": "tsx scripts/verify-consume-bucket-split.ts",
+    "grant-buckets:verify": "tsx scripts/verify-grant-buckets.ts",
+    "ai-subsidy:report": "tsx scripts/report-ai-subsidy.ts",
+    "storage:gc": "tsx scripts/gc-orphan-objects.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

@@ -3,6 +3,7 @@
 import type { PrismaClient } from '@prisma/client'
 import COS from 'cos-nodejs-sdk-v5'
 import { createLocalMediaToken, isLocalStorage } from '../lib/local-storage.js'
+import { assertSafeObjectKey } from '../lib/object-key.js'
 
 export class MediaNotFoundError extends Error {
   constructor() {
@@ -52,6 +53,8 @@ export async function getPlayUrl(
 
 /** 按 key 签播放地址（用于合成产物等无 media_asset 行的文件），须落在当前商家前缀下 */
 export async function getPlayUrlByKey(merchantId: bigint, key: string, baseUrl?: string): Promise<PlayUrl> {
+  // 先校验键本身，再校验前缀：只做前缀匹配会被 `uploads/1/../../2/x` 这类键绕过
+  assertSafeObjectKey(key, 'key')
   if (!key.startsWith(`uploads/${merchantId}/`) && !key.startsWith(`renders/${merchantId}/`)) {
     throw new MediaKeyPrefixError()
   }

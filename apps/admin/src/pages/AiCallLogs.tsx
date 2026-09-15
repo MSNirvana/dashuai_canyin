@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Select, Tag, Input } from 'tdesign-react'
 import DataTable from '../lib/table'
-import { request } from '../lib/http'
+import { useListQuery } from '../lib/useListQuery'
 import dayjs from 'dayjs'
 
 interface CallLog {
@@ -14,6 +14,8 @@ interface CallLog {
   totalTokens: number
   costFen: number
   beanCharged: string
+  /** 被场景单次上限截断、由平台承担的豆数（>0 说明上限在贴钱） */
+  absorbedBeans: string
   latencyMs: number
   errorMsg: string | null
   createdAt: string
@@ -25,22 +27,12 @@ interface CallLog {
 export default function AiCallLogsPage() {
   const [status, setStatus] = useState<string | undefined>(undefined)
   const [scene, setScene] = useState<string | undefined>(undefined)
-  const [data, setData] = useState<{ list: CallLog[]; total: number } | null>(null)
-  const [loading, setLoading] = useState(false)
-
-  const load = async () => {
-    setLoading(true)
-    try {
-      const r = await request<{ list: CallLog[]; total: number; page: number; pageSize: number }>({
-        url: '/ai/call-logs',
-        params: { status, sceneCode: scene, pageSize: 50 },
-      })
-      setData({ list: r.list, total: r.total })
-    } finally {
-      setLoading(false)
-    }
-  }
-  useEffect(() => { void load() }, [status, scene])
+  // 分页 + 筛选竞态防护：原先只请求第 1 页、pageSize 写死 50，且没有分页控件
+  const { data, loading, pagination } = useListQuery<CallLog>({
+    url: '/ai/call-logs',
+    params: { status, sceneCode: scene },
+    pageSize: 20,
+  })
 
   return (
     <div>
@@ -63,6 +55,7 @@ export default function AiCallLogsPage() {
         rowKey="id"
         data={data?.list ?? []}
         loading={loading}
+        pagination={pagination}
         columns={[
           { colKey: 'createdAt', title: '时间', width: 170, render: ({ row }: any) => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss') },
           { colKey: 'merchant', title: '商家', width: 130, render: ({ row }: any) => row.merchant?.phone ?? '—' },
@@ -78,6 +71,12 @@ export default function AiCallLogsPage() {
           { colKey: 'tokens', title: 'tokens(in/out)', width: 140, render: ({ row }: any) => `${row.promptTokens}/${row.completionTokens}` },
           { colKey: 'costFen', title: '成本(分)', width: 100 },
           { colKey: 'beanCharged', title: '扣豆', width: 90 },
+          { colKey: 'absorbedBeans', title: '平台补贴', width: 110,
+            render: ({ row }: any) => {
+              const n = Number(row.absorbedBeans ?? 0)
+              return n > 0 ? <Tag theme="warning">贴 {n} 豆</Tag> : <span style={{ color: '#999' }}>—</span>
+            },
+          },
           { colKey: 'latencyMs', title: '延迟(ms)', width: 100 },
           { colKey: 'errorMsg', title: '错误', render: ({ row }: any) => row.errorMsg ?? '—' },
         ]}

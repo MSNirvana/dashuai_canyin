@@ -75,6 +75,13 @@ export default function CreationEdit() {
   const [title, setTitle] = useState('')
   const [copyLoading, setCopyLoading] = useState(false)
   const [boardLoading, setBoardLoading] = useState(false)
+  // P0-7 再入锁：state 更新是异步的，而且 tdesign 组件的 loading 要经 native setData 下发，
+  // 快速连点时有真实窗口两次点击都看到 loading=false。两次调用会各自 newRequestId()，
+  // 服务端幂等是按 requestId 建的 → 幂等失效 → 两次 AI 调用 + 两笔扣豆。
+  // 所以闸门必须是**同步**的 ref：先置位再发请求，不与渲染节奏赛跑。
+  const copyLockRef = useRef(false)
+  const boardLockRef = useRef(false)
+  const createLockRef = useRef(false)
   const [creating, setCreating] = useState(false)
   // ── 同款配方（来自优秀作品） ──
   const [workRecipe, setWorkRecipe] = useState<WorkRecipe | null>(null)
@@ -201,7 +208,8 @@ export default function CreationEdit() {
       Taro.showToast({ title: '请选择门店', icon: 'none' })
       return
     }
-    if (creating) return
+    if (createLockRef.current) return // P0-7 同类：下方 runAuto 会连带生成文案+分镜（扣豆），连点会重复创建并双扣
+    createLockRef.current = true
     setCreating(true)
     try {
       const c = await createCreation({
@@ -222,6 +230,7 @@ export default function CreationEdit() {
     } catch {
       /* 错误已在 request 层 toast */
     } finally {
+      createLockRef.current = false
       setCreating(false)
     }
   }
@@ -241,6 +250,8 @@ export default function CreationEdit() {
   /** 生成 / 重新生成文案 */
   const onGenCopy = async () => {
     if (!localId) return
+    if (copyLockRef.current) return // 连点防护（同步闸门，先于 setState 生效）
+    copyLockRef.current = true
     setCopyLoading(true)
     try {
       const r = await generateCopy(localId, newRequestId(), track)
@@ -250,6 +261,7 @@ export default function CreationEdit() {
     } catch {
       /* 2001 / 2005 已 toast */
     } finally {
+      copyLockRef.current = false
       setCopyLoading(false)
     }
   }
@@ -284,6 +296,8 @@ export default function CreationEdit() {
   /** 生成 / 重新生成分镜 */
   const onGenBoard = async () => {
     if (!localId) return
+    if (boardLockRef.current) return // 连点防护（同步闸门，见 copyLockRef 说明）
+    boardLockRef.current = true
     setBoardLoading(true)
     try {
       const r = await generateStoryboard(localId, newRequestId(), complexity)
@@ -300,6 +314,7 @@ export default function CreationEdit() {
     } catch {
       /* 错误已 toast */
     } finally {
+      boardLockRef.current = false
       setBoardLoading(false)
     }
   }
@@ -523,7 +538,13 @@ export default function CreationEdit() {
               <Button className='cedit__act cedit__act--ghost' size='mini' onClick={onEditCopy}>
                 编辑
               </Button>
-              <Button className='cedit__act cedit__act--main' size='mini' loading={copyLoading} onClick={onGenCopy}>
+              <Button
+                className='cedit__act cedit__act--main'
+                size='mini'
+                loading={copyLoading}
+                disabled={copyLoading}
+                onClick={onGenCopy}
+              >
                 重新生成
               </Button>
             </View>
@@ -532,7 +553,13 @@ export default function CreationEdit() {
           <>
             <View className='cedit__empty'>选好款式后点击下方按钮生成文案</View>
             <View className='cedit__acts'>
-              <Button className='cedit__act cedit__act--main' size='mini' loading={copyLoading} onClick={onGenCopy}>
+              <Button
+                className='cedit__act cedit__act--main'
+                size='mini'
+                loading={copyLoading}
+                disabled={copyLoading}
+                onClick={onGenCopy}
+              >
                 生成文案
               </Button>
             </View>
@@ -555,7 +582,13 @@ export default function CreationEdit() {
         <Text className='cedit__desc'>{COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.desc}</Text>
 
         <View className='cedit__genbox'>
-          <Button className='cedit__act cedit__act--main' size='mini' loading={boardLoading} onClick={onGenBoard}>
+          <Button
+            className='cedit__act cedit__act--main'
+            size='mini'
+            loading={boardLoading}
+            disabled={boardLoading}
+            onClick={onGenBoard}
+          >
             {detail.shots.length > 0 ? '重新生成' : '生成分镜'}
           </Button>
           {detail.shots.length > 0 && (

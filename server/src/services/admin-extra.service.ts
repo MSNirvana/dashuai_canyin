@@ -152,7 +152,16 @@ export async function listMerchants(
           take: 1,
           include: { package: { select: { name: true, code: true } } },
         },
-        _count: { select: { stores: true, creations: true, orders: true } },
+        // 软删的实体不该计入统计：Store / Creation / Dish 都有 deletedAt，
+        // 不过滤会让后台看到的「门店数/创作数」比实际多（用户已删的还在数）。
+        // Order / RenderTask / Shot 没有软删字段，无需过滤。
+        _count: {
+          select: {
+            stores: { where: { deletedAt: null } },
+            creations: { where: { deletedAt: null } },
+            orders: true,
+          },
+        },
       },
     }),
     prisma.merchant.count({ where }),
@@ -173,7 +182,13 @@ export async function getMerchantDetail(prisma: PrismaClient, merchantId: bigint
         take: 10,
         include: { package: { select: { name: true } } },
       },
-      _count: { select: { stores: true, creations: true, renderTasks: true } },
+      _count: {
+        select: {
+          stores: { where: { deletedAt: null } },
+          creations: { where: { deletedAt: null } },
+          renderTasks: true,
+        },
+      },
     },
   })
   if (!m) throw new AdminNotFoundError('商家')

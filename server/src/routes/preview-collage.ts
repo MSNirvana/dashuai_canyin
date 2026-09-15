@@ -2,7 +2,8 @@
 // 不扣豆、不写 render_task；返回每个分镜的"首帧可访问 URL"，前端按 N 列网格渲染
 // 真实环境的"拼图合成"（ffmpeg tile 多帧图像为一张大图）属于进阶能力，
 // 当前实现：返回结构化清单，由前端组件按列布局组装展示，已满足"提交合成前先看一眼"诉求
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
+import { InvalidIdParamError, idParam } from '../lib/params.js'
 import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
@@ -10,7 +11,7 @@ import { ok, fail } from '../lib/result.js'
 import * as mediaSvc from '../services/media.service.js'
 import { getCreation, CreationNotFoundError } from '../services/creation.service.js'
 
-const router = Router()
+const router = createRouter()
 router.use(auth)
 
 const input = z.object({ creationId: z.string().min(1) })
@@ -35,7 +36,7 @@ interface PreviewCollageView {
 router.post('/preview-collage', async (req, res) => {
   try {
     const { creationId } = input.parse(req.body)
-    const c = await getCreation(prisma, req.merchantId!, BigInt(creationId))
+    const c = await getCreation(prisma, req.merchantId!, idParam(creationId, 'creationId'))
     const shots = await prisma.shot.findMany({
       where: { creationId: c.id },
       orderBy: { seq: 'asc' },
@@ -86,7 +87,9 @@ router.post('/preview-collage', async (req, res) => {
     ok(res, view)
   } catch (e) {
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
+    console.error('[preview-collage] 预览失败:', e)
     return fail(res, 500, '预览失败', 500)
   }
 })

@@ -3,7 +3,7 @@ import { View, Text, Button, Slider, Video, Image, Switch, Textarea } from '@tar
 import Taro, { useDidShow, useDidHide } from '@tarojs/taro'
 import { getCreation, type CreationDetail } from '../../services/creation'
 import {
-  submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl,
+  submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl, getGradeCapabilities,
   type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions, CHATCUT_VOICES,
 } from '../../services/render'
 import { useMerchantStore } from '../../store/merchant'
@@ -56,6 +56,8 @@ export default function RenderCompose() {
   const [pollError, setPollError] = useState('')
   const [pollRetry, setPollRetry] = useState(0)
   const [refreshingHistory, setRefreshingHistory] = useState(false)
+  // P0-5：不可用档位 → 原因文案。空对象表示「都可用」（含能力接口拉取失败时的保守放行）
+  const [gradeIssues, setGradeIssues] = useState<Partial<Record<RenderGrade, string>>>({})
   const submitLock = useRef(false)
   const previewVersion = useRef(0)
   const loadVersion = useRef(0)
@@ -97,9 +99,28 @@ export default function RenderCompose() {
     }
   }, [id, showResult])
 
+  /**
+   * P0-5 档位能力：服务端环境决定 AI 档能不能用（依赖外部剪辑通道配置）。
+   * 拉取失败时**保守放行**（不标灰），因为服务端在 freeze 之前还会再硬拒一次（4013），
+   * 客户端标灰只是体验优化，不能因为一次网络抖动把档位全锁死。
+   */
+  const loadCapabilities = useCallback(async () => {
+    try {
+      const r = await getGradeCapabilities()
+      const issues: Partial<Record<RenderGrade, string>> = {}
+      for (const g of r.grades) if (!g.available) issues[g.key] = g.reason || '该档位暂不可用'
+      setGradeIssues(issues)
+      // 当前选中的档位如果已不可用，回退到 BASIC，避免用户点了提交才发现
+      setGrade((cur) => (issues[cur] ? 'BASIC' : cur))
+    } catch {
+      setGradeIssues({})
+    }
+  }, [])
+
   useDidShow(() => {
     setVisible(true)
     void load()
+    void loadCapabilities()
     void refreshMe().catch(() => setLoadError('账户刷新失败，请重试'))
   })
   useDidHide(() => {
@@ -118,6 +139,11 @@ export default function RenderCompose() {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     let failures = 0
+    // 轮询必须封顶：服务端 sweeper 正常时任务 30 分钟内一定收敛，但如果 sweeper 挂了 /
+    // 任务卡在 sweeper 不认的状态里，客户端原实现会每 3 秒请求一次、永不停止 ——
+    // 用户把页面留在后台就是一整晚的网络与电量消耗。超过上限就停下来并明确告知。
+    const startedAt = Date.now()
+    const POLL_MAX_MS = 30 * 60 * 1000
     setPollError('')
     const poll = async () => {
       try {
@@ -130,6 +156,10 @@ export default function RenderCompose() {
           if (latest.status === 'SUCCESS') void showResult(latest)
           else setPollError(latest.errorMsg || '任务已结束，请查看任务状态与积分账户')
           void refreshMe().catch(() => setPollError('任务已结束，账户刷新失败，请重试'))
+          return
+        }
+        if (Date.now() - startedAt >= POLL_MAX_MS) {
+          setPollError('已等待超过 30 分钟，任务仍在后台处理。可先离开此页，稍后在「我的作品」查看结果；若有异常请联系客服。')
           return
         }
       } catch {
@@ -199,6 +229,13 @@ export default function RenderCompose() {
   const doRender = async (mode: 'FULL' | 'RECOLOR') => {
     if (!id || !detail || submitLock.current || pendingTask) return
     if (!materialsReady) { setLoadError('请先补齐全部分镜素材'); return }
+    // P0-5 纵深防御：UI 已把不可用档位标灰，但状态可能过期（例如页面停留期间服务端改了配置），
+    // 这里再拦一道，并顺手刷新一次能力表，避免用户反复点到同一个拒绝。
+    if (gradeIssues[grade]) {
+      setLoadError(gradeIssues[grade] as string)
+      void loadCapabilities()
+      return
+    }
     submitLock.current = true
     setSubmitting(true)
     try {
@@ -288,18 +325,35 @@ export default function RenderCompose() {
       <View className='rcompose__card'>
         <Text className='rcompose__sectitle'>生成方式</Text>
         <View className='rcompose__grades'>
-          {GRADE_OPTIONS.map((option) => (
-            <View
-              key={option.key}
-              className={`rcompose__grade ${grade === option.key ? 'rcompose__grade--on' : ''}`}
-              onClick={() => setGrade(option.key)}
-            >
-              <Text className='rcompose__gradetitle'>{option.title}</Text>
-              <Text className='rcompose__gradedesc'>{option.desc}</Text>
-              <Text className='rcompose__graderatio'>{GRADE_RATIO[option.key].toFixed(1)}×</Text>
-            </View>
-          ))}
+          {GRADE_OPTIONS.map((option) => {
+            const issue = gradeIssues[option.key]
+            const off = !!issue
+            return (
+              <View
+                key={option.key}
+                className={`rcompose__grade ${grade === option.key ? 'rcompose__grade--on' : ''} ${off ? 'rcompose__grade--off' : ''}`}
+                onClick={() => {
+                  if (off) {
+                    Taro.showToast({ title: issue, icon: 'none', duration: 2500 })
+                    return
+                  }
+                  setGrade(option.key)
+                }}
+              >
+                <Text className='rcompose__gradetitle'>{option.title}</Text>
+                <Text className='rcompose__gradedesc'>{option.desc}</Text>
+                {off ? (
+                  <Text className='rcompose__graderatio'>即将开放</Text>
+                ) : (
+                  <Text className='rcompose__graderatio'>{GRADE_RATIO[option.key].toFixed(1)}×</Text>
+                )}
+              </View>
+            )
+          })}
         </View>
+        {!!gradeIssues[grade] && (
+          <View className='ds-notice ds-notice--warn rcompose__premiumtip'>{gradeIssues[grade]}</View>
+        )}
         {grade === 'PREMIUM' && (
           <View className='ds-notice ds-notice--warn rcompose__premiumtip'>提交后进入人工队列，可在本页查看进度与交付结果。</View>
         )}

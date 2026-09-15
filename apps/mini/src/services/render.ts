@@ -108,6 +108,21 @@ export function getPlayUrl(assetId: string) {
   return http.get<PlayUrl>(`/media/${assetId}/play-url`)
 }
 
+/** 档位能力（P0-5）：服务端告知哪些档位当前可用，用于把不可用档位标灰 */
+export interface GradeCapability {
+  key: RenderGrade
+  available: boolean
+  reason: string | null
+}
+
+/**
+ * 拉取档位能力。服务端说不可用就真的不要提交 —— 服务端在 freeze 之前会硬拒（4013）。
+ * 失败时返回 null，调用方应保守处理（按「全部可用」放行，让服务端做最终裁决）。
+ */
+export function getGradeCapabilities() {
+  return http.get<{ grades: GradeCapability[] }>('/render/capabilities')
+}
+
 /** 按 cos key 签播放地址（合成产物等无 media_asset 行的文件） */
 export function getResultPlayUrl(key: string) {
   return http.get<PlayUrl>(`/media/play-url?key=${encodeURIComponent(key)}`)

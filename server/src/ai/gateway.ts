@@ -6,6 +6,7 @@ import type { Redis } from 'ioredis'
 import { AiCallError, getAdapter, type AiUsage } from './adapters.js'
 import { CircuitBreaker } from './circuit-breaker.js'
 import { decryptSecret } from '../lib/secret.js'
+import { ceilDiv } from '../lib/decimal.js'
 
 export type SceneRunResult =
   | {
@@ -38,17 +39,34 @@ export function renderTemplate(tpl: string, vars: Record<string, string>): strin
   return tpl.replace(/\{\{\s*(\w+)\s*\}\}/g, (_, k: string) => vars[k] ?? '')
 }
 
-/** 成本（分）= 输入分/百万 * tokens + 输出分/百万 * tokens，整数运算杜绝浮点误差 */
+/**
+ * 成本（分）= ceil(输入 tokens × 输入分/百万 / 1e6) + ceil(输出 tokens × 输出分/百万 / 1e6)
+ *
+ * 用 BigInt 做除法再取整。价格字段在库里是 UnsignedInt，tokens 也是整数，
+ * 所以当前实现其实是精确的；改 BigInt 是为了防止后续把 tokens 换成估算小数、
+ * 或把价格改成小数字段时，`Math.ceil(浮点除法)` 出现「整数边界被舍入到略大 → 多扣 1 分」。
+ */
 export function computeCostFen(
   promptTokens: number,
   completionTokens: number,
   inputPricePerMtok: number,
   outputPricePerMtok: number,
 ): number {
-  return (
-    Math.ceil((promptTokens * inputPricePerMtok) / 1_000_000) +
-    Math.ceil((completionTokens * outputPricePerMtok) / 1_000_000)
-  )
+  const per = 1_000_000n
+  const fen =
+    ceilDiv(safeNonNegInt(promptTokens) * safeNonNegInt(inputPricePerMtok), per) +
+    ceilDiv(safeNonNegInt(completionTokens) * safeNonNegInt(outputPricePerMtok), per)
+  const n = Number(fen)
+  if (!Number.isSafeInteger(n)) throw new RangeError(`computeCostFen: 结果溢出 ${fen}`)
+  return n
+}
+
+/** 把任意入参归一为非负安全整数：NaN / Infinity / 负数 / 小数一律按语义安全处理，绝不抛错 */
+function safeNonNegInt(v: number): bigint {
+  if (!Number.isFinite(v)) return 0n
+  const t = Math.trunc(v)
+  if (!Number.isSafeInteger(t) || t <= 0) return 0n
+  return BigInt(t)
 }
 
 export class AiGateway {

@@ -3,7 +3,16 @@
 import { createWriteStream, createReadStream, stat } from 'node:fs'
 import { promisify } from 'node:util'
 import COS from 'cos-nodejs-sdk-v5'
-import { copyFileToLocalObject, copyLocalObjectToFile, isLocalStorage, localObjectExists } from './local-storage.js'
+import {
+  copyFileToLocalObject,
+  copyLocalObjectToFile,
+  deleteLocalObject,
+  isLocalStorage,
+  listLocalObjects,
+  localObjectExists,
+  type StorageObject,
+} from './local-storage.js'
+import { assertSafeObjectKey } from './object-key.js'
 
 const statP = promisify(stat)
 
@@ -94,4 +103,161 @@ export async function uploadFile(localPath: string, key: string, contentType = '
   })
   const st = await statP(localPath)
   return st.size
+}
+
+/** 单页列举上限。COS 默认 1000，显式写出便于看清分页行为。 */
+const LIST_PAGE_SIZE = 1000
+
+/**
+ * 列举存储中所有 `prefix` 开头的对象（本地模式 / COS 模式统一入口）。
+ *
+ * 为什么需要它：孤儿对象 GC 必须知道「存储里实际有什么」，而此前本模块只有
+ * 「按已知 key 判存在」的能力，无法反向列举。缺少这一步，GC 根本无从下手。
+ *
+ * COS 侧用 `getBucket` 分页拉取：`IsTruncated` 为字符串 `'true'` 时才继续，
+ * 且**优先用响应里的 `NextMarker`**；某些情况下 SDK 不返回它，此时退化为
+ * 「用本页最后一个 Key 作为 Marker」——COS 的 Marker 语义是「从该键之后开始」，
+ * 所以这样做不会重复也不会漏，只是少一次服务端优化。
+ */
+export async function listObjects(prefix: string): Promise<StorageObject[]> {
+  if (isLocalStorage()) return listLocalObjects(prefix)
+
+  const c = getClient()
+  if (!c) throw new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）')
+  const bucket = process.env.COS_BUCKET!
+  const region = process.env.COS_REGION!
+
+  const out: StorageObject[] = []
+  let marker: string | undefined
+  // 防御性上限，避免后端异常返回 `IsTruncated=true` 但 marker 不变时死循环
+  for (let page = 0; page < 10_000; page++) {
+    const res = await new Promise<{
+      Contents?: Array<{ Key?: string; Size?: string | number; LastModified?: string }>
+      IsTruncated?: string | boolean
+      NextMarker?: string
+    }>((resolve, reject) => {
+      c.getBucket(
+        { Bucket: bucket, Region: region, Prefix: prefix, Marker: marker, MaxKeys: LIST_PAGE_SIZE },
+        (err: Error | null, data: unknown) => (err ? reject(err) : resolve(data as never)),
+      )
+    })
+
+    const contents = res.Contents ?? []
+    for (const item of contents) {
+      if (!item.Key) continue
+      out.push({
+        key: item.Key,
+        sizeBytes: Number(item.Size ?? 0),
+        lastModifiedMs: item.LastModified ? Date.parse(item.LastModified) : 0,
+      })
+    }
+
+    const truncated = res.IsTruncated === true || res.IsTruncated === 'true'
+    if (!truncated) break
+    const next = res.NextMarker ?? contents[contents.length - 1]?.Key
+    if (!next || next === marker) break
+    marker = next
+  }
+  return out
+}
+
+/**
+ * 删除单个对象。入口先做对象键安全校验，非法键（`..`、空段、编码分隔符）直接抛错，
+ * 不会走到存储删除。本地模式复用 localPathForKey 的前缀白名单校验。
+ */
+export async function deleteObject(key: string): Promise<void> {
+  assertSafeObjectKey(key, 'gc delete key')
+  if (isLocalStorage()) return deleteLocalObject(key)
+
+  const c = getClient()
+  if (!c) throw new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）')
+  await new Promise<void>((resolve, reject) => {
+    c.deleteObject(
+      { Bucket: process.env.COS_BUCKET!, Region: process.env.COS_REGION!, Key: key },
+      (err: Error | null) => (err ? reject(err) : resolve()),
+    )
+  })
+}
+
+export type { StorageObject }
+
+/** 一个未完成的分片上传（碎片） */
+export interface MultipartFragment {
+  key: string
+  uploadId: string
+  /** UploadId 的创建时间（毫秒）；后端未提供时为 0 */
+  initiatedMs: number
+}
+
+/**
+ * 列举**未完成的分片上传**（碎片），按前缀。
+ *
+ * ★ 为什么必须单独一个接口：碎片不是对象，`getBucket` 看不到它们。
+ *   上传失败（小程序弱网、用户切后台被系统杀死）会留下 UploadId 及其已上传分片，
+ *   这些分片**照样占用存储并计费**，却不会出现在任何对象列表里，
+ *   也不会出现在同目录下 `ls` 的输出中 —— 是典型的「看不见的成本」。
+ *
+ * 本地存储模式没有分片概念（走 multer 直接落盘），返回空数组。
+ */
+export async function listMultipartUploads(prefix: string): Promise<MultipartFragment[]> {
+  if (isLocalStorage()) return []
+  const c = getClient()
+  if (!c) throw new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）')
+  const bucket = process.env.COS_BUCKET!
+  const region = process.env.COS_REGION!
+
+  const out: MultipartFragment[] = []
+  let keyMarker: string | undefined
+  let uploadIdMarker: string | undefined
+  for (let page = 0; page < 10_000; page++) {
+    const res = await new Promise<{
+      Upload?: Array<{ Key?: string; UploadId?: string; Initiated?: string }>
+      IsTruncated?: string | boolean
+      NextKeyMarker?: string
+      NextUploadIdMarker?: string
+    }>((resolve, reject) => {
+      c.multipartList(
+        {
+          Bucket: bucket,
+          Region: region,
+          Prefix: prefix,
+          MaxUploads: LIST_PAGE_SIZE,
+          KeyMarker: keyMarker,
+          UploadIdMarker: uploadIdMarker,
+        },
+        (err: Error | null, data: unknown) => (err ? reject(err) : resolve(data as never)),
+      )
+    })
+
+    for (const item of res.Upload ?? []) {
+      if (!item.Key || !item.UploadId) continue
+      out.push({
+        key: item.Key,
+        uploadId: item.UploadId,
+        initiatedMs: item.Initiated ? Date.parse(item.Initiated) : 0,
+      })
+    }
+
+    const truncated = res.IsTruncated === true || res.IsTruncated === 'true'
+    if (!truncated) break
+    if (!res.NextKeyMarker && !res.NextUploadIdMarker) break
+    if (res.NextKeyMarker === keyMarker && res.NextUploadIdMarker === uploadIdMarker) break
+    keyMarker = res.NextKeyMarker
+    uploadIdMarker = res.NextUploadIdMarker
+  }
+  return out
+}
+
+/** 中止一个未完成的分片上传：其已上传分片会被立即回收。 */
+export async function abortMultipartUpload(key: string, uploadId: string): Promise<void> {
+  assertSafeObjectKey(key, 'gc abort key')
+  if (isLocalStorage()) return
+  const c = getClient()
+  if (!c) throw new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）')
+  await new Promise<void>((resolve, reject) => {
+    c.multipartAbort(
+      { Bucket: process.env.COS_BUCKET!, Region: process.env.COS_REGION!, Key: key, UploadId: uploadId },
+      (err: Error | null) => (err ? reject(err) : resolve()),
+    )
+  })
 }

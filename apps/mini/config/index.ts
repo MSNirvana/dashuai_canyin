@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { defineConfig, type UserConfigExport } from '@tarojs/cli'
 import devConfig from './dev'
 import prodConfig from './prod'
+import { buildTdesignCopyPatterns } from './tdesign-copy'
 
 /**
  * 极简 .env 解析：读 apps/mini/.env.local / .env（都不进 git，见根 .gitignore）。
@@ -63,12 +64,13 @@ export default defineConfig(async (merge, { mode }) => {
       patterns: [
         // 原生小程序 npm 组件（tdesign-miniprogram）不会被打包进 webpack，
         // 必须整目录拷贝到 dist/<env>/npm/ 下，与 app.config.ts 里
-        // usingComponents 的 '/npm/tdesign-miniprogram/...' 引用路径对应
-        {
-          from: 'node_modules/tdesign-miniprogram/miniprogram_dist/',
-          to: `dist/${process.env.TARO_ENV}/npm/tdesign-miniprogram/`,
-          ignore: ['*.md', '*.d.ts'],
-        },
+        // usingComponents 的 '/npm/tdesign-miniprogram/...' 引用路径对应。
+        //
+        // ★ 按需拷贝（P0-3）：原先整拷 miniprogram_dist 共 104 个组件目录、1.43MB，
+        //   而项目只注册了 7 个 t-* 组件。现在按 app.config.ts 的注册项算传递闭包，
+        //   只拷真正需要的目录（含 common/mixins/loading/overlay/popup 等隐藏依赖）。
+        //   注册新组件无需改这里，拷贝范围会自动跟着走。
+        ...buildTdesignCopyPatterns(process.cwd(), process.env.TARO_ENV),
       ],
       options: {},
     },

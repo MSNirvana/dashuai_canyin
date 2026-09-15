@@ -1,5 +1,6 @@
 // 账户查询路由：积分流水 / AI 调用日志 / 当前订阅 — 全部只读，不影响余额
-import { Router } from 'express'
+import { createRouter } from '../lib/async-router.js'
+import { InvalidIdParamError, idParam } from '../lib/params.js'
 import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
@@ -7,7 +8,7 @@ import { ok, fail } from '../lib/result.js'
 import { activeMembership } from '../services/order.service.js'
 import { listMyReminders, markReminderRead } from '../services/membership-reminder.service.js'
 
-const router = Router()
+const router = createRouter()
 router.use(auth)
 
 const pageQuery = z.object({
@@ -31,6 +32,8 @@ router.get('/bean/ledger', async (req, res) => {
           type: true,
           bucket: true,
           amount: true,
+          grantAmount: true,
+          grantRegisterAmount: true,
           balanceAfter: true,
           grantAfter: true,
           frozenAfter: true,
@@ -47,6 +50,8 @@ router.get('/bean/ledger', async (req, res) => {
         ...r,
         id: r.id.toString(),
         amount: r.amount.toString(),
+        grantAmount: r.grantAmount.toString(),
+        grantRegisterAmount: r.grantRegisterAmount.toString(),
         balanceAfter: r.balanceAfter.toString(),
         grantAfter: r.grantAfter.toString(),
         frozenAfter: r.frozenAfter.toString(),
@@ -129,9 +134,10 @@ router.get('/membership/reminders', async (req, res) => {
 
 router.post('/membership/reminders/:id/read', async (req, res) => {
   try {
-    await markReminderRead(prisma, req.merchantId!, BigInt(req.params.id))
+    await markReminderRead(prisma, req.merchantId!, idParam(req.params.id, 'id'))
     ok(res, { ok: true })
-  } catch {
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     fail(res, 500, '操作失败', 500)
   }
 })

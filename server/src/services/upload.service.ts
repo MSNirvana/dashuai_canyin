@@ -4,6 +4,7 @@ import STS from 'qcloud-cos-sts'
 import type { PrismaClient } from '@prisma/client'
 import { assertUploadAllowed } from './subscription.service.js'
 import { storageMode, type StorageMode } from '../lib/local-storage.js'
+import { assertSafeObjectKey } from '../lib/object-key.js'
 
 export interface StsCredential {
   tmpSecretId: string
@@ -156,10 +157,16 @@ export interface ConfirmUploadInput {
 }
 
 export async function confirmUpload(prisma: PrismaClient, merchantId: bigint, input: ConfirmUploadInput) {
-  // 越权防护：cosKey 必须落在当前商家前缀下，否则拒绝落库
+  // 越权防护：先做键本身的安全校验，再做商家前缀校验。
+  // 顺序不能反 —— 只做前缀匹配拦不住 `uploads/1/../../2/xxx.jpg`
+  // （前缀通过，但路径解析后落到商户 2 的目录），见 lib/object-key.ts 的说明。
+  assertSafeObjectKey(input.cosKey, 'cosKey')
   if (!input.cosKey.startsWith(`uploads/${merchantId}/`)) throw new UploadPrefixError()
   // 封面同样必须落在当前商家前缀下，避免借用他人对象键
-  if (input.coverKey && !input.coverKey.startsWith(`uploads/${merchantId}/`)) throw new UploadPrefixError()
+  if (input.coverKey) {
+    assertSafeObjectKey(input.coverKey, 'coverKey')
+    if (!input.coverKey.startsWith(`uploads/${merchantId}/`)) throw new UploadPrefixError()
+  }
   const store = await prisma.store.findFirst({
     where: { id: input.storeId, merchantId, deletedAt: null },
   })
