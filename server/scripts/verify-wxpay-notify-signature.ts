@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { verifyNotify, wechatVerifyMode, wxpayEnabled } from '../src/lib/wxpay.js'
+import { verifyNotify, wechatVerifyMode, wxpayEnabled, describeNotifySerial } from '../src/lib/wxpay.js'
 
 // ── 子进程模式：只回报「真实 wxpayEnabled 常量」的取值 ──
 // 该常量在模块顶层求值，同进程内改 env 不会重算，故用子进程重载模块。
@@ -126,7 +126,16 @@ try {
   verifyMatrix('微信支付公钥（新商户默认模式）', publicKeyPem)
   if (certificatePem) verifyMatrix('平台证书（旧商户 / 向后兼容）', certificatePem)
 
-  console.log('\n=== C. 真实 wxpayEnabled 常量（子进程重载模块）===')
+  console.log('\n=== C. describeNotifySerial() 仅提示、绝不拒绝 ===')
+  {
+    const ID = 'PUB_KEY_ID_0117504054172026091500191587002400'
+    check('未配置公钥 ID → 明确标注「未核对」', describeNotifySerial('X', '').includes('未核对'), true)
+    check('一致 → 标注一致', describeNotifySerial(ID, ID).includes('一致'), true)
+    check('不一致 → 仍标注「不拒绝」★不得带任何拒绝语义', describeNotifySerial('OTHER_ID', ID).includes('不拒绝'), true)
+    check('头缺失 → 如实说明缺失', describeNotifySerial(undefined, ID).includes('缺失'), true)
+  }
+
+  console.log('\n=== D. 真实 wxpayEnabled 常量（子进程重载模块）===')
   check('本机未配置支付凭据时 → false（fail-closed，不得静默进入真实支付）', wxpayEnabled, false)
   {
     const tsxBin = path.join(process.cwd(), 'node_modules', '.bin', 'tsx')

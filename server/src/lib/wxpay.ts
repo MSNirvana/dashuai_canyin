@@ -26,6 +26,38 @@ const notifyUrl = process.env.WX_PAY_NOTIFY_URL ?? ''
 // 两种内容都合法。**不要**因为变量名里的 "CERT" 就只接受证书 —— 见下方 wxpayEnabled。
 const platformCert = (process.env.WX_PAY_PLATFORM_CERT ?? '').replace(/\\n/g, '\n')
 
+// 微信支付公钥 ID（可选）。**它不是密钥材料**，不能替代上面的公钥 PEM ——
+// 它只是「微信侧验签钥匙」的**标识**，两个用途：
+//   ① 微信在下发响应/回调时用 `Wechatpay-Serial` 头指明「本次签名用的是哪把钥匙」；
+//   ② 商户在需要**上送加密敏感信息**的接口（如商家转账的收款人姓名）时，
+//      也要在请求头带 `Wechatpay-Serial: <公钥ID>` 指明用什么公钥加密。
+// 本项目的 JSAPI 下单 + 回调流程**不需要发这个头**（没有需要加密上送的敏感字段），
+// 所以配置它纯粹是为了在日志里核对回调头，便于真机排查。实测（商户 1750405417）：
+// 微信对 v3 请求的响应头 `wechatpay-serial` 就是该值。
+const publicKeyId = (process.env.WX_PAY_PUBLIC_KEY_ID ?? '').trim()
+
+/** 已配置的微信支付公钥 ID；未配置时为空串。 */
+export function getPublicKeyId(): string {
+  return publicKeyId
+}
+
+/**
+ * 描述回调头 `Wechatpay-Serial` 与已配置公钥 ID 的关系（供日志使用）。
+ *
+ * ⚠ **仅用于日志核对，绝不可作为拒绝回调的依据** —— 理由见 verifyNotify 的注释：
+ *   微信在「平台证书 → 公钥」灰度期该头可能仍返回平台证书序列号，
+ *   据此拒绝会把**合法回调误判为伪造**，用户付了钱拿不到积分。
+ *
+ * `expectedId` 默认取环境变量，显式传入便于测试。
+ */
+export function describeNotifySerial(serial: string | undefined, expectedId: string = publicKeyId): string {
+  if (!expectedId) return `Wechatpay-Serial=${serial ?? '(缺失)'}（未配置 WX_PAY_PUBLIC_KEY_ID，未核对）`
+  if (!serial) return `Wechatpay-Serial 缺失（已配置公钥 ID=${expectedId}）`
+  return serial === expectedId
+    ? `Wechatpay-Serial=${serial}（与已配置公钥 ID 一致）`
+    : `Wechatpay-Serial=${serial} ≠ 已配置公钥 ID=${expectedId}（不拒绝，仅提示）`
+}
+
 /**
  * 微信侧验签凭据的形态。
  *   certificate —— 平台证书（X.509）
