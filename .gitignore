@@ -22,3 +22,8 @@ apps/mini/npm-cache/
 apps/admin/.npm-cache/
 apps/admin/npm-cache/
 server/storage/
+
+# docker compose 的本地/服务器专属覆盖（卷名、项目名、生产强口令等），
+# 绝不能提交 —— 里面是"只对某台机器成立"的东西，提交了会部署到服务器上。
+docker-compose.override.yml
+docker-compose.*.override.yml

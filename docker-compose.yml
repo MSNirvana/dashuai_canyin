@@ -1,13 +1,21 @@
-# 大帅餐饮短视频工具 · 本地依赖栈
-# 仅起 MySQL + Redis，后端与小程序在本机原生运行（便于热重载 + 微信开发者工具联调）
+# 大帅餐饮短视频工具 · MySQL + Redis（本地开发 与 服务器 /opt/dashuai 共用）
 #
 #   docker compose up -d        # 启动依赖
 #   docker compose down         # 停止（保留数据）
-#   docker compose down -v      # 停止并清空数据卷
+#
+# ★ 这个文件是【本地开发】和【服务器】共用的，所以**只放两边都成立的东西**。
+#   任何"只对我这台机器成立"的配置（卷名、项目名、强口令）一律写进
+#   `docker-compose.override.yml` —— 那个文件**本地专属、已被 .gitignore 忽略**，
+#   不会被提交、也不会被部署到服务器。踩过的坑见 deploy/README.md。
+#
+# ★ 端口只绑 127.0.0.1（回环）：局域网和公网都看不见 MySQL / Redis。
+#   用它的都是同机进程（后端 API、本机 mysql CLI），所以没有任何影响。
+#   同网段真机联调要暴露的是 **API 3000**（后端进程，不是容器），一般用不到数据库；
+#   万一需要，临时改成 "0.0.0.0:3306:3306" 再 `docker compose up -d`，⚠ 服务器上别这么干。
 #
 # 账号与 server/.env 保持一致：
-#   MySQL  dashuai / CHANGE_ME  @ localhost:3306 / db=dashuai
-#   Redis  (无密码)            @ localhost:6379
+#   MySQL  dashuai / CHANGE_ME  @ 127.0.0.1:3306 / db=dashuai
+#   Redis  (无密码)             @ 127.0.0.1:6379
 
 services:
   mysql:
@@ -21,7 +29,7 @@ services:
       MYSQL_USER: dashuai
       MYSQL_PASSWORD: CHANGE_ME
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     volumes:
       - dashuai_mysql:/var/lib/mysql
     healthcheck:
@@ -37,7 +45,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - dashuai_redis:/data
     healthcheck:

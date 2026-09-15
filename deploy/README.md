@@ -223,9 +223,12 @@ openssl rand -hex 32    # → APP_MASTER_KEY（必须 64 位十六进制）
 > 值（`lib/config.ts`，大小写不敏感）。`CHANGE_ME` **不含** `changeme` 这个连续子串（有下划线），
 > 所以严格说能过校验 —— 但既然公网可达，别赌这个，直接换强密码。
 >
-> `docker-compose.yml` 把 `3306` / `6379` 映射到了 `0.0.0.0`。实测腾讯云安全组默认**未放行**这两个端口
-> （外部探测 filtered），所以不构成实际暴露；若日后为图省事放行了端口，记得改成
-> `"127.0.0.1:3306:3306"` 只绑本机。
+> **2026-09-15 起 `docker-compose.yml` 已默认只绑回环**（`"127.0.0.1:3306:3306"` / `"127.0.0.1:6379:6379"`）。
+> 用这两个端口的都是**同机进程**（后端 API、本机 mysql/redis CLI），所以这个默认值
+> 对**本地开发和服务器都成立** —— 也正因如此，这个基础文件才能两边共用。
+>
+> 背景：以前它绑的是 `0.0.0.0`。实测腾讯云安全组默认**未放行**这两个端口（外部探测 filtered），
+> 所以不构成实际暴露 —— 但别依赖这个，绑回环是零成本的。
 
 **⚠ 覆盖端口必须用 `!override` 标签**（2026-09-15 实测踩到，部署因此中断）
 
@@ -238,8 +241,8 @@ services:
       - "127.0.0.1:6379:6379"      # ❌ 错误
 ```
 
-compose 对 `ports` 是**列表追加**语义，不是覆盖 —— 上面会跟主文件的 `6379:6379`
-**叠加成两条映射**（一条绑 `0.0.0.0`、一条绑 `127.0.0.1`），启动时报：
+compose 对 `ports` 是**列表追加**语义，不是覆盖 —— 上面会跟主文件的映射
+**叠加成两条**，启动时报：
 
 ```
 Error response from daemon: failed to set up container networking:
@@ -260,9 +263,58 @@ services:
       - "127.0.0.1:6379:6379"
 ```
 
+（主文件现在**已默认绑回环**，所以服务器那份 override 里的端口块其实可以省掉了；
+但 `!override` 这个用法要记住 —— 哪天需要把端口改回 `0.0.0.0`（比如别的机器要连），
+直接写就会踩上面那个 `address already in use`。）
+
 （仓库根目录没有这个 override 文件，服务器上单独放一份即可 —— 它不在 git 里，
 所以生产口令不会被提交。注意 `deploy/deploy.sh` 是在 `/opt/dashuai` 下执行
-`docker compose up`，compose 会自动读取同目录的 `docker-compose.override.yml`。）
+`docker compose up`，compose 会自动读取同目录的 `docker-compose.override.yml`。
+**根目录的 `.gitignore` 已显式忽略 `docker-compose.override.yml`** —— 本地那份override
+里钉的是本机卷名，一旦被提交并部署到服务器，服务器会去找一个不存在的卷而直接失败。）
+
+---
+
+## 2.1 ⚠ 本地开发：项目名 = 目录名 ⇒ 换目录执行会挂到「空卷」
+
+（2026-09-15 实测踩到，排查了很久）
+
+`docker compose` 默认用**执行时所在目录名**当项目名，卷名则是 `<项目名>_<卷键>`。
+这套 MySQL/Redis 最早是在 `/Users/gaoyunhong/WorkBuddy/2026-09-07-17-56-03/` 里
+第一次 `up -d` 的，所以本机实际的卷名是：
+
+| 项目名 | 卷名 |
+|---|---|
+| `2026-09-07-17-56-03` | `2026-09-07-17-56-03_dashuai_mysql` / `..._dashuai_redis` |
+
+仓库后来搬到了别的目录。**此时在仓库根直接 `docker compose up -d`，compose 会把它当成
+一个全新项目，挂两个全新的空卷** —— 现象就是「本地数据全丢了」
+（旧数据其实还在上面那两个卷里，只是没被挂上）。**这件事真实发生过。**
+
+已实现的结论：
+
+- **`docker-compose.yml`（提交进 git）保持可移植** —— 它同时给本地和服务器 `/opt/dashuai` 用，
+  所以只放两边都成立的东西。**任何"只对某台机器成立"的配置都不要写进它。**
+- **本地专属的「项目名 + 卷名」钉子放在 `docker-compose.override.yml`**，
+  这个文件**已被 `.gitignore` 忽略**（见根目录 `.gitignore`），不会提交、也不会被部署到服务器。
+  内容很短：
+
+  - 顶层 `name: 2026-09-07-17-56-03`（钉死项目名，消除"随目录名漂移"）
+  - 两个卷声明 `external: true` + `name: 2026-09-07-17-56-03_dashuai_{mysql,redis}`
+
+  用 `external` 的额外好处：`down -v` **删不掉**它（误删本地数据的路被堵死），
+  而且卷若真丢了，`up -d` 会**直接报错**，而不是悄悄给你建一个空库。
+
+- 换目录/改配置后，先用 `docker compose config` 确认「当下解析到哪个项目名、哪个卷名」。
+- 确实要清空本地数据，只能手动：
+  `docker volume rm 2026-09-07-17-56-03_dashuai_mysql 2026-09-07-17-56-03_dashuai_redis`
+- 旧副本目录 `/Users/gaoyunhong/WorkBuddy/2026-09-07-17-56-03/` 里的两份 compose 文件
+  已同步成一致，所以从哪个目录执行都会落到同一个项目 + 同一批卷。
+
+> 顺带一提：`docker-compose.yml` 里 MySQL 的 healthcheck 用的是 `-pdashuai`，
+> 而 `MYSQL_PASSWORD` 是 `CHANGE_ME` —— 也就是这个 healthcheck 其实一直在"假通过"
+> （`mysqladmin ping` 认证失败也返回存活）。不影响使用，但别把它当真实健康判据。
+
 
 
 
