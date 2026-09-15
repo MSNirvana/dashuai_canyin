@@ -49,6 +49,16 @@ export function validateProductionConfig(env: NodeJS.ProcessEnv = process.env): 
       if (!(env[key] ?? '')) throw new Error(`Missing production payment config: ${key}`)
     }
     if ((env.WX_PAY_API_KEY_V3 ?? '').length !== 32) throw new Error('WX_PAY_API_KEY_V3 requires 32 characters')
+    // 微信侧验签凭据必须是「平台证书」或「微信支付公钥」之一，两者微信对同一商户只启用其一。
+    // 只查非空是不够的：内容填错（例如误粘成商户 API 证书）会让 wxpay.ts 的 wxpayEnabled
+    // 静默变成 false —— 表现为「服务器正常启动、下单全被拒」，线上排查成本极高。这里直接失败。
+    const verifyMaterial = (env.WX_PAY_PLATFORM_CERT ?? '').replace(/\\n/g, '\n')
+    if (!verifyMaterial.includes('BEGIN CERTIFICATE') && !verifyMaterial.includes('BEGIN PUBLIC KEY')) {
+      throw new Error(
+        'WX_PAY_PLATFORM_CERT requires 微信支付平台证书 or 微信支付公钥 PEM ' +
+          '(BEGIN CERTIFICATE / BEGIN PUBLIC KEY)',
+      )
+    }
   } else {
     // PAYMENTS_ENABLED=false：显式关闭支付能力。
     // 只跳过支付凭据校验，不放松任何其他守卫；下单入口会在 order.service 里被拒绝。
