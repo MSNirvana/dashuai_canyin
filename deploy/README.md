@@ -360,6 +360,40 @@ npm install && npm run build     # 产物 dist/
 > 构建时有「单个 chunk > 500KB」的告警（`index-*.js` 约 810KB），属性能提示不属错误，内部后台可接受。
 > 测试期如果只是给他人测小程序，后台仍可先不部署，用本地 `npm run dev` 连服务器接口。
 
+### ★ 增量更新：改了服务端代码之后必须做什么
+
+**PM2 跑的是 `dist/index.js`，不是 `src/`**（`deploy/ecosystem.config.cjs:22`）。
+所以「改代码 → `pm2 restart`」**不够** —— 重启只是重新加载**旧的**编译产物，
+表现为「代码明明改了、服务器行为没变」，极难排查（本项目 2026-09-15 差点踩到）。
+
+正确顺序：
+
+```bash
+# ① 本地：重新编译（tsc → dist）
+cd server && npm run build
+
+# ② 同步 dist（以及 src / scripts / package.json 保持仓库一致）
+rsync -az -e "sshpass -p <密码> ssh -o StrictHostKeyChecking=no \
+  -o PreferredAuthentications=password -o PubkeyAuthentication=no" \
+  --exclude node_modules --exclude .env \
+  server/dist/ ubuntu@<IP>:/opt/dashuai/server/dist/
+
+# ③ 确认同步到位：本地与服务器 sha256 必须一致
+shasum -a 256 server/dist/lib/<改动的文件>.js | cut -c1-32
+ssh ... 'sha256sum /opt/dashuai/server/dist/lib/<改动的文件>.js | cut -c1-32'
+
+# ④ 重启并验证
+pm2 restart dashuai-api && curl -s http://127.0.0.1:3000/healthz
+```
+
+> ⚠ 两个坑：
+> 1. **不要用 `if rsync ... | tail` 判断成败** —— `if` 拿的是管道最后一个命令（`tail`）的退出码，
+>    rsync 失败也会被判成成功。加 `set -o pipefail`，或直接看 `rsync` 自身的输出。
+> 2. macOS 自带的是 **openrsync**，**不支持 `--info=stats2`** 等 GNU 选项，会直接打印用法并失败。
+>    用 `--stats` 或不带统计选项即可。
+>
+> `.env` 不会被覆盖：`deploy.sh` 对它是「存在性检查 + `chmod 600`」，不写入内容。
+
 ---
 
 ## 4. 小程序后台配置（关键一步）
