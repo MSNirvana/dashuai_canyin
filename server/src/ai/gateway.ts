@@ -69,6 +69,28 @@ function safeNonNegInt(v: number): bigint {
   return BigInt(t)
 }
 
+/**
+ * 是否属于「通道级」故障 —— 即「换到备用通道才可能成功」的错误。
+ *
+ * 用于让网关**立即熔断**该通道，而不是干等 record() 的失败率熔断：
+ * 后者要求滑动窗口内至少 minSamples(20) 个样本，低频场景几小时都攒不满，
+ * 于是每次请求都要先在这个坏通道上耗掉一次超时（ai_scene.timeout_ms 默认 30s）
+ * 才轮到备用 —— 「自动切换」名义上有、体验上没有。
+ *
+ * · TIMEOUT / NETWORK —— 连不上、超时
+ * · HTTP 401 / 403    —— 密钥无效或无权
+ * · HTTP 429          —— 限流
+ * · HTTP 5xx          —— 对端故障
+ *
+ * 反例：BAD_RESPONSE（报文偶发异常）与其余 4xx（多半是请求本身的问题）——
+ * 重试同一通道仍有成功可能，不该熔断。
+ */
+export function isChannelLevelFailure(err: AiCallError): boolean {
+  if (err.code === 'TIMEOUT' || err.code === 'NETWORK') return true
+  const s = err.status
+  return s === 401 || s === 403 || s === 429 || (typeof s === 'number' && s >= 500)
+}
+
 export class AiGateway {
   constructor(
     private prisma: PrismaClient,
@@ -175,6 +197,16 @@ export class AiGateway {
         } catch (e) {
           const err = e as AiCallError
           lastError = `[${provider.code}/${model.modelCode}] ${err.message}`
+
+          // 通道级硬故障：立即熔断该通道，并**放弃它剩余的重试**，直接换下一个候选。
+          // 不能只依赖 record() 的失败率熔断（需 ≥20 样本，低频场景攒不满），
+          // 更不能在这里重试 —— 否则主通道挂掉时，每个请求要连等 maxRetries+1 次超时。
+          if (isChannelLevelFailure(err)) {
+            await this.circuit.open(provider.id)
+            await this.circuit.record(provider.id, false)
+            break
+          }
+
           await this.circuit.record(provider.id, false)
           if (t < maxTry - 1) await sleep(200 * (t + 1))
         }

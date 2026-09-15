@@ -62,6 +62,11 @@ async function postJson(url: string, init: RequestInit & { timeoutMs: number }):
   return res.json()
 }
 
+/** 空白正文判定：空字符串或只有空白字符 */
+function isBlank(s: string): boolean {
+  return s.trim().length === 0
+}
+
 /** OpenAI 兼容协议：DeepSeek / 通义 / 豆包 / 混元 / 多数国产模型 */
 export const openaiCompatible: AiAdapter = async (p) => {
   const url = joinUrl(p.baseUrl, '/chat/completions')
@@ -87,6 +92,21 @@ export const openaiCompatible: AiAdapter = async (p) => {
   const text = data?.choices?.[0]?.message?.content
   if (typeof text !== 'string') {
     throw new AiCallError('unexpected response: missing choices[0].message.content', undefined, 'BAD_RESPONSE')
+  }
+  // ★ 空白正文必须算失败，不能当成功返回。
+  //   实测成因：中转站/厂商把 max_tokens 同时当作「思考(reasoning)预算 + 正文预算」，
+  //   推理模型（gpt-5.5 / claude-* / deepseek-* 均带思考）常把预算全花在思考上，
+  //   于是返回 finish_reason='length' 且 content='' —— HTTP 200、报文结构完全合法。
+  //   若在这里放过，网关会判定成功 → 业务层照常扣豆并把空文案交给商户。
+  //   判为 BAD_RESPONSE 后：本通道按 maxRetries 重试，仍失败则**转入下一个候选通道**，
+  //   全部失败才回落到 ai_scene.fallback_template 且不扣豆。故障转移因此才真正生效。
+  if (isBlank(text)) {
+    throw new AiCallError(
+      `unexpected response: empty content (finish_reason=${data?.choices?.[0]?.finish_reason ?? '?'}) — ` +
+        `推理模型可能把 max_tokens(${p.maxOutputTokens ?? 2048}) 全用在思考上，请调大该场景的 max_output_tokens`,
+      undefined,
+      'BAD_RESPONSE',
+    )
   }
   return {
     text,
@@ -121,6 +141,15 @@ export const anthropicNative: AiAdapter = async (p) => {
   const block = data?.content?.[0]
   if (typeof block?.text !== 'string') {
     throw new AiCallError('unexpected response: missing content[0].text', undefined, 'BAD_RESPONSE')
+  }
+  // 同上：空白正文算失败，否则会「成功」返回空文案并照常扣豆
+  if (isBlank(block.text)) {
+    throw new AiCallError(
+      `unexpected response: empty content (stop_reason=${data?.stop_reason ?? '?'}) — ` +
+        `推理模型可能把 max_tokens(${p.maxOutputTokens ?? 2048}) 全用在思考上，请调大该场景的 max_output_tokens`,
+      undefined,
+      'BAD_RESPONSE',
+    )
   }
   return {
     text: block.text,
