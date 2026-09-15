@@ -12,6 +12,7 @@ import * as adminAi from '../services/admin-ai.service.js'
 import * as workSvc from '../services/work.service.js'
 import { getSharedPlayUrlByKey } from '../services/media.service.js'
 import * as ttsSvc from '../services/tts-provider.service.js'
+import { PackageNotFoundError } from '../services/order.service.js'
 import * as premium from '../render/premium.js'
 import { invalidate } from '../lib/settings.js'
 import type { Prisma } from '@prisma/client'
@@ -85,6 +86,28 @@ router.post('/merchants/:id/status', async (req, res) => {
     if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '操作失败', 500)
+  }
+})
+
+// 后台手动开通 / 续期会员（备案未过、支付未开放期间，用户线下付款后的兜底通道）。
+// 走的是与微信支付回调**完全相同**的结算链：赠豆进会员桶、随会员到期清零、重复调用＝续期顺延。
+const openMembershipInput = z.object({ remark: z.string().max(200).optional() })
+router.post('/merchants/:id/membership', async (req, res) => {
+  try {
+    const input = openMembershipInput.parse(req.body ?? {})
+    ok(
+      res,
+      await adminExtra.adminOpenMembership(prisma, BigInt(req.adminId!), {
+        merchantId: idParam(req.params.id, 'id'),
+        remark: input.remark,
+      }),
+    )
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof adminExtra.AdminNotFoundError) return fail(res, 4049, e.message, 404)
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof PackageNotFoundError) return fail(res, 4003, e.message, 400)
+    fail(res, 500, (e as Error).message || '开通失败', 500)
   }
 })
 

@@ -29,7 +29,8 @@
     "ai-failover:verify": "tsx scripts/verify-ai-failover.ts",
     "ai-channels:setup": "tsx scripts/setup-ai-channels.ts",
     "billing:status": "tsx scripts/billing-status.ts",
-    "storage:gc": "tsx scripts/gc-orphan-objects.ts"
+    "storage:gc": "tsx scripts/gc-orphan-objects.ts",
+    "membership:verify": "tsx scripts/verify-membership-gate.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

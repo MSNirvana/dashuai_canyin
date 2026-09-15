@@ -25,7 +25,7 @@
 //   SCENE_MIN_OUTPUT_TOKENS   场景输出预算下限，默认 4000
 //   TB_SET_PRICES=1           把真实单价写库（否则单价 0 ⇒ 扣 0 豆）
 //   TB_SET_CAPS=1             把场景单次上限写库（否则扣费恒被截断成封顶值）
-//   TB_REGISTER_GRANT=n       注册赠豆（未设 = 不改）
+//   TB_REGISTER_GRANT=n       注册赠豆（未设 = 不改；`0` = 关掉注册赠豆，当前策略）
 //   TB_USD_TO_CNY             汇率，默认 7.2
 //
 // ══ 备用是怎么工作的（代码已在 src/ai/ 里实现，本脚本只配数据）══
@@ -219,7 +219,7 @@ const SET_CAPS = process.env.TB_SET_CAPS === '1'
 
 /**
  * 注册赠豆（`system_setting` 的 `bean.register_grant_points`）。
- * 未设 = 不改。设成数字才写库（`TB_REGISTER_GRANT=600`）。
+ * 未设 = 不改。设成数字才写库（`TB_REGISTER_GRANT=600` / `TB_REGISTER_GRANT=0`）。
  *
  * ★ 为什么必须和场景上限一起看：
  *   场景上限同时是**预冻结额**，抬高上限 = 同时抬高「账户可用豆不足」的门槛。
@@ -227,10 +227,21 @@ const SET_CAPS = process.env.TB_SET_CAPS === '1'
  *   ⇒ 新用户一注册就「一个 AI 功能都用不了」——
  *     不是报错扣费，而是**冻结阶段就被拦**：`BeanNotEnoughError: AI豆不足：需要 80，可用 30`。
  *   旧上限（3/5/10 豆）时不存在这个问题，所以这是「抬上限」引入的连带回归。
- *   要么把注册赠豆抬到 ≥ 最贵场景的上限（storyboard 250），
- *   要么把上限压回「新用户能负担」的量级 —— 两者必须一起定。
+ *
+ * ★ 当前策略（2026-09-15 起）：**注册赠豆 = 0**。
+ *   产品决策是「注册后必须购买 ¥980 会员才能用 AI」——真正的闸门是
+ *   `requireSubscription`（文案 / 分镜 / 合成 三处，未订阅 → 403 + 2005），
+ *   赠豆只是「能不能过预冻结」的第二道门。赠豆置 0 后两道门一致，不会出现
+ *   「用户拿到赠豆、点生成却报需要订阅」这种前后矛盾的体验。
+ *   支付未开放期间由后台「商家详情 → 会员 → 手动开通」发放会员。
  */
-const REGISTER_GRANT = process.env.TB_REGISTER_GRANT ? Number(process.env.TB_REGISTER_GRANT) : null
+const REGISTER_GRANT = (() => {
+  const raw = process.env.TB_REGISTER_GRANT
+  if (raw === undefined) return null
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) throw new Error(`TB_REGISTER_GRANT 非法（应为 ≥0 的数字）：${raw}`)
+  return n
+})()
 
 interface ChannelSpec {
   code: string
@@ -446,30 +457,35 @@ async function main() {
 
     // 上限 = 预冻结额 ⇒ 抬上限会连带抬高「可用豆不足」的门槛。新用户只有注册赠豆，
     // 若赠豆 < 最贵场景的上限，他一个 AI 功能都用不了（冻结阶段就被拦，不是扣费问题）。
+    // 赠豆 = 0 是**合法的当前策略**（必须先买会员），不是故障，所以要分开说。
     const grantRow = await prisma.systemSetting.findUnique({
       where: { groupKey_settingKey: { groupKey: 'bean', settingKey: 'register_grant_points' } },
     })
-    const grantNow = Number(grantRow?.settingVal ?? 0)
+    let grantNow = Number(grantRow?.settingVal ?? 0)
     const maxCap = Math.max(...scenes.map((s) => Number(s.beanPrice)))
-    const affordable = scenes.filter((s) => Number(s.beanPrice) <= grantNow).length
-    console.log(
-      `\n  注册赠豆 = ${grantNow} 豆；最贵场景上限 = ${maxCap} 豆` +
-        ` ⇒ 新用户可用的场景 ${affordable}/${scenes.length}`,
-    )
     if (REGISTER_GRANT !== null && REGISTER_GRANT !== grantNow) {
       await prisma.systemSetting.update({
         where: { groupKey_settingKey: { groupKey: 'bean', settingKey: 'register_grant_points' } },
         data: { settingVal: String(REGISTER_GRANT) },
       })
-      console.log(`  ⇒ 注册赠豆 ${grantNow} → ${REGISTER_GRANT} 豆（已写库）`)
-    } else if (REGISTER_GRANT === null) {
-      const need = scenes.filter((s) => Number(s.beanPrice) > grantNow).length
-      if (need > 0) {
-        console.log(
-          `  ⚠ ${need}/${scenes.length} 个场景的上限 > 注册赠豆 ⇒ 新用户注册后冻结就过不去。\n` +
-            `    要改的话：TB_REGISTER_GRANT=<豆数> 重跑本脚本（不会影响老用户已得赠豆）。`,
-        )
-      }
+      console.log(`\n  注册赠豆 ${grantNow} → ${REGISTER_GRANT} 豆（已写库）`)
+      grantNow = REGISTER_GRANT
+    } else {
+      console.log(`\n  注册赠豆 = ${grantNow} 豆${REGISTER_GRANT === null ? '（未指定，保持不变）' : '（已一致）'}`)
+    }
+    const affordable = scenes.filter((s) => Number(s.beanPrice) <= grantNow).length
+    console.log(`  最贵场景上限 = ${maxCap} 豆 ⇒ 新用户可用的场景 ${affordable}/${scenes.length}`)
+    if (grantNow === 0) {
+      console.log('  ℹ 注册赠豆 = 0 ⇒ 当前策略「注册后必须购买会员才能用 AI」。')
+      console.log('    闸门是 requireSubscription（文案/分镜/合成 → 403+2005），赠豆只是第二道门。')
+      console.log('    支付未开放期间：后台「商家详情 → 会员 → 手动开通会员」发放。')
+    } else if (affordable < scenes.length) {
+      const need = scenes.length - affordable
+      console.log(
+        `  ⚠ ${need}/${scenes.length} 个场景的上限 > 注册赠豆 ⇒ 新用户注册后冻结就过不去（不是扣费问题）。\n` +
+          `    要改的话：TB_REGISTER_GRANT=<豆数> 重跑本脚本（不会影响老用户已得赠豆）。\n` +
+          `    要彻底关掉注册赠豆（必须先买会员）：TB_REGISTER_GRANT=0。`,
+      )
     }
 
     console.log('\n[5/6] 停用历史供应商（保留数据，不删除）')

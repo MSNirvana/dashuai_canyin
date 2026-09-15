@@ -2,6 +2,7 @@
 // 业务错误统一抛出 { code, httpStatus }，路由层捕获并映射
 import type { PrismaClient, Prisma } from '@prisma/client'
 import { adjust } from '../bean/bean.service.js'
+import { adminActivateMembership } from './order.service.js'
 
 export class AdminNotFoundError extends Error {
   constructor(readonly what: string) {
@@ -180,7 +181,7 @@ export async function getMerchantDetail(prisma: PrismaClient, merchantId: bigint
       memberships: {
         orderBy: { createdAt: 'desc' },
         take: 10,
-        include: { package: { select: { name: true } } },
+        include: { package: { select: { name: true, code: true, durationDays: true, priceFen: true } } },
       },
       _count: {
         select: {
@@ -365,6 +366,30 @@ export async function adminAdjustBeans(
     }),
   )
   return result
+}
+
+// ──────────────────────── 会员开通（后台兜底通道） ────────────────────────
+
+/**
+ * 后台手动开通 / 续期会员。
+ *
+ * 用途：支付通道未开放期间（备案未通过 ⇒ 微信回调进不来），用户线下付款后由管理员开通。
+ * 关键点：**委托给 `adminActivateMembership` 走支付回调的同一套结算**，不要在这里另写发豆逻辑——
+ * 否则赠豆会进错桶（注册桶 vs 会员桶），到期清零与续期顺延都会与线上不一致。
+ *
+ * 入参 `merchantId` / `operatorId` 必须是已解析的 BigInt（路由层负责）。
+ */
+export async function adminOpenMembership(
+  prisma: PrismaClient,
+  operatorId: bigint,
+  input: { merchantId: bigint; remark?: string },
+) {
+  const m = await prisma.merchant.findFirst({
+    where: { id: input.merchantId, deletedAt: null },
+    select: { id: true },
+  })
+  if (!m) throw new AdminNotFoundError('商家')
+  return adminActivateMembership(prisma, input.merchantId, operatorId, input.remark)
 }
 
 // ──────────────────────── 合成任务 ────────────────────────

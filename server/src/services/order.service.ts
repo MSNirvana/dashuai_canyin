@@ -233,8 +233,19 @@ export async function createMemberOrder(
   return { dev: false, orderNo, amountFen: pkg.priceFen, beans: '0', memberDiscountApplied: false, payParams: buildPayParams(prepayId) }
 }
 
-/** 标记订单已支付并结算（终态 CAS：仅 PENDING→PAID 可发放权益，并发重复回调天然幂等） */
-export async function markOrderPaid(prisma: PrismaClient, orderNo: string, wxTransactionId: string, _dev = false): Promise<void> {
+/** 标记订单已支付并结算（终态 CAS：仅 PENDING→PAID 可发放权益，并发重复回调天然幂等）
+ *
+ * `wxTransactionId` 允许为 null —— 后台手动开通会员没有微信交易号，走的也是这个函数，
+ * 这样「赠豆进哪个桶 / 到期怎么清 / 续期怎么顺延 / 幂等键怎么算」只有一份实现，
+ * 不会出现「后台开的会员和付钱买的会员账务口径不一样」。
+ */
+export async function markOrderPaid(
+  prisma: PrismaClient,
+  orderNo: string,
+  wxTransactionId: string | null,
+  _dev = false,
+  grantRemark?: string,
+): Promise<void> {
   const order = await prisma.order.findUnique({ where: { orderNo } })
   if (!order) throw new Error(`order not found: ${orderNo}`)
   if (order.status === 'PAID') return
@@ -260,6 +271,7 @@ export async function markOrderPaid(prisma: PrismaClient, orderNo: string, wxTra
       await activateMembership(tx, order.merchantId, order.refId, order.id, {
         durationDays: subDurationDays,
         grantPoints: subGrantPoints,
+        grantRemark,
       })
     }
   })
@@ -270,8 +282,8 @@ async function activateMembership(
   tx: Db,
   merchantId: bigint,
   packageId: bigint,
-  sourceOrderId: bigint,
-  override?: { durationDays: number; grantPoints: bigint },
+  sourceOrderId: bigint | null,
+  override?: { durationDays: number; grantPoints: bigint; grantRemark?: string },
 ): Promise<void> {
   const pkg = await tx.memberPackage.findUnique({ where: { id: packageId } })
   if (!pkg) throw new PackageNotFoundError()
@@ -313,9 +325,83 @@ async function activateMembership(
     await grant(tx, {
       merchantId,
       amount: grantPoints,
-      bizId: sourceOrderId.toString(),
+      bizId: sourceOrderId?.toString(),
       source: 'MEMBERSHIP', // 会员周期赠豆：会随会员到期清零
+      remark: override?.grantRemark,
     })
+  }
+}
+
+export interface AdminMembershipResult {
+  orderNo: string
+  packageName: string
+  /** true = 在现有到期时间上顺延；false = 新开 */
+  renewed: boolean
+  endAt: string
+  /** 本次开通赠送的积分数 */
+  grantPoints: string
+}
+
+/**
+ * 后台手动开通会员（用户线下付款 / 备案未通过期间的兜底通道）。
+ *
+ * 设计取舍：**不另写一套开会员逻辑**，而是造一张 amountFen=0 的 MEMBER 订单再调 `markOrderPaid`。
+ * 这样：
+ *   · 赠豆走 `grant(source:'MEMBERSHIP')` → 进**会员桶**，随会员到期清零（与线上购买完全一致）
+ *   · 幂等键 = `membership:<orderId>`，每次开通都是一张新订单 ⇒ 重复开通就是真续期，不会双发
+ *   · 在后台「最近订单」里留下一行可追溯记录（orderNo 以 `A` 开头 = 后台单，无微信交易号）
+ *   · 时长 / 赠豆取 `SystemSetting.subscription.*`，与线上购买共用同一份配置
+ *
+ * 操作人记录在赠豆流水的 remark 里（BeanLedger 是唯一有留痕字段的账务表）。
+ */
+export async function adminActivateMembership(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  operatorId: bigint,
+  remark?: string,
+): Promise<AdminMembershipResult> {
+  const pkg = await prisma.memberPackage.findFirst({ where: { code: 'SUBSCRIPTION' } })
+  if (!pkg) throw new PackageNotFoundError()
+  if (!pkg.enabled) throw new PackageNotFoundError()
+
+  const before = await activeMembership(prisma, merchantId)
+  // 与 markOrderPaid 读的是同一份配置（SystemSetting.subscription.*），仅用于回显
+  const grantedThisTime = BigInt(Math.round(await getNumber(prisma, 'subscription', 'grant_points', 98000)))
+
+  // 单号前缀 A = ADMIN，与线上充值 B / 线上会员 M 区分
+  const orderNo = `A${Date.now().toString().slice(-10)}${randomUUID().slice(0, 6)}`
+  await prisma.order.create({
+    data: {
+      orderNo,
+      merchantId,
+      orderType: 'MEMBER',
+      refId: pkg.id,
+      amountFen: 0, // 线下收款 / 赠送，不走微信支付，故为 0
+      originalAmountFen: pkg.priceFen,
+      memberDiscountApplied: false,
+      beans: 0,
+      status: 'PENDING',
+      expireAt: new Date(Date.now() + 15 * 60 * 1000),
+    },
+  })
+  await markOrderPaid(
+    prisma,
+    orderNo,
+    null,
+    false,
+    remark?.trim()
+      ? `后台手动开通会员（操作人 admin#${operatorId}）：${remark.trim()}`
+      : `后台手动开通会员（操作人 admin#${operatorId}）`,
+  )
+
+  const after = await activeMembership(prisma, merchantId)
+  if (!after) throw new Error('会员激活后未查到有效会员，请检查配置')
+  return {
+    orderNo,
+    packageName: after.package.name,
+    renewed: !!before,
+    endAt: after.endAt.toISOString(),
+    grantPoints: grantedThisTime.toString(),
   }
 }
 

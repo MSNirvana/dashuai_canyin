@@ -91,11 +91,17 @@ async function main() {
   const maxCap = Math.max(...scenes.map((s) => Number(s.beanPrice)))
   const ok = scenes.filter((s) => Number(s.beanPrice) <= grant).length
   console.log(`  注册赠豆 = ${grant} 豆；最贵场景上限 = ${maxCap} 豆`)
-  console.log(`  ⇒ 新用户注册后可用的场景：${ok}/${scenes.length}${ok === scenes.length ? '' : ' ⚠'}`)
-  if (ok < scenes.length) {
+  console.log(`  ⇒ 新用户注册后可用的场景：${ok}/${scenes.length}${grant === 0 || ok === scenes.length ? '' : ' ⚠'}`)
+  if (grant === 0) {
+    console.log('  ℹ 注册赠豆 = 0 ⇒ 当前**策略**是「注册后必须购买会员才能用 AI」，不是故障。')
+    console.log('    真正的闸门是 `requireSubscription`（文案/分镜/合成 → 403 + 2005），')
+    console.log('    赠豆只是「能不能过预冻结」的第二道门。两者都拦 = 前后一致。')
+    console.log('    支付未开放期间发放方式：后台「商家详情 → 会员 → 手动开通会员」。')
+  } else if (ok < scenes.length) {
     console.log('  ⚠ 上限同时是**预冻结额**：赠豆不够时不是「扣得少」，而是**冻结阶段就被拦**，')
     console.log('    报 `BeanNotEnoughError: AI豆不足：需要 X，可用 Y`，功能直接不可用。')
     console.log(`    修法：TB_REGISTER_GRANT=<豆数> 重跑 setup-ai-channels.ts（只影响新注册，老用户不受影响）。`)
+    console.log('    或彻底关掉注册赠豆（必须先买会员）：TB_REGISTER_GRANT=0。')
   }
 
   console.log('\n════ 五、最近 10 次真实调用的实际扣费（证明到底扣没扣）════')
