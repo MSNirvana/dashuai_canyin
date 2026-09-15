@@ -1,10 +1,17 @@
 // 一键接入 GPT-5.6-Sol 中转：插入供应商 + 模型 + 把生成文案/分镜默认切换到 gpt-5-sol，mock 降为兜底
-// 运行：npx tsx scripts/setup-gpt5sol.ts
+// 运行：SOL_API_KEY=sk-xxxx npx tsx scripts/setup-gpt5sol.ts
 import { PrismaClient } from '@prisma/client'
 import { encryptSecret, maskSecret } from '../src/lib/secret.js'
 
-const API_KEY = 'sk-JfslOnRv2hSvhM9nOSYaPqoG7ctpju9IU2si4yf9Qia691bX'
-const BASE_URL = 'https://tokenbox.you/v1'
+// ⚠ 不要把 key 硬编码在这个文件里。
+//   本仓库是 **public** 的 —— 密钥一旦提交即等于向全网公开（会被爬虫秒抓走）。
+//   历史上这里曾硬编码过一个 `sk-...`，已移除；那把 key 必须视为已泄露并作废重签。
+const API_KEY = (process.env.SOL_API_KEY ?? '').trim()
+const BASE_URL = (process.env.SOL_BASE_URL ?? 'https://tokenbox.you/v1').trim()
+
+if (!API_KEY) {
+  throw new Error('缺少 SOL_API_KEY。用法：SOL_API_KEY=sk-xxxx npx tsx scripts/setup-gpt5sol.ts')
+}
 
 async function main() {
   const prisma = new PrismaClient()

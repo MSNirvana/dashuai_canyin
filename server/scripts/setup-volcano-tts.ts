@@ -11,11 +11,20 @@ import { tmpdir } from 'node:os'
 
 const execFileP = promisify(execFile)
 
-// ───── 配置区（按需修改）─────
-const API_KEY = 'b7f81d77-4ead-4b98-88e3-7c2ef2017a66'
-const VOICE_ID = 'zh_female_qinqienv_uranus_bigtts' // 亲切女声 2.0（通用场景，豆包同款）
-const RESOURCE_ID = 'seed-tts-2.0'                    // 2.0 音色配 2.0 模型
-// ────────────────────────────
+// ───── 配置区 ─────
+// ⚠ 不要把 key 硬编码在这个文件里。
+//   本仓库是 **public** 的 —— 密钥一旦提交即等于向全网公开（会被爬虫秒抓走）。
+//   历史上这里曾硬编码过一个火山 TTS key，已移除；那把 key 必须视为已泄露并作废重签。
+const API_KEY = (process.env.VOLCANO_TTS_API_KEY ?? '').trim()
+const VOICE_ID = process.env.VOLCANO_TTS_VOICE_ID ?? 'zh_female_qinqienv_uranus_bigtts' // 亲切女声 2.0（通用场景，豆包同款）
+const RESOURCE_ID = process.env.VOLCANO_TTS_RESOURCE_ID ?? 'seed-tts-2.0'              // 2.0 音色配 2.0 模型
+// ─────────────────
+
+if (!API_KEY) {
+  throw new Error(
+    '缺少 VOLCANO_TTS_API_KEY。用法：VOLCANO_TTS_API_KEY=xxx npx tsx scripts/setup-volcano-tts.ts',
+  )
+}
 
 const TEST_TEXT = '家人们，今天给大家推荐我们店的招牌红烧肉，肥而不腻，入口即化，快来尝尝吧！'
 
