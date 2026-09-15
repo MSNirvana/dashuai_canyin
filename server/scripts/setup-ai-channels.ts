@@ -51,7 +51,7 @@
 //   「正文为空」时 HTTP 仍是 200、报文结构完全合法 —— 仅校验「content 是字符串」会放过它。
 //   所以修了两处：
 //     · src/ai/adapters.ts：空白正文判为 BAD_RESPONSE（否则网关当成功、业务层照常扣豆）
-//     · 本脚本 [3/5]：把场景 max_output_tokens 抬到 ≥ SCENE_MIN_OUTPUT_TOKENS
+//     · 本脚本 [3/6]：把场景 max_output_tokens 抬到 ≥ SCENE_MIN_OUTPUT_TOKENS
 //
 // ⚠ 计费单价（input_price_per_mtok / output_price_per_mtok，单位：分 / 百万 token）
 //   本脚本已内置从 tokenbox 实际计费表推导出的单价（见下方 PRICES 表），
@@ -76,7 +76,7 @@ const MODEL_DEEPSEEK = (process.env.TB_DEEPSEEK_MODEL ?? 'deepseek-v4-flash').tr
 
 /**
  * 场景输出预算下限（token）。低于它的一律抬到它，只抬不降。
- * 理由见 [3/5] 处的注释：max_tokens 要同时容纳「思考 + 正文」，
+ * 理由见 [3/6] 处的注释：max_tokens 要同时容纳「思考 + 正文」，
  * 原先 300~800 的预算配上推理模型会返回空正文。
  */
 const MIN_OUTPUT_TOKENS = Number(process.env.SCENE_MIN_OUTPUT_TOKENS ?? 4000)
@@ -146,6 +146,54 @@ const SCENE_OVERRIDES: Record<string, { fallbacks?: string[]; timeoutMs?: number
   storyboard_generate: { fallbacks: ['tokenbox-deepseek', 'tokenbox-claude'], timeoutMs: 90_000 },
 }
 
+/**
+ * 场景单次上限（= 预冻结额 = 单次最大扣费，`ai_scene.bean_price`）。
+ *
+ * ★ 这是**给用户的报价**，不是技术参数 —— 改了它等于改用户实付多少豆。
+ *   所以默认**不写库**，只在 `TB_SET_CAPS=1` 时应用。
+ *
+ * 为什么需要调：计费口径是「扣豆 = ceil(成本分 × points_per_yuan × cost_multiplier / 100)」，
+ * 而 beanPrice 是硬截断线（`charged = min(wantCharge, frozenAmount)`）。
+ * 实测（2026-09-15，全场景各 1 次真实调用，gpt-5.5）：
+ *
+ *   场景                 应扣豆   现上限   差距
+ *   copy_generate          36  >    5    ← 平台承担 31
+ *   storyboard_generate   123  >   10    ← 平台承担 113
+ *   copy_traffic           38  >    5
+ *   copy_intro             41  >    5
+ *   copy_quality           31  >    5
+ *   script_polish          91  >    5
+ *   review_guard           20  >    3
+ *   title_overlay          36  >    5
+ *   bgm_select             28  >    3
+ *   rhythm_detect          94  >    3
+ *   copy_recommend         28  >    5
+ *
+ * → **11/11 场景全部被截断**，现上限是按「mock / 早期便宜模型」定的。
+ *   要让「按成本×系数扣」真正成立，上限必须抬到不会截断的水平（上限只是财务安全网）。
+ *
+ * 下表 = 实测应扣豆 × 2 取整到 10（留一倍余量给输出长度抖动）。
+ * ⚠ 注意副作用：上限同时是**预冻结额**，抬上去后「账户可用豆不足」的门槛也一起抬高
+ *   （新用户注册赠豆目前 30，copy_intro 需 80 冻结 ⇒ 新用户一上来用不了）。
+ *   所以调上限要连带评估注册赠豆/豆套餐的定价。
+ */
+const SCENE_CAPS: Record<string, number> = {
+  copy_generate: 70,
+  storyboard_generate: 250,
+  copy_traffic: 80,
+  copy_intro: 80,
+  copy_quality: 60,
+  copy_recommend: 60,
+  script_polish: 180,
+  review_guard: 40,
+  title_overlay: 70,
+  bgm_select: 60,
+  rhythm_detect: 190,
+}
+
+/** 是否把 SCENE_CAPS 写库。默认 false —— 会改变用户实付，属商业决策。 */
+const SET_CAPS = process.env.TB_SET_CAPS === '1'
+
 interface ChannelSpec {
   code: string
   name: string
@@ -202,7 +250,7 @@ async function main() {
   const keys = readKeys()
 
   try {
-    console.log(`\n[1/5] 配置供应商（baseUrl = ${BASE_URL}）`)
+    console.log(`\n[1/6] 配置供应商（baseUrl = ${BASE_URL}）`)
     const providerIds: bigint[] = []
     /** channelCode → 该通道第一个模型 id（用作场景主/备模型） */
     const primaryModelOf = new Map<string, bigint>()
@@ -272,7 +320,7 @@ async function main() {
       if (stale.count > 0) console.log(`        停用同供应商下 ${stale.count} 个历史模型`)
     }
 
-    console.log('\n[2/5] 重建场景备用链')
+    console.log('\n[2/6] 重建场景备用链')
     const primary = primaryModelOf.get('tokenbox-gpt')!
     const claudeModelId = primaryModelOf.get('tokenbox-claude')!
     const deepseekModelId = primaryModelOf.get('tokenbox-deepseek')!
@@ -309,7 +357,7 @@ async function main() {
       )
     }
 
-    console.log(`\n[3/5] 抬高场景输出预算（下限 ${MIN_OUTPUT_TOKENS} token，只抬不降）`)
+    console.log(`\n[3/6] 抬高场景输出预算（下限 ${MIN_OUTPUT_TOKENS} token，只抬不降）`)
     // ★ 为什么必须抬：实测发现中转站（以及不少厂商）把 max_tokens 同时当作
     //   「思考(reasoning)预算 + 正文预算」。三个候选通道全是推理模型，
     //   GPT-5.5 在极短提示下就要花 188~352 个思考 token，
@@ -328,7 +376,37 @@ async function main() {
     }
     if (raised === 0) console.log('  （全部已在下限之上，无需调整）')
 
-    console.log('\n[4/5] 停用历史供应商（保留数据，不删除）')
+    console.log(`\n[4/6] 场景单次上限（冻结额）${SET_CAPS ? '' : ' —— 仅对照，未应用'}`)
+    // 上限是硬截断线，决定用户实付多少豆。默认只打印对照，不改。
+    let capChanged = 0
+    console.log(`  ${'场景'.padEnd(22)}${'现上限'.padEnd(9)}建议   说明`)
+    for (const s of scenes) {
+      const want = SCENE_CAPS[s.code]
+      const cur = Number(s.beanPrice)
+      const note =
+        want === undefined
+          ? '（未给出建议值，保持原样）'
+          : want === cur
+            ? '已一致'
+            : want > cur
+              ? `低于实测应扣 ⇒ 现在会被截断`
+              : `高于实测应扣（收紧）`
+      console.log(`  ${s.code.padEnd(22)}${String(cur).padEnd(9)}${String(want ?? '-').padEnd(8)}${note}`)
+      if (SET_CAPS && want !== undefined && want !== cur) {
+        await prisma.aiScene.update({ where: { id: s.id }, data: { beanPrice: BigInt(want) } })
+        capChanged++
+      }
+    }
+    if (SET_CAPS) {
+      console.log(`  ⇒ 已更新 ${capChanged} 个场景的上限`)
+    } else {
+      console.log(
+        '  ⚠ 未应用（未设 TB_SET_CAPS=1）。上限现在会截断几乎所有场景的真实成本，\n' +
+          '    于是实际扣费是「封顶值」而不是「成本 × 系数」。确认后 TB_SET_CAPS=1 重跑。',
+      )
+    }
+
+    console.log('\n[5/6] 停用历史供应商（保留数据，不删除）')
     const retired = await prisma.aiProvider.findMany({
       where: { code: { notIn: CHANNELS.map((c) => c.code) }, enabled: true },
     })
@@ -344,7 +422,7 @@ async function main() {
       }
     }
 
-    console.log('\n[5/5] 清理熔断状态 + 打印当前生效配置')
+    console.log('\n[6/6] 清理熔断状态 + 打印当前生效配置')
     // 熔断状态在 Redis（ai:cb:open:<providerId>，TTL 60s），不在数据库。
     // 刚把某个通道改好（比如换了 key / 换了模型）却不清它，会有最长 60s
     // 「明明配好了，请求还是走备用」的窗口 —— 排查起来非常费解。
