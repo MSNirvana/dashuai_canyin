@@ -227,6 +227,44 @@ openssl rand -hex 32    # → APP_MASTER_KEY（必须 64 位十六进制）
 > （外部探测 filtered），所以不构成实际暴露；若日后为图省事放行了端口，记得改成
 > `"127.0.0.1:3306:3306"` 只绑本机。
 
+**⚠ 覆盖端口必须用 `!override` 标签**（2026-09-15 实测踩到，部署因此中断）
+
+不要在 `docker-compose.override.yml` 里直接写这样：
+
+```yaml
+services:
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"      # ❌ 错误
+```
+
+compose 对 `ports` 是**列表追加**语义，不是覆盖 —— 上面会跟主文件的 `6379:6379`
+**叠加成两条映射**（一条绑 `0.0.0.0`、一条绑 `127.0.0.1`），启动时报：
+
+```
+Error response from daemon: failed to set up container networking:
+failed to bind host port 127.0.0.1:6379/tcp: address already in use
+```
+
+而 `docker compose config` 会把两条都列出来（可用来诊断）。正确写法是用 `!override` 整段替换：
+
+```yaml
+services:
+  mysql:
+    environment:
+      MYSQL_PASSWORD: <强口令>        # environment 是 map 语义，同名 key 直接覆盖，无需 !override
+    ports: !override
+      - "127.0.0.1:3306:3306"
+  redis:
+    ports: !override
+      - "127.0.0.1:6379:6379"
+```
+
+（仓库根目录没有这个 override 文件，服务器上单独放一份即可 —— 它不在 git 里，
+所以生产口令不会被提交。注意 `deploy/deploy.sh` 是在 `/opt/dashuai` 下执行
+`docker compose up`，compose 会自动读取同目录的 `docker-compose.override.yml`。）
+
+
 
 ---
 

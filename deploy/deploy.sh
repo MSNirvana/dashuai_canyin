@@ -135,8 +135,16 @@ npm run db:seed
 
 # ───────── 7. 起进程 ─────────
 log "[7/7] 启动 PM2 进程"
-mkdir -p /var/log/dashuai
-pm2 startOrReload deploy/ecosystem.config.cjs --update-env
+# 日志目录属 root，普通用户建不了 —— 已存在则 mkdir -p 直接成功，否则需要 sudo
+mkdir -p /var/log/dashuai 2>/dev/null || sudo mkdir -p /var/log/dashuai
+sudo chown -R "$(id -un):$(id -gn)" /var/log/dashuai 2>/dev/null || true
+
+# ⚠ PM2 配置必须用【绝对路径】：
+#   上面第 4 步执行过 `cd "$SERVER_DIR"`，之后 cwd 一直停在 server/，
+#   这里若写相对的 `deploy/ecosystem.config.cjs`，会被解析成 server/deploy/...
+#   → `[PM2][ERROR] File deploy/ecosystem.config.cjs not found`。
+#   （2026-09-15 实际踩到，部署卡在第 7 步。）
+pm2 startOrReload "$APP_DIR/deploy/ecosystem.config.cjs" --update-env
 pm2 save
 
 sleep 3
