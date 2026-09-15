@@ -157,6 +157,73 @@ export interface CopyPattern {
   ignore?: string[]
 }
 
+// ────────────────────────────────────────────────────────────────
+// tslib：tdesign 的隐式外部依赖
+//
+// tdesign-miniprogram >= 1.9.0 的产物里有 `import{__decorate}from"tslib"`，
+// 但它 package.json 未声明任何 dependencies（官方 issue #3697），
+// 所以上面的传递闭包**永远拷不到 tslib**（闭包只处理 `.` 开头的相对引用），
+// 运行时报 `module 'npm/tdesign-miniprogram/button/tslib.js' is not defined`。
+//
+// 微信对 `npm/` 下的裸模块名会退回**相对当前文件**解析，所以 shim 必须落到
+// **每个引用 tslib 的组件目录**里。整份 tslib.js 23KB × 11 目录 = 253KB 会顶爆
+// 主包配额，故用 config/tdesign-tslib-shim.js（只含实际用到的 helper，约 2KB）。
+// ────────────────────────────────────────────────────────────────
+const TSLIB_SHIM_REL = 'config/tdesign-tslib-shim.js'
+
+/** shim 里实际导出的 helper —— 必须与 config/tdesign-tslib-shim.js 末尾的 exports 一致 */
+const TSLIB_SHIM_EXPORTS = ['__awaiter', '__decorate', '__rest']
+
+export interface TslibUsage {
+  /** 引用 tslib 的目录（相对 tdesign-miniprogram/），已排序 */
+  dirs: string[]
+  /** 实际用到的 helper 名 */
+  helpers: string[]
+}
+
+/**
+ * 扫描闭包内所有 .js，收集 tslib 的引用位置与实际用到的 helper。
+ * 用于 ① 决定把 shim 拷到哪些目录 ② 校验 shim 是否覆盖了全部 helper。
+ */
+export function collectTslibUsage(distRoot: string, needed: string[]): TslibUsage {
+  const dirs = new Set<string>()
+  const helpers = new Set<string>()
+
+  for (const top of needed) {
+    const stack = [top]
+    while (stack.length) {
+      const rel = stack.pop() as string
+      const abs = join(distRoot, rel)
+      if (!existsSync(abs)) continue
+      if (statSync(abs).isDirectory()) {
+        for (const e of readdirSync(abs, { withFileTypes: true })) stack.push(`${rel}/${e.name}`)
+        continue
+      }
+      if (!rel.endsWith('.js')) continue
+
+      const text = readFileSync(abs, 'utf8')
+      if (!/["']tslib["']/.test(text)) continue
+
+      const dir = rel.split('/').slice(0, -1).join('/')
+      if (dir) dirs.add(dir)
+
+      // import { a, b } from "tslib" —— 产物里 from 与引号之间无空格
+      for (const m of text.matchAll(/import\s*\{([^}]*)\}\s*from\s*["']tslib["']/g)) {
+        for (const raw of m[1].split(',')) {
+          const name = raw.trim().split(/\s+as\s+/)[0].trim()
+          if (name) helpers.add(name)
+        }
+      }
+      // 整体引入（require("tslib") / import * as tslib）—— 无法静态确定用了哪些
+      if (/require\s*\(\s*["']tslib["']\s*\)|import\s*\*\s*as\s+\w+\s*from\s*["']tslib["']/.test(text)) {
+        helpers.add('*')
+      }
+    }
+  }
+
+  return { dirs: [...dirs].sort(), helpers: [...helpers].sort() }
+}
+
 /**
  * 生成 Taro copy 规则：只拷闭包内的组件目录。
  * 若解析出现未决引用，直接抛错中断构建 —— 宁可构建失败，也不要出一个白屏的包。
@@ -179,19 +246,58 @@ export function buildTdesignCopyPatterns(cwd: string, taroEnv: string | undefine
   const distRoot = join(cwd, DIST_REL)
   const keptBytes = dirSize(join(distRoot, '.')) - r.excluded.reduce((s, d) => s + dirSize(join(distRoot, d)), 0)
 
+  // ── tslib shim：补齐 tdesign 未声明的隐式依赖，见本文件顶部的说明 ──
+  const usage = collectTslibUsage(distRoot, r.needed)
+  const shimPath = join(cwd, TSLIB_SHIM_REL)
+  if (usage.dirs.length > 0 && !existsSync(shimPath)) {
+    throw new Error(
+      `[tdesign] tdesign 产物引用了 tslib，但找不到 shim：${TSLIB_SHIM_REL}\n` +
+        '该文件用于补齐 tdesign 未声明的隐式依赖，缺失会导致小程序运行时白屏。',
+    )
+  }
+  const uncovered = usage.helpers.filter((h) => !TSLIB_SHIM_EXPORTS.includes(h))
+  if (uncovered.length > 0) {
+    throw new Error(
+      `[tdesign] tslib shim 未覆盖以下 helper：${uncovered.join(', ')}\n` +
+        `  tdesign 实际用到：${usage.helpers.join(', ') || '(无)'}\n` +
+        `  shim 已提供：${TSLIB_SHIM_EXPORTS.join(', ')}\n` +
+        '多半是 tdesign-miniprogram 升级引入了新的 helper（`*` 表示整体引入、无法静态判断）。\n' +
+        `修法：从 node_modules/tslib/tslib.js 取出对应实现补进 ${TSLIB_SHIM_REL}，` +
+        '并同步更新 config/tdesign-copy.ts 里的 TSLIB_SHIM_EXPORTS。',
+    )
+  }
+
+  const tslibFullBytes = (() => {
+    const p = join(cwd, 'node_modules/tslib/tslib.js')
+    return existsSync(p) ? statSync(p).size : 0
+  })()
+
   console.log(
     `[tdesign] 按需拷贝：注册 ${r.components.length} 个组件 → 保留 ${r.needed.length} 个目录` +
       `（${r.needed.join(', ')}），排除 ${r.excluded.length} 个，npm 体积约 ${fmt(keptBytes)}`,
   )
+  if (usage.dirs.length > 0) {
+    const shimBytes = statSync(shimPath).size
+    console.log(
+      `[tdesign] tslib shim：${usage.helpers.join('/')} → 拷到 ${usage.dirs.length} 个目录` +
+        `（${fmt(shimBytes * usage.dirs.length)}；若整拷 tslib.js 需 ${fmt(tslibFullBytes * usage.dirs.length)}）`,
+    )
+  }
 
-  return r.needed.map((dir) => ({
-    from: `node_modules/tdesign-miniprogram/miniprogram_dist/${dir}/`,
-    to: `dist/${env}/npm/tdesign-miniprogram/${dir}/`,
-    // 注意：这里必须用 `**/*.d.ts` 而不是 `*.d.ts`。
-    // 原来的 `*.d.ts` 只能匹配 from 目录的直属文件，子目录里的类型声明会照拷进来 ——
-    // 实测残留 69 个 .d.ts、46.4KB。类型声明在小程序产物里毫无用处。
-    ignore: ['**/*.d.ts', '**/*.md'],
-  }))
+  return [
+    ...r.needed.map((dir) => ({
+      from: `node_modules/tdesign-miniprogram/miniprogram_dist/${dir}/`,
+      to: `dist/${env}/npm/tdesign-miniprogram/${dir}/`,
+      // 注意：这里必须用 `**/*.d.ts` 而不是 `*.d.ts`。
+      // 原来的 `*.d.ts` 只能匹配 from 目录的直属文件，子目录里的类型声明会照拷进来 ——
+      // 实测残留 69 个 .d.ts、46.4KB。类型声明在小程序产物里毫无用处。
+      ignore: ['**/*.d.ts', '**/*.md'],
+    })),
+    ...usage.dirs.map((dir) => ({
+      from: TSLIB_SHIM_REL,
+      to: `dist/${env}/npm/tdesign-miniprogram/${dir}/tslib.js`,
+    })),
+  ]
 }
 
 /** 供构建后自检：把未决引用暴露出去 */

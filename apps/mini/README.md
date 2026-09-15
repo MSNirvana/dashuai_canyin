@@ -27,6 +27,36 @@ src/
     └── home/            # 首页（门店切换 / 豆余额 / 新建创作）
 ```
 
+## TDesign 组件与 npm 拷贝（动这里之前先读）
+
+TDesign 是**原生小程序组件**，不经过 webpack，而是由 `config/tdesign-copy.ts` 按
+「`src/app.config.ts` 注册的 `t-*` 组件 → 真实引用传递闭包」**按需拷贝**到 `dist/weapp/npm/`。
+注册新组件不用改配置，拷贝范围会跟着自动走（闭包是机械算出来的，不是手工维护的目录清单）。
+
+两个**已经踩过**的坑，现在都做了构建期拦截：
+
+1. **tdesign ≥ 1.9.0 的隐式 tslib 依赖**
+   产物里有 `import{__decorate}from"tslib"`，但 tdesign 的 `package.json` 未声明该依赖
+   （官方 issue `Tencent/tdesign-miniprogram#3697`）。微信对 `npm/` 下的裸模块名会退回
+   「相对当前文件」解析，所以**每个引用 tslib 的组件目录**里都必须有 `tslib.js`，否则运行时报
+   `module 'npm/tdesign-miniprogram/button/tslib.js' is not defined`，页面直接白屏。
+   → 由 `config/tdesign-tslib-shim.js` + `tdesign-copy.ts` 自动逐目录补齐
+   （11 个目录 × 约 2KB；整份 `tslib.js` 每目录拷一份要 251KB，会顶爆主包配额）。
+   若 tdesign 升级后用到新 helper，**构建会直接失败**并告诉你怎么补。
+
+2. **改了 `.env` 却不生效**
+   构建脚本里曾写死 `TARO_APP_API_BASE_URL`，而命令行优先级高于 `.env`
+   → 已移除。现在产物里的后端地址**只**来自 `.env`。
+   想临时连本地后端用 `npm run dev:weapp:local`。
+
+构建后建议跑一次产物自检：
+
+```bash
+npm run verify:dist
+```
+
+核对项：组件引用是否都能解析 / tslib 是否补齐 / 主包体积 / 产物里有没有残留联调地址。
+
 ## 登录
 
 - **默认入口**：微信一键登录。必须用原生 `<Button openType="getPhoneNumber">`（TDesign 的 `t-button` 对 `openType` 支持不稳定）

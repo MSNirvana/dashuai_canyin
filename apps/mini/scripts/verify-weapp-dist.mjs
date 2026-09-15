@@ -118,6 +118,7 @@ const essential = [
   'app.js',
   'common.js',
   'npm/tdesign-miniprogram/button/button.js',
+  'npm/tdesign-miniprogram/button/tslib.js',
   'npm/tdesign-miniprogram/loading/loading.js',
   'npm/tdesign-miniprogram/common/style/index.wxss',
 ]
@@ -128,7 +129,35 @@ for (const e of essential) {
   if (!ok) fail += 1
 }
 
-// ── 5. 产物里不应出现的联调地址（P0-4） ──
+// ── 5. tslib 隐式依赖校验 ──
+// tdesign-miniprogram >= 1.9.0 的产物里有 `import{__decorate}from"tslib"`，
+// 但它 package.json 未声明该依赖（官方 issue #3697）。微信对 `npm/` 下的裸模块名
+// 会退回「相对当前文件」解析，所以**每个引用 tslib 的组件目录**里都必须有 tslib.js，
+// 否则运行时报 `module 'npm/tdesign-miniprogram/button/tslib.js' is not defined`。
+// 这类问题构建期完全静默，只在开发者工具/真机打开对应页面时才炸 —— 必须机械核对。
+const npmJs = files.filter((f) => f.endsWith('.js') && f.includes('/npm/tdesign-miniprogram/'))
+const tslibMissing = []
+let tslibChecked = 0
+for (const f of npmJs) {
+  if (!/["']tslib["']/.test(readFileSync(f, 'utf8'))) continue
+  tslibChecked += 1
+  if (!existsSync(join(dirname(f), 'tslib.js'))) {
+    tslibMissing.push(f.replace(DIST + '/', ''))
+  }
+}
+console.log(`\n[自检] tslib 隐式依赖：${tslibChecked} 个文件引用它`)
+if (tslibChecked === 0) {
+  console.log('    ⚠ 没有任何文件引用 tslib —— 若 tdesign 版本仍是 >=1.9.0，说明本项校验已失效，请人工确认')
+} else if (tslibMissing.length) {
+  fail += 1
+  console.log(`    ✗ ${tslibMissing.length} 处所在目录缺 tslib.js：`)
+  for (const m of tslibMissing) console.log('        ' + m)
+  console.log('      修法：见 config/tdesign-copy.ts 的 TSLIB_SHIM_REL 与 config/tdesign-tslib-shim.js')
+} else {
+  console.log('    ✓ 每个引用 tslib 的目录里都有 tslib.js')
+}
+
+// ── 6. 产物里不应出现的联调地址（P0-4） ──
 const jsFiles = files.filter((f) => f.endsWith('.js'))
 const localhostHits = []
 for (const f of jsFiles) {
