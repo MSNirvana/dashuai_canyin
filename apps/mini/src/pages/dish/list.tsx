@@ -139,13 +139,8 @@ export default function DishListPage() {
                 </View>
                 <Text className='dish-card__del' onClick={(e) => { e.stopPropagation(); onDelete(d) }}>删除</Text>
               </View>
-              <View className='dish-card__foot'>
-                <View className='dish-card__shoot'>
-                  <Text className='dish-card__shoot-label'>建议出镜</Text>
-                  <Text className='dish-card__shoot-text'>{d.sellingPoints ? '先拍卖点，再拍一口下饭' : '补充卖点后，生成更贴合的分镜'}</Text>
-                </View>
-                <Text className='dish-card__hint'>点击查看详情 · 编辑拍摄素材</Text>
-              </View>
+              {/* 「建议出镜」已移到菜品详情页：列表里每张卡都是同一句通用文案，留着只是噪音 */}
+              <Text className='dish-card__hint'>点击查看详情 · 编辑拍摄素材</Text>
             </View>
           ))}
         </View>

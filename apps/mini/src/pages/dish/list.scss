@@ -129,12 +129,8 @@
   &__title-row { display: flex; align-items: center; gap: 12rpx; min-width: 0; }
   &__badge { flex: 0 0 auto; padding: 4rpx 12rpx; border-radius: 999rpx; background: var(--td-brand-color-light); color: var(--td-brand-color); font-size: 18rpx; font-weight: 600; }
 
-  /* 建议出镜与「点击查看详情」放在封面高度之外，避免被上面的上限裁掉 */
-  &__foot { margin-top: 18rpx; }
-  &__shoot { padding: 14rpx 16rpx; border-radius: 14rpx; background: var(--td-bg-color-secondary); }
-  &__shoot-label { display: block; color: var(--td-text-color-placeholder); font-size: 19rpx; }
-  &__shoot-text { display: block; margin-top: 6rpx; color: var(--td-text-color-primary); font-size: 22rpx; line-height: 1.45; }
-  &__hint { display: block; margin-top: 12rpx; color: var(--td-text-color-placeholder); font-size: 20rpx; }
+  /* 「建议出镜」已移到菜品详情页 —— 列表里每张卡都是同一句通用文案，一屏十道菜就是十个同样的灰框 */
+  &__hint { display: block; margin-top: 16rpx; color: var(--td-text-color-placeholder); font-size: 20rpx; }
 
   &__name {
     font-size: 30rpx;
