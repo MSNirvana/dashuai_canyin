@@ -7,10 +7,13 @@
 .dish-detail__name { display: block; font-size: 40rpx; font-weight: 700; letter-spacing: -0.025em; margin-bottom: 24rpx; }
 .dish-detail__section { display: flex; flex-direction: column; gap: 10rpx; margin: 20rpx 0; color: var(--td-text-color-secondary); line-height: 1.6; }
 .dish-detail__label { display: block; margin: 28rpx 0 14rpx; color: var(--td-text-color-primary); font-size: 26rpx; font-weight: 600; }
+/* 一行三个。宽度按 1/3 算而不是写死 rpx：body 的 margin/padding 一改，
+   写死的宽度就会把第三个挤到下一行。gap 12rpx 但宽度按 30rpx 扣，留 6rpx 余量防亚像素四舍五入导致的换行。 */
 .dish-detail__gallery { display: flex; flex-wrap: wrap; gap: 12rpx; }
-.dish-detail__gallery image { width: 200rpx; height: 200rpx; border-radius: var(--td-radius-default); }
-.dish-detail__videos { display: flex; flex-direction: column; gap: 18rpx; }
-.dish-detail__video video { width: 100%; height: 360rpx; border-radius: var(--td-radius-default); }
+.dish-detail__gallery image { width: calc((100% - 30rpx) / 3); height: 200rpx; border-radius: var(--td-radius-default); }
+.dish-detail__videos { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.dish-detail__video { width: calc((100% - 30rpx) / 3); }
+.dish-detail__video video { width: 100%; height: 200rpx; border-radius: var(--td-radius-default); }
 .dish-detail__muted { color: var(--td-text-color-placeholder); font-size: 24rpx; }
 .dish-detail__footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 24rpx 36rpx calc(24rpx + env(safe-area-inset-bottom)); background: rgba(255,255,255,.96); backdrop-filter: blur(20rpx); border-top: 1rpx solid var(--td-component-border); }
 .dish-detail__footer view { height: 96rpx; border-radius: var(--td-radius-default); background: var(--td-brand-color); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 32rpx; font-weight: 600; }

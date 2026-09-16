@@ -11,7 +11,16 @@ export default function DishDetailPage() {
   const [dish, setDish] = useState<DishItem | null>(null); const [media, setMedia] = useState<MediaView[]>([]); const [loading, setLoading] = useState(true)
   useEffect(() => { if (!id) { setLoading(false); return }; getDish(storeId, id).then(async (d) => { setDish(d); const legacy: DishMedia[] = d.media?.length ? d.media : [...(d.coverKey ? [{ type: 'IMAGE' as const, cosKey: d.coverKey, sort: 0 }] : []), ...(d.videoKey ? [{ type: 'VIDEO' as const, cosKey: d.videoKey, sort: 0 }] : [])]; const views = await Promise.all(legacy.map(async (m) => { const r = await getDishMediaUrl(m.cosKey).catch(() => ({ url: null })); const c = m.coverKey ? await getDishMediaUrl(m.coverKey).catch(() => ({ url: null })) : { url: null }; return { ...m, url: r.url || '', coverUrl: c.url || undefined } })); setMedia(views) }).catch(() => Taro.showToast({ title: '菜品加载失败', icon: 'none' })).finally(() => setLoading(false)) }, [id, storeId])
   const images = media.filter((m) => m.type === 'IMAGE' && m.url); const videos = media.filter((m) => m.type === 'VIDEO')
-  const previewImages = (index: number) => Taro.previewImage({ current: images[index]?.url, urls: images.map((m) => m.url) })
+  const imageUrls = images.map((m) => m.url)
+  // ★ 被点的那张必须排到 urls[0]。
+  // wx.previewImage 的 current 只接受「图片链接」，靠「能在 urls 里精确匹配到」来定位；
+  // 匹配不上（或平台实现压根忽略 current）时会静默回落到 urls[0] —— 表现就是「点第 2、3 张却从第 1 张开始」。
+  // 实测这条链路本身没有错（源码、产物、Taro 透传都核过），所以不去赌微信的匹配行为：
+  // 把被点的挪到 0 号位后，「匹配成功」与「回落 urls[0]」两条路都落在同一张上。
+  const previewImages = (index: number) => {
+    const ordered = [imageUrls[index], ...imageUrls.filter((_, i) => i !== index)]
+    Taro.previewImage({ current: ordered[0], urls: ordered })
+  }
   const edit = () => Taro.navigateTo({ url: '/pages/dish/edit?storeId=' + storeId + '&id=' + id })
   if (loading) return <View className='dish-detail dish-detail--state'>加载中…</View>
   if (!dish) return <View className='dish-detail dish-detail--state'>菜品不存在</View>
