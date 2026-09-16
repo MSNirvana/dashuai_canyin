@@ -42,7 +42,11 @@ export default function WorkDetailPage() {
     Taro.navigateTo({ url: `/pages/creation/edit?workId=${id}` })
   }
 
-  /** 一键生成：会真的调用 AI（消耗 AI 豆），先确认再跳 */
+  /**
+   * 一键生成：下一步就会真的调 AI（消耗 AI 豆），先确认再跳。
+   * 创作页本身已是「选好款式就直接生成、生成完直达拍摄」，所以这里只做预填 + 前置确认，
+   * 不再需要额外的 auto 参数（款式与门店都要让用户在创作页确认一次，避免白扣豆）。
+   */
   const onAutoGenerate = async () => {
     if (!currentStoreId) {
       goStores()
@@ -50,13 +54,13 @@ export default function WorkDetailPage() {
     }
     const r = await Taro.showModal({
       title: '用 AI 直接生成',
-      content: '将按这条作品的配方自动生成口播文案与分镜脚本，会消耗 AI 豆。继续？',
+      content: '将按这条作品的配方预填文案款式与镜头复杂度，点「生成文案与分镜」后消耗 AI 豆。继续？',
       confirmText: '继续生成',
       confirmColor: '#e1251b',
     })
     if (!r.confirm) return
     void markWorkClone(id).catch(() => undefined)
-    Taro.navigateTo({ url: `/pages/creation/edit?workId=${id}&auto=1` })
+    Taro.navigateTo({ url: `/pages/creation/edit?workId=${id}` })
   }
 
   if (loading) return <View className='work-detail work-detail--state'>加载中…</View>
