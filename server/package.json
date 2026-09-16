@@ -32,6 +32,7 @@
     "storage:gc": "tsx scripts/gc-orphan-objects.ts",
     "membership:verify": "tsx scripts/verify-membership-gate.ts",
     "sms:verify": "tsx scripts/verify-sms-login.ts",
+    "sms:status": "tsx scripts/sms-status.ts",
     "wxpay:probe": "tsx scripts/probe-wxpay-live.ts",
     "pay-reconcile:verify": "tsx scripts/verify-pay-reconcile.ts",
     "wxpay:appid": "tsx scripts/probe-wxpay-appid.ts"

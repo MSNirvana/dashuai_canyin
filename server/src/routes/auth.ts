@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { prisma, redis } from '../db.js'
 import { loginByPhone, loginByWechat, refresh, devLogin, WxLoginFailedError } from '../auth/auth.service.js'
 import { sendCode, SmsSendTooFrequentError, SmsDailyLimitError, SmsProviderNotConfiguredError } from '../auth/sms.js'
+import { SmsSendFailedError } from '../auth/sms-provider.js'
 import { ok, fail } from '../lib/result.js'
 
 const router = createRouter()
@@ -22,6 +23,13 @@ router.post('/sms/send', async (req, res) => {
     }
     if (e instanceof SmsProviderNotConfiguredError) {
       fail(res, 1004, e.message, 503)
+      return
+    }
+    if (e instanceof SmsSendFailedError) {
+      // e.reason 含腾讯云内部错误码与账号状态，只进服务端日志，不回给客户端。
+      // 这条日志是排查「用户说收不到短信」的第一现场 —— 余额不足 / 签名模板未过审 / 限频都在这里现形。
+      console.error(`[SMS] 发送失败：${e.reason}`)
+      fail(res, 1005, '短信发送失败，请稍后重试', 502)
       return
     }
     fail(res, 1003, '发送失败', 400)

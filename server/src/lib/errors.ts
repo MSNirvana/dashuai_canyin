@@ -7,6 +7,7 @@ import { BeanNotEnoughError } from '../bean/bean.service.js'
 import { ScenePendingError } from '../ai/ai.service.js'
 import { WxApiError } from '../auth/wechat.js'
 import { SmsCodeInvalidError, SmsDailyLimitError, SmsSendTooFrequentError, SmsProviderNotConfiguredError } from '../auth/sms.js'
+import { SmsSendFailedError } from '../auth/sms-provider.js'
 import { StoreLimitError, StoreDefaultDeleteError } from '../services/store.service.js'
 import { DishStoreMismatchError } from '../services/dish.service.js'
 import {
@@ -49,6 +50,9 @@ function mapError(e: unknown): MappedError {
   if (e instanceof SmsDailyLimitError) return { code: 1003, message: `今日验证码次数已达上限（${e.limit}）`, httpStatus: 429 }
   if (e instanceof SmsCodeInvalidError) return { code: 1002, message: '验证码错误或已过期', httpStatus: 400 }
   if (e instanceof SmsProviderNotConfiguredError) return { code: 1004, message: e.message, httpStatus: 503 }
+  // 通道侧发送失败（余额不足 / 签名模板未过审 / 网络异常）。
+  // 刻意不回传 e.reason：它含腾讯云内部错误码与账号状态，对用户无意义，只进服务端日志。
+  if (e instanceof SmsSendFailedError) return { code: 1005, message: '短信发送失败，请稍后重试', httpStatus: 502 }
   if (e instanceof StoreLimitError) return { code: 2003, message: e.message, httpStatus: 400 }
   if (e instanceof StoreDefaultDeleteError) return { code: 2003, message: e.message, httpStatus: 400 }
   if (e instanceof DishStoreMismatchError) return { code: 2004, message: e.message, httpStatus: 400 }

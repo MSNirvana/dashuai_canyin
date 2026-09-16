@@ -24,6 +24,7 @@ import previewCollageRouter from './routes/preview-collage.js'
 import renderCapabilitiesRouter from './routes/render-capabilities.js'
 import systemSettingsRouter from './routes/system-settings.js'
 import { ensureLocalStorage, isLocalStorage, localStorageRoot } from './lib/local-storage.js'
+import { smsTestCodeConfig } from './auth/sms.js'
 
 const app: Express = express()
 const PORT = Number(process.env.PORT ?? 3000)
@@ -108,6 +109,17 @@ async function bootstrap() {
     console.log(`[server] listening on :${PORT} (env=${process.env.NODE_ENV ?? 'development'})`)
     if (process.env.FFMPEG_WORKER !== 'true') {
       console.log('[server] 渲染为演示模式（FFMPEG_WORKER≠true，提交即模拟成功）；真实合成见 npm run worker')
+    }
+    // 启动横幅上高亮后门状态：它能让人**一眼看到**自己正在跑一个「固定验证码可登录」的进程。
+    // 写成 console.warn 而不是 log，是为了在刷屏的启动日志里能跳出来 —— 这类开关最大的风险
+    // 不是被人恶意打开，而是**被忘在启用状态**：本地联调完忘了关，某天把 .env 整份复制到服务器
+    // （NODE_ENV 一写错就生效）。只打手机号条数、**绝不回显码值**。
+    const testSms = smsTestCodeConfig()
+    if (testSms) {
+      console.warn(
+        `[server] ⚠ 短信测试码已启用（白名单 ${testSms.phones.length} 个手机号可用固定验证码登录）` +
+          ' —— 这是登录后门，联调结束后请删掉 .env 里的 SMS_TEST_CODE / SMS_TEST_CODE_PHONES',
+      )
     }
   })
 
