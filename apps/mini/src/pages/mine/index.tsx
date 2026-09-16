@@ -118,7 +118,11 @@ export default function Mine() {
     }
   }
 
-  const go = (url: string) => Taro.navigateTo({ url })
+  // 带上 fail：跳转失败时把目标 url 打进日志。
+  // 否则失败会以「navigateTo:fail timeout」的形式被抛到 App.onError，
+  // 控制台里只有一堆 WAServiceMainContext 的栈，看不到是哪个页面挂了。
+  const go = (url: string) =>
+    Taro.navigateTo({ url, fail: (e) => console.warn('[nav] 跳转失败', url, e?.errMsg) })
   const quotaNum = Number(storageQuota)
   const usedNum = Number(storageUsed)
   const pct = quotaNum > 0 ? Math.min(100, Math.round((usedNum / quotaNum) * 100)) : 0

@@ -61,13 +61,29 @@ function clearLoginState() {
   Taro.removeStorageSync(STORAGE_KEYS.merchant)
 }
 
+// ★ 回登录页必须「幂等 + 延后」，不能立刻 switchTab。
+//
+// 本函数是被「请求层」触发的，而请求往往就发在**刚刚跳过去的那个页面**的 onShow/useDidShow 里
+// —— 那一刻 `navigateTo` 还没有落定。此时立刻 switchTab 会把这次跳转打断，
+// 微信侧报的正是 `navigateTo:fail timeout`：文案看着像「目标页加载超时」，
+// 实际是导航被另一个跳转打断了。加上 fail 回调也救不回来，因为它压根没失败，是被打断。
+//
+// 所以：先把 auth:required 事件放出去（我的页收到会弹登录框），
+// 等页栈稳定后再切 tab。`loginRedirecting` 顺便把并发 401 引发的重复跳转挡掉。
+let loginRedirecting = false
+
 function redirectToLogin() {
-  const pages = Taro.getCurrentPages()
-  const current = pages[pages.length - 1]?.route ?? ''
   Taro.eventCenter.trigger('auth:required')
-  if (!current.includes('pages/mine')) {
-    Taro.switchTab({ url: '/pages/mine/index' })
-  }
+  if (loginRedirecting) return
+  const current = Taro.getCurrentPages().slice(-1)[0]?.route ?? ''
+  if (current.includes('pages/mine')) return
+  loginRedirecting = true
+  setTimeout(() => {
+    loginRedirecting = false
+    const route = Taro.getCurrentPages().slice(-1)[0]?.route ?? ''
+    if (route.includes('pages/mine')) return
+    Taro.switchTab({ url: '/pages/mine/index', fail: () => undefined })
+  }, 300)
 }
 
 function guideSubscription() {
