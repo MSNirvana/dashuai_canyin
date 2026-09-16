@@ -16,6 +16,7 @@ import AiScenesPage from './pages/AiScenes'
 import AiCallLogsPage from './pages/AiCallLogs'
 import ShotLibraryPage from './pages/ShotLibrary'
 import WorksPage from './pages/Works'
+import HomeCarouselPage from './pages/HomeCarousel'
 import SettingsPage from './pages/Settings'
 import TtsProvidersPage from './pages/TtsProviders'
 
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="/ai/call-logs" element={<AiCallLogsPage />} />
           <Route path="/shot-library" element={<ShotLibraryPage />} />
           <Route path="/works" element={<WorksPage />} />
+          <Route path="/home-carousel" element={<HomeCarouselPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/tts-providers" element={<TtsProvidersPage />} />
         </Route>

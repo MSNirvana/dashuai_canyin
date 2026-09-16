@@ -91,8 +91,9 @@ export interface PublicSettings {
   groups: Record<string, PublicSettingItem[]>
 }
 export function getPublicSettings() {
-  // 公开接口，无鉴权
-  return http.get<PublicSettings>('/system/settings', undefined, { autoRefresh: false })
+  // 公开接口，无鉴权；silent：它是页面渲染前顺手拉的配置，
+  // 失败时调用方自己走兜底，不该在首页弹一个「请求失败」的 toast。
+  return http.get<PublicSettings>('/system/settings', undefined, { autoRefresh: false, silent: true })
 }
 
 // ───────────── 镜头库 ─────────────

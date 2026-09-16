@@ -21,6 +21,7 @@
     "dev:h5": "npm run build:h5 -- --watch",
     "typecheck": "tsc --noEmit",
     "verify:dist": "node scripts/verify-weapp-dist.mjs",
+    "assets:upload": "node scripts/upload-static-assets.mjs",
     "tdesign:closure": "node scripts/tdesign-closure.mjs"
   },
   "browserslist": [

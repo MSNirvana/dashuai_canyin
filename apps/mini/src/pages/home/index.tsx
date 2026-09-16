@@ -1,18 +1,25 @@
 import { useRef, useState } from 'react'
-import { Image, ScrollView, Text, View } from '@tarojs/components'
+import { Image, ScrollView, Swiper, SwiperItem, Text, View } from '@tarojs/components'
 import Taro, { useDidShow, useReachBottom } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
 import { listCreations, type CreationItem } from '../../services/creation'
 import { listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
+import { FALLBACK_SLIDE, getHomeCarousel, type HomeCarouselSlide } from '../../services/home'
 import StoreSwitcher from '../../components/store-switcher'
 import logoPng from '../../assets/logo.png'
-import createHeroPng from '../../assets/home/create-hero.jpg'
 import sloganBanner from '../../assets/home/slogan-banner.svg'
-import workFoodPng from '../../assets/home/work-food.jpg'
-import workEducationPng from '../../assets/home/work-education.jpg'
-import workBeautyPng from '../../assets/home/work-beauty.jpg'
-import workServicePng from '../../assets/home/work-service.jpg'
-import workLeisurePng from '../../assets/home/work-leisure.jpg'
+// 展示图走 CDN（见 src/constants/static-assets.ts 的说明）：它们不需要跟版本走，
+// 留在包里会白占 2MB 主包额度、并踩「图片资源超过 200K」的代码质量建议项。
+// 图片源文件仍在 src/assets/home/ 下，改图后跑 `npm run assets:upload` 重新上传即可。
+// ⚠ 轮播用的图不再从这里取：改由后台配置（services/home.ts），
+//   兜底那张才用 static-assets 里的 HOME_CREATE_HERO。
+import {
+  HOME_WORK_FOOD as workFoodPng,
+  HOME_WORK_EDUCATION as workEducationPng,
+  HOME_WORK_BEAUTY as workBeautyPng,
+  HOME_WORK_SERVICE as workServicePng,
+  HOME_WORK_LEISURE as workLeisurePng,
+} from '../../constants/static-assets'
 import './index.scss'
 
 const WORK_COVER_FALLBACKS: Record<string, string> = {
@@ -37,6 +44,9 @@ export default function HomePage() {
   const refreshMe = useMerchantStore((s) => s.refreshMe)
   const [error, setError] = useState('')
   const [recent, setRecent] = useState<CreationItem[]>([])
+  // 首页轮播（运营在后台配）：初值直接给兜底单张，首屏立刻有内容，不等接口回来才画
+  const [banners, setBanners] = useState<HomeCarouselSlide[]>([FALLBACK_SLIDE])
+  const bannerKeyRef = useRef('')
   // 优秀作品：分类来自接口，列表按页拉取（真分页，不再本地切片）
   const [workCats, setWorkCats] = useState<WorkCategory[]>([])
   const [workCategory, setWorkCategory] = useState(WORK_CATEGORY_ALL)
@@ -75,6 +85,20 @@ export default function HomePage() {
     }
   }
 
+  /**
+   * 拉首页轮播配置（公开接口，免登录；失败一律走兜底，见 services/home.ts）。
+   *
+   * 内容没变就不 setState：换一个全新的数组会让 Swiper 重挂载、把当前页跳回第一张，
+   * 而 useDidShow 每次回到首页都会跑一遍，运营没改配置时不该有这种跳动。
+   */
+  const loadBanners = async () => {
+    const slides = await getHomeCarousel()
+    const key = JSON.stringify(slides)
+    if (key === bannerKeyRef.current) return
+    bannerKeyRef.current = key
+    setBanners(slides)
+  }
+
   const refresh = async () => {
     if (!merchant) return
     setError('')
@@ -95,6 +119,8 @@ export default function HomePage() {
   }
   useDidShow(() => {
     void refresh()
+    // 轮播是运营内容，每次回首页重拉一遍（内容不变时上面会跳过 setState）
+    void loadBanners()
     // 作品是公共内容，只在首次进入时拉；切分类与上拉由下面各自触发
     if (!workLoadedRef.current) {
       workLoadedRef.current = true
@@ -153,6 +179,25 @@ export default function HomePage() {
     void markWorkClone(work.id).catch(() => undefined)
     Taro.navigateTo({ url: `/pages/creation/edit?workId=${work.id}` })
   }
+
+  /**
+   * 轮播点击：跳转目标由后台配置，但**只认白名单里的枚举**（services/home.ts::CarouselLink）。
+   * 这里用 switch 穷举、而不是拿后台存的值拼 URL —— 拼 URL 的话后台一旦存了脏值，
+   * 用户点下去就是一次静默失败的 navigateTo（报的还是看着像超时的 fail timeout）。
+   */
+  const onBannerTap = (s: HomeCarouselSlide) => {
+    switch (s.link) {
+      case 'CREATE': goCreate(); break
+      case 'CREATIONS': goCreations(); break
+      case 'STORES': goStores(); break
+      case 'MEMBER': void Taro.navigateTo({ url: '/pages/recharge/index' }); break
+      case 'WORK':
+        // 没填作品 id 时当作纯展示，别跳一个必然不存在的详情页
+        if (s.workId) void Taro.navigateTo({ url: `/pages/work/detail?id=${s.workId}` })
+        break
+      default: break
+    }
+  }
   return <View className='home'>
     {/* ── 顶栏：门店是创作上下文，但不在首页重复展示管理入口 ── */}
     <View className='home__top'>
@@ -166,17 +211,35 @@ export default function HomePage() {
     </View>
 
     <View className='home__body'>
-      {/* ── 创作入口：用任务语言，不用工具语言 ── */}
-      <View className='home__create-card' hoverClass='ds-hover--press' onClick={goCreate}>
-        <Image className='home__create-image' src={createHeroPng} mode='aspectFill' />
-        <View className='home__create-shade' />
-        <View className='home__create-copy'>
-          <Text className='home__create-kicker'>从一道菜开始</Text>
-          <Text className='home__create-title'>做一条能带来客人的视频</Text>
-          <Text className='home__create-desc'>AI 帮你想文案、排分镜，现场拍完就能出片</Text>
-        </View>
-        <View className='home__create-action'><Text>开始创作</Text><Text className='home__create-arrow'>→</Text></View>
-      </View>
+      {/* ── 创作入口：运营可在后台配成轮播（只配一张时等于原来的静态卡片） ── */}
+      <Swiper
+        className='home__banner'
+        // 只有一张时不轮播、也不显示圆点：一个孤零零的圆点看着像出错
+        autoplay={banners.length > 1}
+        circular={banners.length > 1}
+        interval={4000}
+        duration={420}
+        indicatorDots={banners.length > 1}
+        indicatorColor='rgba(255, 255, 255, 0.35)'
+        indicatorActiveColor='#ffffff'
+      >
+        {banners.map((s) => (
+          <SwiperItem key={s.id}>
+            <View className='home__create-card' hoverClass='ds-hover--press' onClick={() => onBannerTap(s)}>
+              <Image className='home__create-image' src={s.image} mode='aspectFill' />
+              <View className='home__create-shade' />
+              <View className='home__create-copy'>
+                {!!s.kicker && <Text className='home__create-kicker'>{s.kicker}</Text>}
+                <Text className='home__create-title'>{s.title}</Text>
+                {!!s.desc && <Text className='home__create-desc'>{s.desc}</Text>}
+              </View>
+              {!!s.actionText && (
+                <View className='home__create-action'><Text>{s.actionText}</Text><Text className='home__create-arrow'>→</Text></View>
+              )}
+            </View>
+          </SwiperItem>
+        ))}
+      </Swiper>
 
       {!!error && (
         <View className='ds-notice home__error' onClick={() => void refresh()}>

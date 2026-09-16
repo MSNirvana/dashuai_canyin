@@ -158,13 +158,23 @@
     font-weight: 700;
     letter-spacing: 0.08em;
   }
+  /* ── 轮播容器（运营在后台「首页轮播图」配置；只配一张时等于原来的静态卡片） ──
+     swiper 必须**显式给定高**：weapp 的 swiper 默认 150px，不写高会把卡片压扁。
+     阴影放在容器上而不是卡片上 —— 卡片在 swipe 时会被裁切，阴影贴卡片会被切掉一半。 */
+  &__banner {
+    height: 376rpx;
+    border-radius: 36rpx;
+    overflow: hidden;
+    box-shadow: 0 18rpx 48rpx rgba(83, 25, 18, 0.18);
+  }
+  /* swiper-item 的高度在部分基础库版本里不是 100%，显式兜一下，否则卡片会塌成 0 高 */
+  &__banner swiper-item { height: 100%; }
   &__create-card {
     position: relative;
-    min-height: 376rpx;
+    height: 100%;
     overflow: hidden;
     border-radius: 36rpx;
     background: #3a1713;
-    box-shadow: 0 18rpx 48rpx rgba(83, 25, 18, 0.18);
   }
   &__create-image,
   &__create-shade {
@@ -188,7 +198,12 @@
   }
   &__create-kicker { color: rgba(255, 231, 223, 0.8); }
   &__create-title {
-    display: block;
+    /* 固定高度（376rpx）的轮播卡片撑不住任意长度的标题：限两行，
+       超出的省略。运营写长标题时至少不会把「开始创作」挤出去。 */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
     margin-top: 18rpx;
     color: #fff;
     font-size: 42rpx;
@@ -197,7 +212,10 @@
     letter-spacing: -0.035em;
   }
   &__create-desc {
-    display: block;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
     margin-top: 16rpx;
     color: rgba(255, 255, 255, 0.76);
     font-size: 24rpx;
