@@ -173,6 +173,10 @@
       background: var(--ds-warning-soft);
       color: var(--ds-member);
     }
+    &--green {
+      background: var(--ds-success-soft);
+      color: var(--ds-success);
+    }
   }
   &__item-copy {
     flex: 1;

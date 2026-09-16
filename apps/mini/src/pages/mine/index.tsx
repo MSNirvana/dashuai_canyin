@@ -207,6 +207,11 @@ export default function Mine() {
           <View className='mine__item-copy'><Text className='mine__item-title'>门店资料</Text><Text className='mine__item-desc'>门店信息、菜品库与老板人设</Text></View>
           <Text className='mine__arrow'>›</Text>
         </View>
+        <View className='mine__item' onClick={() => go('/pages/dish/list')}>
+          <View className='mine__item-icon mine__item-icon--green'><t-icon name='rice' size='32rpx' /></View>
+          <View className='mine__item-copy'><Text className='mine__item-title'>菜品管理</Text><Text className='mine__item-desc'>维护菜品图片与卖点</Text></View>
+          <Text className='mine__arrow'>›</Text>
+        </View>
         <View className='mine__item' onClick={() => go('/pages/recharge/index')}>
           <View className='mine__item-icon mine__item-icon--gold'><t-icon name='wallet' size='32rpx' /></View>
           <View className='mine__item-copy'><Text className='mine__item-title'>订阅与积分</Text><Text className='mine__item-desc'>管理会员权益与创作额度</Text></View>
