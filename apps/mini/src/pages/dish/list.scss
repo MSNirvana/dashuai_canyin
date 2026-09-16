@@ -111,18 +111,27 @@
   border: 1rpx solid var(--td-component-stroke);
   border-radius: var(--td-radius-large);
   padding: 30rpx;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
   box-shadow: var(--ds-shadow-card);
 
-  &__cover { width: 164rpx; height: 220rpx; flex: 0 0 164rpx; align-self: stretch; min-height: 220rpx; border-radius: var(--td-radius-default); overflow: hidden; background: var(--td-bg-color-secondary); margin-right: 24rpx; display: flex; align-items: center; justify-content: center; }
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 24rpx;
+  }
+
+  /* ★ 封面高度 = 菜品介绍的高度上限，整行高由它定死 */
+  &__cover { width: 164rpx; height: 220rpx; flex: 0 0 164rpx; border-radius: var(--td-radius-default); overflow: hidden; background: var(--td-bg-color-secondary); display: flex; align-items: center; justify-content: center; }
   &__cover-image { width: 100%; height: 100%; }
   &__cover-empty { color: var(--td-text-color-placeholder); font-size: 22rpx; }
-  &__main { flex: 1; min-width: 0; }
+
+  /* ★ 卖点 + 简介合计不得超过封面高度：max-height 硬顶，各自 2 行封顶带省略号 */
+  &__main { flex: 1; min-width: 0; max-height: 220rpx; overflow: hidden; }
   &__title-row { display: flex; align-items: center; gap: 12rpx; min-width: 0; }
   &__badge { flex: 0 0 auto; padding: 4rpx 12rpx; border-radius: 999rpx; background: var(--td-brand-color-light); color: var(--td-brand-color); font-size: 18rpx; font-weight: 600; }
-  &__shoot { margin-top: 16rpx; padding: 14rpx 16rpx; border-radius: 14rpx; background: var(--td-bg-color-secondary); }
+
+  /* 建议出镜与「点击查看详情」放在封面高度之外，避免被上面的上限裁掉 */
+  &__foot { margin-top: 18rpx; }
+  &__shoot { padding: 14rpx 16rpx; border-radius: 14rpx; background: var(--td-bg-color-secondary); }
   &__shoot-label { display: block; color: var(--td-text-color-placeholder); font-size: 19rpx; }
   &__shoot-text { display: block; margin-top: 6rpx; color: var(--td-text-color-primary); font-size: 22rpx; line-height: 1.45; }
   &__hint { display: block; margin-top: 12rpx; color: var(--td-text-color-placeholder); font-size: 20rpx; }
@@ -134,7 +143,10 @@
   }
 
   &__sp {
-    display: block;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
     font-size: 24rpx;
     color: var(--td-brand-color);
     margin-top: 10rpx;
@@ -142,7 +154,10 @@
   }
 
   &__intro {
-    display: block;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
     font-size: 24rpx;
     color: var(--td-text-color-secondary);
     margin-top: 8rpx;
@@ -150,8 +165,8 @@
   }
 
   &__del {
+    flex: 0 0 auto;
     font-size: 26rpx;
     color: var(--td-text-color-placeholder);
-    padding-left: 24rpx;
   }
 }

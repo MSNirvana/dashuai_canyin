@@ -121,27 +121,31 @@ export default function DishListPage() {
         <View className='dish-list__items'>
           {list.map((d) => (
             <View key={d.id} className='dish-card' onClick={() => onDetail(d)}>
-              <View className='dish-card__cover'>
-                {coverUrls[d.id] ? (
-                  <Image className='dish-card__cover-image' src={coverUrls[d.id]} mode='aspectFill' />
-                ) : (
-                  <Text className='dish-card__cover-empty'>菜品</Text>
-                )}
-              </View>
-              <View className='dish-card__main'>
-                <View className='dish-card__title-row'>
-                  <Text className='dish-card__name'>{d.name}</Text>
-                  {d.sellingPoints && <Text className='dish-card__badge'>招牌卖点</Text>}
+              <View className='dish-card__row'>
+                <View className='dish-card__cover'>
+                  {coverUrls[d.id] ? (
+                    <Image className='dish-card__cover-image' src={coverUrls[d.id]} mode='aspectFill' />
+                  ) : (
+                    <Text className='dish-card__cover-empty'>菜品</Text>
+                  )}
                 </View>
-                {d.sellingPoints && <Text className='dish-card__sp'>{d.sellingPoints}</Text>}
-                {d.intro && <Text className='dish-card__intro'>{d.intro}</Text>}
+                <View className='dish-card__main'>
+                  <View className='dish-card__title-row'>
+                    <Text className='dish-card__name'>{d.name}</Text>
+                    {d.sellingPoints && <Text className='dish-card__badge'>招牌卖点</Text>}
+                  </View>
+                  {d.sellingPoints && <Text className='dish-card__sp'>{d.sellingPoints}</Text>}
+                  {d.intro && <Text className='dish-card__intro'>{d.intro}</Text>}
+                </View>
+                <Text className='dish-card__del' onClick={(e) => { e.stopPropagation(); onDelete(d) }}>删除</Text>
+              </View>
+              <View className='dish-card__foot'>
                 <View className='dish-card__shoot'>
                   <Text className='dish-card__shoot-label'>建议出镜</Text>
                   <Text className='dish-card__shoot-text'>{d.sellingPoints ? '先拍卖点，再拍一口下饭' : '补充卖点后，生成更贴合的分镜'}</Text>
                 </View>
                 <Text className='dish-card__hint'>点击查看详情 · 编辑拍摄素材</Text>
               </View>
-              <Text className='dish-card__del' onClick={(e) => { e.stopPropagation(); onDelete(d) }}>删除</Text>
             </View>
           ))}
         </View>
