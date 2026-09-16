@@ -1,0 +1,125 @@
+// 用户协议 / 隐私政策 · 长文阅读版式
+// 目标：在小屏上把「法律文书」读起来不费劲 —— 行高 1.85、字号 28rpx、章节间距 40rpx，
+//       用留白和字重分层，不用边框和底色堆装饰。
+
+.agreement {
+  min-height: 100vh;
+  padding-bottom: calc(60rpx + env(safe-area-inset-bottom));
+  background: var(--td-bg-color-page);
+
+  // 顶部切换条：长文往下滚时仍可切换另一份文档
+  // （部分旧版本基础库不支持 sticky，退化成普通吸顶前状态也不影响阅读）
+  &__switch {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    padding: 20rpx 24rpx 16rpx;
+    background: var(--td-bg-color-page);
+  }
+
+  &__body {
+    padding: 0 40rpx;
+  }
+
+  // ── 文首 ──
+  &__head {
+    padding: 16rpx 0 0;
+    margin-bottom: 24rpx;
+  }
+  &__title {
+    display: block;
+    font-size: 44rpx;
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+    color: var(--td-text-color-primary);
+  }
+  &__meta {
+    display: block;
+    margin-top: 12rpx;
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__intro {
+    display: block;
+    padding: 26rpx 28rpx;
+    border-radius: var(--td-radius-large);
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    font-size: 26rpx;
+    line-height: 1.8;
+    color: var(--td-text-color-secondary);
+  }
+
+  // ── 章节 ──
+  &__section {
+    margin-top: 44rpx;
+  }
+  &__h {
+    display: block;
+    margin-bottom: 16rpx;
+    font-size: 30rpx;
+    font-weight: 700;
+    line-height: 1.5;
+    letter-spacing: -0.01em;
+    color: var(--td-text-color-primary);
+  }
+  &__p {
+    display: block;
+    margin-bottom: 16rpx;
+    font-size: 28rpx;
+    line-height: 1.85;
+    color: var(--td-text-color-secondary);
+    // 小程序 text 默认 inline，连续两段会挤在同一行 —— 必须显式 block
+  }
+  &__sub {
+    display: block;
+    margin: 24rpx 0 12rpx;
+    font-size: 28rpx;
+    font-weight: 600;
+    line-height: 1.6;
+    color: var(--td-text-color-primary);
+  }
+
+  // ── 列表 ──
+  &__list {
+    margin-bottom: 8rpx;
+  }
+  &__li {
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 14rpx;
+  }
+  &__dot {
+    flex: none;
+    width: 8rpx;
+    height: 8rpx;
+    margin: 22rpx 16rpx 0 0;
+    border-radius: 50%;
+    background: var(--td-text-color-disabled);
+  }
+  &__litext {
+    flex: 1;
+    font-size: 28rpx;
+    line-height: 1.85;
+    color: var(--td-text-color-secondary);
+  }
+
+  // ── 落款 ──
+  &__footer {
+    margin-top: 48rpx;
+    text-align: center;
+  }
+  &__footer-org {
+    display: block;
+    font-size: 24rpx;
+    font-weight: 500;
+    color: var(--td-text-color-placeholder);
+  }
+  &__footer-note {
+    display: block;
+    margin-top: 8rpx;
+    font-size: 22rpx;
+    color: var(--td-text-color-disabled);
+  }
+}

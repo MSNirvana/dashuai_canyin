@@ -16,6 +16,8 @@ export default defineAppConfig({
     'pages/work/detail',
     'pages/recharge/index',
     'pages/mine/index',
+    // 用户协议 / 隐私政策（一个页面承载两份文档，用 ?type=user|privacy 区分）
+    'pages/agreement/index',
   ],
 
   // TDesign 组件全局注册：页面内可直接使用 <t-button /> <t-input /> <t-icon /> 等
