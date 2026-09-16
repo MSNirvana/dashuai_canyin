@@ -5,21 +5,24 @@ import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
+import { requiredText, optionalText, nullableText } from '../lib/validators.js'
 import * as storeSvc from '../services/store.service.js'
 
 const router = createRouter()
 router.use(auth)
 
+// 用户输入的文本一律走 validators 的工厂函数：`.trim()` 漏掉是静默失效
+// （`z.string().min(1)` 会让 "   " 通过，库里存下纯空白的名称/品类/城市）
 const storeInput = z.object({
-  name: z.string().min(1).max(128),
-  category: z.string().max(64).optional(),
-  province: z.string().max(64).optional(),
-  city: z.string().max(64).optional(),
-  district: z.string().max(64).optional(),
-  address: z.string().max(255).optional(),
-  contact: z.string().max(64).optional(),
+  name: requiredText(128),
+  category: optionalText(64),
+  province: optionalText(64),
+  city: optionalText(64),
+  district: optionalText(64),
+  address: optionalText(255),
+  contact: optionalText(64),
   coverKey: z.string().max(512).nullable().optional(),
-  intro: z.string().max(500).nullable().optional(),
+  intro: nullableText(500),
   videoKey: z.string().max(512).nullable().optional(),
   isDefault: z.boolean().optional(),
 })

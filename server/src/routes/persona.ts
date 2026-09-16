@@ -6,14 +6,17 @@ import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
+import { nullableText } from '../lib/validators.js'
 import * as personaSvc from '../services/persona.service.js'
 
 const router = createRouter({ mergeParams: true })
 router.use(auth)
 
+// 人设两字段会拼进提示词的 {{persona}}，纯空白值等于"没填"，所以 trim 后存
+// （小程序端提交前已经 trim 过一次，但服务端不能依赖客户端行为）
 const personaInput = z.object({
-  bossTags: z.string().max(500).nullable().optional(),
-  activity: z.string().max(1000).nullable().optional(),
+  bossTags: nullableText(500),
+  activity: nullableText(1000),
 })
 
 router.get('/', async (req, res) => {

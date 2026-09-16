@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
+import { requiredText, optionalText } from '../lib/validators.js'
 import * as dishSvc from '../services/dish.service.js'
 
 const router = createRouter({ mergeParams: true })
@@ -12,10 +13,12 @@ router.use(auth)
 
 type StoreDishParams = { storeId: string; id?: string }
 
+// 菜名/简介/卖点都会喂给 AI 提示词变量（dishName / dishIntro / sellingPoints），
+// 纯空白值会让提示词里出现空段，所以必须 trim 后再判空（`.min(1)` 数的是长度，"   " 能过）
 const dishInput = z.object({
-  name: z.string().min(1).max(128),
-  intro: z.string().max(500).optional(),
-  sellingPoints: z.string().max(1000).optional(),
+  name: requiredText(128),
+  intro: optionalText(500),
+  sellingPoints: optionalText(1000),
   coverKey: z.string().max(512).optional(),
   videoKey: z.string().max(512).optional(),
   media: z.array(z.object({ type: z.enum(['IMAGE', 'VIDEO']), cosKey: z.string().min(1).max(512), coverKey: z.string().max(512).optional(), sort: z.number().int().min(0).optional() })).max(6).optional(),

@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
+import { requiredText, optionalText } from '../lib/validators.js'
 import * as creationSvc from '../services/creation.service.js'
 import { aiGateway } from '../ai/gateway-instance.js'
 import { BeanNotEnoughError } from '../bean/bean.service.js'
@@ -24,14 +25,15 @@ function mediaBaseUrl(req: import('express').Request): string {
 const createInput = z.object({
   storeId: z.string().min(1),
   dishId: z.string().optional(),
-  title: z.string().trim().min(1).max(255).optional(),
+  title: requiredText(255).optional(),
   track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
 })
 
 const creationPatch = z.object({
-  title: z.string().trim().min(1).max(255).optional(),
-  copyText: z.string().max(20000).optional(),
+  title: requiredText(255).optional(),
+  // 口播文案会作为 {{copyText}} 喂给分镜提示词，纯空白值同样要 trim
+  copyText: optionalText(20000),
   track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
 })
