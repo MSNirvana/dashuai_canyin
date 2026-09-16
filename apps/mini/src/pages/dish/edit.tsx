@@ -40,7 +40,20 @@ export default function DishEditPage() {
   }
   const removeImage = (index: number) => set('images', refreshSort(form.images.filter((_, i) => i !== index)))
   const removeVideo = (index: number) => set('videos', refreshSort(form.videos.filter((_, i) => i !== index)))
-  const previewImages = (index: number) => Taro.previewImage({ current: form.images[index]?.url, urls: form.images.map((m) => m.url).filter(Boolean) })
+  // ★ 与 pages/dish/detail.tsx 是同一处坑：被点的那张必须排到 urls[0]。
+  // previewImage 的 current 只收「图片链接」、靠能在 urls 里精确匹配到来定位；
+  // 匹配不上（或平台实现忽略 current）时会静默回落到 urls[0]，
+  // 表现就是「点第 2、3 张却从第 1 张开始」。
+  // 另外这里 urls 是过滤掉上传失败（url 为空）的那些之后的，下标本来就与
+  // form.images 对不齐 —— 所以先定位再重排，不拿 index 去猜。
+  const previewImages = (index: number) => {
+    const cur = form.images[index]?.url
+    if (!cur) return
+    const urls = form.images.map((m) => m.url).filter(Boolean)
+    const at = urls.indexOf(cur)
+    if (at < 0) return
+    Taro.previewImage({ current: urls[at], urls: [urls[at], ...urls.slice(0, at), ...urls.slice(at + 1)] })
+  }
   const onSubmit = async () => {
     if (!form.name.trim()) { Taro.showToast({ title: '请填写菜品名称', icon: 'none' }); return }; if (!storeId) { Taro.showToast({ title: '缺少门店参数', icon: 'none' }); return }; if (saving || uploading) return; setSaving(true)
     const media = [...form.images, ...form.videos].map((m) => ({ type: m.type, cosKey: m.cosKey, coverKey: m.coverKey, sort: m.sort })); const payload: DishInput = { name: form.name.trim(), intro: form.intro || undefined, sellingPoints: form.sellingPoints || undefined, coverKey: form.images[0]?.cosKey, videoKey: form.videos[0]?.cosKey, media }
