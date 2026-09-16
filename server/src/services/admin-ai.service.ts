@@ -8,11 +8,25 @@ import type { PrismaClient, Prisma, AiModel, AiScene } from '@prisma/client'
 import { encryptSecret, decryptSecret, maskSecret } from '../lib/secret.js'
 import { getAdapter } from '../ai/adapters.js'
 import { LIVE_SCENE_CODES } from '../ai/scene-codes.js'
+import { validateTemplate, SCENE_VARIABLES } from '../ai/prompt-vars.js'
 
 export class AdminAiNotFoundError extends Error {
   constructor(readonly what: string) {
     super(`${what} 不存在`)
     this.name = 'AdminAiNotFoundError'
+  }
+}
+
+/**
+ * 提示词模板里出现了该场景不支持的占位符。
+ * 为什么必须拦：网关做的是字符串替换，取不到的变量替换成空串 —— 不报错、提示词那一段
+ * 变成空白、这次调用照常扣豆。后台手抖写成 {{dishname}}（大小写）或 {{store.intro}}（点号）
+ * 都会命中，用户只看到「生成的文案莫名其妙少了一段」。
+ */
+export class AdminAiInvalidTemplateError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'AdminAiInvalidTemplateError'
   }
 }
 
@@ -391,6 +405,8 @@ export interface AiSceneView {
   updatedAt: string
   /** 代码里是否有业务调用方（true=已接入，false=待接入）；列表接口返回 */
   hasCaller?: boolean
+  /** 该场景支持的提示词变量白名单（保存时按它校验；空数组=未登记，不校验）；列表接口返回 */
+  variables?: string[]
   /** 历史上被调用的次数（来自 ai_call_log）；列表接口返回 */
   callCount?: number
   /** 附带的模型展示信息，避免前端拿裸 ID 展示（列表接口返回） */
@@ -462,6 +478,7 @@ export async function listAiScenes(prisma: PrismaClient) {
     return {
       ...v,
       hasCaller: (LIVE_SCENE_CODES as readonly string[]).includes(s.code),
+      variables: [...(SCENE_VARIABLES[s.code] ?? [])],
       callCount: callMap.get(s.code) ?? 0,
       defaultModel: modelMap.get(v.defaultModelId) ?? null,
       fallbackModels: v.fallbackModelIds
@@ -489,6 +506,15 @@ export async function upsertAiScene(
     enabled?: boolean
   },
 ) {
+  // 保存前按变量契约校验模板：未支持的变量运行时会被静默替换成空串（不报错但照常扣豆），
+  // 写法不合法的占位符则会原样留在提示词里。两者都属于「不报错、只错内容」，必须在这里拦死。
+  const problems = validateTemplate(input.code, input.promptTemplate)
+  if (problems.length) {
+    throw new AdminAiInvalidTemplateError(
+      `提示词模板校验不通过：${problems.join('；')}。` +
+        `未支持的变量在生成时会被替换成空串，不报错但这次调用照常扣豆。`,
+    )
+  }
   const data = {
     code: input.code,
     name: input.name,

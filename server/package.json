@@ -35,7 +35,9 @@
     "sms:status": "tsx scripts/sms-status.ts",
     "wxpay:probe": "tsx scripts/probe-wxpay-live.ts",
     "pay-reconcile:verify": "tsx scripts/verify-pay-reconcile.ts",
-    "wxpay:appid": "tsx scripts/probe-wxpay-appid.ts"
+    "wxpay:appid": "tsx scripts/probe-wxpay-appid.ts",
+    "ai-prompts:sync": "tsx scripts/ai-prompts-sync.ts",
+    "ai-prompts:verify": "tsx scripts/verify-prompt-vars.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

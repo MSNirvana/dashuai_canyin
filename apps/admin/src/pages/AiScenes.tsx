@@ -29,6 +29,8 @@ interface AiScene {
   enabled: boolean
   hasCaller?: boolean
   callCount?: number
+  /** 该场景支持的提示词变量白名单（保存时按它校验；空=未登记，不校验） */
+  variables?: string[]
   defaultModel?: AiModelRef | null
   fallbackModels?: AiModelRef[]
 }
@@ -128,6 +130,15 @@ export default function AiScenesPage() {
 
   const liveCount = list.filter((s) => s.hasCaller).length
   const pendingCount = list.length - liveCount
+
+  /**
+   * 当前表单里场景编码支持的变量（用于把「可用变量」直接显示在编辑弹窗里）。
+   * 新增场景时随编码输入联动；查不到（场景未登记白名单）就是空数组 —— 那种情况下服务端也不校验。
+   */
+  const allowedVars = useMemo(
+    () => list.find((s) => s.code === form.code.trim())?.variables ?? [],
+    [list, form.code],
+  )
 
   const startCreate = () => {
     setEditing(null)
@@ -287,11 +298,27 @@ export default function AiScenesPage() {
           <Field label="名称">
             <Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} />
           </Field>
-          <Field label="提示词模板">
+          <Field
+            label="提示词模板"
+            help={
+              allowedVars.length ? (
+                <>
+                  可用变量（写成 <code>{'{{变量名}}'}</code>，写错会被替换成空白且照常扣豆）：
+                  {allowedVars.map((v) => (
+                    <Tag key={v} variant="light" style={{ marginLeft: 6 }}>
+                      {`{{${v}}}`}
+                    </Tag>
+                  ))}
+                </>
+              ) : (
+                <>该场景未登记变量白名单，保存时不做变量校验（新增的自定义场景默认可写任意变量）。</>
+              )
+            }
+          >
             <Textarea
               value={form.promptTemplate}
               onChange={(v) => setForm((f) => ({ ...f, promptTemplate: v as string }))}
-              placeholder="支持 {{variable}}，如 {{storeName}} / {{dishName}} / {{copyText}} / {{complexity}} / {{shotLibrary}}"
+              placeholder="支持 {{变量}}，如 {{storeName}} / {{storeIntro}} / {{dishName}} / {{persona}}；分镜场景另有 {{copyText}} / {{complexityLabel}} / {{shotLibrary}}"
               autosize={{ minRows: 10, maxRows: 24 }}
             />
           </Field>

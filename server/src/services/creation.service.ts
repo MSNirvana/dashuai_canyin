@@ -319,8 +319,30 @@ export async function ensureCreationCovers(
   return { generated, pending }
 }
 
-/** 拼装 AI 提示词变量：门店 + 菜品 + 门店人设 + 已生成文案 + 款式/复杂度 + 镜头库（人设跟随门店） */
-async function buildVariables(
+/**
+ * 拼装人设变量：带标签、逐字段判断，两个字段都空则返回空串。
+ *
+ * 为什么不做 `${bossTags} ${activity}` 式裸拼：两个字段语义完全不同（前者是「老板是什么样的人」，
+ * 后者是「最近想让顾客知道什么」），拼成一串后模型只能看到一坨无标号的文字，容易把
+ * 「开业 8 折」当成老板的性格去写。带上标签后模型能分别归位。
+ * 全空时返回空串而不是留着空标签，避免提示词里出现「老板人设标签：」这种噪声行。
+ */
+export function formatPersona(p: { bossTags?: string | null; activity?: string | null } | null): string {
+  if (!p) return ''
+  const parts: string[] = []
+  const tags = (p.bossTags ?? '').trim()
+  const activity = (p.activity ?? '').trim()
+  if (tags) parts.push(`老板人设标签：${tags}`)
+  if (activity) parts.push(`最近想重点告诉顾客：${activity}`)
+  return parts.join('；')
+}
+
+/**
+ * 拼装 AI 提示词变量：门店（含门店介绍）+ 菜品 + 门店人设 + 已生成文案 + 款式/复杂度 + 镜头库
+ * （人设跟随门店）。导出仅供 scripts/verify-prompt-vars.ts 做变量契约测试，
+ * 业务调用请走 generateCopy / generateShots。
+ */
+export async function buildVariables(
   prisma: PrismaClient,
   creationId: bigint,
   opts: { track?: CopyTrack; complexity?: Complexity } = {},
@@ -333,17 +355,17 @@ async function buildVariables(
     },
   })
   if (!c) throw new CreationNotFoundError()
-  const persona = c.store.persona
   const track = opts.track ?? (isCopyTrack(c.track) ? c.track : DEFAULT_COPY_TRACK)
   const complexity = opts.complexity ?? (isComplexity(c.complexity) ? c.complexity : DEFAULT_COMPLEXITY)
   return {
     storeName: c.store.name,
+    storeIntro: c.store.intro ?? '',
     category: c.store.category ?? '',
     city: c.store.city ?? '',
     dishName: c.dish?.name ?? '',
     dishIntro: c.dish?.intro ?? '',
     sellingPoints: c.dish?.sellingPoints ?? '',
-    persona: persona ? `${persona.bossTags ?? ''} ${persona.activity ?? ''}`.trim() : '',
+    persona: formatPersona(c.store.persona),
     copyText: c.copyText ?? '',
     track,
     trackLabel: COPY_TRACKS[track].label,

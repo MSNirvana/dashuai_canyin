@@ -548,6 +548,7 @@ router.post('/ai/scenes', async (req, res) => {
     )
   } catch (e) {
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof adminAi.AdminAiInvalidTemplateError) return fail(res, 400, e.message, 400)
     fail(res, 500, '创建失败', 500)
   }
 })
@@ -566,6 +567,7 @@ router.put('/ai/scenes/:id', async (req, res) => {
   } catch (e) {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof adminAi.AdminAiInvalidTemplateError) return fail(res, 400, e.message, 400)
     fail(res, 500, '更新失败', 500)
   }
 })
