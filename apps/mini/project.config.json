@@ -10,7 +10,7 @@
     "es6": false,
     "enhance": true,
     "postcss": false,
-    "minified": false,
+    "minified": true,
     "newFeature": true,
     "coverView": true,
     "nodeModules": false,
@@ -21,7 +21,7 @@
     "userConfirmedUseCompilerModuleSwitch": false,
     "compileWorklet": false,
     "uglifyFileName": false,
-    "uploadWithSourceMap": true,
+    "uploadWithSourceMap": false,
     "packNpmManually": false,
     "packNpmRelationList": [],
     "minifyWXSS": true,
@@ -39,8 +39,22 @@
   "condition": {},
   "simulatorPluginLibVersion": {},
   "packOptions": {
-    "ignore": [],
-    "include": []
+    "ignore": [
+      {
+        "type": "file",
+        "value": "project.config.json"
+      },
+      {
+        "type": "suffix",
+        "value": ".LICENSE.txt"
+      }
+    ],
+    "include": [
+      {
+        "type": "folder",
+        "value": "assets"
+      }
+    ]
   },
   "editorSetting": {}
 }

@@ -39,6 +39,12 @@ export default defineAppConfig({
     backgroundColor: '#f5f6f8',
   },
 
+  // 组件按需注入：只把当前页面真正用到的自定义组件注入给它。
+  // 不开的话，app.json 里声明的组件会把所有组件代码都注入每个页面 —— 主包会大一圈，
+  // 开发者工具「代码质量 → 代码包 → 组件 → 启用组件按需注入」也会判未通过。
+  // 前置条件：基础库 ≥ 2.11.1（project.config.json 里 libVersion 是 3.5.0，满足）。
+  lazyCodeLoading: 'requiredComponents',
+
   // 底部导航栏（白底 + 品牌红选中态）
   // 色值与 src/styles/theme.scss 的品牌红 #e1251b / 占位灰 #8e939a 保持一致
   tabBar: {
