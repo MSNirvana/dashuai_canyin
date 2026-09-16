@@ -204,7 +204,7 @@ export default function Mine() {
       <View className='mine__menu'>
         <View className='mine__item' onClick={() => go('/pages/store/list')}>
           <View className='mine__item-icon mine__item-icon--red'><t-icon name='shop' size='32rpx' /></View>
-          <View className='mine__item-copy'><Text className='mine__item-title'>门店资料</Text><Text className='mine__item-desc'>门店信息、菜品库与老板人设</Text></View>
+          <View className='mine__item-copy'><Text className='mine__item-title'>门店资料</Text><Text className='mine__item-desc'>门店信息与老板人设</Text></View>
           <Text className='mine__arrow'>›</Text>
         </View>
         <View className='mine__item' onClick={() => go('/pages/dish/list')}>

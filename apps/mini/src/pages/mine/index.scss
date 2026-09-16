@@ -169,6 +169,12 @@
     flex: none;
     background: var(--td-brand-color-light);
     color: var(--td-brand-color);
+    // 与基础样式同值：写出来是为了把「门店资料 = 品牌红」固定住，
+    // 否则哪天基础样式改成别的颜色，这一项会跟着悄悄变。
+    &--red {
+      background: var(--td-brand-color-light);
+      color: var(--td-brand-color);
+    }
     &--gold {
       background: var(--ds-warning-soft);
       color: var(--ds-member);
