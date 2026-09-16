@@ -133,14 +133,13 @@ export default function DishListPage() {
                   <View className='dish-card__title-row'>
                     <Text className='dish-card__name'>{d.name}</Text>
                     {d.sellingPoints && <Text className='dish-card__badge'>招牌卖点</Text>}
+                    {/* 删除并进标题行右端：贴在内容里，不再是卡片最右边一个孤立标签 */}
+                    <Text className='dish-card__del' onClick={(e) => { e.stopPropagation(); onDelete(d) }}>删除</Text>
                   </View>
                   {d.sellingPoints && <Text className='dish-card__sp'>{d.sellingPoints}</Text>}
                   {d.intro && <Text className='dish-card__intro'>{d.intro}</Text>}
                 </View>
-                <Text className='dish-card__del' onClick={(e) => { e.stopPropagation(); onDelete(d) }}>删除</Text>
               </View>
-              {/* 「建议出镜」已移到菜品详情页：列表里每张卡都是同一句通用文案，留着只是噪音 */}
-              <Text className='dish-card__hint'>点击查看详情 · 编辑拍摄素材</Text>
             </View>
           ))}
         </View>

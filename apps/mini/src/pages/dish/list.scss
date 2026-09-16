@@ -129,13 +129,24 @@
   &__title-row { display: flex; align-items: center; gap: 12rpx; min-width: 0; }
   &__badge { flex: 0 0 auto; padding: 4rpx 12rpx; border-radius: 999rpx; background: var(--td-brand-color-light); color: var(--td-brand-color); font-size: 18rpx; font-weight: 600; }
 
-  /* 「建议出镜」已移到菜品详情页 —— 列表里每张卡都是同一句通用文案，一屏十道菜就是十个同样的灰框 */
-  &__hint { display: block; margin-top: 16rpx; color: var(--td-text-color-placeholder); font-size: 20rpx; }
-
   &__name {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
     font-size: 30rpx;
     font-weight: 600;
     color: var(--td-text-color-primary);
+  }
+
+  /* 删除并进标题行右端：margin-left:auto 推到最右，与菜品名同一行 */
+  &__del {
+    flex: none;
+    margin-left: auto;
+    padding-left: 16rpx;
+    font-size: 26rpx;
+    color: var(--td-text-color-placeholder);
   }
 
   &__sp {
@@ -158,11 +169,5 @@
     color: var(--td-text-color-secondary);
     margin-top: 8rpx;
     line-height: 1.5;
-  }
-
-  &__del {
-    flex: 0 0 auto;
-    font-size: 26rpx;
-    color: var(--td-text-color-placeholder);
   }
 }
