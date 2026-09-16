@@ -209,6 +209,21 @@ export default function CreationShots() {
     }
   }
 
+  /**
+   * 上一步：回「创作」页重新生成文案与分镜。
+   * 按视图栈里的创作页实例回退（同一创作可能在栈中间：创作 → 拍摄 → 成片 → 拍摄），
+   * 找不到时才新开一个 —— 直接 navigateBack 有可能退到成片页，或退到别的创作的创作页。
+   */
+  const onBack = () => {
+    const routes = (Taro.getCurrentPages() as unknown as { route?: string }[]).map((p) => p.route)
+    const idx = routes.lastIndexOf('pages/creation/edit')
+    if (idx >= 0 && idx < routes.length - 1) {
+      Taro.navigateBack({ delta: routes.length - 1 - idx })
+      return
+    }
+    Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
+  }
+
   if (!detail) return <View className='cshots__tip'>加载中…<Button onClick={() => load().catch(() => undefined)}>重新加载</Button></View>
   const missingShots = detail.shots.filter((shot) => !shot.assetId)
   const total = detail.shots.length
@@ -220,7 +235,7 @@ export default function CreationShots() {
   return (
     <View className='cshots'>
       <View className='cshots__stage'>
-        <Text className='cshots__stage-kicker'>STEP 3 OF 4 · SHOOTING</Text>
+        <Text className='cshots__stage-kicker'>STEP 2 OF 3 · SHOOTING</Text>
         <Text className='cshots__stage-title'>照着分镜，一条一条拍</Text>
         <Text className='cshots__stage-desc'>不必一次拍完，已上传的素材会自动保存。每个镜头都有现场拍摄提示。</Text>
       </View>
@@ -361,23 +376,28 @@ export default function CreationShots() {
       })}
 
       <View className='ds-footer'>
-        {canCompose ? (
+        <View className='ds-footer__row'>
+          <Button className='ds-btn ds-btn--ghost ds-btn--sm' hoverClass='ds-hover' onClick={onBack}>
+            上一步
+          </Button>
           <Button
-            className='ds-btn ds-btn--primary ds-btn--block'
+            className={`ds-btn ds-btn--primary ds-btn--block ${canCompose ? '' : 'ds-btn--disabled'}`}
             hoverClass='ds-hover'
+            disabled={!canCompose}
             onClick={() => Taro.navigateTo({ url: `/pages/render/compose?id=${id}` })}
           >
-            {missingShots.length === 0
-              ? '下一步 · 合成成片'
-              : `下一步 · 合成成片（缺 ${missingShots.length} 个素材）`}
+            下一步
           </Button>
-        ) : (
-          <Button className='ds-btn ds-btn--primary ds-btn--block ds-btn--disabled' disabled>
-            {uploadingCount > 0
-              ? `${uploadingCount} 个素材正在上传，请稍候…`
-              : '加载中…'}
-          </Button>
-        )}
+        </View>
+        <View className='ds-footer__note'>
+          {uploadingCount > 0
+            ? `${uploadingCount} 个素材正在上传，完成后即可合成`
+            : total === 0
+              ? '还没有分镜，回上一步生成文案与分镜'
+              : missingShots.length > 0
+                ? `已上传 ${done}/${total}，仍缺 ${missingShots.length} 个也可先合成`
+                : '素材已齐，可以合成成片了'}
+        </View>
       </View>
     </View>
   )

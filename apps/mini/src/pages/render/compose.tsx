@@ -278,7 +278,7 @@ export default function RenderCompose() {
   return (
     <View className='rcompose'>
       <View className='rcompose__stage'>
-        <Text className='rcompose__stage-kicker'>STEP 4 OF 4 · FINISH</Text>
+        <Text className='rcompose__stage-kicker'>STEP 3 OF 3 · FINISH</Text>
         <Text className='rcompose__stage-title'>把素材剪成一条能发布的视频</Text>
         <Text className='rcompose__stage-desc'>选择生成方式，确认预计消耗后提交。失败会全额返还积分。</Text>
       </View>

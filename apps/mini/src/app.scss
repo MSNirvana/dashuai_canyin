@@ -279,7 +279,17 @@ button.ds-btn {
   backdrop-filter: blur(20rpx);
   border-top: 1rpx solid var(--td-component-border);
 }
-// 底部操作区下方的一行说明（积分预估等）
+// 底部主/次按钮同行：次要按钮（如上一步）按内容收窄，主按钮占满剩余宽度
+.ds-footer__row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+}
+.ds-footer__row .ds-btn--block {
+  flex: 1;
+  width: auto;
+}
+// 底部操作区下方的一行说明（积分预估、下一步做什么等）
 .ds-footer__note {
   margin-top: 14rpx;
   text-align: center;

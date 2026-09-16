@@ -33,8 +33,12 @@ const SHOT_TYPES = ['开场', '口播', '特写', '原料', '制作', '环境', 
 /** 景别 */
 const SHOT_SIZES = ['远景', '全景', '中景', '近景', '特写', '大特写']
 
-/** 四步流程条 */
-const STEP_LABELS = ['文案', '分镜', '素材', '成片']
+/**
+ * 三步流程条。
+ * 文案与分镜不再拆成两个独立步骤 —— 用户选好款式/复杂度后一次生成，
+ * 所以它们同属第 1 步「创作」，页面本身也是随时可回退的编辑页。
+ */
+const STEP_LABELS = ['创作', '素材', '成片']
 
 interface ShotDraft {
   shotType: string
@@ -60,9 +64,8 @@ function shotToText(s: ShotItem) {
 
 export default function CreationEdit() {
   const params = Taro.getCurrentInstance().router?.params ?? {}
-  // 从「优秀作品」带过来的同款配方：workId 预填，auto=1 时创建后自动跑 AI
+  // 从「优秀作品」带过来的同款配方：workId 预填款式/复杂度，用户仍可改
   const workId = params.workId ?? ''
-  const autoMode = params.auto === '1'
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const setStore = useMerchantStore((s) => s.setStore)
   const loadStores = useMerchantStore((s) => s.loadStores)
@@ -88,8 +91,25 @@ export default function CreationEdit() {
   const [workTitle, setWorkTitle] = useState('')
   const [workLoaded, setWorkLoaded] = useState(false)
   const [autoRunning, setAutoRunning] = useState(false)
-  /** 一键生成只允许消费一次，避免返回本页时重复扣豆 */
-  const autoPendingRef = useRef(autoMode)
+  /**
+   * 悬浮窗上的出口，用**同步 ref** 记录：
+   * - 'stay'       正常等待，两步跑完后跳拍摄页
+   * - 'cancel'     取消生成 —— 不再发起后续步骤，回包一律忽略
+   * - 'background' 关闭等待 —— 两步照常跑完落库，但完成时不再自动跳转
+   * 必须用 ref 而不是 state：点击发生在某个 await 的间隙里，setState 要等下一轮渲染才生效，
+   * 而这里要求「点下去立刻对已经在等待的请求链生效」。
+   */
+  const autoExitRef = useRef<'stay' | 'cancel' | 'background'>('stay')
+  /** 正在生成的创作 id：取消时要把它拉回来，否则 detail 仍为 null 会闪一下「加载中…」 */
+  const autoIdRef = useRef('')
+  /** 「关闭等待」会离开本页，卸载后不能再 setState / 再跳转 */
+  const mountedRef = useRef(true)
+  useEffect(
+    () => () => {
+      mountedRef.current = false
+    },
+    [],
+  )
 
   // 文案四款 + 分镜复杂度（新建时先本地选，创建后落库）
   const [track, setTrack] = useState<CopyTrack>('TRAFFIC')
@@ -183,22 +203,55 @@ export default function CreationEdit() {
   }, [currentStoreId, stores])
 
   /**
-   * 一键生成：按同款配方自动跑「文案 → 分镜」。
-   * 失败只提示不阻断，用户可在页面内手动重试（不会重复扣豆：失败会全额解冻）。
+   * 读「悬浮窗出口」标志。
+   * 包一层函数是必须的：runAuto 开头刚把 autoExitRef.current 置成 'stay'，
+   * TypeScript 的控制流分析会据此把它收窄成字面量 'stay'，
+   * 于是后面 `=== 'cancel'` 被判成「两个类型没有交集」而报 TS2367。
+   * 但 ref 恰恰是能在 await 期间被用户点击改掉的 —— 那个收窄在这里是错的。
+   */
+  const waitingExit = () => autoExitRef.current
+
+  /**
+   * 一次跑完「文案 → 分镜」，成功后直接进拍摄页
+   * —— 用户选好款式就拿到成品，不必在中间页手动点两次生成。
+   * 任一步失败都留在本页：本页就是编辑页，页内有「重新生成」可原地重试；
+   * 生成失败会全额解冻预扣的豆，重试不会重复扣费。
    */
   const runAuto = async (id: string) => {
+    autoExitRef.current = 'stay'
+    autoIdRef.current = id
     setAutoRunning(true)
     try {
       const cr = await generateCopy(id, newRequestId(), track)
+      // 等待期间被「取消生成」：不再发起分镜请求。
+      // 已经发出去的这一笔文案请求撤不回来（请求层没有 abort 能力），
+      // 但它的结果会落库 —— 为它付的那笔豆不浪费，用户可从「创作」进入接着用。
+      if (waitingExit() === 'cancel') return
       const br = await generateStoryboard(id, newRequestId(), complexity)
-      await loadDetail(id)
-      if (!br.parsed) Taro.showToast({ title: '分镜解析异常，请手动重试', icon: 'none' })
-      else if (cr.isFallbackTemplate || br.isFallbackTemplate) Taro.showToast({ title: 'AI 繁忙，已用兜底内容', icon: 'none' })
-      else Taro.showToast({ title: `同款已生成：文案 + ${br.shots.length} 个分镜`, icon: 'none' })
+      // 「关闭等待」：两步照常跑完落库（用户稍后从「创作」进入），只是不再自动跳拍摄页
+      if (waitingExit() !== 'stay') return
+      if (!br.parsed || br.shots.length === 0) {
+        // 没有分镜就没法拍摄，停在本页让用户重试，避免落到一个空的拍摄列表
+        Taro.showToast({ title: '分镜生成异常，请重新生成', icon: 'none' })
+        return
+      }
+      if (cr.isFallbackTemplate || br.isFallbackTemplate) {
+        Taro.showToast({ title: 'AI 繁忙，部分内容用了兜底', icon: 'none' })
+      }
+      Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })
     } catch {
-      Taro.showToast({ title: '自动生成中断，可在页面内手动重试', icon: 'none' })
+      // 用户主动取消时的失败不必再报「生成中断」——那是他自己按掉的
+      if (waitingExit() === 'stay') {
+        Taro.showToast({ title: '生成中断，可在本页重新生成', icon: 'none' })
+      }
     } finally {
-      setAutoRunning(false)
+      // 成败都要把详情落回页面：失败时本页要停在可重试的编辑态。
+      // 只置 autoRunning=false 而不拉详情，detail 仍是 null，页面会卡在「加载中…」。
+      // 「关闭等待」会先离开本页，此时再拉一次只是白发一个请求（setState 也不会生效）。
+      if (mountedRef.current) {
+        await loadDetail(id).catch(() => undefined)
+        setAutoRunning(false)
+      }
     }
   }
 
@@ -208,7 +261,8 @@ export default function CreationEdit() {
       Taro.showToast({ title: '请选择门店', icon: 'none' })
       return
     }
-    if (createLockRef.current) return // P0-7 同类：下方 runAuto 会连带生成文案+分镜（扣豆），连点会重复创建并双扣
+    // 一次点击 = 创建 + 生成文案 + 生成分镜（连续两笔扣豆），连点会重复创建并双扣
+    if (createLockRef.current) return
     createLockRef.current = true
     setCreating(true)
     try {
@@ -220,19 +274,35 @@ export default function CreationEdit() {
         complexity,
       })
       setLocalId(c.id)
-      if (autoPendingRef.current) {
-        // 只消费一次：后续返回本页不再自动生成
-        autoPendingRef.current = false
-        await runAuto(c.id)
-      } else {
-        Taro.showToast({ title: workRecipe ? '已套用同款配方' : '已创建', icon: 'success' })
-      }
+      // 创建即生成：款式已选定，直接出文案和分镜，然后进拍摄页
+      await runAuto(c.id)
     } catch {
       /* 错误已在 request 层 toast */
     } finally {
       createLockRef.current = false
       setCreating(false)
     }
+  }
+
+  /**
+   * 取消生成：立刻停止等待，并且不再发起后续步骤。
+   * 已经发出去的那一笔撤不回来（请求层没有 abort 能力），但它的结果会落库，
+   * 所以「已扣的豆换来的文案」不丢掉 —— 用户从「创作」进入仍能看到并用它。
+   */
+  const onCancelGenerate = async () => {
+    autoExitRef.current = 'cancel'
+    Taro.showToast({ title: '已取消生成，已完成的文案会保留', icon: 'none' })
+    // 先把详情拉回来再收悬浮窗：否则 detail 仍是 null，页面会闪一下「加载中…」
+    if (autoIdRef.current) await loadDetail(autoIdRef.current).catch(() => undefined)
+    if (mountedRef.current) setAutoRunning(false)
+  }
+
+  /** 关闭等待：生成继续在后台跑完并落库，本页离开，之后从「创作」再次进入 */
+  const onBackgroundGenerate = () => {
+    autoExitRef.current = 'background'
+    Taro.showToast({ title: '已转入后台生成，可从「创作」再次进入', icon: 'none' })
+    // 拿不到上一页（从分享/扫码直达）时兜到「创作」列表，不让用户卡在原地
+    Taro.navigateBack({ fail: () => Taro.switchTab({ url: '/pages/creation/list' }) })
   }
 
   /** 选款式/复杂度：本地即时生效，并静默落库，避免下次进入丢失 */
@@ -354,7 +424,9 @@ export default function CreationEdit() {
   const complexityLabel = COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.label ?? ''
 
   // ───────────── 新建创作（未落库前） ─────────────
-  if (!localId) {
+  // 生成中（autoRunning）而详情还没落回来时也留在这个分支：
+  // 悬浮窗要盖在**用户刚刚填的这张表单**上，而不是把整页替换成等待页。
+  if (!localId || (autoRunning && !detail)) {
     return (
       <View className='cedit'>
         <View className='cedit__bar'>
@@ -412,13 +484,6 @@ export default function CreationEdit() {
                   ? `已预填「${trackLabel}」+「${complexityLabel}」，可自行调整`
                   : '配方读取失败，请手动选择文案款式与镜头复杂度'}
             </Text>
-            {autoMode && workLoaded && (
-              <Text className='cedit__recipe-warn'>
-                {workRecipe
-                  ? '创建后将自动生成文案与分镜，会消耗 AI 豆'
-                  : '自动生成已跳过，请手动点击生成'}
-              </Text>
-            )}
           </View>
         )}
 
@@ -452,19 +517,43 @@ export default function CreationEdit() {
             disabled={creating || (!!workId && !workLoaded)}
             onClick={onCreate}
           >
-            {creating ? (autoMode ? '创建并生成中…' : '创建中…') : autoMode && workRecipe ? '创建并生成同款' : '创建创作'}
+            {creating ? '生成中…' : '生成文案与分镜'}
           </Button>
+          <View className='ds-footer__note'>
+            {!!workId && !workLoaded ? '正在读取同款配方…' : '生成后会消耗 AI 豆，失败全额返还'}
+          </View>
         </View>
-      </View>
-    )
-  }
 
-  // 一键生成期间：整页占位，避免用户在半成品页面上误操作
-  if (autoRunning) {
-    return (
-      <View className='cedit__tip'>
-        <Text className='cedit__tip-main'>正在按同款配方生成文案与分镜…</Text>
-        <Text className='cedit__tip-sub'>生成完成后可逐条修改，会消耗 AI 豆</Text>
+        {/* 生成中的悬浮窗：盖在「初始页面」之上，而不是把整页替换掉 ——
+            用户看得见自己填的表单还在，只是被挡住。
+            两个出口的语义见 onCancelGenerate / onBackgroundGenerate。 */}
+        {autoRunning && (
+          <View className='cedit__gen-mask' catchMove>
+            <View className='cedit__gen-card'>
+              <View className='cedit__gen-spinner' />
+              <Text className='cedit__gen-title'>正在生成文案与分镜…</Text>
+              <Text className='cedit__gen-sub'>
+                关闭等待后仍会继续生成，可稍后从「创作」再次进入
+              </Text>
+              <View className='cedit__gen-actions'>
+                <View
+                  className='cedit__gen-btn cedit__gen-btn--ghost'
+                  hoverClass='ds-hover'
+                  onClick={() => void onCancelGenerate()}
+                >
+                  取消生成
+                </View>
+                <View
+                  className='cedit__gen-btn cedit__gen-btn--primary'
+                  hoverClass='ds-hover'
+                  onClick={onBackgroundGenerate}
+                >
+                  关闭等待
+                </View>
+              </View>
+            </View>
+          </View>
+        )}
       </View>
     )
   }
@@ -473,16 +562,16 @@ export default function CreationEdit() {
 
   const hasCopy = !!detail.copyText
   const hasShots = detail.shots.length > 0
-  // 文案 → 0，分镜 → 1，素材 → 2，成片 → 3
-  const step = !hasCopy ? 0 : !hasShots ? 1 : 2
+  // 文案与分镜同属第 1 步「创作」；两者都齐时流程条推进到第 2 步「素材」，提示可以往下走
+  const step = hasCopy && hasShots ? 1 : 0
 
   return (
     <View className='cedit'>
       <View className='cedit__steps-wrap'>
         <Steps steps={STEP_LABELS} current={step} />
         <View className='cedit__stage'>
-          <Text className='cedit__stage-kicker'>STEP {step + 1} OF 4</Text>
-          <Text className='cedit__stage-title'>{step === 0 ? '先把想说的话写出来' : step === 1 ? '把想法变成可执行的镜头' : '文案和分镜已经就绪，去拍摄吧'}</Text>
+          <Text className='cedit__stage-kicker'>STEP 1 OF 3 · CREATE</Text>
+          <Text className='cedit__stage-title'>{step === 0 ? '先把文案和分镜准备好' : '文案和分镜已就绪，去拍摄吧'}</Text>
         </View>
       </View>
 
@@ -705,15 +794,15 @@ export default function CreationEdit() {
 
       <View className='ds-footer'>
         <Button
-          className={`ds-btn ds-btn--primary ds-btn--block ${detail.shots.length === 0 ? 'ds-btn--disabled' : ''}`}
+          className={`ds-btn ds-btn--primary ds-btn--block ${hasShots ? '' : 'ds-btn--disabled'}`}
           hoverClass='ds-hover'
-          disabled={detail.shots.length === 0}
+          disabled={!hasShots}
           onClick={() => Taro.navigateTo({ url: `/pages/creation/shots?id=${localId}` })}
         >
-          下一步 · 拍摄上传素材
+          下一步
         </Button>
         <View className='ds-footer__note'>
-          {detail.shots.length === 0 ? '先生成分镜后再拍摄素材' : '文案与分镜已保存，可随时回来修改'}
+          {hasShots ? '按分镜逐条拍摄并上传素材' : '先生成分镜，才能进入拍摄'}
         </View>
       </View>
     </View>

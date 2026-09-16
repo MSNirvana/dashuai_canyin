@@ -1,5 +1,5 @@
-// 四步流程条：让用户始终知道「我在第几步、还剩几步」
-// 用法：<Steps steps={['文案','分镜','素材','成片']} current={1} />  current 从 0 开始
+// 三步流程条：让用户始终知道「我在第几步、还剩几步」
+// 用法：<Steps steps={['创作','素材','成片']} current={0} />  current 从 0 开始
 
 import { Fragment } from 'react'
 import { View, Text } from '@tarojs/components'

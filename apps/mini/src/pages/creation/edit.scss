@@ -1,4 +1,8 @@
 // 创作编辑：四步流程条 + 分段控件选款式/复杂度 + 白卡分区
+// 生成中悬浮窗的转圈动画。写在这一层（而不是嵌进 .cedit）是因为 @keyframes 必须是顶层规则。
+@keyframes cedit-gen-spin {
+  to { transform: rotate(360deg); }
+}
 .cedit {
   min-height: 100vh;
   background: var(--td-bg-color-page);
@@ -21,6 +25,78 @@
     margin-top: 12rpx;
     font-size: 24rpx;
     color: var(--td-text-color-placeholder);
+  }
+
+  /* ── 生成中悬浮窗 ──
+     盖在「初始页面」之上，而不是把整页替换成等待页：用户看得见自己填的表单还在。
+     遮罩色 / 卡片圆角 / 投影与 .mine__login-mask、.mine__login-modal 取同值，
+     弹层观感在整个 App 里保持一致。 */
+  &__gen-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 48rpx;
+    background: rgba(17, 17, 20, 0.42);
+  }
+  &__gen-card {
+    width: 100%;
+    max-width: 600rpx;
+    box-sizing: border-box;
+    padding: 48rpx 40rpx 36rpx;
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-extra);
+    box-shadow: 0 24rpx 80rpx rgba(17, 17, 20, 0.18);
+    text-align: center;
+  }
+  &__gen-spinner {
+    width: 56rpx;
+    height: 56rpx;
+    margin: 0 auto 28rpx;
+    border: 6rpx solid var(--td-bg-color-secondary);
+    border-top-color: var(--td-brand-color);
+    border-radius: 50%;
+    animation: cedit-gen-spin 0.8s linear infinite;
+  }
+  &__gen-title {
+    display: block;
+    font-size: 32rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+  &__gen-sub {
+    display: block;
+    margin-top: 12rpx;
+    font-size: 24rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-secondary);
+  }
+  &__gen-actions {
+    display: flex;
+    gap: 20rpx;
+    margin-top: 40rpx;
+  }
+  &__gen-btn {
+    flex: 1;
+    height: 88rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--td-radius-default);
+    font-size: 28rpx;
+    font-weight: 600;
+  }
+  /* 「关闭等待」是推荐动作（不浪费已发出的调用），所以给它实心主色；
+     取消是次选，用灰底，避免误触。 */
+  &__gen-btn--ghost {
+    background: var(--td-bg-color-secondary);
+    color: var(--td-text-color-secondary);
+  }
+  &__gen-btn--primary {
+    background: var(--td-brand-color);
+    color: #fff;
   }
 
   &__new-head { padding: 10rpx 4rpx 30rpx; }
