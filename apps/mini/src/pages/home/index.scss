@@ -1,23 +1,17 @@
 // 首页 · 今日创作台
-// 结构：顶栏（门店切换 + 我的）→ 口号横幅 → 创作入口 → 最近创作 → 优秀作品
+// 结构：口号横幅 → 创作入口（轮播）→ 最近创作 → 优秀作品
+// ⚠ 这里原来还有一条顶栏（左：门店切换 pill；右：圆形头像按钮），已按需求去掉，
+//   理由写在 index.tsx 的 home__top 上。相关的 &__topbar / &__brand / &__logo /
+//   &__appname / &__icon-btn 一并清掉 —— 留着会是没人引用的死样式。
 .home {
   min-height: 100vh;
   background: var(--td-bg-color-page);
   padding-bottom: 60rpx;
 
-  // ─────────── 顶栏 ───────────
+  // ─────────── 顶部（只剩口号海报） ───────────
   &__top {
     position: relative;
     padding: 24rpx 36rpx 0;
-  }
-  &__topbar {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 20rpx;
-    padding: 8rpx 0 32rpx;
   }
   // 手绘字标：只保留一句品牌主张，用楷体字形 + 墨迹划线营造绘画感
   &__hero-mark {
@@ -83,37 +77,6 @@
       opacity: 0.22;
     }
   }
-  &__brand {
-    display: flex;
-    align-items: center;
-    gap: 16rpx;
-    min-width: 0;
-  }
-  &__logo {
-    width: 64rpx;
-    height: 64rpx;
-    border-radius: 18rpx;
-    flex: none;
-    background: var(--td-bg-color-container);
-  }
-  &__appname {
-    font-size: 34rpx;
-    font-weight: 650;
-    letter-spacing: -0.01em;
-    color: var(--td-text-color-primary);
-  }
-  &__icon-btn {
-    width: 72rpx;
-    height: 72rpx;
-    border-radius: 50%;
-    background: var(--td-bg-color-container);
-    box-shadow: var(--ds-shadow-card);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-    color: var(--td-text-color-primary);
-  }
   &__headline {
     position: relative;
     z-index: 1;
@@ -143,7 +106,10 @@
     margin: 0 0 28rpx;
     overflow: hidden;
     border-radius: 36rpx;
-    background: #fff8f6;
+    // 纯白：口号海报本身是**不透明纯白底**（见 src/assets/home/README.md）。
+    // 容器跟着用纯白，是为了让 aspectFit 的极小留白与圆角处不露出暖色底 ——
+    // 图微宽于容器（678/248 = 2.734 < 1125/411 = 2.737），按宽贴合后上下各差不到 1rpx。
+    background: #fff;
   }
   &__slogan-image {
     display: block;

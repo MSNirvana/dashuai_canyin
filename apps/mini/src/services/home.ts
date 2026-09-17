@@ -1,13 +1,17 @@
-// 首页运营配置：轮播图（首页顶部「创作入口」那张卡片）。
+// 首页运营配置：轮播图（首页顶部「创作入口」那张卡片）+ 口号图（再上面那张海报）。
 //
 // 数据源复用**公开系统配置**（`GET /api/v1/system/settings`，免登录）——
-// 不新建表、不新开接口：运营在后台「首页轮播图」页里改，小程序拉到的就是同一份。
+// 不新建表、不新开接口：运营在后台「首页轮播图」/「首页口号图」页里改，小程序拉到的就是同一份。
+//
+// ★ 两块配置来自**同一个接口**，所以合并成一个 `getHomeLayout()` 一次拉完，
+//   不要写两个各拉一次的函数 —— 首页每次 useDidShow 都会跑，等于白多一次请求。
 //
 // ⚠ 服务端对 `valueType='JSON'` 的项做了一次「简化」：它 `JSON.parse` 之后又
 //   `JSON.stringify` 回去，所以拿到手的是**字符串**而不是对象
 //   （见 server/src/routes/system-settings.ts::coerceValue）。这里必须自己再 parse 一次。
+//   （口号图那张是 `valueType='STRING'`，值就是地址本身，不用 parse。）
 import { getPublicSettings } from './account'
-import { HOME_CREATE_HERO } from '../constants/static-assets'
+import { HOME_CREATE_HERO, HOME_SLOGAN_BANNER_V3 } from '../constants/static-assets'
 
 /**
  * 轮播的跳转目标。**这是一份白名单**，必须与后台下拉里的选项逐一对应
@@ -84,23 +88,51 @@ function normalize(raw: unknown): HomeCarouselSlide[] {
 }
 
 /**
- * 拉首页轮播配置。
+ * 后台没配（或配得不合法）时用的**内置口号图**。
  *
- * 三条失败路径都必须**不抛**，且都退到 `FALLBACK_SLIDE`：
+ * 内置图不是「也存一份到库里」而是**留在代码里**：这样它跟着版本走，
+ * 背景/文案改版时改代码即可，不会被库里一条陈旧地址永久遮住。
+ */
+export const DEFAULT_SLOGAN_BANNER = HOME_SLOGAN_BANNER_V3
+
+/** 只认完整的 http(s) 直链 —— 小程序这边是 `<Image src>`，别的值只会白图且无迹可循 */
+const isHttpUrl = (v: string) => /^https?:\/\//i.test(v)
+
+export interface HomeLayoutConfig {
+  slides: HomeCarouselSlide[]
+  /** **已解析好**的口号图地址：运营配了就用运营的，否则是内置默认图 */
+  sloganBanner: string
+}
+
+/**
+ * 一次性拉齐首页的两块运营配置（轮播 + 口号图）。
+ *
+ * 三条失败路径都必须**不抛**，且都退到内置默认：
  *   1. 接口失败（离线 / 后端没起）—— 首页是 App 第一屏，不能因此空白或弹错误；
  *   2. 配置项不存在（运营还没配）—— 等价于改造前的行为；
  *   3. value 不是合法 JSON（有人直接把普通文本填进去过）—— 解析异常在这里吞掉。
  */
-export async function getHomeCarousel(): Promise<HomeCarouselSlide[]> {
+export async function getHomeLayout(): Promise<HomeLayoutConfig> {
   try {
     const settings = await getPublicSettings()
-    const item = settings.groups?.home?.find((i) => i.key === 'carousel')
-    if (!item) return [FALLBACK_SLIDE]
-    // 服务端按理给的是字符串；但它可能把已是数组的值原样传出，两条都兜住
-    const raw = typeof item.value === 'string' ? JSON.parse(item.value) : item.value
-    const slides = normalize(raw)
-    return slides.length > 0 ? slides : [FALLBACK_SLIDE]
+    const home = settings.groups?.home ?? []
+
+    // 轮播：服务端按理给的是字符串；但它可能把已是数组的值原样传出，两条都兜住
+    const carousel = home.find((i) => i.key === 'carousel')
+    let slides: HomeCarouselSlide[] = []
+    if (carousel) {
+      const raw = typeof carousel.value === 'string' ? JSON.parse(carousel.value) : carousel.value
+      slides = normalize(raw)
+    }
+
+    // 口号图：STRING 类型，空串 = 没配 = 用内置图（seed 建的默认值就是空串）
+    const banner = asText(home.find((i) => i.key === 'sloganBanner')?.value)
+
+    return {
+      slides: slides.length > 0 ? slides : [FALLBACK_SLIDE],
+      sloganBanner: isHttpUrl(banner) ? banner : DEFAULT_SLOGAN_BANNER,
+    }
   } catch {
-    return [FALLBACK_SLIDE]
+    return { slides: [FALLBACK_SLIDE], sloganBanner: DEFAULT_SLOGAN_BANNER }
   }
 }

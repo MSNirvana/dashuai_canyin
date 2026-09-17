@@ -126,6 +126,59 @@
     transition: width 0.3s ease-out;
   }
 
+  // ─────────── 学习中心（四宫格）───────────
+  // 与下面「我的资料」那个 iOS 列表刻意不同：这一块是**入口宫格**（图标在上、文字在下），
+  // 参考样式里四个图标都是**无底色的线性图标**，所以这里不套彩色圆角底（别跟 __item-icon 混了）。
+  &__learn {
+    margin: 24rpx 36rpx 0;
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx 16rpx 22rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__learn-title {
+    display: block;
+    margin: 0 12rpx;
+    padding-bottom: 20rpx;
+    // 标题与四宫格之间的细分割线（参考样式里有）
+    border-bottom: 1rpx solid var(--td-component-border);
+    font-size: 30rpx;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--td-text-color-primary);
+  }
+  &__learn-grid {
+    display: flex;
+    padding-top: 22rpx;
+  }
+  &__learn-item {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    // 上下各 8rpx：加上图标 88rpx，点按高度 ≥ 88rpx（微信建议的最小可点尺寸）
+    padding: 8rpx 0;
+  }
+  &__learn-icon {
+    width: 88rpx;
+    height: 88rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--td-text-color-primary);
+  }
+  &__learn-label {
+    margin-top: 10rpx;
+    font-size: 24rpx;
+    color: var(--td-text-color-primary);
+  }
+  &__learn-count {
+    margin-top: 4rpx;
+    font-size: 20rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
   // ─────────── 菜单（iOS 分组列表） ───────────
   &__menu {
     margin: 0 36rpx;

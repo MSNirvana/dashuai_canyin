@@ -4,6 +4,7 @@ import Taro, { useDidShow } from '@tarojs/taro'
 import * as authApi from '../../services/auth'
 import { pickAndUploadAvatar } from '../../services/profile'
 import { listMembershipReminders, markMembershipReminderRead, type MembershipReminder } from '../../services/account'
+import { TUTORIAL_CATEGORIES, listTutorialStats } from '../../services/tutorial'
 import { STORAGE_KEYS } from '../../config'
 import { useMerchantStore } from '../../store/merchant'
 import logoPng from '../../assets/logo.png'
@@ -51,6 +52,8 @@ export default function Mine() {
   const [submitting, setSubmitting] = useState(false)
   const [devMode, setDevMode] = useState(false)
   const [reminders, setReminders] = useState<MembershipReminder[]>([])
+  /** 学习中心每个分类的课程数（code → 节数）。拿不到就是空对象，四宫格照常渲染 */
+  const [tutorialCounts, setTutorialCounts] = useState<Record<string, number>>({})
   const loginRequest = useRef(0)
 
   // ── 短信登录（备选通道）──
@@ -76,6 +79,11 @@ export default function Mine() {
     if (!currentToken && useMerchantStore.getState().token) logout()
     setShowLogin(!currentToken)
     if (currentToken) {
+      // 学习中心的课程数是**锦上添花**：单独发、单独吞错，绝不并进下面的 Promise.all
+      // ——否则教学接口一慢，整页「加载中…」跟着一起等。
+      void listTutorialStats()
+        .then((r) => setTutorialCounts(Object.fromEntries(r.categories.map((c) => [c.code, c.count]))))
+        .catch(() => undefined)
       Promise.all([
         refreshMe(),
         // 昵称与头像不在 /orders/me 里，必须单独拉一次；失败不能连累整页（头像空着也能用）
@@ -225,8 +233,16 @@ export default function Mine() {
   // 带上 fail：跳转失败时把目标 url 打进日志。
   // 否则失败会以「navigateTo:fail timeout」的形式被抛到 App.onError，
   // 控制台里只有一堆 WAServiceMainContext 的栈，看不到是哪个页面挂了。
+  //
+  // ★ 末尾那个 .catch 不是多余的：Taro 的 navigateTo 除了回调，**还会返回一个 Promise**，
+  //   只给 fail 回调而不接住这个 Promise，失败时会以「未处理的 Promise 拒绝」冒到
+  //   App.onError，控制台里就变成一行 `MiniProgramError {"errMsg":"navigateTo:fail timeout"}`
+  //   —— 正是上面想避免的那种「看不出是哪个页面挂了」。
+  //   日志已经由 fail 打过，所以这里静默接住即可（navigateTo 的返回类型就是 Promise）。
   const go = (url: string) =>
-    Taro.navigateTo({ url, fail: (e) => console.warn('[nav] 跳转失败', url, e?.errMsg) })
+    Taro.navigateTo({ url, fail: (e) => console.warn('[nav] 跳转失败', url, e?.errMsg) }).catch(
+      () => undefined,
+    )
 
   /**
    * 点头像直接换头像（不跳页）。
@@ -351,6 +367,30 @@ export default function Mine() {
             className='mine__storagefill'
             style={{ width: `${pct}%`, background: pct >= 90 ? '#c4892c' : undefined }}
           />
+        </View>
+      </View>
+
+      {/* ── 学习中心：四宫格（卡片标题 + 细分割线 + 四个图标项）── */}
+      {/* 图标与文案来自 services/tutorial.ts 的本地常量：教学接口挂了这一块也要照常显示 */}
+      <View className='mine__learn'>
+        <Text className='mine__learn-title'>学习中心</Text>
+        <View className='mine__learn-grid'>
+          {TUTORIAL_CATEGORIES.map((c) => (
+            <View
+              key={c.code}
+              className='mine__learn-item'
+              hoverClass='ds-hover'
+              onClick={() => go(`/pages/tutorial/index?category=${c.code}`)}
+            >
+              <View className='mine__learn-icon'>
+                <t-icon name={c.icon} size='46rpx' />
+              </View>
+              <Text className='mine__learn-label'>{c.label}</Text>
+              {tutorialCounts[c.code] > 0 && (
+                <Text className='mine__learn-count'>{tutorialCounts[c.code]} 节</Text>
+              )}
+            </View>
+          ))}
         </View>
       </View>
 

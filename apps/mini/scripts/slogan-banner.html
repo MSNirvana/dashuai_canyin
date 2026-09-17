@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!--
+  首页口号海报（红 / 白 / 黑 三色）源文件。
+  渲染：node scripts/render-slogan-banner.mjs  →  src/assets/home/slogan-banner-v3.png
+  画布 1125×411（宽高比 2.737），**不透明纯白底**（靠下面那层 .bg，不靠容器/截图参数）。
+  字重取字体自身 W6；要更粗用 text-shadow 多向偏移，别用 -webkit-text-stroke（会留接缝）。
+  改完必须同步 pages/home/index.scss 的 &__slogan-image 高度（1125/411 ⇒ 248rpx）。
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1125px; height: 411px; background: transparent; overflow: hidden; }
+  /* 只有红 / 白 / 黑；白靠胶片齿孔、播放三角、AI 字与负空间体现 */
+  :root { --red: #e1251b; --black: #17181a; --white: #ffffff; }
+
+  .stage { position: relative; width: 1125px; height: 411px; }
+  /* 纯白底：整幅铺满，不靠容器的底色 */
+  .bg { position: absolute; inset: 0; background: var(--white); }
+
+  /* ── 胶片带：红色底 + 两排白色齿孔。
+        拆成左右两段、共用同一条 -8° 直线，看着是一条带子被文字挡住。
+        一整条横穿会把红字切成虚线（齿孔是白的）；内侧再用 clip-path 收成尖头，
+        齿孔就在字形之前收住。 ── */
+  .film {
+    position: absolute; height: 40px; background: var(--red);
+    transform: rotate(-8deg); transform-origin: left center;
+  }
+  .film::before, .film::after {
+    content: ''; position: absolute; left: 0; right: 0; height: 9px;
+    background-image: repeating-linear-gradient(90deg, #fff 0 10px, rgba(255,255,255,0) 10px 22px);
+  }
+  .film::before { top: 5px; }
+  .film::after { bottom: 5px; }
+  .film-l { left: -40px; top: 300px; width: 230px;
+            clip-path: polygon(0 0, 64% 0, 100% 50%, 64% 100%, 0 100%); }
+  .film-r { left: 880px; top: 175px; width: 320px; }
+
+  /* ── 文字块 ── */
+  .words {
+    position: absolute; left: 0; top: 0; width: 1125px; height: 411px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transform: translateX(-30px) skewX(-8deg);
+    font-family: "Hiragino Sans GB", "STHeiti", "Heiti SC", sans-serif;
+    font-weight: 600; letter-spacing: -3px; line-height: 0.96;
+  }
+  /* 字重就取字体自身的 W6（Hiragino Sans GB 的最粗档），不加任何仿粗体。
+     ⚠ 别用 -webkit-text-stroke 加粗：描边在「餐」这种笔画交叠的字上会留下
+     一条极细的亮色接缝（实测确有）。要更粗时用 text-shadow 多向偏移，
+     不要用描边。 */
+  .l1, .l2 { display: block; font-size: 132px; }
+  .l1 { color: var(--black); }
+  .l2 { color: var(--red); margin-top: 8px; }
+
+  /* ── AI 芯片：黑底白字 ── */
+  .ai {
+    position: absolute; left: 886px; top: 92px; width: 108px; height: 108px;
+    background: var(--black); border-radius: 26px; transform: rotate(-3deg);
+    display: flex; align-items: center; justify-content: center;
+    font-family: "Helvetica Neue", Arial, sans-serif; font-weight: 800;
+    font-size: 46px; letter-spacing: -1px; color: var(--white);
+  }
+  /* ── 播放芯片：红底白三角 ── */
+  .play {
+    position: absolute; left: 886px; top: 238px; width: 92px; height: 92px;
+    background: var(--red); border-radius: 24px; transform: rotate(-3deg);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .play i {
+    display: block; width: 0; height: 0; margin-left: 6px;
+    border-left: 32px solid var(--white);
+    border-top: 20px solid transparent; border-bottom: 20px solid transparent;
+  }
+
+  /* ── 四角星 ── */
+  .spark {
+    position: absolute;
+    clip-path: polygon(50% 0, 60% 40%, 100% 50%, 60% 60%, 50% 100%, 40% 60%, 0 50%, 40% 40%);
+  }
+  .s1 { left: 148px; top: 104px; width: 54px; height: 54px; background: var(--red); }
+  .s2 { left: 806px; top: 28px;  width: 30px; height: 30px; background: var(--black); }
+  .s3 { left: 1040px; top: 232px; width: 38px; height: 38px; background: var(--black); }
+  .s4 { left: 106px; top: 300px; width: 38px; height: 38px; background: var(--black); }
+  .s5 { left: 800px; top: 350px; width: 28px; height: 28px; background: var(--red); }
+
+  /* ── 文字下方的红色横线 ── */
+  .underline {
+    position: absolute; left: 338px; top: 358px; width: 450px; height: 8px;
+    background: var(--red); border-radius: 4px; transform: rotate(-1.2deg);
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <div class="bg"></div>
+    <div class="film film-l"></div>
+    <div class="film film-r"></div>
+    <div class="spark s1"></div>
+    <div class="spark s2"></div>
+    <div class="spark s3"></div>
+    <div class="spark s4"></div>
+    <div class="spark s5"></div>
+    <div class="underline"></div>
+    <div class="words">
+      <span class="l1">让餐饮门店</span>
+      <span class="l2">轻松拍视频</span>
+    </div>
+    <div class="ai">AI</div>
+    <div class="play"><i></i></div>
+  </div>
+</body>
+</html>

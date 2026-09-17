@@ -4,16 +4,18 @@ import Taro, { useDidShow, useReachBottom } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
 import { listCreations, type CreationItem } from '../../services/creation'
 import { listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
-import { FALLBACK_SLIDE, getHomeCarousel, type HomeCarouselSlide } from '../../services/home'
-import StoreSwitcher from '../../components/store-switcher'
-import logoPng from '../../assets/logo.png'
+import {
+  DEFAULT_SLOGAN_BANNER,
+  FALLBACK_SLIDE,
+  getHomeLayout,
+  type HomeCarouselSlide,
+} from '../../services/home'
 // 展示图走 CDN（见 src/constants/static-assets.ts 的说明）：它们不需要跟版本走，
 // 留在包里会白占 2MB 主包额度、并踩「图片资源超过 200K」的代码质量建议项。
 // 图片源文件仍在 src/assets/home/ 下，改图后跑 `npm run assets:upload` 重新上传即可。
-// ⚠ 轮播用的图不再从这里取：改由后台配置（services/home.ts），
-//   兜底那张才用 static-assets 里的 HOME_CREATE_HERO。
+// ⚠ 轮播与口号图这两张**不再由页面直接引用 static-assets**：它们改由后台配置，
+//   取值与兜底都在 services/home.ts（页面只拿解析好的地址）。
 import {
-  HOME_SLOGAN_BANNER as sloganBannerPng,
   HOME_WORK_FOOD as workFoodPng,
   HOME_WORK_EDUCATION as workEducationPng,
   HOME_WORK_BEAUTY as workBeautyPng,
@@ -35,7 +37,7 @@ const WORK_PAGE_SIZE = 6
 /** 分类横滑的「全部」选项：接口只返回有作品的分类 */
 const WORK_CATEGORY_ALL = ''
 
-/** 首页 · 创作工作台：门店切换常驻左上角，全页只有一个红色实心主按钮 */
+/** 首页 · 创作工作台：顶部只有口号海报（原顶栏的门店切换与头像按钮已去掉），全页只有一个红色实心主按钮 */
 export default function HomePage() {
   const merchant = useMerchantStore((s) => s.merchant)
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
@@ -47,6 +49,10 @@ export default function HomePage() {
   // 首页轮播（运营在后台配）：初值直接给兜底单张，首屏立刻有内容，不等接口回来才画
   const [banners, setBanners] = useState<HomeCarouselSlide[]>([FALLBACK_SLIDE])
   const bannerKeyRef = useRef('')
+  // 口号图：初值同样是**内置默认图**（首屏立刻有内容），拉到运营配置后原地换 src。
+  // 这里不需要 bannerKeyRef 那种去重 ref：值是个字符串，setState 同值 React 会直接跳过；
+  // 而轮播是数组，每次都是新引用，不去重就会让 Swiper 重挂载、跳回第一张。
+  const [sloganBanner, setSloganBanner] = useState(DEFAULT_SLOGAN_BANNER)
   // 优秀作品：分类来自接口，列表按页拉取（真分页，不再本地切片）
   const [workCats, setWorkCats] = useState<WorkCategory[]>([])
   const [workCategory, setWorkCategory] = useState(WORK_CATEGORY_ALL)
@@ -86,17 +92,20 @@ export default function HomePage() {
   }
 
   /**
-   * 拉首页轮播配置（公开接口，免登录；失败一律走兜底，见 services/home.ts）。
+   * 拉首页的运营配置：轮播 + 口号图（公开接口，免登录；失败一律走兜底，见 services/home.ts）。
    *
-   * 内容没变就不 setState：换一个全新的数组会让 Swiper 重挂载、把当前页跳回第一张，
+   * 轮播内容没变就不 setState：换一个全新的数组会让 Swiper 重挂载、把当前页跳回第一张，
    * 而 useDidShow 每次回到首页都会跑一遍，运营没改配置时不该有这种跳动。
+   * （口号图是字符串，同值 setState 本身就不会触发重渲染，不用额外去重。）
    */
-  const loadBanners = async () => {
-    const slides = await getHomeCarousel()
-    const key = JSON.stringify(slides)
-    if (key === bannerKeyRef.current) return
-    bannerKeyRef.current = key
-    setBanners(slides)
+  const loadHomeLayout = async () => {
+    const cfg = await getHomeLayout()
+    const key = JSON.stringify(cfg.slides)
+    if (key !== bannerKeyRef.current) {
+      bannerKeyRef.current = key
+      setBanners(cfg.slides)
+    }
+    setSloganBanner(cfg.sloganBanner)
   }
 
   const refresh = async () => {
@@ -119,8 +128,8 @@ export default function HomePage() {
   }
   useDidShow(() => {
     void refresh()
-    // 轮播是运营内容，每次回首页重拉一遍（内容不变时上面会跳过 setState）
-    void loadBanners()
+    // 轮播与口号图都是运营内容，每次回首页重拉一遍（内容没变时上面会跳过 setState）
+    void loadHomeLayout()
     // 作品是公共内容，只在首次进入时拉；切分类与上拉由下面各自触发
     if (!workLoadedRef.current) {
       workLoadedRef.current = true
@@ -147,14 +156,9 @@ export default function HomePage() {
   const goMine = () => Taro.switchTab({ url: '/pages/mine/index' })
 
   if (!merchant) return <View className='home'>
-    <View className='home__top home__top--guest'>
-      <View className='home__topbar'>
-        <View className='home__brand'>
-          <Image className='home__logo' src={logoPng} mode='aspectFit' />
-          <Text className='home__appname'>大帅餐饮</Text>
-        </View>
-        <View className='home__icon-btn' onClick={goMine}><t-icon name='user' size='20px' /></View>
-      </View>
+    {/* 未登录分支原来也有一条同样的顶栏（品牌字标 + 头像按钮），一并去掉：
+        顶栏没了之后「大帅餐饮」仍由原生导航栏标题承载（index.config.ts），品牌不会丢。 */}
+    <View className='home__top'>
       <View className='home__guest-hero'>
         <Text className='home__eyebrow'>门店短视频创作助手</Text>
         <Text className='home__hero-title'>把今天的招牌菜，拍成明天的客流。</Text>
@@ -199,16 +203,17 @@ export default function HomePage() {
     }
   }
   return <View className='home'>
-    {/* ── 顶栏：门店是创作上下文，但不在首页重复展示管理入口 ── */}
+    {/* ── 顶部：只留口号海报 ──
+        原来这里还有一条顶栏（左侧门店切换 pill + 右侧圆形头像按钮），已按需求去掉：
+        首页是「看内容、点创作」的台子，门店是创作上下文但不是首页的入口，
+        头像更是与底部「我的」tab 重复；两者都在别的页面/底部 tab 有入口。 */}
     <View className='home__top'>
-      <View className='home__topbar'>
-        <StoreSwitcher />
-        <View className='home__icon-btn' onClick={goMine}><t-icon name='user' size='20px' /></View>
-      </View>
-      {/* 品牌口号海报：白底已扣成透明（见 src/assets/home/README.md），
-          直接落在卡片的奶油底色上，不会出现一个白色方块 */}
+      {/* 品牌口号海报：运营可在后台「首页口号图」上传替换（services/home.ts）。
+          没配时用的是内置那张红/白/黑三色海报 —— 它由代码合成，别手工改 PNG
+          （源码 scripts/slogan-banner.html，见 src/assets/home/README.md）。
+          src 变化时会自动换图，不用 key 或强制刷新。 */}
       <View className='home__slogan-banner'>
-        <Image className='home__slogan-image' src={sloganBannerPng} mode='aspectFit' />
+        <Image className='home__slogan-image' src={sloganBanner} mode='aspectFit' />
       </View>
     </View>
 

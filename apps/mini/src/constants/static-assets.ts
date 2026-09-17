@@ -15,8 +15,8 @@ export const STATIC_BASE_URL = 'https://dashuai-1485028436.cos.ap-beijing.myqclo
 /** static/mini/home/create-hero.jpg */
 export const HOME_CREATE_HERO = 'https://dashuai-1485028436.cos.ap-beijing.myqcloud.com/static/mini/home/create-hero.jpg'
 
-/** static/mini/home/slogan-banner.png */
-export const HOME_SLOGAN_BANNER = 'https://dashuai-1485028436.cos.ap-beijing.myqcloud.com/static/mini/home/slogan-banner.png'
+/** static/mini/home/slogan-banner-v3.png */
+export const HOME_SLOGAN_BANNER_V3 = 'https://dashuai-1485028436.cos.ap-beijing.myqcloud.com/static/mini/home/slogan-banner-v3.png'
 
 /** static/mini/home/work-food.jpg */
 export const HOME_WORK_FOOD = 'https://dashuai-1485028436.cos.ap-beijing.myqcloud.com/static/mini/home/work-food.jpg'

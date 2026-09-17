@@ -39,16 +39,21 @@ const DRY_RUN = process.argv.includes('--dry-run')
  *   两者合计约 32KB，离微信 200K 的建议线还差得远，
  *   而留在本地能让品牌标与 tabBar **零延迟渲染**，不用等网络。
  *
- * ★ `home/slogan-banner.png` 为什么从「本地内联的 1.2KB SVG」换成「CDN 上的 73KB PNG」：
- *   那张手绘口号图换成了一版成品海报（深色字 + 橙色描边 + 胶片带 + 半透明菜品照）。
- *   它带**透明底**且是照相级内容 ⇒ base64 内联会让包体涨 100KB 以上，
- *   而换成调色板 PNG（256 色 + tRNS，半透明保留 111 档）后只有 73KB。
- *   尺寸 1125×411（宽高比 2.737 ⇒ 卡片里展示高 248rpx），裁切基准与踩坑见
- *   `src/assets/home/README.md`「垂直构图」一节。
+ * ★ `home/slogan-banner-v3.png` 为什么在 CDN 上：
+ *   它是首页口号海报（红/白/黑三色，1125×411，**不透明纯白底**，19KB 调色板 PNG）。
+ *   代码合成而非模型出图 —— **源码是 `scripts/slogan-banner.html`，用 `npm run assets:slogan` 生成**，
+ *   别手工改这个 PNG（中文文案、字重与三色都锁在 HTML 里）。宽高比 2.737 ⇒ 卡片里展示高 248rpx。
+ *
+ * ★★ 换图必须换文件名（所以有 `-v2`）：
+ *   本脚本上传时带 `CacheControl: public, max-age=604800`（7 天），而对象 Key 是固定的。
+ *   沿用同名 = 小程序端与 CDN 都会继续吐**旧图**，而且开发者工具里清缓存也不一定管用。
+ *   换图流程：改 slogan-banner.html → 改这里的文件名（v3…）→ `assets:slogan` + 上传
+ *   → 同步 `src/constants/static-assets.ts`（本脚本自动生成）与页面里的常量引用。
+ *   旧对象留在桶里不用删：老版本客户端可能还在读它。
  */
 const FILES = [
   'home/create-hero.jpg',
-  'home/slogan-banner.png',
+  'home/slogan-banner-v3.png',
   'home/work-food.jpg',
   'home/work-education.jpg',
   'home/work-beauty.jpg',

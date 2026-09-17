@@ -16,6 +16,8 @@ export default defineAppConfig({
     'pages/work/detail',
     'pages/recharge/index',
     'pages/mine/index',
+    // 教学中心：分类课程页（?category=SHOOTING|EDITING|OPERATION|MANUAL）
+    'pages/tutorial/index',
     // 个人主页：换头像 + 改用户名（点头像/用户名进入）
     'pages/profile/index',
     // 用户协议 / 隐私政策（一个页面承载两份文档，用 ?type=user|privacy 区分）
