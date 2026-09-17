@@ -74,7 +74,7 @@ npm --prefix server exec tsx -- docs/audit-tests/critical-path-reproduction.ts
 |---|---|---|---|
 | ARC-P1-01 上传元数据/配额 | S；E 待验 | 上传确认接受客户端元数据，配额预占和真实 COS 对象一致性需隔离 COS/DB 验证。 | Engineer |
 | ARC-P1-02 worker/AI 租约与崩溃 | S；E 待验 | worker 有 QUEUED 条件抢占，但无完整租约、总超时和崩溃补偿；未启动 worker。 | Engineer |
-| ARC-P1-03 赠豆到期/权益快照 | S；E 待验 | 代码有到期清零函数，但未在本轮验证调度、续期并发和购买权益快照。 | Engineer |
+| ARC-P1-03 赠积分到期/权益快照 | S；E 待验 | 代码有到期清零函数，但未在本轮验证调度、续期并发和购买权益快照。 | Engineer |
 | ARC-P1-04 AI 日志与业务完成 | S；C 待验 | AI 日志更新和业务持久化不形成独立完成状态；需注入持久化失败检查扣费、日志和重试。 | Engineer |
 | ARC-P1-05 分镜重生成/版本 | S | 非数组/无 `.shots` 时可能清空旧分镜；未验证真实历史素材绑定恢复。 | Engineer |
 | ARC-P1-06 小程序余额混用 | S | `setLogin`/`refreshBean` 写充值余额，`refreshMe` 写 `balance.available`；compose 用 `Number(balance)` 做拦截。 | Engineer |

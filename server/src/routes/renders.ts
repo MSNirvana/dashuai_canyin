@@ -61,7 +61,7 @@ router.post('/:id/render', async (req, res) => {
     ok(res, r)
   } catch (e) {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
-    if (e instanceof BeanNotEnoughError) return fail(res, 2001, 'AI豆不足，请充值', 400)
+    if (e instanceof BeanNotEnoughError) return fail(res, 2001, '积分不足，请充值', 400)
     if (e instanceof CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
     if (e instanceof renderSvc.RenderNoAssetError) return fail(res, 4003, '请先为分镜上传素材', 400)
     if (e instanceof renderSvc.RenderAlreadyRunningError) return fail(res, 4001, '已有合成任务进行中', 409)
@@ -76,11 +76,11 @@ router.post('/:id/render', async (req, res) => {
 /**
  * 整片调色预览。
  *
- * 与合成的关系：**不冻结豆、不建任务、不扣费** —— 它只是按当前调色参数把尚未调色的成片
+ * 与合成的关系：**不冻结积分、不建任务、不扣费** —— 它只是按当前调色参数把尚未调色的成片
  * 重编一版低码率预览，给用户「调完先看一眼」用。真正出片仍走 POST /:id/render（RECOLOR）。
  *
  * 为什么要订阅门槛：预览是**整片**的（用户明确要的），因此它在内容上等价于成片。
- * 不加门槛的话，「调色预览」就成了绕开扣豆拿视频的免费通道。
+ * 不加门槛的话，「调色预览」就成了绕开扣积分拿视频的免费通道。
  *
  * ★ 限流不在这里做，而在 buildColorPreview 内部「缓存未命中 / 未复用 in-flight」之后 ——
  *   那边才知道这次请求是不是真的要花算力。路由层调用会连带把「命中缓存的重复请求」

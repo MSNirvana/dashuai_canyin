@@ -1,8 +1,8 @@
-// 赠豆到期清零调度（会员到期 job）
+// 赠积分到期清零调度（会员到期 job）
 //
 // 背景：bean.service.expireGrant() 早已实现，但**全项目零调用**——
-// 结果是「订阅到期后赠送的 AI 豆永久保留」，与 docs/05 计费规则（订阅 ¥980/30天/赠 98000 积分，到期清零）不符，
-// 也让续费失去意义（不续费也能一直用赠豆）。
+// 结果是「订阅到期后赠送的积分永久保留」，与 docs/05 计费规则（订阅 ¥980/30天/赠 98000 积分，到期清零）不符，
+// 也让续费失去意义（不续费也能一直用赠积分）。
 //
 // 触发口径：以 membership.grantExpireAt 为准（激活/续期时被置为该期 endAt）。
 //
@@ -10,7 +10,7 @@
 //   1. 一个商户只处理一次，避免同一 merchant 多行会员记录被重复清零；
 //   2. 清零前必须确认该商户**没有**仍然有效的会员（endAt > now）。
 //      因为 activateMembership 续期时会把新 endAt 写到同一行、并把旧行留在 ACTIVE 且 endAt 已过；
-//      若不检查，续期用户的赠豆会在旧行到期日被误清空；
+//      若不检查，续期用户的赠积分会在旧行到期日被误清空；
 //   3. expireGrant 自身对 grant_balance <= 0 直接返回 0，天然幂等；
 //   4. 状态置 EXPIRED 作为「已处理」标记（docs/01 定义的枚举就是 ACTIVE/EXPIRED）。
 import type { PrismaClient } from '@prisma/client'
@@ -23,14 +23,14 @@ export interface GrantExpiryResult {
   merchantsExpired: number
   /** 因仍有有效会员而跳过的商户数（已续期） */
   skippedStillActive: number
-  /** 累计清零豆数 */
+  /** 累计清零积分数 */
   beansCleared: bigint
 }
 
 const BATCH = 500
 
 /**
- * 扫描并执行赠豆到期清零。幂等：重复调用不会重复清零。
+ * 扫描并执行赠积分到期清零。幂等：重复调用不会重复清零。
  * 导出为纯函数形式（不依赖调度器），便于测试与手动触发。
  *
  * 到期口径（`grant_expire_at` 是后加字段，历史数据可能为 NULL，必须兼容）：
@@ -65,7 +65,7 @@ export async function scanGrantExpiry(prisma: PrismaClient, now = new Date()): P
     if (handled.has(key)) continue // 同一商户只处理一次
     handled.add(key)
 
-    // 续期保护：该商户若还有未到期的有效会员，说明已续期，赠豆顺延，不能清零
+    // 续期保护：该商户若还有未到期的有效会员，说明已续期，赠积分顺延，不能清零
     const stillActive = await prisma.membership.findFirst({
       where: { merchantId: m.merchantId, status: 'ACTIVE', endAt: { gt: now } },
       select: { id: true },
@@ -89,7 +89,7 @@ export async function scanGrantExpiry(prisma: PrismaClient, now = new Date()): P
       const cleared = await prisma.$transaction(async (tx: Db) => {
         const r = await expireGrant(tx, {
           merchantId: m.merchantId,
-          remark: `会员到期，赠豆清零（到期时间 ${expiryLabel}）`,
+          remark: `会员到期，赠积分清零（到期时间 ${expiryLabel}）`,
         })
         // 标记该商户所有已到期会员为 EXPIRED，同时作为「已处理」幂等标记
         await tx.membership.updateMany({
@@ -101,7 +101,7 @@ export async function scanGrantExpiry(prisma: PrismaClient, now = new Date()): P
       result.merchantsExpired += 1
       result.beansCleared += cleared
       if (cleared > 0n) {
-        console.log(`[grant-expiry] 商户 ${m.merchantId} 会员到期，清零赠豆 ${cleared}`)
+        console.log(`[grant-expiry] 商户 ${m.merchantId} 会员到期，清零赠积分 ${cleared}`)
       }
     } catch (e) {
       // 单个商户失败不影响其余：事务已回滚，下次扫描会重试
@@ -124,7 +124,7 @@ async function tick(prisma: PrismaClient): Promise<void> {
     const r = await scanGrantExpiry(prisma)
     if (r.merchantsExpired > 0 || r.skippedStillActive > 0) {
       console.log(
-        `[grant-expiry] 扫描 ${r.scanned} 条，清零 ${r.merchantsExpired} 商户 / ${r.beansCleared} 豆，跳过续期 ${r.skippedStillActive} 商户`,
+        `[grant-expiry] 扫描 ${r.scanned} 条，清零 ${r.merchantsExpired} 商户 / ${r.beansCleared} 积分，跳过续期 ${r.skippedStillActive} 商户`,
       )
     }
   } catch (e) {

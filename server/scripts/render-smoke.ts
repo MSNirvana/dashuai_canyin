@@ -1,5 +1,5 @@
 // FFmpeg 链路冒烟 + 中间产物缓存收益实测
-// 用途：部署机上线前验证 ffmpeg/ffprobe 可用、编码参数正确、重调色（10豆）确实比重跑（30豆）省 CPU
+// 用途：部署机上线前验证 ffmpeg/ffprobe 可用、编码参数正确、重调色（10积分）确实比重跑（30积分）省 CPU
 // 运行：npm run render:smoke
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'

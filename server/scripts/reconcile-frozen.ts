@@ -1,4 +1,4 @@
-// 「冻结豆」对账工具。
+// 「冻结积分」对账工具。
 //
 // 背景（为什么需要它）：
 //   bean_account.frozen 是**增量计数器**（freeze +A / consume -A / unfreeze -A），
@@ -72,7 +72,7 @@ async function scan(): Promise<Drift[]> {
 const drifts = await scan()
 const totalAccounts = await prisma.beanAccount.count()
 
-console.log(`[frozen:reconcile] 扫描 ${totalAccounts} 个豆账户（模式：${FIX ? '修正' : '只读'}）`)
+console.log(`[frozen:reconcile] 扫描 ${totalAccounts} 个积分账户（模式：${FIX ? '修正' : '只读'}）`)
 
 if (drifts.length === 0) {
   console.log('[frozen:reconcile] 全部一致，无漂移。')
@@ -82,7 +82,7 @@ if (drifts.length === 0) {
 
 console.log(`\n发现 ${drifts.length} 个账户存在冻结漂移：`)
 for (const d of drifts) {
-  const sign = d.drift > 0n ? '冻结偏高（豆被锁死）' : '冻结偏低（豆被提前放行）'
+  const sign = d.drift > 0n ? '冻结偏高（积分被锁死）' : '冻结偏低（积分被提前放行）'
   console.log(`  商户 ${d.merchantId}：frozen=${d.accountFrozen} 应为 ${d.expectedFrozen}  漂移=${d.drift > 0n ? '+' : ''}${d.drift}  ${sign}`)
   console.log(`    可用余额 ${d.availableBefore} → 修正后 ${d.availableAfter}（ACTIVE 预留 ${d.activeReservations} 条）`)
 }

@@ -14,7 +14,7 @@ interface CallLog {
   totalTokens: number
   costFen: number
   beanCharged: string
-  /** 被场景单次上限截断、由平台承担的豆数（>0 说明上限在贴钱） */
+  /** 被场景单次上限截断、由平台承担的积分数（>0 说明上限在贴钱） */
   absorbedBeans: string
   latencyMs: number
   errorMsg: string | null
@@ -70,11 +70,11 @@ export default function AiCallLogsPage() {
           },
           { colKey: 'tokens', title: 'tokens(in/out)', width: 140, render: ({ row }: any) => `${row.promptTokens}/${row.completionTokens}` },
           { colKey: 'costFen', title: '成本(分)', width: 100 },
-          { colKey: 'beanCharged', title: '扣豆', width: 90 },
+          { colKey: 'beanCharged', title: '扣积分', width: 90 },
           { colKey: 'absorbedBeans', title: '平台补贴', width: 110,
             render: ({ row }: any) => {
               const n = Number(row.absorbedBeans ?? 0)
-              return n > 0 ? <Tag theme="warning">贴 {n} 豆</Tag> : <span style={{ color: '#999' }}>—</span>
+              return n > 0 ? <Tag theme="warning">贴 {n} 积分</Tag> : <span style={{ color: '#999' }}>—</span>
             },
           },
           { colKey: 'latencyMs', title: '延迟(ms)', width: 100 },

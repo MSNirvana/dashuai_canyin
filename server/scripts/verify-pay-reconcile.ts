@@ -267,7 +267,7 @@ async function main() {
     const after1 = await getBalance(prisma, mid)
     check(after1.balance - before.balance === 77n, '只补发了窗口内那一笔的 77 分', String(after1.balance - before.balance))
 
-    // 再跑一轮：已 PAID 的不应再查、更不能再发豆
+    // 再跑一轮：已 PAID 的不应再查、更不能再发积分
     const callsBefore = calls.length
     const r2 = await scanPendingOrders(prisma, { query, ...REAL })
     const after2 = await getBalance(prisma, mid)

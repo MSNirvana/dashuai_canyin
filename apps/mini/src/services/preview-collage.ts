@@ -1,4 +1,4 @@
-// 渲染预览 API：对接 /api/v1/render/preview-collage（免费，不扣豆）
+// 渲染预览 API：对接 /api/v1/render/preview-collage（免费，不扣积分）
 import { http } from './request'
 
 export interface PreviewShotItem {

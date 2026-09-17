@@ -101,7 +101,7 @@ console.log('\n② 归一化缓存键：预览与合成必须算出同一个键'
     intermediateKey(openEnded, 500, 0, OUTPUT) === intermediateKey({ ...CLIP, trimEndMs: 0 }, 500, 0, OUTPUT),
   )
 
-  // 调色参数绝不能进这个键：否则「仅改调色重合成」会全部缓存未命中，10 豆的成本依据就没了
+  // 调色参数绝不能进这个键：否则「仅改调色重合成」会全部缓存未命中，10 积分的成本依据就没了
   check(
     '缓存键不含调色参数（改调色不影响归一化缓存）',
     intermediateKey(CLIP, 500, 4200, OUTPUT) === intermediateKey(CLIP, 500, 4200, OUTPUT) && !key.includes('brightness'),
@@ -244,7 +244,7 @@ console.log('\n⑦ 路由挂载：POST /api/v1/creations/:id/render/preview 真�
   check('该 handler 调用了 buildColorPreview', routeSrc.includes('await buildColorPreview({'))
   check('播放地址由 getGeneratedPlayUrl 签发（键是服务端自己算的，不是请求参数）',
     routeSrc.includes('getGeneratedPlayUrl(result.key'))
-  check('该 handler 有订阅门槛（否则预览会变成绕开扣豆的免费取片通道）',
+  check('该 handler 有订阅门槛（否则预览会变成绕开扣积分的免费取片通道）',
     routeSrc.includes("requireSubscription(prisma, merchantId, '调色预览')"))
 
   const entry = await readFile(join(here, '../src/index.ts'), 'utf8')

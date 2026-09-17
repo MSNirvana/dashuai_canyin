@@ -20,7 +20,7 @@ export class AdminAiNotFoundError extends Error {
 /**
  * 提示词模板里出现了该场景不支持的占位符。
  * 为什么必须拦：网关做的是字符串替换，取不到的变量替换成空串 —— 不报错、提示词那一段
- * 变成空白、这次调用照常扣豆。后台手抖写成 {{dishname}}（大小写）或 {{store.intro}}（点号）
+ * 变成空白、这次调用照常扣积分。后台手抖写成 {{dishname}}（大小写）或 {{store.intro}}（点号）
  * 都会命中，用户只看到「生成的文案莫名其妙少了一段」。
  */
 export class AdminAiInvalidTemplateError extends Error {
@@ -506,13 +506,13 @@ export async function upsertAiScene(
     enabled?: boolean
   },
 ) {
-  // 保存前按变量契约校验模板：未支持的变量运行时会被静默替换成空串（不报错但照常扣豆），
+  // 保存前按变量契约校验模板：未支持的变量运行时会被静默替换成空串（不报错但照常扣积分），
   // 写法不合法的占位符则会原样留在提示词里。两者都属于「不报错、只错内容」，必须在这里拦死。
   const problems = validateTemplate(input.code, input.promptTemplate)
   if (problems.length) {
     throw new AdminAiInvalidTemplateError(
       `提示词模板校验不通过：${problems.join('；')}。` +
-        `未支持的变量在生成时会被替换成空串，不报错但这次调用照常扣豆。`,
+        `未支持的变量在生成时会被替换成空串，不报错但这次调用照常扣积分。`,
     )
   }
   const data = {

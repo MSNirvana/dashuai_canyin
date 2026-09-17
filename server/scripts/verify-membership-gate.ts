@@ -1,10 +1,10 @@
 /**
- * 验证「注册不赠豆 + 必须买会员才能用 AI」这条商业策略在账务与闸门上真的成立。
+ * 验证「注册不赠积分 + 必须买会员才能用 AI」这条商业策略在账务与闸门上真的成立。
  *
  * 背景（2026-09-15 起）：产品决定取消新用户免费赠送，注册后必须购买 ¥980 会员
  * 才能使用 AI 生成与出片；支付通道未开放期间由后台手动开通会员。
  * 这条策略横跨**三处**互不相邻的实现，任何一处走偏都不会报错、只会静默错账：
- *   1. `auth.service.ts::grantRegisterBeanIfNeeded` —— 赠豆 = 0 时必须仍然置
+ *   1. `auth.service.ts::grantRegisterBeanIfNeeded` —— 赠积分 = 0 时必须仍然置
  *      `registerGrantGranted`，否则每次登录都跑一遍事务
  *   2. `subscription.service.ts::requireSubscription` —— 真正的闸门
  *   3. `order.service.ts::adminActivateMembership` —— 后台开会员必须走**会员桶**，
@@ -69,27 +69,27 @@ async function main() {
   })
   const wantGrant = BigInt(grantCfg)
 
-  console.log(`\n配置：bean.register_grant_points = ${grantCfg}（策略${grantCfg === 0 ? '：注册不赠豆' : '：注册赠豆'}）`)
+  console.log(`\n配置：bean.register_grant_points = ${grantCfg}（策略${grantCfg === 0 ? '：注册不赠积分' : '：注册赠积分'}）`)
   console.log(`      subscription.grant_points = ${subGrant?.settingVal} / duration_days = ${subDuration?.settingVal}`)
 
   // ── 节 ①：新用户注册 ──────────────────────────────────────────────
-  console.log('\n════ ① 新用户注册（赠豆配置生效）════')
+  console.log('\n════ ① 新用户注册（赠积分配置生效）════')
   await devLogin(prisma, PHONE)
   const m1 = await prisma.merchant.findUniqueOrThrow({ where: { phone: PHONE } })
   const mid = m1.id
 
-  check(m1.registerGrantGranted, '注册后 registerGrantGranted = true（0 豆也要置位，否则每次登录重复跑事务）')
+  check(m1.registerGrantGranted, '注册后 registerGrantGranted = true（0 积分也要置位，否则每次登录重复跑事务）')
   const bal1 = await getBalance(prisma, mid)
   check(
     bal1.grantRegisterBalance === wantGrant && bal1.grantMembershipBalance === 0n,
-    `注册赠豆进**注册桶** = ${wantGrant}，会员桶 = 0`,
+    `注册赠积分进**注册桶** = ${wantGrant}，会员桶 = 0`,
     `实际 注册桶=${bal1.grantRegisterBalance} 会员桶=${bal1.grantMembershipBalance}`,
   )
   check(bal1.available === wantGrant, `可用积分 = ${wantGrant}`, `实际 ${bal1.available}`)
   const regLedger = await prisma.beanLedger.count({ where: { merchantId: mid, bizType: 'REGISTER' } })
   check(
     grantCfg === 0 ? regLedger === 0 : regLedger === 1,
-    grantCfg === 0 ? '赠豆 = 0 时不写任何 REGISTER 流水（不留 0 元账）' : '赠豆 > 0 时写 1 条 REGISTER 流水',
+    grantCfg === 0 ? '赠积分 = 0 时不写任何 REGISTER 流水（不留 0 元账）' : '赠积分 > 0 时写 1 条 REGISTER 流水',
     `实际 ${regLedger} 条`,
   )
 
@@ -136,7 +136,7 @@ async function main() {
   const bal3 = await getBalance(prisma, mid)
   check(
     bal3.grantMembershipBalance === BigInt(subGrant?.settingVal ?? 98000) && bal3.grantRegisterBalance === wantGrant,
-    `赠豆进**会员桶** = ${subGrant?.settingVal}（注册桶维持 ${wantGrant} 不变）`,
+    `赠积分进**会员桶** = ${subGrant?.settingVal}（注册桶维持 ${wantGrant} 不变）`,
     `实际 会员桶=${bal3.grantMembershipBalance} 注册桶=${bal3.grantRegisterBalance}`,
   )
   const gl = await prisma.beanLedger.findFirst({
@@ -169,11 +169,11 @@ async function main() {
   )
   const giftSum = BigInt(subGrant?.settingVal ?? 98000) * 2n
   const bal4 = await getBalance(prisma, mid)
-  check(bal4.grantMembershipBalance === giftSum, `两次开通共赠 ${giftSum} 豆（累加不覆盖）`, `实际 ${bal4.grantMembershipBalance}`)
+  check(bal4.grantMembershipBalance === giftSum, `两次开通共赠 ${giftSum} 积分（累加不覆盖）`, `实际 ${bal4.grantMembershipBalance}`)
 
   // ── 节 ⑤：会员到期清零只清会员桶 ─────────────────────────────────
   console.log('\n════ ⑤ 会员到期清零：只清会员桶，不动注册桶 ════')
-  // 造一个「老用户」场景：注册桶里还有 30 豆
+  // 造一个「老用户」场景：注册桶里还有 30 积分
   await prisma.beanAccount.update({
     where: { merchantId: mid },
     data: { grantRegisterBalance: 30n, version: { increment: 1 } },

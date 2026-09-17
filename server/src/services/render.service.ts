@@ -1,7 +1,7 @@
 // 合成服务：把分镜已上传素材按序硬切拼接为 9:16 成片
 // 三档产品档位（grade）：BASIC=纯粗剪 / AI=全自动（配音+字幕+节奏）/ PREMIUM=人工精剪（不进 FFmpeg 队列）
 // 计费（v5）：时长(秒) × point_per_sec × 档位系数 ×（RECOLOR 再乘 recolor_ratio）
-// 扣豆两阶段：freeze（提交时预留）→ consume（合成成功结算）；失败/unfreeze 退款由 worker / sweeper 负责
+// 扣积分两阶段：freeze（提交时预留）→ consume（合成成功结算）；失败/unfreeze 退款由 worker / sweeper 负责
 // 演示环境（FFMPEG_WORKER≠true，无 ffmpeg）下，BASIC/AI 任务会在同一事务内模拟「成功」完成，打通最小闭环；
 // PREMIUM 任务无论何种环境都进入人工队列（MANUAL_PENDING），由管理后台剪辑工作台交付
 // 真实环境（FFMPEG_WORKER=true）：submitRender 仅 freeze 预留 + 建 QUEUED 任务，
@@ -238,7 +238,7 @@ export function clipDurationMs(clip: RenderClip): number | null {
   return null
 }
 
-/** 提交合成：校验 → 组装 clips → 创建任务 → 两阶段扣豆 → (演示)模拟完成 */
+/** 提交合成：校验 → 组装 clips → 创建任务 → 两阶段扣积分 → (演示)模拟完成 */
 /**
  * 取「本次合成要用的片段集合」（按分镜顺序）。
  *
@@ -317,7 +317,7 @@ export async function submitRender(
     )
   }
 
-  // 计费时长 = 各分镜有效时长之和；任一分镜时长未知则拒绝（无法正确计价会少扣豆）
+  // 计费时长 = 各分镜有效时长之和；任一分镜时长未知则拒绝（无法正确计价会少扣积分）
   let totalMs = 0
   for (const cl of clips) {
     const dur = clipDurationMs(cl)
@@ -327,7 +327,7 @@ export async function submitRender(
 
   const requestPayload = { creationId: creationId.toString(), mode, color, grade, aiMode, clips, chatcut }
   // 创建任务 + 并发拦截 + 业务请求占用 + freeze 放在同一事务并对创作行加锁：
-  // 防止两个并发请求同时通过「无进行中任务」检查、创建出两个任务双重扣豆
+  // 防止两个并发请求同时通过「无进行中任务」检查、创建出两个任务双重扣积分
   // 计价系数一律用精确十进制读取（getDecimal 解析库里原始字符串，不经 Number()）
   const pointPerSec = await getDecimal(prisma, 'render', 'point_per_sec', 1)
   // 档位系数（后台 render.grade_ratio_basic/ai/premium 可配）—— 默认值 1 / 1.5 / 3 本身就是小数
@@ -338,7 +338,7 @@ export async function submitRender(
     : decFromString('1')!
   // 原实现 `Math.max(1, Math.ceil(totalSec * pointPerSec * gradeRatio * recolorRatio))` 有浮点误差：
   // totalSec = totalMs/1000 本身多数情况下不是精确二进制小数，再连乘 1.5 / 0.5 会放大误差。
-  // 改成：amount = ceil(totalMs × pointPerSec × gradeRatio × recolorRatio / 1000)，全程整数，最低收 1 豆。
+  // 改成：amount = ceil(totalMs × pointPerSec × gradeRatio × recolorRatio / 1000)，全程整数，最低收 1 积分。
   const amountRaw = decMulCeil([decFromNumber(totalMs)!, pointPerSec, gradeRatio, recolorRatio], 1000n)
   const amount = amountRaw < 1n ? 1n : amountRaw
 
@@ -378,7 +378,7 @@ export async function submitRender(
         creationId,
         status: 'PENDING_RESERVATION',
         grade,
-        beanCharged: amount, // 计划扣豆额：演示模式立即结算，真实模式由 worker / 人工交付结算
+        beanCharged: amount, // 计划扣积分额：演示模式立即结算，真实模式由 worker / 人工交付结算
         deadlineAt,
         paramsJson: {
           mode,
@@ -399,7 +399,7 @@ export async function submitRender(
       amount,
       bizType: 'RENDER',
       bizId: task.id.toString(),
-      remark: `${mode === 'RECOLOR' ? '重调色合成' : '合成成片'}(${grade}) 预留 ${amount} 豆`,
+      remark: `${mode === 'RECOLOR' ? '重调色合成' : '合成成片'}(${grade}) 预留 ${amount} 积分`,
     })
     const status = grade === 'PREMIUM' ? 'MANUAL_PENDING' : 'QUEUED'
     const updated = await tx.renderTask.update({
@@ -422,7 +422,7 @@ export async function submitRender(
         amount,
         bizType: 'RENDER',
         bizId: task.id.toString(),
-        remark: `${mode === 'RECOLOR' ? '重调色合成' : '合成成片'} 消耗 ${amount} 豆`,
+        remark: `${mode === 'RECOLOR' ? '重调色合成' : '合成成片'} 消耗 ${amount} 积分`,
       })
       await tx.renderTask.updateMany({
         where: { id: task.id, status: 'QUEUED' },
@@ -439,7 +439,7 @@ export async function submitRender(
   return { task: view, duplicated: txResult.duplicated }
 }
 
-/** 真实环境 worker 收尾调用：结算扣豆 + 写产物（freeze 已在 submit 阶段完成） */
+/** 真实环境 worker 收尾调用：结算扣积分 + 写产物（freeze 已在 submit 阶段完成） */
 export async function completeRender(
   tx: Db,
   merchantId: bigint,
@@ -449,7 +449,7 @@ export async function completeRender(
     previewKey?: string | null
     resultSize?: bigint
     durationMs?: number | null
-    /** 是否命中中间产物缓存（重调色复用归一化产物，对应 10 豆计费） */
+    /** 是否命中中间产物缓存（重调色复用归一化产物，对应 10 积分计费） */
     cacheHit?: boolean
   },
 ): Promise<void> {
@@ -548,7 +548,7 @@ export async function failRender(
   }
 }
 
-/** 当前可用豆（供前端预估展示） */
+/** 当前可用积分（供前端预估展示） */
 export async function getAvailable(prisma: PrismaClient, merchantId: bigint) {
   const acc = await prisma.beanAccount.upsert({
     where: { merchantId },
@@ -562,7 +562,7 @@ export async function getAvailable(prisma: PrismaClient, merchantId: bigint) {
 //
 // 问题：failRender 的 unfreeze 抛错时，任务落到 SETTLEMENT_PENDING（前端显示「退款确认中」），
 // 但**没有任何出口** —— 原 stuck-sweeper 只扫 RUNNING / QUEUED，所以预留额度被永久占用，
-// 用户账上的冻结豆永远解不开。
+// 用户账上的冻结积分永远解不开。
 //
 // 补偿方向的选择（重要）：
 //   docs/审计-架构与业务逻辑.md 写了 SETTLEMENT_PENDING → SUCCESS/FAILED 两条路。
@@ -640,7 +640,7 @@ export async function sweepSettlementPending(
       const state = await compensateSettlementPending(prisma, task.id)
       if (state === 'RECOVERED') {
         result.recovered += 1
-        console.log(`[settle-compensate] 任务 ${task.id} 补偿成功，已释放冻结 ${task.beanCharged} 豆`)
+        console.log(`[settle-compensate] 任务 ${task.id} 补偿成功，已释放冻结 ${task.beanCharged} 积分`)
         continue
       }
       // 仍失败：计一次并保留给下一轮
@@ -652,7 +652,7 @@ export async function sweepSettlementPending(
       })
       if (next >= SETTLE_MAX_ATTEMPTS) {
         console.error(
-          `[settle-compensate] ★ 任务 ${task.id}（商户 ${task.merchantId}，冻结 ${task.beanCharged} 豆）` +
+          `[settle-compensate] ★ 任务 ${task.id}（商户 ${task.merchantId}，冻结 ${task.beanCharged} 积分）` +
             `连续 ${next} 次补偿失败，已停止自动重试，需要人工对账。原因：${task.errorMsg ?? '-'}`,
         )
       } else {

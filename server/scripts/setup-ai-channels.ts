@@ -14,7 +14,7 @@
 //        （priority 只影响后台列表排序）
 //   4. 把场景的 max_output_tokens 抬到不低于 SCENE_MIN_OUTPUT_TOKENS（默认 4000）
 //      ⇒ 推理模型需要「思考 + 正文」共用 max_tokens，预算太小会返回空正文
-//   5. 商业参数：场景单次上限（TB_SET_CAPS=1）+ 注册赠豆（TB_REGISTER_GRANT=n）
+//   5. 商业参数：场景单次上限（TB_SET_CAPS=1）+ 注册赠积分（TB_REGISTER_GRANT=n）
 //      默认都只打印对照，不写库 —— 它们决定用户实付和补贴，属商业决策
 //   6. 停用其它历史供应商（**不删除** —— 删除会连带清掉 ai_call_log 历史），
 //      清熔断状态，打印生效配置
@@ -23,9 +23,9 @@
 //   TB_GPT_KEY / TB_CLAUDE_KEY / TB_DEEPSEEK_KEY   必填，三个统一 Key
 //   TB_GPT_MODEL / TB_CLAUDE_MODEL / TB_DEEPSEEK_MODEL   模型码覆盖
 //   SCENE_MIN_OUTPUT_TOKENS   场景输出预算下限，默认 4000
-//   TB_SET_PRICES=1           把真实单价写库（否则单价 0 ⇒ 扣 0 豆）
+//   TB_SET_PRICES=1           把真实单价写库（否则单价 0 ⇒ 扣 0 积分）
 //   TB_SET_CAPS=1             把场景单次上限写库（否则扣费恒被截断成封顶值）
-//   TB_REGISTER_GRANT=n       注册赠豆（未设 = 不改；`0` = 关掉注册赠豆，当前策略）
+//   TB_REGISTER_GRANT=n       注册赠积分（未设 = 不改；`0` = 关掉注册赠积分，当前策略）
 //   TB_USD_TO_CNY             汇率，默认 7.2
 //
 // ══ 备用是怎么工作的（代码已在 src/ai/ 里实现，本脚本只配数据）══
@@ -62,12 +62,12 @@
 //     claude-haiku-4-5   ★ 3/3 把 800 全用在思考上 → finish_reason='length'、正文 = ''
 //   「正文为空」时 HTTP 仍是 200、报文结构完全合法 —— 仅校验「content 是字符串」会放过它。
 //   所以修了两处：
-//     · src/ai/adapters.ts：空白正文判为 BAD_RESPONSE（否则网关当成功、业务层照常扣豆）
+//     · src/ai/adapters.ts：空白正文判为 BAD_RESPONSE（否则网关当成功、业务层照常扣积分）
 //     · 本脚本 [3/6]：把场景 max_output_tokens 抬到 ≥ SCENE_MIN_OUTPUT_TOKENS
 //
 // ⚠ 计费单价（input_price_per_mtok / output_price_per_mtok，单位：分 / 百万 token）
 //   本脚本已内置从 tokenbox 实际计费表推导出的单价（见下方 PRICES 表）。
-//   默认不写库 —— 一旦写进去，商户扣费就从「0 豆」变成「按成本算」，
+//   默认不写库 —— 一旦写进去，商户扣费就从「0 积分」变成「按成本算」，
 //   等于把「平台补贴多少」这个商业决策变成默认生效。确认后 TB_SET_PRICES=1。
 //   ⚠ 写了单价**还不够**：`charged = min(应付, 场景单次上限)`，
 //     上限不一起抬，扣费仍是封顶值（见 [4/6]）。所以两个开关要成对使用。
@@ -75,9 +75,9 @@
 //
 // ══ ★ 2026-09-15 实测：单次成本能差 15 倍，变量是「思考 token」不是文案长度 ══
 //   同一个 copy_intro 提示词、同一个 claude-sonnet-5，连打 3 次：
-//     #1  in=433 out=171    →  5 分  →  20 豆   6.9s   126 字
-//     #2  in=433 out=1979   → 31 分  → 124 豆  54.7s   130 字   ← 思考爆了
-//     #3  deepseek  in=334 out=132  → 2 分 → 8 豆  33.4s   97 字
+//     #1  in=433 out=171    →  5 分  →  20 积分   6.9s   126 字
+//     #2  in=433 out=1979   → 31 分  → 124 积分  54.7s   130 字   ← 思考爆了
+//     #3  deepseek  in=334 out=132  → 2 分 → 8 积分  33.4s   97 字
 //   正文都是 100~130 字，成本差 15 倍。所以：
 //     · 「按字数/按次」定价会亏，必须按 token 成本算（本项目的做法）
 //     · 场景上限只能是**财务安全网**，不能当常规定价用 —— 它一定会被周期性击穿
@@ -169,14 +169,14 @@ const SCENE_OVERRIDES: Record<string, { fallbacks?: string[]; timeoutMs?: number
 /**
  * 场景单次上限（= 预冻结额 = 单次最大扣费，`ai_scene.bean_price`）。
  *
- * ★ 这是**给用户的报价**，不是技术参数 —— 改了它等于改用户实付多少豆。
+ * ★ 这是**给用户的报价**，不是技术参数 —— 改了它等于改用户实付多少积分。
  *   所以默认**不写库**，只在 `TB_SET_CAPS=1` 时应用。
  *
- * 为什么需要调：计费口径是「扣豆 = ceil(成本分 × points_per_yuan × cost_multiplier / 100)」，
+ * 为什么需要调：计费口径是「扣积分 = ceil(成本分 × points_per_yuan × cost_multiplier / 100)」，
  * 而 beanPrice 是硬截断线（`charged = min(wantCharge, frozenAmount)`）。
  * 实测（2026-09-15，全场景各 1 次真实调用，gpt-5.5）：
  *
- *   场景                 应扣豆   现上限   差距
+ *   场景                 应扣积分   现上限   差距
  *   copy_generate          36  >    5    ← 平台承担 31
  *   storyboard_generate   123  >   10    ← 平台承担 113
  *   copy_traffic           38  >    5
@@ -192,12 +192,12 @@ const SCENE_OVERRIDES: Record<string, { fallbacks?: string[]; timeoutMs?: number
  * → **11/11 场景全部被截断**，现上限是按「mock / 早期便宜模型」定的。
  *   要让「按成本×系数扣」真正成立，上限必须抬到不会截断的水平（上限只是财务安全网）。
  *
- * 下表 = 实测应扣豆 × 2 取整到 10（留一倍余量给输出长度抖动）。
+ * 下表 = 实测应扣积分 × 2 取整到 10（留一倍余量给输出长度抖动）。
  * ⚠ 上限只是安全网，**不保证不被击穿**：实测同一提示词、同一通道连打 3 次，
  *   单次成本 5 / 31 / 2 分（差 15 倍，全看思考 token 花多少），上限一定会周期性被击穿；
  *   被击穿的那部分记 `absorbedBeans`（平台承担）。这是设计如此，不是 bug。
- * ⚠ 注意副作用：上限同时是**预冻结额**，抬上去后「账户可用豆不足」的门槛也一起抬高
- *   （新用户注册赠豆目前 30，copy_intro 需 80 冻结 ⇒ 新用户一上来用不了）。
+ * ⚠ 注意副作用：上限同时是**预冻结额**，抬上去后「账户可用积分不足」的门槛也一起抬高
+ *   （新用户注册赠积分目前 30，copy_intro 需 80 冻结 ⇒ 新用户一上来用不了）。
  *   所以调上限必须连带调 `TB_REGISTER_GRANT`，否则新用户注册即「一个 AI 功能都用不了」。
  */
 const SCENE_CAPS: Record<string, number> = {
@@ -218,21 +218,21 @@ const SCENE_CAPS: Record<string, number> = {
 const SET_CAPS = process.env.TB_SET_CAPS === '1'
 
 /**
- * 注册赠豆（`system_setting` 的 `bean.register_grant_points`）。
+ * 注册赠积分（`system_setting` 的 `bean.register_grant_points`）。
  * 未设 = 不改。设成数字才写库（`TB_REGISTER_GRANT=600` / `TB_REGISTER_GRANT=0`）。
  *
  * ★ 为什么必须和场景上限一起看：
- *   场景上限同时是**预冻结额**，抬高上限 = 同时抬高「账户可用豆不足」的门槛。
- *   实测（2026-09-15）：上限抬到 40~250 豆后，**11/11 个场景的上限都 > 注册赠豆 30**
+ *   场景上限同时是**预冻结额**，抬高上限 = 同时抬高「账户可用积分不足」的门槛。
+ *   实测（2026-09-15）：上限抬到 40~250 积分后，**11/11 个场景的上限都 > 注册赠积分 30**
  *   ⇒ 新用户一注册就「一个 AI 功能都用不了」——
- *     不是报错扣费，而是**冻结阶段就被拦**：`BeanNotEnoughError: AI豆不足：需要 80，可用 30`。
- *   旧上限（3/5/10 豆）时不存在这个问题，所以这是「抬上限」引入的连带回归。
+ *     不是报错扣费，而是**冻结阶段就被拦**：`BeanNotEnoughError: 积分不足：需要 80，可用 30`。
+ *   旧上限（3/5/10 积分）时不存在这个问题，所以这是「抬上限」引入的连带回归。
  *
- * ★ 当前策略（2026-09-15 起）：**注册赠豆 = 0**。
+ * ★ 当前策略（2026-09-15 起）：**注册赠积分 = 0**。
  *   产品决策是「注册后必须购买 ¥980 会员才能用 AI」——真正的闸门是
  *   `requireSubscription`（文案 / 分镜 / 合成 三处，未订阅 → 403 + 2005），
- *   赠豆只是「能不能过预冻结」的第二道门。赠豆置 0 后两道门一致，不会出现
- *   「用户拿到赠豆、点生成却报需要订阅」这种前后矛盾的体验。
+ *   赠积分只是「能不能过预冻结」的第二道门。赠积分置 0 后两道门一致，不会出现
+ *   「用户拿到赠积分、点生成却报需要订阅」这种前后矛盾的体验。
  *   支付未开放期间由后台「商家详情 → 会员 → 手动开通」发放会员。
  */
 const REGISTER_GRANT = (() => {
@@ -425,8 +425,8 @@ async function main() {
     }
     if (raised === 0) console.log('  （全部已在下限之上，无需调整）')
 
-    console.log(`\n[4/6] 商业参数（场景单次上限 + 注册赠豆）${SET_CAPS ? '' : ' —— 上限仅对照，未应用'}`)
-    // 上限是硬截断线，决定用户实付多少豆。默认只打印对照，不改。
+    console.log(`\n[4/6] 商业参数（场景单次上限 + 注册赠积分）${SET_CAPS ? '' : ' —— 上限仅对照，未应用'}`)
+    // 上限是硬截断线，决定用户实付多少积分。默认只打印对照，不改。
     let capChanged = 0
     console.log(`  ${'场景'.padEnd(22)}${'现上限'.padEnd(9)}建议   说明`)
     for (const s of scenes) {
@@ -455,9 +455,9 @@ async function main() {
       )
     }
 
-    // 上限 = 预冻结额 ⇒ 抬上限会连带抬高「可用豆不足」的门槛。新用户只有注册赠豆，
-    // 若赠豆 < 最贵场景的上限，他一个 AI 功能都用不了（冻结阶段就被拦，不是扣费问题）。
-    // 赠豆 = 0 是**合法的当前策略**（必须先买会员），不是故障，所以要分开说。
+    // 上限 = 预冻结额 ⇒ 抬上限会连带抬高「可用积分不足」的门槛。新用户只有注册赠积分，
+    // 若赠积分 < 最贵场景的上限，他一个 AI 功能都用不了（冻结阶段就被拦，不是扣费问题）。
+    // 赠积分 = 0 是**合法的当前策略**（必须先买会员），不是故障，所以要分开说。
     const grantRow = await prisma.systemSetting.findUnique({
       where: { groupKey_settingKey: { groupKey: 'bean', settingKey: 'register_grant_points' } },
     })
@@ -468,23 +468,23 @@ async function main() {
         where: { groupKey_settingKey: { groupKey: 'bean', settingKey: 'register_grant_points' } },
         data: { settingVal: String(REGISTER_GRANT) },
       })
-      console.log(`\n  注册赠豆 ${grantNow} → ${REGISTER_GRANT} 豆（已写库）`)
+      console.log(`\n  注册赠积分 ${grantNow} → ${REGISTER_GRANT} 积分（已写库）`)
       grantNow = REGISTER_GRANT
     } else {
-      console.log(`\n  注册赠豆 = ${grantNow} 豆${REGISTER_GRANT === null ? '（未指定，保持不变）' : '（已一致）'}`)
+      console.log(`\n  注册赠积分 = ${grantNow} 积分${REGISTER_GRANT === null ? '（未指定，保持不变）' : '（已一致）'}`)
     }
     const affordable = scenes.filter((s) => Number(s.beanPrice) <= grantNow).length
-    console.log(`  最贵场景上限 = ${maxCap} 豆 ⇒ 新用户可用的场景 ${affordable}/${scenes.length}`)
+    console.log(`  最贵场景上限 = ${maxCap} 积分 ⇒ 新用户可用的场景 ${affordable}/${scenes.length}`)
     if (grantNow === 0) {
-      console.log('  ℹ 注册赠豆 = 0 ⇒ 当前策略「注册后必须购买会员才能用 AI」。')
-      console.log('    闸门是 requireSubscription（文案/分镜/合成 → 403+2005），赠豆只是第二道门。')
+      console.log('  ℹ 注册赠积分 = 0 ⇒ 当前策略「注册后必须购买会员才能用 AI」。')
+      console.log('    闸门是 requireSubscription（文案/分镜/合成 → 403+2005），赠积分只是第二道门。')
       console.log('    支付未开放期间：后台「商家详情 → 会员 → 手动开通会员」发放。')
     } else if (affordable < scenes.length) {
       const need = scenes.length - affordable
       console.log(
-        `  ⚠ ${need}/${scenes.length} 个场景的上限 > 注册赠豆 ⇒ 新用户注册后冻结就过不去（不是扣费问题）。\n` +
-          `    要改的话：TB_REGISTER_GRANT=<豆数> 重跑本脚本（不会影响老用户已得赠豆）。\n` +
-          `    要彻底关掉注册赠豆（必须先买会员）：TB_REGISTER_GRANT=0。`,
+        `  ⚠ ${need}/${scenes.length} 个场景的上限 > 注册赠积分 ⇒ 新用户注册后冻结就过不去（不是扣费问题）。\n` +
+          `    要改的话：TB_REGISTER_GRANT=<积分数> 重跑本脚本（不会影响老用户已得赠积分）。\n` +
+          `    要彻底关掉注册赠积分（必须先买会员）：TB_REGISTER_GRANT=0。`,
       )
     }
 
@@ -547,7 +547,7 @@ async function main() {
     } else {
       console.log(
         '\n⚠ 单价**未**写库（TB_SET_PRICES 未设为 1）：模型单价仍为 0，' +
-          '\n  于是 ai_call_log.cost_fen = 0、商户实际扣 0 豆 —— 等于平台全额补贴。' +
+          '\n  于是 ai_call_log.cost_fen = 0、商户实际扣 0 积分 —— 等于平台全额补贴。' +
           '\n  上表已打印按 tokenbox 计费表推导的真实单价，确认后再 TB_SET_PRICES=1 重跑。',
       )
     }

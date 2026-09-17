@@ -3,7 +3,7 @@
 //  - 加油包：¥100/200/300 → 1万/2万/3万 积分，**仅订阅用户可买**
 //  - 下单：建 Order → 调微信支付（或演示支付）→ 返回 wx.requestPayment 参数
 //  - 支付成功：标记 Order.PAID（幂等）→ 发积分 / 激活订阅（含续期）
-// 规则见 docs/05 v5；v4 的「会员 8 折购豆」已废除。
+// 规则见 docs/05 v5；v4 的「会员 8 折购积分」已废除。
 // 对外统一称「积分」，底层仍复用 bean_* 账务表。
 import type { PrismaClient, Prisma } from '@prisma/client'
 import { randomUUID } from 'crypto'
@@ -236,7 +236,7 @@ export async function createMemberOrder(
 /** 标记订单已支付并结算（终态 CAS：仅 PENDING→PAID 可发放权益，并发重复回调天然幂等）
  *
  * `wxTransactionId` 允许为 null —— 后台手动开通会员没有微信交易号，走的也是这个函数，
- * 这样「赠豆进哪个桶 / 到期怎么清 / 续期怎么顺延 / 幂等键怎么算」只有一份实现，
+ * 这样「赠积分进哪个桶 / 到期怎么清 / 续期怎么顺延 / 幂等键怎么算」只有一份实现，
  * 不会出现「后台开的会员和付钱买的会员账务口径不一样」。
  */
 export async function markOrderPaid(
@@ -259,7 +259,7 @@ export async function markOrderPaid(
   await prisma.$transaction(async (tx: Db) => {
     // 终态 CAS：条件更新仅允许 PENDING → PAID。
     // 微信回调会重试，两个并发回调可能同时通过外层「已 PAID」快照检查；
-    // 只有抢到状态流转的那一个会发放权益，另一个 count=0 直接返回，杜绝双重发豆/双开会员。
+    // 只有抢到状态流转的那一个会发放权益，另一个 count=0 直接返回，杜绝双重发积分/双开会员。
     const claimed = await tx.order.updateMany({
       where: { orderNo, status: 'PENDING' },
       data: { status: 'PAID', paidAt: new Date(), wxTransactionId },
@@ -326,7 +326,7 @@ async function activateMembership(
       merchantId,
       amount: grantPoints,
       bizId: sourceOrderId?.toString(),
-      source: 'MEMBERSHIP', // 会员周期赠豆：会随会员到期清零
+      source: 'MEMBERSHIP', // 会员周期赠积分：会随会员到期清零
       remark: override?.grantRemark,
     })
   }
@@ -347,12 +347,12 @@ export interface AdminMembershipResult {
  *
  * 设计取舍：**不另写一套开会员逻辑**，而是造一张 amountFen=0 的 MEMBER 订单再调 `markOrderPaid`。
  * 这样：
- *   · 赠豆走 `grant(source:'MEMBERSHIP')` → 进**会员桶**，随会员到期清零（与线上购买完全一致）
+ *   · 赠积分走 `grant(source:'MEMBERSHIP')` → 进**会员桶**，随会员到期清零（与线上购买完全一致）
  *   · 幂等键 = `membership:<orderId>`，每次开通都是一张新订单 ⇒ 重复开通就是真续期，不会双发
  *   · 在后台「最近订单」里留下一行可追溯记录（orderNo 以 `A` 开头 = 后台单，无微信交易号）
- *   · 时长 / 赠豆取 `SystemSetting.subscription.*`，与线上购买共用同一份配置
+ *   · 时长 / 赠积分取 `SystemSetting.subscription.*`，与线上购买共用同一份配置
  *
- * 操作人记录在赠豆流水的 remark 里（BeanLedger 是唯一有留痕字段的账务表）。
+ * 操作人记录在赠积分流水的 remark 里（BeanLedger 是唯一有留痕字段的账务表）。
  */
 export async function adminActivateMembership(
   prisma: PrismaClient,

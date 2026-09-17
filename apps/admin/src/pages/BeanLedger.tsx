@@ -112,7 +112,7 @@ export default function BeanLedgerPage() {
           </Field>
           <Field label="桶">
             <Select value={adjust.bucket} onChange={(v) => setAdjust((s) => ({ ...s, bucket: v as 'RECHARGE' | 'GRANT' }))}
-              options={[{ label: '充值豆', value: 'RECHARGE' }, { label: '赠豆', value: 'GRANT' }]} />
+              options={[{ label: '充值积分', value: 'RECHARGE' }, { label: '赠积分', value: 'GRANT' }]} />
           </Field>
           <Field label="原因">
             <Input value={adjust.remark} onChange={(v) => setAdjust((s) => ({ ...s, remark: v as string }))} placeholder="必填，留作审计" />

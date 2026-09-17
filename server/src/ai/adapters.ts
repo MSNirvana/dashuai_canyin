@@ -97,9 +97,9 @@ export const openaiCompatible: AiAdapter = async (p) => {
   //   实测成因：中转站/厂商把 max_tokens 同时当作「思考(reasoning)预算 + 正文预算」，
   //   推理模型（gpt-5.5 / claude-* / deepseek-* 均带思考）常把预算全花在思考上，
   //   于是返回 finish_reason='length' 且 content='' —— HTTP 200、报文结构完全合法。
-  //   若在这里放过，网关会判定成功 → 业务层照常扣豆并把空文案交给商户。
+  //   若在这里放过，网关会判定成功 → 业务层照常扣积分并把空文案交给商户。
   //   判为 BAD_RESPONSE 后：本通道按 maxRetries 重试，仍失败则**转入下一个候选通道**，
-  //   全部失败才回落到 ai_scene.fallback_template 且不扣豆。故障转移因此才真正生效。
+  //   全部失败才回落到 ai_scene.fallback_template 且不扣积分。故障转移因此才真正生效。
   if (isBlank(text)) {
     throw new AiCallError(
       `unexpected response: empty content (finish_reason=${data?.choices?.[0]?.finish_reason ?? '?'}) — ` +
@@ -142,7 +142,7 @@ export const anthropicNative: AiAdapter = async (p) => {
   if (typeof block?.text !== 'string') {
     throw new AiCallError('unexpected response: missing content[0].text', undefined, 'BAD_RESPONSE')
   }
-  // 同上：空白正文算失败，否则会「成功」返回空文案并照常扣豆
+  // 同上：空白正文算失败，否则会「成功」返回空文案并照常扣积分
   if (isBlank(block.text)) {
     throw new AiCallError(
       `unexpected response: empty content (stop_reason=${data?.stop_reason ?? '?'}) — ` +

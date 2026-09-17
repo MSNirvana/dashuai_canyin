@@ -107,7 +107,7 @@ export default function MerchantDetailPage() {
   }
 
   // 后台手动开通 / 续期会员：支付未开放期间用户线下付款后的兜底通道。
-  // 走的是与微信支付回调完全相同的结算链（赠豆进会员桶、随会员到期清零、重复开通＝顺延）。
+  // 走的是与微信支付回调完全相同的结算链（赠积分进会员桶、随会员到期清零、重复开通＝顺延）。
   const openMembership = async () => {
     if (!data) return
     const current = data.memberships.find((m) => m.status === 'ACTIVE' && dayjs(m.endAt).isAfter(dayjs()))
@@ -261,8 +261,8 @@ export default function MerchantDetailPage() {
       <Card title="积分账户" style={{ marginBottom: 16 }}>
         {acc ? (
           <Descriptions column={4}>
-            <Descriptions.DescriptionsItem label="可用充值豆">{acc.balance}</Descriptions.DescriptionsItem>
-            <Descriptions.DescriptionsItem label="赠豆余额">{acc.grantBalance}</Descriptions.DescriptionsItem>
+            <Descriptions.DescriptionsItem label="可用充值积分">{acc.balance}</Descriptions.DescriptionsItem>
+            <Descriptions.DescriptionsItem label="赠积分余额">{acc.grantBalance}</Descriptions.DescriptionsItem>
             <Descriptions.DescriptionsItem label="冻结">{acc.frozen}</Descriptions.DescriptionsItem>
             <Descriptions.DescriptionsItem label="累计充值">{acc.totalRecharge}</Descriptions.DescriptionsItem>
             <Descriptions.DescriptionsItem label="累计消耗">{acc.totalConsume}</Descriptions.DescriptionsItem>

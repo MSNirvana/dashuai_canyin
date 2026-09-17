@@ -11,7 +11,7 @@ function App({ children }: PropsWithChildren) {
   })
 
   useEffect(() => {
-    // 每次进前台刷新豆余额，避免展示过期数据
+    // 每次进前台刷新积分余额，避免展示过期数据
     const refresh = () => {
       if (useMerchantStore.getState().token) {
         useMerchantStore.getState().refreshBean()

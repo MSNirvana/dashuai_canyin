@@ -42,7 +42,7 @@ async function main() {
 
   console.log(`订单终态: ${paid?.status}（期望 PAID）         ${okStatus ? 'PASS' : 'FAIL'}`)
   console.log(`并发回调均正常返回: ${okNoThrow ? '是' : '否'}              ${okNoThrow ? 'PASS' : 'FAIL'}`)
-  console.log(`豆变动: +${gained}（期望 +10，双发=+20）    ${okBeans ? 'PASS' : 'FAIL'}`)
+  console.log(`积分变动: +${gained}（期望 +10，双发=+20）    ${okBeans ? 'PASS' : 'FAIL'}`)
   console.log(`充值流水条数: ${ledgerCount}（期望 1）        ${ledgerCount === 1 ? 'PASS' : 'FAIL'}`)
 
   // 清理测试数据：回滚账户、删流水、删订单，不留痕

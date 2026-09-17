@@ -1,5 +1,5 @@
 // 免费首帧拼图预览：POST /api/v1/render/preview-collage
-// 不扣豆、不写 render_task；返回每个分镜的"首帧可访问 URL"，前端按 N 列网格渲染
+// 不扣积分、不写 render_task；返回每个分镜的"首帧可访问 URL"，前端按 N 列网格渲染
 // 真实环境的"拼图合成"（ffmpeg tile 多帧图像为一张大图）属于进阶能力，
 // 当前实现：返回结构化清单，由前端组件按列布局组装展示，已满足"提交合成前先看一眼"诉求
 import { createRouter } from '../lib/async-router.js'

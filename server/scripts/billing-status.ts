@@ -1,10 +1,10 @@
 /**
- * 计费现状自检：一眼看清「当下按什么在扣豆」。
+ * 计费现状自检：一眼看清「当下按什么在扣积分」。
  *
  * 为什么需要它：本轮（2026-09-15）踩到的坑是「配置看起来完全正确，实际一分没扣」——
  *   · `charge_mode = COST_BASED` 在库里有，但**代码从来没读过**它（死配置）
- *   · 三个模型单价是 0，`costFen = 0` ⇒ `beansFromCost` 直接 return 0n ⇒ 扣 0 豆
- *   · 场景单次上限（3/5/10 豆）远低于真实成本 ⇒ 就算补上单价也只会被截断成封顶值
+ *   · 三个模型单价是 0，`costFen = 0` ⇒ `beansFromCost` 直接 return 0n ⇒ 扣 0 积分
+ *   · 场景单次上限（3/5/10 积分）远低于真实成本 ⇒ 就算补上单价也只会被截断成封顶值
  * 这三件事在后台界面上都看不出来。所以做一个只读自检，把「实际生效的」打出来。
  *
  * 用法：npx tsx scripts/billing-status.ts   （或 npm run billing:status）
@@ -43,7 +43,7 @@ async function main() {
   for (const s of settings) {
     console.log(`  ${s.settingKey.padEnd(22)} = ${String(s.settingVal).padEnd(12)} ${s.displayName ?? ''}`)
   }
-  console.log(`  ⇒ 换算：1 分成本 = ceil(${ppy} × ${mul} / 100) = ${Math.ceil((Number(ppy) * Number(mul)) / 100)} 豆`)
+  console.log(`  ⇒ 换算：1 分成本 = ceil(${ppy} × ${mul} / 100) = ${Math.ceil((Number(ppy) * Number(mul)) / 100)} 积分`)
   console.log('  ⚠ charge_mode 是死配置：全仓库只有 prisma/seed.ts 写过它，代码从未读取 ——')
   console.log('    它显示 COST_BASED **不代表**真的按成本计费，要看下面第二节的单价。')
 
@@ -57,7 +57,7 @@ async function main() {
   for (const m of models) {
     const zero = m.inputPricePerMtok === 0 && m.outputPricePerMtok === 0
     // 0 单价本身无害，**启用中的** 0 单价才是风险：走它 = 平台全额补贴
-    const risk = !m.enabled ? '停用（不影响计费）' : zero ? '★ 0 单价且启用中＝走它扣 0 豆' : ''
+    const risk = !m.enabled ? '停用（不影响计费）' : zero ? '★ 0 单价且启用中＝走它扣 0 积分' : ''
     console.log(
       `  ${(m.enabled ? '● ' : '○ ')}${m.provider.code.padEnd(18)} ${m.modelCode.padEnd(18)} in=${String(
         m.inputPricePerMtok,
@@ -68,7 +68,7 @@ async function main() {
 
   console.log('\n════ 三、场景：上限（＝预冻结额＝单次扣费硬上限）vs 实测应扣 ════')
   const scenes = await prisma.aiScene.findMany({ orderBy: { id: 'asc' } })
-  console.log(`  ${'场景'.padEnd(22)}${'上限(豆)'.padEnd(10)}${'实测应扣(参照)'.padEnd(16)}说明`)
+  console.log(`  ${'场景'.padEnd(22)}${'上限(积分)'.padEnd(10)}${'实测应扣(参照)'.padEnd(16)}说明`)
   let truncated = 0
   for (const s of scenes) {
     const cap = Number(s.beanPrice)
@@ -76,7 +76,7 @@ async function main() {
     let note = '（无实测参照）'
     if (m) {
       if (cap < m.beans) {
-        note = `会被截断（平台承担 ${m.beans - cap} 豆）`
+        note = `会被截断（平台承担 ${m.beans - cap} 积分）`
         truncated++
       } else {
         note = '不截断 ✓'
@@ -87,21 +87,21 @@ async function main() {
     )
   }
 
-  console.log('\n════ 四、新用户可负担性（注册赠豆 vs 场景上限）════')
+  console.log('\n════ 四、新用户可负担性（注册赠积分 vs 场景上限）════')
   const maxCap = Math.max(...scenes.map((s) => Number(s.beanPrice)))
   const ok = scenes.filter((s) => Number(s.beanPrice) <= grant).length
-  console.log(`  注册赠豆 = ${grant} 豆；最贵场景上限 = ${maxCap} 豆`)
+  console.log(`  注册赠积分 = ${grant} 积分；最贵场景上限 = ${maxCap} 积分`)
   console.log(`  ⇒ 新用户注册后可用的场景：${ok}/${scenes.length}${grant === 0 || ok === scenes.length ? '' : ' ⚠'}`)
   if (grant === 0) {
-    console.log('  ℹ 注册赠豆 = 0 ⇒ 当前**策略**是「注册后必须购买会员才能用 AI」，不是故障。')
+    console.log('  ℹ 注册赠积分 = 0 ⇒ 当前**策略**是「注册后必须购买会员才能用 AI」，不是故障。')
     console.log('    真正的闸门是 `requireSubscription`（文案/分镜/合成 → 403 + 2005），')
-    console.log('    赠豆只是「能不能过预冻结」的第二道门。两者都拦 = 前后一致。')
+    console.log('    赠积分只是「能不能过预冻结」的第二道门。两者都拦 = 前后一致。')
     console.log('    支付未开放期间发放方式：后台「商家详情 → 会员 → 手动开通会员」。')
   } else if (ok < scenes.length) {
-    console.log('  ⚠ 上限同时是**预冻结额**：赠豆不够时不是「扣得少」，而是**冻结阶段就被拦**，')
-    console.log('    报 `BeanNotEnoughError: AI豆不足：需要 X，可用 Y`，功能直接不可用。')
-    console.log(`    修法：TB_REGISTER_GRANT=<豆数> 重跑 setup-ai-channels.ts（只影响新注册，老用户不受影响）。`)
-    console.log('    或彻底关掉注册赠豆（必须先买会员）：TB_REGISTER_GRANT=0。')
+    console.log('  ⚠ 上限同时是**预冻结额**：赠积分不够时不是「扣得少」，而是**冻结阶段就被拦**，')
+    console.log('    报 `BeanNotEnoughError: 积分不足：需要 X，可用 Y`，功能直接不可用。')
+    console.log(`    修法：TB_REGISTER_GRANT=<积分数> 重跑 setup-ai-channels.ts（只影响新注册，老用户不受影响）。`)
+    console.log('    或彻底关掉注册赠积分（必须先买会员）：TB_REGISTER_GRANT=0。')
   }
 
   console.log('\n════ 五、最近 10 次真实调用的实际扣费（证明到底扣没扣）════')
@@ -116,17 +116,17 @@ async function main() {
     console.log(
       `  ${l.sceneCode.padEnd(22)} ${l.provider.code.padEnd(18)} tok=${String(l.promptTokens).padStart(4)}/${String(
         l.completionTokens,
-      ).padStart(5)}  cost=${String(l.costFen).padStart(3)}分  charged=${String(l.beanCharged).padStart(4)}豆  absorbed=${String(
+      ).padStart(5)}  cost=${String(l.costFen).padStart(3)}分  charged=${String(l.beanCharged).padStart(4)}积分  absorbed=${String(
         l.absorbedBeans,
       ).padStart(4)}  ${l.status}`,
     )
   }
   const chargedCount = logs.filter((l) => l.beanCharged > 0n).length
-  console.log(`  ⇒ 最近 ${logs.length} 次里有 ${chargedCount} 次真的扣了豆`)
+  console.log(`  ⇒ 最近 ${logs.length} 次里有 ${chargedCount} 次真的扣了积分`)
 
   console.log('\n════ 结论 ════')
   if (priced.length === 0) {
-    console.log('  ✗ 所有模型单价为 0 ⇒ costFen 恒为 0 ⇒ **商户扣 0 豆，平台全额补贴**。')
+    console.log('  ✗ 所有模型单价为 0 ⇒ costFen 恒为 0 ⇒ **商户扣 0 积分，平台全额补贴**。')
     console.log('    要按成本计费：TB_SET_PRICES=1 重跑 setup-ai-channels.ts')
   } else if (truncated > 0) {
     console.log(`  △ 单价已就位，但 ${truncated}/${scenes.length} 个场景的上限低于实测应扣 ⇒`)

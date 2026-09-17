@@ -1,16 +1,16 @@
 /**
- * P2-1 验证：混合消费（赠豆 + 充值豆）时流水必须记下赠豆的实际用量。
+ * P2-1 验证：混合消费（赠积分 + 充值积分）时流水必须记下赠积分的实际用量。
  *
  * 背景：bean_ledger 唯一索引是 (merchant_id, biz_type, request_id, type)，同一 requestId
  * 只能有一条 CONSUME 行，所以混合消费不可能拆成两条流水。原实现只把 bucket 记成 'RECHARGE'，
- * 「这次消耗里有多少赠豆」永久丢失 → 用户账单明细与赠豆统计双向失真。
- * 修法：新增 grant_amount 列，记录本行 amount 中来自赠豆桶的绝对数量。
+ * 「这次消耗里有多少赠积分」永久丢失 → 用户账单明细与赠积分统计双向失真。
+ * 修法：新增 grant_amount 列，记录本行 amount 中来自赠积分桶的绝对数量。
  *
  * 用例：
- *   ① 纯赠豆消费      → bucket=GRANT    grantAmount=全额
- *   ② 纯充值豆消费    → bucket=RECHARGE grantAmount=0
- *   ③ 混合消费（跨桶）→ bucket=RECHARGE grantAmount=赠豆余额
- *   ④ 赠豆到期清零    → EXPIRE 行 grantAmount=清零额
+ *   ① 纯赠积分消费      → bucket=GRANT    grantAmount=全额
+ *   ② 纯充值积分消费    → bucket=RECHARGE grantAmount=0
+ *   ③ 混合消费（跨桶）→ bucket=RECHARGE grantAmount=赠积分余额
+ *   ④ 赠积分到期清零    → EXPIRE 行 grantAmount=清零额
  *   ⑤ 幂等重放        → 返回的 grantUsed 与首次一致
  * 全部用商户 3（dev 测试账号），跑完恢复账户原值。
  *
@@ -75,44 +75,44 @@ async function runConsume(amount: bigint, tag: string) {
   return { reqId, result, row, replay, dupCount }
 }
 
-console.log('=== ① 纯赠豆消费（余额 100 / 赠豆 40，消耗 25）===')
+console.log('=== ① 纯赠积分消费（余额 100 / 赠积分 40，消耗 25）===')
 {
   await setAccount(100n, 40n)
   const { reqId, row, replay, dupCount } = await runConsume(25n, 'grant-only')
   check(row.bucket === 'GRANT', 'bucket=GRANT', `actual=${row.bucket}`)
-  check(row.grantAmount === 25n, 'grantAmount=25（全额来自赠豆）', `actual=${row.grantAmount}`)
+  check(row.grantAmount === 25n, 'grantAmount=25（全额来自赠积分）', `actual=${row.grantAmount}`)
   check(replay.grantUsed === 25n, '幂等重放 grantUsed 一致', `actual=${replay.grantUsed}`)
   check(dupCount === 1, '幂等重放不新增流水', `rows=${dupCount}`)
   await cleanup(reqId)
 }
 
-console.log('\n=== ② 纯充值豆消费（余额 100 / 赠豆 0，消耗 30）===')
+console.log('\n=== ② 纯充值积分消费（余额 100 / 赠积分 0，消耗 30）===')
 {
   await setAccount(100n, 0n)
   const { reqId, row, replay, dupCount } = await runConsume(30n, 'recharge-only')
   check(row.bucket === 'RECHARGE', 'bucket=RECHARGE', `actual=${row.bucket}`)
-  check(row.grantAmount === 0n, 'grantAmount=0（未动赠豆）', `actual=${row.grantAmount}`)
+  check(row.grantAmount === 0n, 'grantAmount=0（未动赠积分）', `actual=${row.grantAmount}`)
   check(replay.grantUsed === 0n, '幂等重放 grantUsed 一致', `actual=${replay.grantUsed}`)
   check(dupCount === 1, '幂等重放不新增流水', `rows=${dupCount}`)
   await cleanup(reqId)
 }
 
-console.log('\n=== ③ 混合消费（余额 100 / 赠豆 12，消耗 40）← 本修复的核心用例 ===')
+console.log('\n=== ③ 混合消费（余额 100 / 赠积分 12，消耗 40）← 本修复的核心用例 ===')
 {
   await setAccount(100n, 12n)
   const { reqId, row, replay, dupCount } = await runConsume(40n, 'mixed')
   check(row.bucket === 'RECHARGE', 'bucket 主桶仍为 RECHARGE（向后兼容）', `actual=${row.bucket}`)
-  check(row.grantAmount === 12n, 'grantAmount=12（赠豆被吃干，剩余 28 走充值豆）', `actual=${row.grantAmount}`)
+  check(row.grantAmount === 12n, 'grantAmount=12（赠积分被吃干，剩余 28 走充值积分）', `actual=${row.grantAmount}`)
   check(row.grantAfter === 0n, 'grantAfter=0', `actual=${row.grantAfter}`)
   check(replay.grantUsed === 12n, '幂等重放 grantUsed 一致', `actual=${replay.grantUsed}`)
   check(dupCount === 1, '幂等重放不新增流水', `rows=${dupCount}`)
-  // 对账：本条流水能自证「消耗 40 = 赠豆 12 + 充值豆 28」
+  // 对账：本条流水能自证「消耗 40 = 赠积分 12 + 充值积分 28」
   const rechargePart = -row.amount - row.grantAmount
-  check(rechargePart === 28n, '可由流水反推充值豆部分=28', `recharge=${rechargePart}`)
+  check(rechargePart === 28n, '可由流水反推充值积分部分=28', `recharge=${rechargePart}`)
   await cleanup(reqId)
 }
 
-console.log('\n=== ④ 赠豆到期清零（余额 60 / 赠豆 18）===')
+console.log('\n=== ④ 赠积分到期清零（余额 60 / 赠积分 18）===')
 {
   await setAccount(60n, 18n)
   const reqId = `${OP}-expire-${Date.now().toString(36)}`

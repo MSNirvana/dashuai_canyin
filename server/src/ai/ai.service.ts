@@ -1,6 +1,6 @@
-// AI 场景编排：把「AI 网关调用」和「AI豆账务」串起来
+// AI 场景编排：把「AI 网关调用」和「积分账务」串起来
 // 计费时序：预冻结（标价 × buffer）→ 调用 → 成功按实际成本结算 / 失败全额解冻
-// 铁律：AI 失败或超时一律不扣豆，返回兜底模板
+// 铁律：AI 失败或超时一律不扣积分，返回兜底模板
 
 import type { PrismaClient } from '@prisma/client'
 import { AiGateway } from './gateway.js'
@@ -29,14 +29,14 @@ export interface BilledSceneParams {
 }
 
 /**
- * 豆 ← 成本 换算（纯整数，无浮点）：
- *   costFen 是「分」，beansPerYuan 是「1 元 = 多少豆」
+ * 积分 ← 成本 换算（纯整数，无浮点）：
+ *   costFen 是「分」，beansPerYuan 是「1 元 = 多少积分」
  *   beans = ceil(costFen × beansPerYuan × costMultiplier / 100)
- *   默认 1 元 = 100 豆、乘数 4 时，beans = ceil(costFen × 4)
+ *   默认 1 元 = 100 积分、乘数 4 时，beans = ceil(costFen × 4)
  *
  * 旧实现 `BigInt(Math.ceil((costFen / 100) * beansPerYuan * multiplier))` 有浮点误差：
- * IEEE754 下 7/100×100×4 = 28.000000000000004 → ceil = 29，凭空多扣 1 豆。
- * 实测成本 1~20000 分里有 1148 个取值（5.74%）被多扣 1 豆，且只会多扣不会少扣。
+ * IEEE754 下 7/100×100×4 = 28.000000000000004 → ceil = 29，凭空多扣 1 积分。
+ * 实测成本 1~20000 分里有 1148 个取值（5.74%）被多扣 1 积分，且只会多扣不会少扣。
  */
 function beansFromCost(costFen: number, beansPerYuan: Dec, multiplier: Dec): bigint {
   if (!Number.isSafeInteger(costFen) || costFen < 0) {
@@ -79,12 +79,12 @@ export async function runBilledScene(
     const wantCharge = beansFromCost(costFen, beansPerYuan, multiplier)
     const charged = wantCharge > frozenAmount ? frozenAmount : wantCharge
     // 被场景单次上限截断的部分由平台承担。必须落库 + 告警，否则「上限是安全网还是
-    // 常态折扣」在账上完全看不出来（实测 copy 系场景 10/10 次调用都被截掉 3 豆）。
+    // 常态折扣」在账上完全看不出来（实测 copy 系场景 10/10 次调用都被截掉 3 积分）。
     const absorbed = wantCharge > frozenAmount ? wantCharge - frozenAmount : 0n
     if (absorbed > 0n) {
       console.warn(
-        `[ai-billing] 场景 ${params.sceneCode} 成本 ${costFen} 分应付 ${wantCharge} 豆，` +
-          `被单次上限 ${frozenAmount} 豆截断，平台承担 ${absorbed} 豆（requestId=${params.requestId}）`,
+        `[ai-billing] 场景 ${params.sceneCode} 成本 ${costFen} 分应付 ${wantCharge} 积分，` +
+          `被单次上限 ${frozenAmount} 积分截断，平台承担 ${absorbed} 积分（requestId=${params.requestId}）`,
       )
     }
     return prisma.$transaction(async (tx) => {
@@ -198,7 +198,7 @@ export async function runBilledScene(
     requestId: params.requestId,
   })
 
-  // 3) 失败 / 超时：全额解冻，返回兜底模板，不扣豆
+  // 3) 失败 / 超时：全额解冻，返回兜底模板，不扣积分
   if (!r.ok) {
     await prisma.$transaction(async (tx) => {
       await bean.unfreeze(tx, {

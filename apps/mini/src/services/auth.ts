@@ -43,7 +43,7 @@ export function devLogin(phone: string) {
   return http.post<LoginResult>('/auth/dev-login', { phone }, { silent: true })
 }
 
-/** 当前豆余额 */
+/** 当前积分余额 */
 export function getBeanAccount() {
   return http.get<{ balance: string; grantBalance: string; available: string }>('/bean/account', undefined, {
     silent: true,

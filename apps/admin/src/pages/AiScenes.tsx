@@ -252,7 +252,7 @@ export default function AiScenesPage() {
           { colKey: 'name', title: '名称', ellipsis: true, width: 240 },
           { colKey: 'defaultModelText', title: '默认模型', width: 180 },
           { colKey: 'fallbackModelText', title: '备用模型', width: 140 },
-          { colKey: 'beanPrice', title: '冻结(豆)', width: 84 },
+          { colKey: 'beanPrice', title: '冻结(积分)', width: 112 },
           { colKey: 'callCount', title: '调用次数', width: 96 },
           {
             colKey: 'status', title: '状态', width: 132,
@@ -303,7 +303,7 @@ export default function AiScenesPage() {
             help={
               allowedVars.length ? (
                 <>
-                  可用变量（写成 <code>{'{{变量名}}'}</code>，写错会被替换成空白且照常扣豆）：
+                  可用变量（写成 <code>{'{{变量名}}'}</code>，写错会被替换成空白且照常扣积分）：
                   {allowedVars.map((v) => (
                     <Tag key={v} variant="light" style={{ marginLeft: 6 }}>
                       {`{{${v}}}`}
@@ -326,7 +326,7 @@ export default function AiScenesPage() {
             <Textarea
               value={form.fallbackTemplate}
               onChange={(v) => setForm((f) => ({ ...f, fallbackTemplate: v as string }))}
-              placeholder="所有通道失败时返回（不扣豆）；分镜/JSON 类场景请填可解析的 JSON"
+              placeholder="所有通道失败时返回（不扣积分）；分镜/JSON 类场景请填可解析的 JSON"
               autosize={{ minRows: 3, maxRows: 10 }}
             />
           </Field>
@@ -350,7 +350,7 @@ export default function AiScenesPage() {
               placeholder="默认模型失败后按序尝试，可多选"
             />
           </Field>
-          <Field label="冻结上限(豆)">
+          <Field label="冻结上限(积分)">
             <InputNumber value={Number(form.beanPrice)} onChange={(v) => setForm((f) => ({ ...f, beanPrice: String(v ?? 0) }))} min={0} />
           </Field>
           <Field label="超时(ms)">

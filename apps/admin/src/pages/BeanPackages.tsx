@@ -103,8 +103,8 @@ export default function BeanPackagesPage() {
         data={list}
         columns={[
           { colKey: 'name', title: '名称' },
-          { colKey: 'beans', title: '基础豆', width: 100 },
-          { colKey: 'bonusBeans', title: '赠送豆', width: 100 },
+          { colKey: 'beans', title: '基础积分', width: 100 },
+          { colKey: 'bonusBeans', title: '赠送积分', width: 100 },
           { colKey: 'priceFen', title: '原价(分)', width: 110 },
           { colKey: 'memberPriceFen', title: '会员价(分)', width: 130 },
           { colKey: 'tag', title: '角标', width: 100, render: ({ row }: any) => row.tag ?? '—' },
@@ -131,10 +131,10 @@ export default function BeanPackagesPage() {
           <Field label="名称">
             <Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} />
           </Field>
-          <Field label="基础豆数">
+          <Field label="基础积分数">
             <InputNumber value={form.beans} onChange={(v) => setForm((f) => ({ ...f, beans: v as number }))} min={0} />
           </Field>
-          <Field label="赠送豆数">
+          <Field label="赠送积分数">
             <InputNumber value={form.bonusBeans} onChange={(v) => setForm((f) => ({ ...f, bonusBeans: v as number }))} min={0} />
           </Field>
           <Field label="原价（分）">

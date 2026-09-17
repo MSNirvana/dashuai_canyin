@@ -10,7 +10,7 @@
 | 熔断器 | `src/ai/circuit-breaker.ts` | Redis 滑动窗口，通道挂掉时直接跳过，不等超时 |
 | AI 网关 | `src/ai/gateway.ts` | 场景化调用、故障转移、成本计算、后台通道测试 |
 | 计费编排 | `src/ai/ai.service.ts` | 先冻后扣 / 失败全额退 / 幂等 / 标价硬上限 |
-| AI豆账务 | `src/bean/bean.service.ts` | FREEZE → CONSUME / UNFREEZE 两阶段，赠豆优先 |
+| 积分账务 | `src/bean/bean.service.ts` | FREEZE → CONSUME / UNFREEZE 两阶段，赠积分优先 |
 | 密钥加解密 | `src/lib/secret.ts` | AES-256-GCM，主密钥走环境变量 |
 | 系统配置 | `src/lib/settings.ts` | 带缓存的配置读取 |
 
@@ -43,21 +43,21 @@ AI 成片使用 ChatCut MCP 时，服务端读取 `CHATCUT_MCP_URL`、`CHATCUT_M
 
 ```
 FREEZE(X)   frozen += X                      可用额不变，仅做预留
-CONSUME(X)  可用额 -= X（赠豆优先），frozen -= X，totalConsume += X
+CONSUME(X)  可用额 -= X（赠积分优先），frozen -= X，totalConsume += X
 UNFREEZE(X) frozen -= X                      可用额不变（失败退款）
 ```
 
 - 幂等：`(request_id, type)` 复合唯一索引，同一 requestId 下 FREEZE / CONSUME / UNFREEZE 各只允许一条
 - 原子：`SELECT ... FOR UPDATE` 行锁 + 事务，绝不先读后写
-- 顺序：赠豆优先消耗，不足部分用充值豆；赠豆随会员到期清零
+- 顺序：赠积分优先消耗，不足部分用充值积分；赠积分随会员到期清零
 
 ## 计费规则
 
 见 `docs/05-计费规则.md`。要点：
 
-- 文案 5 豆 / 分镜 10 豆 / 合成 30 豆 / 仅改调色重合成 10 豆 / 首帧拼图 0 豆
+- 文案 5 积分 / 分镜 10 积分 / 合成 30 积分 / 仅改调色重合成 10 积分 / 首帧拼图 0 积分
 - 标价是硬上限，AI 实际成本超出部分平台承担
-- 失败、超时一律全额退豆
+- 失败、超时一律全额退积分
 
 ## 待实现（后续迭代）
 

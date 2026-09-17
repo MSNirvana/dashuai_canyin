@@ -504,7 +504,7 @@ bash scripts/build-weapp-prod.sh https://api.<你的域名>/api/v1
 - [ ] 新建/编辑门店，城市区县下拉能选
 - [ ] 新建菜品，**上传图片和视频成功**（这一步验证 COS 直传 + uploadFile 白名单）
 - [ ] 首页/门店页能看到刚上传的图片和视频（这一步验证 downloadFile 白名单 + 签名 URL）
-- [ ] 进入创作，AI 生成口播文案（**验证 AI 通道 + 扣豆**）
+- [ ] 进入创作，AI 生成口播文案（**验证 AI 通道 + 扣积分**）
 - [ ] AI 生成分镜脚本（同上）
 - [ ] 按槽位上传素材
 - [ ] 提交合成 → 进度推进 → **产出可播放的成片**
@@ -528,7 +528,7 @@ bash scripts/build-weapp-prod.sh https://api.<你的域名>/api/v1
 
 **不阻断本次测试，但会影响体验**
 
-- `Bean Reservation`（账务预留）与 freeze/consume/unfreeze 并发原子性未验证 → 高并发下可能重复扣豆/漏退
+- `Bean Reservation`（账务预留）与 freeze/consume/unfreeze 并发原子性未验证 → 高并发下可能重复扣积分/漏退
 - `RenderTask` 状态机与 Worker 崩溃恢复：已有 stuck sweeper 兜底（默认 30 分钟超时退款），但租约机制未做
 - `Shot.line` → TTS → 字幕 → 成片的完整链路、TTS 供应商真实联调未验收
 

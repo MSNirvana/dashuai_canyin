@@ -79,7 +79,7 @@ export async function getDashboardOverview(prisma: PrismaClient): Promise<Dashbo
       _sum: { amountFen: true },
       where: { status: 'PAID', orderType: 'MEMBER', paidAt: { gte: startOfDay } },
     }),
-    // 今日消耗豆（绝对值）：beanLedger amount 为负表示消耗
+    // 今日消耗积分（绝对值）：beanLedger amount 为负表示消耗
     prisma.beanLedger.aggregate({
       _sum: { amount: true },
       where: { type: 'CONSUME', createdAt: { gte: startOfDay } },
@@ -374,8 +374,8 @@ export async function adminAdjustBeans(
  * 后台手动开通 / 续期会员。
  *
  * 用途：支付通道未开放期间（备案未通过 ⇒ 微信回调进不来），用户线下付款后由管理员开通。
- * 关键点：**委托给 `adminActivateMembership` 走支付回调的同一套结算**，不要在这里另写发豆逻辑——
- * 否则赠豆会进错桶（注册桶 vs 会员桶），到期清零与续期顺延都会与线上不一致。
+ * 关键点：**委托给 `adminActivateMembership` 走支付回调的同一套结算**，不要在这里另写发积分逻辑——
+ * 否则赠积分会进错桶（注册桶 vs 会员桶），到期清零与续期顺延都会与线上不一致。
  *
  * 入参 `merchantId` / `operatorId` 必须是已解析的 BigInt（路由层负责）。
  */

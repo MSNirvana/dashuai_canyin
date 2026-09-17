@@ -1,9 +1,9 @@
-// AI豆账务核心
+// 积分账务核心
 // 两阶段模型：FREEZE（预留）→ CONSUME（结算扣减）/ UNFREEZE（释放）
 // 三条铁律：
 //   1. 幂等 —— (request_id, type) 唯一索引，重复提交直接返回首次结果
 //   2. 原子 —— 行锁 SELECT ... FOR UPDATE + 事务，绝不先读后写
-//   3. 顺序 —— 赠豆优先消耗，不足部分用充值豆
+//   3. 顺序 —— 赠积分优先消耗，不足部分用充值积分
 
 import { Prisma } from '@prisma/client'
 import type { PrismaClient } from '@prisma/client'
@@ -27,7 +27,7 @@ export class BeanNotEnoughError extends Error {
     readonly required: bigint,
     readonly available: bigint,
   ) {
-    super(`AI豆不足：需要 ${required}，可用 ${available}`)
+    super(`积分不足：需要 ${required}，可用 ${available}`)
     this.name = 'BeanNotEnoughError'
   }
 }
@@ -44,7 +44,7 @@ interface AccountRow {
 export function availableOf(a: {
   balance: bigint
   grantBalance: bigint
-  /** 注册赠豆桶；老调用点可能没带这个字段，按 0 处理保持向后兼容 */
+  /** 注册赠积分桶；老调用点可能没带这个字段，按 0 处理保持向后兼容 */
   grantRegisterBalance?: bigint
   frozen: bigint
 }): bigint {
@@ -69,9 +69,9 @@ async function writeLedger(
     type: LedgerType
     amount: bigint
     bucket?: BeanBucket
-    /** 本行 amount 中来自赠豆桶的绝对数量（>=0）；见 schema.prisma 的说明 */
+    /** 本行 amount 中来自赠积分桶的绝对数量（>=0）；见 schema.prisma 的说明 */
     grantAmount?: bigint
-    /** 上一项中来自「注册赠豆」桶的部分（会员赠豆用量 = grantAmount - grantRegisterAmount） */
+    /** 上一项中来自「注册赠积分」桶的部分（会员赠积分用量 = grantAmount - grantRegisterAmount） */
     grantRegisterAmount?: bigint
     balanceAfter: bigint
     grantAfter: bigint
@@ -218,7 +218,7 @@ export async function freeze(
       bizType,
       bizId: args.bizId,
       requestId: args.requestId,
-      remark: args.remark ?? `预留 ${args.amount} 豆`,
+      remark: args.remark ?? `预留 ${args.amount} 积分`,
     })
   } catch (e) {
     // reservation/account/ledger are one transaction; any error rolls all changes back.
@@ -235,16 +235,16 @@ export interface ConsumeResult {
   duplicated: boolean
   charged: bigint
   bucket: BeanBucket
-  /** 本次消耗中来自赠豆桶的绝对数量（会员赠豆 + 注册赠豆；0 表示全部来自充值豆） */
+  /** 本次消耗中来自赠积分桶的绝对数量（会员赠积分 + 注册赠积分；0 表示全部来自充值积分） */
   grantUsed: bigint
-  /** 上一项中来自「注册赠豆」桶的部分 */
+  /** 上一项中来自「注册赠积分」桶的部分 */
   grantRegisterUsed: bigint
   balanceAfter: bigint
-  /** 剩余赠豆总量（会员桶 + 注册桶） */
+  /** 剩余赠积分总量（会员桶 + 注册桶） */
   grantAfter: bigint
 }
 
-/** 结算扣减：赠豆优先，不足部分用充值豆。幂等：同一 (requestId, CONSUME) 只执行一次 */
+/** 结算扣减：赠积分优先，不足部分用充值积分。幂等：同一 (requestId, CONSUME) 只执行一次 */
 export async function consume(
   tx: Db,
   args: { merchantId: bigint; requestId?: string; amount: bigint; bizType?: string; bizId?: string; remark?: string },
@@ -276,8 +276,8 @@ export async function consume(
   if (remaining < args.amount) throw new Error('consume exceeds business reservation')
   if (acc.frozen < args.amount) throw new Error(`consume(${args.amount}) exceeds frozen(${acc.frozen})，请先 freeze`)
 
-  // 消耗顺序（对用户有利：先用会作废的，再用永久的，最后动充值豆）：
-  //   会员赠豆 grant_balance（会员到期会清零）→ 注册赠豆 grant_register_balance（永久）→ 充值豆 balance
+  // 消耗顺序（对用户有利：先用会作废的，再用永久的，最后动充值积分）：
+  //   会员赠积分 grant_balance（会员到期会清零）→ 注册赠积分 grant_register_balance（永久）→ 充值积分 balance
   const min = (a: bigint, b: bigint) => (a < b ? a : b)
   const membershipUsed: bigint = min(acc.grant_balance, args.amount)
   const afterMembership: bigint = args.amount - membershipUsed
@@ -286,7 +286,7 @@ export async function consume(
   const grantUsed: bigint = membershipUsed + registerUsed
   const available = acc.balance + acc.grant_balance + acc.grant_register_balance - acc.frozen
   if (acc.balance < rechargeUsed) throw new BeanNotEnoughError(args.amount, available)
-  // 主桶只标「是否含充值豆」，保持既有 GRANT/RECHARGE 二值语义（前端 Tag 颜色依赖它）
+  // 主桶只标「是否含充值积分」，保持既有 GRANT/RECHARGE 二值语义（前端 Tag 颜色依赖它）
   const bucket: BeanBucket = grantUsed > 0n && rechargeUsed === 0n ? 'GRANT' : 'RECHARGE'
   const grantAfter = acc.grant_balance - membershipUsed
   const grantRegisterAfter = acc.grant_register_balance - registerUsed
@@ -317,10 +317,10 @@ export async function consume(
     type: 'CONSUME',
     amount: -args.amount,
     bucket,
-    // ★ P2-1：bucket 只能标一个主桶，混合消费时必须把赠豆用量单独留痕，
-    //   否则「这次消耗里有多少赠豆」永久丢失（用户账单 + 赠豆统计都会失真）。
+    // ★ P2-1：bucket 只能标一个主桶，混合消费时必须把赠积分用量单独留痕，
+    //   否则「这次消耗里有多少赠积分」永久丢失（用户账单 + 赠积分统计都会失真）。
     grantAmount: grantUsed,
-    // 赠豆内部再分来源，这样「会员赠豆被吃掉了多少」可审计（= grantAmount - grantRegisterAmount）
+    // 赠积分内部再分来源，这样「会员赠积分被吃掉了多少」可审计（= grantAmount - grantRegisterAmount）
     grantRegisterAmount: registerUsed,
     balanceAfter,
     grantAfter: grantAfter + grantRegisterAfter,
@@ -328,7 +328,7 @@ export async function consume(
     bizType: args.bizType,
     bizId: args.bizId,
     requestId: args.requestId,
-    remark: args.remark ?? `消耗 ${args.amount} 豆`,
+    remark: args.remark ?? `消耗 ${args.amount} 积分`,
   })
 
   return {
@@ -387,7 +387,7 @@ export async function unfreeze(
     bizType: args.bizType,
     bizId: args.bizId,
     requestId: args.requestId,
-    remark: args.remark ?? `释放 ${release} 豆`,
+    remark: args.remark ?? `释放 ${release} 积分`,
   })
 
   return { duplicated: false, frozenAfter }
@@ -417,28 +417,28 @@ export async function recharge(
     bizType: 'ORDER',
     bizId: args.bizId,
     requestId: args.bizId ? `order:${args.bizId}` : undefined,
-    remark: args.remark ?? `充值 ${args.amount} 豆`,
+    remark: args.remark ?? `充值 ${args.amount} 积分`,
   })
   return { balanceAfter }
 }
 
-/** 赠豆来源：决定进哪个桶，也就决定了会不会随会员到期被清零 */
+/** 赠积分来源：决定进哪个桶，也就决定了会不会随会员到期被清零 */
 export type GrantSource = 'MEMBERSHIP' | 'REGISTER'
 
 export interface GrantResult {
   duplicated: boolean
-  /** 剩余赠豆总量（会员桶 + 注册桶） */
+  /** 剩余赠积分总量（会员桶 + 注册桶） */
   grantAfter: bigint
   membershipAfter: bigint
   registerAfter: bigint
 }
 
 /**
- * 发放赠豆，按来源记入**不同的桶**：
- *   - MEMBERSHIP：会员周期赠豆，随会员到期清零（grant-expiry 调度）
- *   - REGISTER  ：注册赠豆，拉新奖励，永久有效，**不参与到期清零**
+ * 发放赠积分，按来源记入**不同的桶**：
+ *   - MEMBERSHIP：会员周期赠积分，随会员到期清零（grant-expiry 调度）
+ *   - REGISTER  ：注册赠积分，拉新奖励，永久有效，**不参与到期清零**
  *
- * 幂等：同一 (bizType, requestId, GRANT) 只发一次。注册赠豆尤其依赖这个 ——
+ * 幂等：同一 (bizType, requestId, GRANT) 只发一次。注册赠积分尤其依赖这个 ——
  * 首登并发（同一用户两个端同时登录）时不能重复发放。
  */
 export async function grant(
@@ -486,18 +486,18 @@ export async function grant(
     bizType,
     bizId: args.bizId,
     requestId,
-    remark: args.remark ?? (isRegister ? `注册赠送 ${args.amount} 豆` : `会员赠送 ${args.amount} 豆`),
+    remark: args.remark ?? (isRegister ? `注册赠送 ${args.amount} 积分` : `会员赠送 ${args.amount} 积分`),
   })
   return { duplicated: false, grantAfter: membershipAfter + registerAfter, membershipAfter, registerAfter }
 }
 
 /**
- * 会员赠豆到期清零（会员到期定时任务调用）。
+ * 会员赠积分到期清零（会员到期定时任务调用）。
  *
- * ★ 只清**会员桶**（grant_balance）。注册赠豆在 grant_register_balance，原样保留 ——
- *   拉新时承诺「送 30 豆试用」，不该在 30 天后随会员一起作废。
- *   原实现清空整个赠豆池，会把注册赠豆一起清掉（靠分桶才可能修对：消耗是池化的，
- *   没有批次概念，所以「账上还剩多少注册赠豆」无法从历史流水反推）。
+ * ★ 只清**会员桶**（grant_balance）。注册赠积分在 grant_register_balance，原样保留 ——
+ *   拉新时承诺「送 30 积分试用」，不该在 30 天后随会员一起作废。
+ *   原实现清空整个赠积分池，会把注册赠积分一起清掉（靠分桶才可能修对：消耗是池化的，
+ *   没有批次概念，所以「账上还剩多少注册赠积分」无法从历史流水反推）。
  */
 export async function expireGrant(tx: Db, args: { merchantId: bigint; remark?: string }) {
   const acc = await lockAccount(tx, args.merchantId)
@@ -513,12 +513,12 @@ export async function expireGrant(tx: Db, args: { merchantId: bigint; remark?: s
     amount: -expired,
     bucket: 'GRANT',
     grantAmount: expired,
-    grantRegisterAmount: 0n, // 清的是会员赠豆，不含注册赠豆
+    grantRegisterAmount: 0n, // 清的是会员赠积分，不含注册赠积分
     balanceAfter: acc.balance,
-    grantAfter: acc.grant_register_balance, // 剩余赠豆 = 注册桶（未被清）
+    grantAfter: acc.grant_register_balance, // 剩余赠积分 = 注册桶（未被清）
     frozenAfter: acc.frozen,
     bizType: 'MEMBER_EXPIRE',
-    remark: args.remark ?? `会员赠豆到期清零 ${expired}`,
+    remark: args.remark ?? `会员赠积分到期清零 ${expired}`,
   })
   return { expired, preserved: acc.grant_register_balance }
 }
@@ -531,8 +531,8 @@ export async function adjust(
   if (!args.remark) throw new Error('adjust requires remark')
   const acc = await lockAccount(tx, args.merchantId)
   const bucket = args.bucket ?? 'RECHARGE'
-  // 后台调账的「赠豆」一律进**会员桶**（会随会员到期清零）；注册桶只由注册路径写入。
-  // 这样运营手动补的赠豆不会变成永久余额，口径与「赠送」按钮的语义一致。
+  // 后台调账的「赠积分」一律进**会员桶**（会随会员到期清零）；注册桶只由注册路径写入。
+  // 这样运营手动补的赠积分不会变成永久余额，口径与「赠送」按钮的语义一致。
   const balanceAfter = bucket === 'RECHARGE' ? acc.balance + args.amount : acc.balance
   const membershipAfter = bucket === 'GRANT' ? acc.grant_balance + args.amount : acc.grant_balance
   if (balanceAfter < 0n || membershipAfter < 0n) throw new Error('adjust would make balance negative')
@@ -570,7 +570,7 @@ export async function getBalance(prisma: Db, merchantId: bigint) {
   const grantRegisterBalance = acc.grantRegisterBalance
   return {
     balance: acc.balance,
-    // 对外仍以「赠豆总量」表达（会员桶 + 注册桶）。
+    // 对外仍以「赠积分总量」表达（会员桶 + 注册桶）。
     // 若这里只给会员桶，而 available 含两桶，客户端会出现「赠积分 0 / 可用 30」这种自相矛盾的界面。
     grantBalance: grantMembershipBalance + grantRegisterBalance,
     /** 会员桶（会随会员到期清零） */

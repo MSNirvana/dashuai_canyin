@@ -35,13 +35,13 @@ async function ensureDefaultStore(prisma: PrismaClient, merchantId: bigint): Pro
   })
 }
 
-/** 新用户发注册赠豆（一次性）。
+/** 新用户发注册赠积分（一次性）。
  *
  * ★ 两个要点：
- *  1. 走 `source: 'REGISTER'` → 进**注册赠豆桶**，永久有效，不随会员到期被清零。
- *     以前它和会员赠豆同进一个池子，会员到期时会被一起清掉。
- *  2. 发放与 `registerGrantGranted` 标记放进**同一个事务**。原实现是先发豆、再更新标记，
- *     两步之间进程挂掉就会在下次登录重复发放（30 豆虽小，但重复发就是账不平）。
+ *  1. 走 `source: 'REGISTER'` → 进**注册赠积分桶**，永久有效，不随会员到期被清零。
+ *     以前它和会员赠积分同进一个池子，会员到期时会被一起清掉。
+ *  2. 发放与 `registerGrantGranted` 标记放进**同一个事务**。原实现是先发积分、再更新标记，
+ *     两步之间进程挂掉就会在下次登录重复发放（30 积分虽小，但重复发就是账不平）。
  *     带上 bizId 后 `grant()` 自身也按 (bizType, requestId, GRANT) 幂等，双保险。
  */
 async function grantRegisterBeanIfNeeded(prisma: PrismaClient, merchantId: bigint): Promise<void> {
@@ -55,7 +55,7 @@ async function grantRegisterBeanIfNeeded(prisma: PrismaClient, merchantId: bigin
         amount,
         source: 'REGISTER',
         bizId: merchantId.toString(),
-        remark: '注册赠豆',
+        remark: '注册赠积分',
       })
     }
     await tx.merchant.update({
@@ -126,7 +126,7 @@ export async function refresh(prisma: PrismaClient, refreshToken: string): Promi
 /**
  * 开发登录旁路：仅在 DEV_LOGIN=true 时可用（默认关闭，生产绝不暴露）。
  * 不依赖真实微信 / 短信，直接按手机号创建或找回账号，走与正式登录一致的
- * 默认门店创建 + 注册赠豆 + 签发 token 流程，便于在微信开发者工具里联调。
+ * 默认门店创建 + 注册赠积分 + 签发 token 流程，便于在微信开发者工具里联调。
  */
 export async function devLogin(prisma: PrismaClient, phone: string): Promise<LoginResult> {
   if (process.env.NODE_ENV === 'production' || process.env.DEV_LOGIN !== 'true') throw new Error('dev login disabled')

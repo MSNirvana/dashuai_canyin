@@ -7,7 +7,7 @@ export interface BeanLedgerItem {
   type: string
   bucket: string
   amount: string
-  /** 本行 amount 中来自赠豆桶的绝对数量；>0 且 < |amount| 表示赠豆/充值豆混合消耗 */
+  /** 本行 amount 中来自赠积分桶的绝对数量；>0 且 < |amount| 表示赠积分/充值积分混合消耗 */
   grantAmount: string
   balanceAfter: string
   grantAfter: string

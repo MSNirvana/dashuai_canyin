@@ -99,7 +99,7 @@ export default function MemberPackagesPage() {
           { colKey: 'name', title: '名称' },
           { colKey: 'durationDays', title: '天数', width: 80 },
           { colKey: 'priceFen', title: '价格(分)', width: 110 },
-          { colKey: 'grantBeans', title: '赠豆', width: 110 },
+          { colKey: 'grantBeans', title: '赠积分', width: 110 },
           { colKey: 'tag', title: '角标', width: 100, render: ({ row }: any) => row.tag ?? '—' },
           { colKey: 'enabled', title: '状态', width: 90, render: ({ row }: any) => row.enabled ? <Tag theme="success">上架</Tag> : <Tag>下架</Tag> },
           { colKey: 'op', title: '操作', width: 160, fixed: 'right',
@@ -125,7 +125,7 @@ export default function MemberPackagesPage() {
           <Field label="名称"><Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} /></Field>
           <Field label="有效期(天)"><InputNumber value={form.durationDays} onChange={(v) => setForm((f) => ({ ...f, durationDays: v as number }))} min={1} /></Field>
           <Field label="价格(分)"><InputNumber value={form.priceFen} onChange={(v) => setForm((f) => ({ ...f, priceFen: v as number }))} min={1} /></Field>
-          <Field label="赠豆数"><InputNumber value={form.grantBeans} onChange={(v) => setForm((f) => ({ ...f, grantBeans: v as number }))} min={0} /></Field>
+          <Field label="赠积分数"><InputNumber value={form.grantBeans} onChange={(v) => setForm((f) => ({ ...f, grantBeans: v as number }))} min={0} /></Field>
           <Field label="权益 JSON"><Input value={form.rightsJson} onChange={(v) => setForm((f) => ({ ...f, rightsJson: v as string }))} placeholder='{"uploadQuotaGb":5}' /></Field>
           <Field label="角标"><Input value={form.tag ?? ''} onChange={(v) => setForm((f) => ({ ...f, tag: v as string }))} /></Field>
           <Field label="排序"><InputNumber value={form.sort} onChange={(v) => setForm((f) => ({ ...f, sort: v as number }))} /></Field>

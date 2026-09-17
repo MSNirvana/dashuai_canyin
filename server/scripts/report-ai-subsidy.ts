@@ -28,7 +28,7 @@ const daysArg = process.argv.find((a) => a.startsWith('--days='))
 const DAYS = daysArg ? Math.max(1, Number(daysArg.split('=')[1]) || 30) : 30
 const since = new Date(Date.now() - DAYS * 86_400_000)
 
-/** 与 ai.service.beansFromCost 同一口径：beans = ceil(costFen × 豆/元 × 系数 / 100) */
+/** 与 ai.service.beansFromCost 同一口径：beans = ceil(costFen × 积分/元 × 系数 / 100) */
 function beansFromCost(costFen: number, beansPerYuan: ReturnType<typeof decFromNumber>, multiplier: ReturnType<typeof decFromNumber>) {
   if (!costFen) return 0n
   return decMulCeil([decFromNumber(costFen)!, beansPerYuan!, multiplier!], 100n)
@@ -45,8 +45,8 @@ const logs = await prisma.aiCallLog.findMany({
   select: { sceneCode: true, costFen: true, beanCharged: true, absorbedBeans: true },
 })
 
-console.log(`AI 场景补贴报表 · 近 ${DAYS} 天（豆/元=${beansPerYuan!.num}e${beansPerYuan!.exp} 系数=${multiplier!.num}e${multiplier!.exp}）`)
-console.log(`口径：应付 = ceil(成本分 × 豆/元 × 系数 / 100)；补贴 = max(0, 应付 − 单次上限)\n`)
+console.log(`AI 场景补贴报表 · 近 ${DAYS} 天（积分/元=${beansPerYuan!.num}e${beansPerYuan!.exp} 系数=${multiplier!.num}e${multiplier!.exp}）`)
+console.log(`口径：应付 = ceil(成本分 × 积分/元 × 系数 / 100)；补贴 = max(0, 应付 − 单次上限)\n`)
 
 type Row = {
   code: string
@@ -78,7 +78,7 @@ for (const l of logs) {
 if (rows.size === 0) {
   console.log('该时间窗内没有 AI 调用记录。')
 } else {
-  const head = ['场景', '调用', '上限', '成本(分)', '实收(豆)', '已记补贴', '回溯补贴', '截断率', '结论']
+  const head = ['场景', '调用', '上限', '成本(分)', '实收(积分)', '已记补贴', '回溯补贴', '截断率', '结论']
   const body = [...rows.values()]
     .sort((a, b) => Number(b.retro - a.retro))
     .map((r) => {
@@ -114,8 +114,8 @@ if (rows.size === 0) {
   const totalRetro = [...rows.values()].reduce((s, r) => s + r.retro, 0n)
   const totalRecorded = [...rows.values()].reduce((s, r) => s + r.recorded, 0n)
   console.log(
-    `\n合计：回溯估算补贴 ${totalRetro} 豆（历史行 absorbed_beans 均为 0，因为该列今天才加）；` +
-      `已记录补贴 ${totalRecorded} 豆`,
+    `\n合计：回溯估算补贴 ${totalRetro} 积分（历史行 absorbed_beans 均为 0，因为该列今天才加）；` +
+      `已记录补贴 ${totalRecorded} 积分`,
   )
   console.log(
     '结论判读：截断率接近 100% 说明上限**低于正常成本**，此时它不再是「防跑飞的安全网」，' +

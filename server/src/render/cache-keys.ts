@@ -26,7 +26,7 @@ export const INTERMEDIATE_CACHE_VERSION = 'v2'
 
 /**
  * 中间产物缓存键：(缓存版本, assetId, trim 起止, 输出尺寸) → sha1
- * 不含调色参数，因此「仅改调色重合成」能命中缓存，只跑一遍调色+拼接（对应 10 豆计费）
+ * 不含调色参数，因此「仅改调色重合成」能命中缓存，只跑一遍调色+拼接（对应 10 积分计费）
  */
 export function intermediateKey(
   clip: RenderClip,

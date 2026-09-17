@@ -11,7 +11,7 @@
 
 - 一条 `ai_scene` 记录 = 一个 Skill，包含：提示词模板、变量占位符、默认模型、备用模型链、兜底模板、超时、重试次数、温度、输出上限、冻结上限。
 - 业务层只传 `sceneCode` + 变量字典，**永不直接引用具体模型**；提示词与模型全部后台可配，改配置不发版。
-- 统一由 `AiGateway.runScene()` 执行：候选链依次尝试 → 失败重试 → 熔断跳过 → 全失败返回兜底模板（不扣豆）。
+- 统一由 `AiGateway.runScene()` 执行：候选链依次尝试 → 失败重试 → 熔断跳过 → 全失败返回兜底模板（不扣积分）。
 - 配置入口：管理后台 → **AI 场景** 页（`apps/admin/src/pages/AiScenes.tsx`）。
 
 ```
@@ -40,7 +40,7 @@
 
 - 接口：`POST /creations/:id/copy`（入参 `track`，返回 `track` / `trackLabel`）
 - 变量：`{{storeName}} {{category}} {{city}} {{dishName}} {{dishIntro}} {{sellingPoints}} {{persona}} {{copyText}} {{track}} {{trackLabel}}`
-- 冻结上限：5 豆 / 次（`beanPrice`，非标价）
+- 冻结上限：5 积分 / 次（`beanPrice`，非标价）
 - 容错：款式对应场景不存在或被停用 → 自动回退 `copy_generate`，不报错
 
 ### 1.2 分镜脚本组
@@ -53,7 +53,7 @@
 - 变量：在文案变量基础上增加 `{{complexity}} {{complexityLabel}} {{shotCountRule}} {{shotLibrary}}`
 - 复杂度规则：`SIMPLE` 2~3 镜 / `COMPLEX` 5~6 镜 / `FINE` 6~9 镜，经 `{{shotCountRule}}` 注入
 - 输出：JSON 数组，字段 `seq / shotType / shotSize / durationSuggest / line / visualReq / libraryCode`
-- 冻结上限：10 豆 / 次
+- 冻结上限：10 积分 / 次
 
 ### 1.3 模型绑定策略（seed 自动维护）
 
@@ -109,7 +109,7 @@
 
 ## 4. 计费与降级规则（所有 Skill 通用）
 
-| 情况 | 是否扣豆 | 说明 |
+| 情况 | 是否扣积分 | 说明 |
 |---|---|---|
 | 默认模型成功 | 扣 | 按实际成本 × `bean.cost_multiplier` 结算 |
 | 备用模型成功 | 扣 | 用户无感，记入毛利报表（`isFallback=1`） |
@@ -164,7 +164,7 @@
 1. 在 `prisma/seed.ts` 的 `seedAi()` 中 `upsert` 一条 `aiScene`（提示词 + 兜底模板 + 冻结上限；**模型绑定不用写死**，seed 会自动挂到已启用的真实模型）
 2. 跑 `npm run db:seed` 生效（或直接在后台「AI 场景」页新建）
 3. 业务层调用 `runBilledScene(prisma, gateway, { sceneCode, merchantId, requestId, variables, bizId })`
-4. 处理返回值：`isFallbackTemplate` 为 true 时前端提示降级、不扣豆
+4. 处理返回值：`isFallbackTemplate` 为 true 时前端提示降级、不扣积分
 5. 后台验证：场景列表可见（AI 场景页）→ 通道测试通过（AI 供应商页）→ 调用日志有记录（AI 调用日志页）
 
 ---

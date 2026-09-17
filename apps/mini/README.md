@@ -14,7 +14,7 @@ npm run dev:tt        # 抖音开发者工具打开 dist/tt
 
 ```
 src/
-├── app.tsx              # 入口：恢复登录态、刷新豆余额
+├── app.tsx              # 入口：恢复登录态、刷新积分余额
 ├── app.config.ts        # 页面路由 / 分包 / TDesign 全局注册
 ├── app.scss             # 全局基础样式
 ├── styles/theme.scss    # 品牌主题（简洁 + 红色）与 CSS 变量
@@ -24,7 +24,7 @@ src/
 ├── components/          # 业务组件
 └── pages/
     ├── login/           # 微信一键 + 手机号验证码（兜底）
-    └── home/            # 首页（门店切换 / 豆余额 / 新建创作）
+    └── home/            # 首页（门店切换 / 积分余额 / 新建创作）
 ```
 
 ## TDesign 组件与 npm 拷贝（动这里之前先读）
@@ -72,7 +72,7 @@ npm run verify:dist
 | 变量 | 值 | 用途 |
 |---|---|---|
 | `--td-brand-color` | `#d93a2b` | 品牌红（按钮、强调） |
-| `--ds-bean` | `#ffb400` | AI豆（金黄） |
+| `--ds-bean` | `#ffb400` | 积分（金黄） |
 | `--ds-member` | `#8b5cf6` | 会员标识（紫） |
 | `--ds-success` | `#00a870` | 成功态 |
 
@@ -95,7 +95,7 @@ npm run verify:dist
 - 门店切换器（首页顶部）
 - 创作流程页（creation / script / shoot）
 - 合成进度与成片页（render）
-- AI豆与会员页（bean / member）
+- 积分与会员页（bean / member）
 - 多门店管理（profile）
 - COS 直传（分片 + 断点续传）
 - 订阅消息授权引导

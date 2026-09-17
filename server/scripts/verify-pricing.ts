@@ -1,7 +1,7 @@
 // 计价回归：精确十进制 vs 旧浮点实现
 //
 // 用途：任何改动 beansFromCost / render amount / computeCostFen 之后跑一次，
-// 防止浮点误差重新引入「凭空多扣 1 豆」。
+// 防止浮点误差重新引入「凭空多扣 1 积分」。
 //
 // 跑法：npm run pricing:verify
 import {
@@ -44,7 +44,7 @@ check('ceilDiv(-7, 2)', ceilDiv(-7n, 2n), '-3')
 check('floorDiv(7, 2)', floorDiv(7n, 2n), '3')
 check('floorDiv(-7, 2)', floorDiv(-7n, 2n), '-4')
 
-console.log('\n=== 3) 新实现 vs 旧浮点实现：AI 扣豆 ===')
+console.log('\n=== 3) 新实现 vs 旧浮点实现：AI 扣积分 ===')
 // 新：ceil(costFen × 100 × 4 / 100) = costFen × 4
 function newBeans(costFen: number): bigint {
   return decMulCeil([decFromNumber(costFen)!, decFromString('100')!, decFromString('4')!], 100n)
@@ -55,7 +55,7 @@ function oldBeans(costFen: number): bigint {
 }
 
 check('costFen=7  新实现', newBeans(7), '28')
-check('costFen=7  旧实现（+1 豆 bug）', oldBeans(7), '29')
+check('costFen=7  旧实现（+1 积分 bug）', oldBeans(7), '29')
 check('costFen=14 新实现', newBeans(14), '56')
 check('costFen=2  新实现', newBeans(2), '8')
 
@@ -70,9 +70,9 @@ for (let c = 1; c <= 20000; c++) {
     overcharge += oldBeans(c) - exact
   }
 }
-console.log(`\n  costFen 1~20000（1元=100豆、乘数4）：`)
+console.log(`\n  costFen 1~20000（1元=100积分、乘数4）：`)
 console.log(`    新实现算错：${newWrong} 个`)
-console.log(`    旧实现算错：${oldWrong} 个（累计多扣 ${overcharge} 豆，只会多扣不会少扣）`)
+console.log(`    旧实现算错：${oldWrong} 个（累计多扣 ${overcharge} 积分，只会多扣不会少扣）`)
 check('新实现零误差', newWrong, '0')
 check('旧实现确实有误差（复现基线）', oldWrong > 0, 'true')
 
@@ -89,7 +89,7 @@ check('2000ms × BASIC(1)', newAmount(2000, '1', '1', '1'), '2')
 check('2000ms × BASIC(1) RECOLOR(0.5)', newAmount(2000, '1', '1', '0.5'), '1')
 check('6000ms × AI(1.5)', newAmount(6000, '1', '1.5', '1'), '9')   // 9 恰为整数
 check('3333ms × AI(1.5)', newAmount(3333, '1', '1.5', '1'), '5')   // 4.9995 → 5
-check('最低收 1 豆（1ms）', newAmount(1, '1', '1', '1'), '1')
+check('最低收 1 积分（1ms）', newAmount(1, '1', '1', '1'), '1')
 check('小数 point_per_sec=0.1, 10000ms', newAmount(10000, '0.1', '1', '1'), '1')
 
 console.log('\n=== 5) computeCostFen ===')

@@ -57,7 +57,7 @@ export const scenarioPlan: Record<Scenario, string> = {
   subscription: '真实copy/storyboard路由对未订阅请求返回403/2005。',
   terminalSuccess: '成功→重复成功→迟到失败/超时，终态保持SUCCESS且只消费一次。',
   terminalFailure: '失败→重复失败→迟到成功，不能转成功、双退或消费其他任务预留。',
-  grantExpiry: '赠送预留跨期到期→结算或释放的独立fixtures；到期豆不得重新可消费。',
+  grantExpiry: '赠送预留跨期到期→结算或释放的独立fixtures；到期积分不得重新可消费。',
   balanceContract: '真实store/API替身：登录、两种刷新、compose使用相同available=85。',
 }
 

@@ -106,7 +106,7 @@ console.log(`   创作 id=${creation.id} status=${creation.status}`)
 const copy = must('POST /creations/:id/copy（AI mock）', await api('POST', `/creations/${creation.id}/copy`, {
   token, body: { requestId: `smoke-copy-${Date.now()}` },
 }))
-console.log(`   文案豆扣费: ${copy.data.beanCharged ?? copy.data.beansCharged ?? '(见流水)'}`)
+console.log(`   文案积分扣费: ${copy.data.beanCharged ?? copy.data.beansCharged ?? '(见流水)'}`)
 
 // 8. AI 分镜
 const shots = must('POST /creations/:id/storyboard（AI mock）', await api('POST', `/creations/${creation.id}/storyboard`, {
@@ -140,7 +140,7 @@ for (let i = 0; i < shotList.length; i++) {
 }
 step('分镜绑定素材', true, `${shotList.length} 镜全部绑定 asset=${asset.id}`)
 
-// 11. 预览拼图（不扣豆）
+// 11. 预览拼图（不扣积分）
 must('POST /render/preview-collage', await api('POST', '/render/preview-collage', {
   token, body: { creationId: creation.id },
 }))
@@ -157,7 +157,7 @@ if (render.status !== 'SUCCESS') {
   console.log('   ℹ FFMPEG_WORKER=true 时合成走异步队列，非即时 SUCCESS 属预期（非缺陷）')
 }
 step('合成扣积分 > 0', BigInt(render.beanCharged) > 0n, `beanCharged=${render.beanCharged}`)
-console.log(`   合成任务 id=${render.id} status=${render.status} 扣豆=${render.beanCharged} 时长=${render.durationMs}ms`)
+console.log(`   合成任务 id=${render.id} status=${render.status} 扣积分=${render.beanCharged} 时长=${render.durationMs}ms`)
 
 // 13. 合成列表 + 详情
 must('GET /creations/:id/renders', await api('GET', `/creations/${creation.id}/renders`, { token }))
