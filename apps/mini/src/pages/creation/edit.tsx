@@ -22,6 +22,7 @@ import { useMerchantStore } from '../../store/merchant'
 import StoreSwitcher from '../../components/store-switcher'
 import Segmented from '../../components/segmented'
 import Steps from '../../components/steps'
+import { splitCopyParagraphs, copyTextParagraphs } from '../../utils/copy-text'
 import './edit.scss'
 
 function newRequestId() {
@@ -102,6 +103,19 @@ export default function CreationEdit() {
   const autoExitRef = useRef<'stay' | 'cancel' | 'background'>('stay')
   /** 正在生成的创作 id：取消时要把它拉回来，否则 detail 仍为 null 会闪一下「加载中…」 */
   const autoIdRef = useRef('')
+  /**
+   * 「创建即生成」这一步**失败了**（区别于成功、取消、关闭等待）。
+   *
+   * ★ 为什么必须用 ref：`finally` 里要立刻判断「要不要收掉悬浮窗」，
+   *   而 setState 要等下一轮渲染才读得到。
+   * ★ 为什么失败时不能收掉悬浮窗：一收掉，渲染条件 `autoRunning` 变 false，
+   *   整页就切到编辑视图，露出「生成文案」「生成分镜」两个手动按钮 ——
+   *   用户看到的就是「刚才那次点击没生效，还得我自己再点两次」。
+   *   所以失败后悬浮窗留着，换成「哪一步没成 + 重试」。
+   */
+  const autoFailedRef = useRef(false)
+  /** 失败原因（给悬浮窗文案用），null = 正常生成中 */
+  const [autoError, setAutoError] = useState<string | null>(null)
   /** 「关闭等待」会离开本页，卸载后不能再 setState / 再跳转 */
   const mountedRef = useRef(true)
   useEffect(
@@ -117,6 +131,14 @@ export default function CreationEdit() {
   // 文案编辑态
   const [editingCopy, setEditingCopy] = useState(false)
   const [copyDraft, setCopyDraft] = useState('')
+  /**
+   * 「已经生成过」之后，「文案款式」/「镜头复杂度」这两行默认收起（减少已完成作品的视觉噪音）。
+   *
+   * 这里记的是「用户主动点开了」，而不是「要不要隐藏」—— 前者只在用户点过之后才为 true，
+   * 不会与 hasCopy / hasShots 的异步变化打架（生成成功后 detail 变了，收起状态自然回到默认）。
+   */
+  const [showTrackPicker, setShowTrackPicker] = useState(false)
+  const [showComplexityPicker, setShowComplexityPicker] = useState(false)
   // 分镜编辑态
   const [editingShot, setEditingShot] = useState<string | null>(null)
   const [shotDraft, setShotDraft] = useState<ShotDraft>({
@@ -214,43 +236,67 @@ export default function CreationEdit() {
   /**
    * 一次跑完「文案 → 分镜」，成功后直接进拍摄页
    * —— 用户选好款式就拿到成品，不必在中间页手动点两次生成。
-   * 任一步失败都留在本页：本页就是编辑页，页内有「重新生成」可原地重试；
-   * 生成失败会全额解冻预扣的豆，重试不会重复扣费。
+   *
+   * ★ 失败**不再退出到编辑视图**：留在等待态、把失败的那一步和「重试」摆出来。
+   *   原因见 `autoFailedRef` 的说明 —— 退出会让用户面对手动按钮，像是没自动生成。
+   * ★ 重试是**续跑**：已生成过的步骤跳过，不重复扣豆。
+   *   `skipCopy` 由调用方按本地 detail 传入；再叠加一次服务端读回的判据做双保险。
+   *
+   * ⚠ 每一步仍然各自 `newRequestId()`，**别「优化」成复用同一个 requestId**：
+   *   服务端的幂等语义是「同 requestId 只能有一条流水」（`bean_ledger` 唯一索引），
+   *   复用会撞上 `ScenePendingError` → 2006「任务进行中或上次失败，请换 requestId 重试」，
+   *   或者在上一步 FAILED 时直接返回兜底模板而不再真的重试。这是服务端刻意的契约。
    */
-  const runAuto = async (id: string) => {
+  const runAuto = async (id: string, opts?: { skipCopy?: boolean }) => {
     autoExitRef.current = 'stay'
     autoIdRef.current = id
+    autoFailedRef.current = false
+    setAutoError(null)
     setAutoRunning(true)
+    /** 走到哪一步断的，用于给悬浮窗定位（'文案' / '分镜'） */
+    let failing = ''
+    let usedFallback = false
     try {
-      const cr = await generateCopy(id, newRequestId(), track)
-      // 等待期间被「取消生成」：不再发起分镜请求。
-      // 已经发出去的这一笔文案请求撤不回来（请求层没有 abort 能力），
-      // 但它的结果会落库 —— 为它付的那笔豆不浪费，用户可从「创作」进入接着用。
-      if (waitingExit() === 'cancel') return
+      // 判据取自**服务端**而不是本地 state：失败可能发生在本页重新进入之后，
+      // 本地 detail 未必是最新的。读不到时按「需要生成」处理（缺一步总比漏一步好）。
+      const needCopy = !opts?.skipCopy && !(await getCreation(id).catch(() => null))?.copyText
+      if (needCopy) {
+        failing = '文案'
+        const cr = await generateCopy(id, newRequestId(), track)
+        // 等待期间被「取消生成」：不再发起分镜请求。
+        // 已经发出去的这一笔文案请求撤不回来（请求层没有 abort 能力），
+        // 但它的结果会落库 —— 为它付的那笔豆不浪费，用户可从「创作」进入接着用。
+        if (waitingExit() === 'cancel') return
+        usedFallback = cr.isFallbackTemplate
+      }
+      failing = '分镜'
       const br = await generateStoryboard(id, newRequestId(), complexity)
       // 「关闭等待」：两步照常跑完落库（用户稍后从「创作」进入），只是不再自动跳拍摄页
       if (waitingExit() !== 'stay') return
       if (!br.parsed || br.shots.length === 0) {
         // 没有分镜就没法拍摄，停在本页让用户重试，避免落到一个空的拍摄列表
-        Taro.showToast({ title: '分镜生成异常，请重新生成', icon: 'none' })
-        return
+        throw new Error('分镜内容没解析出来')
       }
-      if (cr.isFallbackTemplate || br.isFallbackTemplate) {
+      usedFallback = usedFallback || br.isFallbackTemplate
+      if (usedFallback) {
         Taro.showToast({ title: 'AI 繁忙，部分内容用了兜底', icon: 'none' })
       }
       Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })
     } catch {
       // 用户主动取消时的失败不必再报「生成中断」——那是他自己按掉的
       if (waitingExit() === 'stay') {
-        Taro.showToast({ title: '生成中断，可在本页重新生成', icon: 'none' })
+        autoFailedRef.current = true
+        setAutoError(failing ? `${failing}这一步没成功` : '生成没有完成')
       }
     } finally {
-      // 成败都要把详情落回页面：失败时本页要停在可重试的编辑态。
+      // 成败都要把详情落回页面：一是失败时页面停在可重试的状态，
+      // 二是重试时要能按 detail 判断哪一步已经完成了（跳过它，不重复扣豆）。
       // 只置 autoRunning=false 而不拉详情，detail 仍是 null，页面会卡在「加载中…」。
       // 「关闭等待」会先离开本页，此时再拉一次只是白发一个请求（setState 也不会生效）。
       if (mountedRef.current) {
         await loadDetail(id).catch(() => undefined)
-        setAutoRunning(false)
+        // ★ 失败时保留悬浮窗，见 autoFailedRef 的说明
+        if (!autoFailedRef.current) setAutoRunning(false)
       }
     }
   }
@@ -305,6 +351,29 @@ export default function CreationEdit() {
     Taro.navigateBack({ fail: () => Taro.switchTab({ url: '/pages/creation/list' }) })
   }
 
+  /**
+   * 失败后原地重试：**只补跑没成功的那一步**。
+   * 已生成过的步骤跳过 —— 文案那次调用是已经扣过豆的，重跑会再扣一次。
+   * 本地 detail 就是判据（它由 finally 里的 loadDetail 落回来，是最新的）。
+   */
+  const onRetryAuto = () => {
+    const id = autoIdRef.current
+    if (!id) return
+    void runAuto(id, { skipCopy: !!detail?.copyText })
+  }
+
+  /**
+   * 失败后「稍后再说」：只收起悬浮窗，落到编辑视图。
+   * 创作已经建好了（文案通常也有了），用户想手改文案/换款式时从这里走。
+   * ★ 与「关闭等待」不同：那个是放弃等待并离开本页，这个是留在本页继续编辑。
+   */
+  const onDismissGenerate = () => {
+    autoExitRef.current = 'cancel'
+    autoFailedRef.current = false
+    setAutoError(null)
+    setAutoRunning(false)
+  }
+
   /** 选款式/复杂度：本地即时生效，并静默落库，避免下次进入丢失 */
   const onPickTrack = (v: string) => {
     const value = v as CopyTrack
@@ -327,6 +396,8 @@ export default function CreationEdit() {
       const r = await generateCopy(localId, newRequestId(), track)
       setDetail((d) => (d ? { ...d, copyText: r.text, track: r.track, trackLabel: r.trackLabel } : d))
       setEditingCopy(false)
+      // 刚按用户选的那一款生成完，选择器就该收回去（否则又变回「一直摆在那儿」）
+      setShowTrackPicker(false)
       Taro.showToast({ title: r.isFallbackTemplate ? 'AI 繁忙，已用兜底文案' : '文案已生成', icon: 'none' })
     } catch {
       /* 2001 / 2005 已 toast */
@@ -377,6 +448,7 @@ export default function CreationEdit() {
         return
       }
       await loadDetail(localId)
+      setShowComplexityPicker(false)
       Taro.showToast({
         title: r.isFallbackTemplate ? `AI 繁忙，已用兜底分镜（${r.shots.length}）` : `已生成 ${r.shots.length} 个分镜`,
         icon: 'none',
@@ -424,9 +496,15 @@ export default function CreationEdit() {
   const complexityLabel = COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.label ?? ''
 
   // ───────────── 新建创作（未落库前） ─────────────
-  // 生成中（autoRunning）而详情还没落回来时也留在这个分支：
-  // 悬浮窗要盖在**用户刚刚填的这张表单**上，而不是把整页替换成等待页。
-  if (!localId || (autoRunning && !detail)) {
+  // 只要还在「创建即生成」里（生成中，或生成失败等着重试），就**留在这个分支**：
+  // 悬浮窗要盖在**用户刚刚填的这张表单**上，而不是把整页替换成编辑视图。
+  //
+  // ★ 判据是 `autoRunning`，不能再叠加 `&& !detail`。
+  //   叠加之后：失败或超时那一刻 finally 把 detail 拉了回来 ⇒ 条件变假 ⇒
+  //   整页立刻切到编辑视图，悬浮窗连同「重试」一起消失，用户面前只剩
+  //   「生成文案」「生成分镜」两个手动按钮 —— 看起来就是「点了没反应、还得我自己点两次」。
+  //   这正是不做叠加的原因：失败后要停在等待态让用户原地重试。
+  if (!localId || autoRunning) {
     return (
       <View className='cedit'>
         <View className='cedit__bar'>
@@ -526,31 +604,60 @@ export default function CreationEdit() {
 
         {/* 生成中的悬浮窗：盖在「初始页面」之上，而不是把整页替换掉 ——
             用户看得见自己填的表单还在，只是被挡住。
-            两个出口的语义见 onCancelGenerate / onBackgroundGenerate。 */}
+            两个出口的语义见 onCancelGenerate / onBackgroundGenerate；
+            失败态换成 onRetryAuto / onDismissGenerate（见 autoFailedRef 的说明）。 */}
         {autoRunning && (
           <View className='cedit__gen-mask' catchMove>
             <View className='cedit__gen-card'>
-              <View className='cedit__gen-spinner' />
-              <Text className='cedit__gen-title'>正在生成文案与分镜…</Text>
-              <Text className='cedit__gen-sub'>
-                关闭等待后仍会继续生成，可稍后从「创作」再次进入
-              </Text>
-              <View className='cedit__gen-actions'>
-                <View
-                  className='cedit__gen-btn cedit__gen-btn--ghost'
-                  hoverClass='ds-hover'
-                  onClick={() => void onCancelGenerate()}
-                >
-                  取消生成
-                </View>
-                <View
-                  className='cedit__gen-btn cedit__gen-btn--primary'
-                  hoverClass='ds-hover'
-                  onClick={onBackgroundGenerate}
-                >
-                  关闭等待
-                </View>
-              </View>
+              {autoError ? (
+                <>
+                  <View className='cedit__gen-icon'>!</View>
+                  <Text className='cedit__gen-title'>生成没有完成</Text>
+                  <Text className='cedit__gen-sub'>
+                    {autoError}。已经生成好的部分不会重复扣豆，点「重试」接着跑就行。
+                  </Text>
+                  <View className='cedit__gen-actions'>
+                    <View
+                      className='cedit__gen-btn cedit__gen-btn--ghost'
+                      hoverClass='ds-hover'
+                      onClick={onDismissGenerate}
+                    >
+                      稍后再说
+                    </View>
+                    <View
+                      className='cedit__gen-btn cedit__gen-btn--primary'
+                      hoverClass='ds-hover'
+                      onClick={onRetryAuto}
+                    >
+                      重试
+                    </View>
+                  </View>
+                </>
+              ) : (
+                <>
+                  <View className='cedit__gen-spinner' />
+                  <Text className='cedit__gen-title'>正在生成文案与分镜…</Text>
+                  <Text className='cedit__gen-sub'>
+                    关闭等待后仍会继续生成，可稍后从「创作」再次进入
+                  </Text>
+                  <View className='cedit__gen-actions'>
+                    <View
+                      className='cedit__gen-btn cedit__gen-btn--ghost'
+                      hoverClass='ds-hover'
+                      onClick={() => void onCancelGenerate()}
+                    >
+                      取消生成
+                    </View>
+                    <View
+                      className='cedit__gen-btn cedit__gen-btn--primary'
+                      hoverClass='ds-hover'
+                      onClick={onBackgroundGenerate}
+                    >
+                      关闭等待
+                    </View>
+                  </View>
+                </>
+              )}
             </View>
           </View>
         )}
@@ -564,6 +671,13 @@ export default function CreationEdit() {
   const hasShots = detail.shots.length > 0
   // 文案与分镜同属第 1 步「创作」；两者都齐时流程条推进到第 2 步「素材」，提示可以往下走
   const step = hasCopy && hasShots ? 1 : 0
+  // 口播文案的分段：库里存的是一整块**没有换行**的文本（提示词明确要求「不要分点」），
+  // 所以只能在前端切段 —— 好处是存量作品也立刻生效。纯函数 + 守护断言见 utils/copy-text.ts。
+  const copyParagraphs = splitCopyParagraphs(detail.copyText)
+  // 这两行各管各的：有文案就收起「文案款式」，有分镜就收起「镜头复杂度」。
+  // ⚠ 没生成时那一行必须留着 —— 否则用户没地方选，也就走不到「生成」这个动作。
+  const trackPickerVisible = !hasCopy || showTrackPicker
+  const complexityPickerVisible = !hasShots || showComplexityPicker
 
   return (
     <View className='cedit'>
@@ -587,15 +701,25 @@ export default function CreationEdit() {
           <View className='cedit__secbadges'>
             {!!detail.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{detail.trackLabel}</Text>}
             {hasCopy && <Text className='ds-pill ds-pill--ghost'>已生成 · {(detail.copyText ?? '').length} 字</Text>}
+            {/* 已生成后这一行默认收起；要换款式时点这里展开，不用时完全不占视觉 */}
+            {hasCopy && (
+              <Text className='cedit__secmore' onClick={() => setShowTrackPicker((v) => !v)}>
+                {showTrackPicker ? '收起' : '换一款'}
+              </Text>
+            )}
           </View>
         </View>
 
-        <Segmented
-          options={COPY_TRACK_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-          value={track}
-          onChange={onPickTrack}
-        />
-        <Text className='cedit__desc'>{COPY_TRACK_OPTIONS.find((o) => o.value === track)?.desc}</Text>
+        {trackPickerVisible && (
+          <>
+            <Segmented
+              options={COPY_TRACK_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+              value={track}
+              onChange={onPickTrack}
+            />
+            <Text className='cedit__desc'>{COPY_TRACK_OPTIONS.find((o) => o.value === track)?.desc}</Text>
+          </>
+        )}
 
         {editingCopy ? (
           <View className='cedit__editbox'>
@@ -619,9 +743,24 @@ export default function CreationEdit() {
           </View>
         ) : hasCopy ? (
           <>
-            <View className='cedit__copy'>{detail.copyText}</View>
+            {/* 一段一个块：段间距靠逐段加类名，**不用相邻兄弟选择器 `+`**
+                （小程序 wxss 对 `+`/`~` 的支持不稳），也不依赖 pre-wrap 渲染空行。 */}
+            <View className='cedit__copy'>
+              {copyParagraphs.map((p, index) => (
+                <Text
+                  key={`copy-p-${index}`}
+                  className={`cedit__copy-p ${index > 0 ? 'cedit__copy-p--gap' : ''}`}
+                >
+                  {p}
+                </Text>
+              ))}
+            </View>
             <View className='cedit__acts'>
-              <Button className='cedit__act cedit__act--ghost' size='mini' onClick={() => onCopyText(detail.copyText ?? '')}>
+              <Button
+                className='cedit__act cedit__act--ghost'
+                size='mini'
+                onClick={() => onCopyText(copyTextParagraphs(detail.copyText))}
+              >
                 复制
               </Button>
               <Button className='cedit__act cedit__act--ghost' size='mini' onClick={onEditCopy}>
@@ -660,15 +799,27 @@ export default function CreationEdit() {
       <View className='cedit__card'>
         <View className='cedit__secbar'>
           <Text className='cedit__sectitle'>分镜脚本（{detail.shots.length}）</Text>
-          {!!detail.complexityLabel && <Text className='ds-pill ds-pill--gray'>{detail.complexityLabel}</Text>}
+          <View className='cedit__secbadges'>
+            {!!detail.complexityLabel && <Text className='ds-pill ds-pill--gray'>{detail.complexityLabel}</Text>}
+            {/* 同「文案款式」那行：已生成就收起，要改版式再点开 */}
+            {hasShots && (
+              <Text className='cedit__secmore' onClick={() => setShowComplexityPicker((v) => !v)}>
+                {showComplexityPicker ? '收起' : '换版式'}
+              </Text>
+            )}
+          </View>
         </View>
 
-        <Segmented
-          options={COMPLEXITY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-          value={complexity}
-          onChange={onPickComplexity}
-        />
-        <Text className='cedit__desc'>{COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.desc}</Text>
+        {complexityPickerVisible && (
+          <>
+            <Segmented
+              options={COMPLEXITY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+              value={complexity}
+              onChange={onPickComplexity}
+            />
+            <Text className='cedit__desc'>{COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.desc}</Text>
+          </>
+        )}
 
         <View className='cedit__genbox'>
           <Button

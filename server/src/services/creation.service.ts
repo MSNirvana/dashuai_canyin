@@ -107,9 +107,17 @@ export async function listCreations(
   prisma: PrismaClient,
   merchantId: bigint,
   storeId?: bigint,
+  opts: { archived?: boolean } = {},
 ) {
   const rows = await prisma.creation.findMany({
-    where: { merchantId, storeId: storeId ?? undefined, deletedAt: null },
+    where: {
+      merchantId,
+      storeId: storeId ?? undefined,
+      deletedAt: null,
+      // 归档与默认列表**互斥**：归档分类只要已归档的，其余分类（全部/进行中/已就绪）
+      // 一律排除已归档 —— 这就是「归档后不出现在那三个分类」的实现点。
+      archivedAt: opts.archived ? { not: null } : null,
+    },
     orderBy: { createdAt: 'desc' },
     select: {
       id: true,
@@ -121,15 +129,83 @@ export async function listCreations(
       copyText: true,
       status: true,
       createdAt: true,
-      _count: { select: { shots: true } },
+      archivedAt: true,
+      // 列表页要显示**分段进度**（文案 / 分镜 / 素材 / 合成），这里把算进度所需的最小信息
+      // 一次带齐，避免前端为每张卡片再打一次接口（N+1）：
+      //   · 每个分镜的 assetId —— 算「素材传了几个」（非空即已上传）
+      //   · 最新一条渲染任务的 status —— 判断「是否已合成 / 合成中」
+      // 只 select 需要的列、不整行拉；一个创作通常几个到几十个分镜，量可控。
+      shots: { select: { assetId: true } },
+      renderTasks: { select: { status: true }, orderBy: { id: 'desc' }, take: 1 },
     },
   })
-  // 附带中文标签，列表页直接展示「款式 / 复杂度」
-  return rows.map((r) => ({
-    ...r,
-    trackLabel: isCopyTrack(r.track) ? COPY_TRACKS[r.track].label : null,
-    complexityLabel: isComplexity(r.complexity) ? COMPLEXITIES[r.complexity].label : null,
-  }))
+  // 附带中文标签与**服务端算好的进度字段**；原始 shots / renderTasks 数组不下发
+  return rows.map((r) => {
+    const { shots, renderTasks, ...rest } = r
+    return {
+      ...rest,
+      shotsTotal: shots.length,
+      shotsReady: shots.filter((s) => s.assetId !== null).length,
+      renderStatus: renderTasks[0]?.status ?? null,
+      trackLabel: isCopyTrack(r.track) ? COPY_TRACKS[r.track].label : null,
+      complexityLabel: isComplexity(r.complexity) ? COMPLEXITIES[r.complexity].label : null,
+    }
+  })
+}
+
+/**
+ * 归档 / 恢复：先校验归属（不存在、越权、已删一律 4046，不泄露他人数据的存在性），再写时间戳。
+ *
+ * 幂等：已经处于目标状态就直接返回、不重复写 —— 否则「连点两次归档」会把归档时间
+ * 刷成第二次的时间，日后按归档时间做排序/清理的逻辑会被带偏。
+ */
+async function setArchived(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  creationId: bigint,
+  archived: boolean,
+): Promise<{ id: bigint; archived: boolean }> {
+  const row = await prisma.creation.findFirst({
+    where: { id: creationId, merchantId, deletedAt: null },
+    select: { id: true, archivedAt: true },
+  })
+  if (!row) throw new CreationNotFoundError()
+  if (archived === (row.archivedAt !== null)) return { id: creationId, archived }
+  await prisma.creation.update({
+    where: { id: creationId },
+    data: { archivedAt: archived ? new Date() : null },
+  })
+  return { id: creationId, archived }
+}
+
+/** 归档：从「全部 / 进行中 / 已就绪」移出，只在「归档」分类可见 */
+export function archiveCreation(prisma: PrismaClient, merchantId: bigint, creationId: bigint) {
+  return setArchived(prisma, merchantId, creationId, true)
+}
+
+/** 恢复：把归档的创作放回默认列表 */
+export function unarchiveCreation(prisma: PrismaClient, merchantId: bigint, creationId: bigint) {
+  return setArchived(prisma, merchantId, creationId, false)
+}
+
+/**
+ * 删除 = **软删**（写 deletedAt），不是物理删除。
+ *
+ * 为什么软删：① 本项目既有的删除语义就是它 —— `listCreations` / `getCreation` 一直在过滤
+ * `deletedAt: null`，`deleted_at` 列与复合索引也早就建好了，另造一套物理删除会让"已删"
+ * 出现两种状态；② 创作下挂着 shot / render_task 与素材对象，物理删除要处理级联与存储回收，
+ * 且误删不可救。软删后两个分类都查不到，用户侧效果与真删一致。
+ *
+ * 用 updateMany + count 一次完成归属校验与幂等：count=0 涵盖「不存在 / 越权 / 已删」，
+ * 统一抛 4046 —— 刻意不区分，避免泄露他人创作的存在性。
+ */
+export async function deleteCreation(prisma: PrismaClient, merchantId: bigint, creationId: bigint) {
+  const r = await prisma.creation.updateMany({
+    where: { id: creationId, merchantId, deletedAt: null },
+    data: { deletedAt: new Date() },
+  })
+  if (r.count === 0) throw new CreationNotFoundError()
+  return { id: creationId, deleted: true }
 }
 
 export async function createCreation(

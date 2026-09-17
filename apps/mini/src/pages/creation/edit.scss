@@ -60,6 +60,20 @@
     border-radius: 50%;
     animation: cedit-gen-spin 0.8s linear infinite;
   }
+  // 失败态没有转圈，用一个「!」图标占掉 spinner 的位置，
+  // 免得卡片高度在成功/失败之间跳一截。柔红底 + 品牌红字，与全站「浅底提示」一致。
+  &__gen-icon {
+    width: 64rpx;
+    height: 64rpx;
+    margin: 0 auto 28rpx;
+    border-radius: 50%;
+    background: var(--td-brand-color-light);
+    color: var(--td-brand-color);
+    font-size: 34rpx;
+    font-weight: 700;
+    line-height: 64rpx;
+    text-align: center;
+  }
   &__gen-title {
     display: block;
     font-size: 32rpx;
@@ -216,6 +230,13 @@
     flex-wrap: wrap;
     justify-content: flex-end;
   }
+  // 已生成后替代整行的「换一款 / 换版式」小字：比徽标轻，
+  // 但必须点得到 —— 所以给一点内边距当点击热区，别只靠字形大小。
+  &__secmore {
+    font-size: 24rpx;
+    color: var(--td-brand-color);
+    padding: 4rpx 2rpx;
+  }
 
   /* 分段控件上方的说明 / 下方的款式描述 */
   &__hint {
@@ -272,7 +293,15 @@
     font-size: 30rpx;
     line-height: 1.8;
     color: var(--td-text-color-primary);
-    white-space: pre-wrap;
+  }
+  // 一段一个块。段间距**只加在非首段**上：首段要贴着上面的 28rpx 留白，
+  // 末段不要多留白（下面的 &__acts 自带 24rpx 上边距）。
+  // 之所以逐段加类名、不用 `+` / `:first-child`：小程序 wxss 对这类选择器支持不稳。
+  &__copy-p {
+    display: block;
+  }
+  &__copy-p--gap {
+    margin-top: 20rpx;
   }
   &__empty {
     margin-top: 28rpx;

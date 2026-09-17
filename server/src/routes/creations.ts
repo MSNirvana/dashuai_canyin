@@ -53,7 +53,10 @@ const shotPatch = z.object({
 router.get('/', async (req, res) => {
   try {
     const storeId = optionalIdParam(req.query.storeId, 'storeId')
-    const list = await creationSvc.listCreations(prisma, req.merchantId!, storeId)
+    // 归档分类用 ?archived=1 拉取。不传就是默认列表 —— 服务层会排除已归档的，
+    // 所以「归档后不出现在全部/进行中/已就绪」是服务端保证的，不是前端过滤出来的。
+    const archived = req.query.archived === '1' || req.query.archived === 'true'
+    const list = await creationSvc.listCreations(prisma, req.merchantId!, storeId, { archived })
     ok(res, list)
   } catch (e) {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
@@ -109,6 +112,45 @@ router.get('/:id', async (req, res) => {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof creationSvc.CreationNotFoundError) fail(res, 4046, '创作不存在', 404)
     else fail(res, 400, '查询失败', 400)
+  }
+})
+
+/** 归档：从「全部 / 进行中 / 已就绪」移出，只在「归档」分类可见 */
+router.post('/:id/archive', async (req, res) => {
+  try {
+    const r = await creationSvc.archiveCreation(prisma, req.merchantId!, idParam(req.params.id, 'id'))
+    ok(res, r)
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof creationSvc.CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
+    console.error('[creations] 归档异常:', e)
+    fail(res, 500, '归档失败', 500)
+  }
+})
+
+/** 恢复：把归档的创作放回默认列表 */
+router.post('/:id/unarchive', async (req, res) => {
+  try {
+    const r = await creationSvc.unarchiveCreation(prisma, req.merchantId!, idParam(req.params.id, 'id'))
+    ok(res, r)
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof creationSvc.CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
+    console.error('[creations] 恢复异常:', e)
+    fail(res, 500, '恢复失败', 500)
+  }
+})
+
+/** 删除（服务层写 deletedAt 软删）：不可恢复，前端必须先弹确认 */
+router.delete('/:id', async (req, res) => {
+  try {
+    const r = await creationSvc.deleteCreation(prisma, req.merchantId!, idParam(req.params.id, 'id'))
+    ok(res, r)
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof creationSvc.CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
+    console.error('[creations] 删除异常:', e)
+    fail(res, 500, '删除失败', 500)
   }
 })
 

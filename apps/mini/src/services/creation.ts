@@ -31,7 +31,14 @@ export interface CreationItem {
   copyText: string | null
   status: string
   createdAt: string
-  _count?: { shots: number }
+  /** 归档时间（ISO 字符串）。非 null 即在「归档」分类里；默认列表不含它 */
+  archivedAt?: string | null
+  /** 分镜总数 */
+  shotsTotal: number
+  /** 已上传素材的分镜数（分段进度里权重最大的一段） */
+  shotsReady: number
+  /** 最新一条渲染任务的 status；null = 从未发起过合成 */
+  renderStatus: string | null
 }
 
 /** 分镜匹配到的镜头库拍摄手法 */
@@ -77,8 +84,31 @@ export interface Balance {
   available: number
 }
 
-export function listCreations(storeId?: string) {
-  return http.get<CreationItem[]>('/creations', storeId ? { storeId } : undefined)
+/**
+ * 创作列表。
+ * 不传 archived 就是默认列表 —— 服务端会排除已归档的，「归档后不出现在全部/进行中/已就绪」
+ * 由服务端保证。前端**不要**再做一次本地过滤：两边判断不一致时，会出现"刚归档的又冒出来"。
+ */
+export function listCreations(storeId?: string, opts: { archived?: boolean } = {}) {
+  const query: Record<string, string> = {}
+  if (storeId) query.storeId = storeId
+  if (opts.archived) query.archived = '1'
+  return http.get<CreationItem[]>('/creations', Object.keys(query).length ? query : undefined)
+}
+
+/** 归档：从「全部 / 进行中 / 已就绪」移出，只在「归档」分类可见 */
+export function archiveCreation(id: string) {
+  return http.post<{ id: string; archived: boolean }>(`/creations/${id}/archive`)
+}
+
+/** 恢复：把归档的创作放回默认列表 */
+export function unarchiveCreation(id: string) {
+  return http.post<{ id: string; archived: boolean }>(`/creations/${id}/unarchive`)
+}
+
+/** 删除（服务端写 deletedAt 软删）。不可恢复，调用前必须先弹确认 */
+export function deleteCreation(id: string) {
+  return http.del<{ id: string; deleted: boolean }>(`/creations/${id}`)
 }
 
 export function getCreation(id: string) {
@@ -103,6 +133,29 @@ export function updateCreation(
   return http.patch<CreationDetail>(`/creations/${id}`, input)
 }
 
+/**
+ * ★ AI 生成类接口必须单独放宽超时，不能吃 `request.ts` 的默认 30 秒。
+ *
+ * 默认 30 秒对普通读写够用，但**单次 AI 生成实测是 20~72 秒**：
+ *   · 主通道（gpt-5.5）健康时，文案 14~16s、分镜 20~26s；
+ *   · 主通道不可用退到备用通道（deepseek-v4-flash 是思考模型，completion 动辄上万 token）时，
+ *     分镜要 46~72s。
+ * 30 秒卡在中间 ⇒ 服务端其实还在跑、最后也确实成功（豆照扣、分镜也落了库），
+ * 但**前端先超时**，`runAuto` 走 catch → 用户被弹回编辑页，看到的是「生成文案」「生成分镜」
+ * 两个手动按钮 —— 像是刚才那次点击根本没自动生成。2026-09-16 实测就是这个形状
+ * （服务端 72.4s 成功落库 6 条分镜，前端 30s 就断了）。
+ *
+ * 取值算法 = 该场景「候选数 × 单候选超时」，取最坏情况：
+ *   · 分镜：候选 [11, 12, 7] 各 90s ⇒ 最坏 270s ⇒ 取 300s
+ *   · 文案：候选 [11, 7, 12] 各 30s ⇒ 最坏 90s  ⇒ 取 120s
+ * ⚠ 上限而已，正常 15~25 秒就回来；改服务端 `ai_scene.timeout_ms` 或候选数组时要同步重算。
+ *
+ * 实测（2026-09-16，主通道 gpt-5.5 挂掉期间）：文案 44.9s、分镜 90.1s（三候选全败退兜底）。
+ * 都远大于原来的 30 秒默认值 —— 那才是「点了生成却像没生效」的直接原因。
+ */
+const COPY_TIMEOUT_MS = 120_000
+const STORYBOARD_TIMEOUT_MS = 300_000
+
 export function generateCopy(id: string, requestId: string, track?: CopyTrack) {
   return http.post<{
     text: string
@@ -112,7 +165,7 @@ export function generateCopy(id: string, requestId: string, track?: CopyTrack) {
     isFallbackTemplate: boolean
     track: CopyTrack
     trackLabel: string
-  }>(`/creations/${id}/copy`, { requestId, track })
+  }>(`/creations/${id}/copy`, { requestId, track }, { timeout: COPY_TIMEOUT_MS })
 }
 
 export function generateStoryboard(id: string, requestId: string, complexity?: Complexity) {
@@ -126,7 +179,7 @@ export function generateStoryboard(id: string, requestId: string, complexity?: C
     isFallbackTemplate: boolean
     complexity: Complexity
     complexityLabel: string
-  }>(`/creations/${id}/storyboard`, { requestId, complexity })
+  }>(`/creations/${id}/storyboard`, { requestId, complexity }, { timeout: STORYBOARD_TIMEOUT_MS })
 }
 
 /** 编辑分镜脚本（景别 / 时长 / 台词 / 画面要求），不涉及素材 */
