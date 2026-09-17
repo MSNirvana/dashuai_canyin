@@ -17,8 +17,10 @@ import AiCallLogsPage from './pages/AiCallLogs'
 import ShotLibraryPage from './pages/ShotLibrary'
 import WorksPage from './pages/Works'
 import HomeCarouselPage from './pages/HomeCarousel'
+import HomeSloganBannerPage from './pages/HomeSloganBanner'
 import SettingsPage from './pages/Settings'
 import TtsProvidersPage from './pages/TtsProviders'
+import TutorialsPage from './pages/Tutorials'
 
 export default function App() {
   return (
@@ -47,6 +49,8 @@ export default function App() {
           <Route path="/shot-library" element={<ShotLibraryPage />} />
           <Route path="/works" element={<WorksPage />} />
           <Route path="/home-carousel" element={<HomeCarouselPage />} />
+          <Route path="/home-slogan-banner" element={<HomeSloganBannerPage />} />
+          <Route path="/tutorials" element={<TutorialsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/tts-providers" element={<TtsProvidersPage />} />
         </Route>

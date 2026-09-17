@@ -55,3 +55,17 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft
   box-shadow: inset 0 0 0 1px #e1251b;
   border-radius: 6px;
 }
+
+/* 图片上传字段（运营公开图，如首页轮播的「图片」一行）
+   预览框固定 300×112 —— 与轮播卡片 3:1.68 的横向比例接近，运营一眼能判断是否会被裁切 */
+.upload-field { display: flex; align-items: flex-start; gap: 16px; }
+.upload-field__preview {
+  width: 300px; height: 112px; flex: 0 0 auto;
+  object-fit: cover; border-radius: 6px; background: #eee;
+}
+.upload-field__empty {
+  width: 300px; height: 112px; flex: 0 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed #d5d5d5; border-radius: 6px; background: #fafafa;
+}
+.upload-field__actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }

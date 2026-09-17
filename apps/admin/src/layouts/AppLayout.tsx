@@ -29,6 +29,8 @@ const MENU = [
   { label: '镜头库', icon: <ImageIcon />, path: '/shot-library' },
   { label: '优秀作品', icon: <VideoIcon />, path: '/works' },
   { label: '首页轮播图', icon: <ImageIcon />, path: '/home-carousel' },
+  { label: '首页口号图', icon: <ImageIcon />, path: '/home-slogan-banner' },
+  { label: '教学中心', icon: <VideoIcon />, path: '/tutorials' },
   { label: '系统设置', icon: <SettingIcon />, path: '/settings' },
   { label: 'TTS 供应商', icon: <ServiceIcon />, path: '/tts-providers' },
 ]

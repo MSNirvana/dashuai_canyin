@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type ChangeEvent } from 'react'
 import { Button, Dialog, Input, InputNumber, Select, Switch, Tag, message } from 'tdesign-react'
 import DataTable from '../lib/table'
 import Field, { FieldGroup } from '../components/Field'
@@ -20,12 +20,21 @@ import { request } from '../lib/http'
  *   所以小程序拿到的是**字符串**、得自己再 parse。本页存的时候也就存字符串化的数组。
  *   （见 server/src/routes/system-settings.ts）
  *
- * ── 图片地址必须是「可公开访问的完整 URL」──────────────────────────────────
- * 小程序是直接把这个值塞进 <Image src>，它不做签名、也不认对象键。
- * 首页现有那批图在 COS 的 `static/mini/home/` 下（ACL: public-read），
- * 源文件在 apps/mini/src/assets/home/，改图后跑 `npm run assets:upload` 重新上传。
- * 这里**故意不做文件上传控件**：后台目前没有上传接口（优秀作品的封面也是手填 key），
- * 而轮播图是低频运营动作，填 URL + 预览足够；真要做上传，得先加 admin 侧的上传路由。
+ * ── 图片：直接上传，地址由服务端生成，运营不填 ─────────────────────────────
+ * 小程序是直接把这个值塞进 <Image src>：它**不签名、也不认对象键**，所以只能是一条
+ * **长期匿名可读的完整 URL**。于是三种候选地址只有一种能用 ——
+ *   · 签名 URL（服务端媒体那套，1 小时过期）⇒ 用户下次打开就是裂图；
+ *   · 对象键 ⇒ 小程序不知道去哪取；
+ *   · 公开直链 ⇒ 唯一可行。
+ * 为此新增了 `POST /admin/api/v1/uploads/carousel-image`：服务端按**文件内容**判断类型
+ * （魔数嗅探，不信 Content-Type 也不信文件名），写进 COS 的 `static/admin/carousel/`，
+ * 并只给这一个对象设 `ACL: public-read`（桶仍是私有桶，里面还有商家私密素材），
+ * 最后返回 CDN 直链。完整理由（含为什么不能复用商家上传那套、以及为什么这个前缀
+ * 不会被孤儿对象 GC 误删）见 `server/src/services/public-asset.service.ts` 顶部。
+ *
+ * ⚠ 图片字段**只有上传入口，没有手填输入框**（按需求，2026-09-16）。因此编辑一张
+ *   「图片是手填的老数据」时，`form.image` 里那个字符串会**原样保留并提交** ——
+ *   不重新上传就不会动它，不会因为「没有输入框」而把老数据洗空。
  */
 
 type LinkCode = 'NONE' | 'CREATE' | 'CREATIONS' | 'STORES' | 'MEMBER' | 'WORK'
@@ -57,6 +66,14 @@ type Setting = {
 
 const GROUP_KEY = 'home'
 const SETTING_KEY = 'carousel'
+
+/**
+ * 单张图上限。
+ * ⚠ 三处必须一致：这里（前端预校验，纯体验）、
+ *   server/src/services/public-asset.service.ts::MAX_PUBLIC_IMAGE_BYTES（服务端权威校验）、
+ *   deploy/nginx/dashuai-admin.conf 的 client_max_body_size（生产入口，默认 1MB 会先拦掉）。
+ */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 /**
  * 跳转白名单。**必须与小程序端 `apps/mini/src/services/home.ts::CarouselLink` 逐一对应** ——
@@ -146,6 +163,9 @@ export default function HomeCarouselPage() {
   const [open, setOpen] = useState(false)
   const [editingIndex, setEditingIndex] = useState(-1)
   const [form, setForm] = useState<Slide>(EMPTY_SLIDE)
+  const [uploading, setUploading] = useState(false)
+  /** 隐藏的文件选择框。用原生 input 而不是 tdesign 的 <Upload>：见 pickImage 的说明 */
+  const fileRef = useRef<HTMLInputElement>(null)
 
   const load = async () => {
     setLoading(true)
@@ -165,9 +185,10 @@ export default function HomeCarouselPage() {
   useEffect(() => { void load() }, [])
 
   const validate = (s: Slide): string => {
-    if (!s.image.trim()) return '图片地址不能为空'
-    // 小程序直接把它当 <Image src>，填对象键或相对路径都会白图
-    if (!/^https?:\/\//i.test(s.image.trim())) return '图片地址要填完整的 http(s) 链接'
+    if (!s.image.trim()) return '还没上传图片'
+    // 正常情况下地址只可能来自上传接口，这条是防「接口返回了非绝对地址」这类内部错误
+    // 静默漏到小程序：那边是 <Image src>，只会白图，且没有任何提示可循。
+    if (!/^https?:\/\//i.test(s.image.trim())) return '图片地址不是完整的 http(s) 链接，请重新上传'
     if (!s.title.trim()) return '标题不能为空（小程序靠它撑起整张卡片）'
     if (s.link === 'WORK' && !s.workId.trim()) return '跳转选了「指定优秀作品」，就要填作品 ID'
     return ''
@@ -185,6 +206,55 @@ export default function HomeCarouselPage() {
     setEditingIndex(idx)
     setForm({ ...slides[idx]! })
     setOpen(true)
+  }
+
+  /**
+   * 打开文件选择框。
+   *
+   * ★ 为什么用原生 `<input type="file">` 而不是 tdesign 的 `<Upload>`：
+   *   本页要的只是「选一张图 → 传掉 → 拿回一个 URL」，而 `<Upload>` 内部自管一套
+   *   文件列表状态；把它插进这个**由 React state 完全自管**的表单，就得在
+   *   onChange / onSuccess / onError / onRemove 四处手工同步 —— 任何一处漏掉，
+   *   表现都是「组件里显示已上传、表单里其实没有」，而且**不会报错**。
+   *   本后台已经因为 tdesign 表单组件的隐式注入踩过坑（见 components/Field.tsx 顶部），
+   *   对这类「多一份影子状态」的组件保持距离；只要选图 + 上传两个能力，自己写更短也更可控。
+   */
+  const pickImage = () => fileRef.current?.click()
+
+  const uploadImage = async (file: File) => {
+    setUploading(true)
+    try {
+      const r = await request<{ key: string; url: string }>({
+        url: '/uploads/carousel-image',
+        method: 'POST',
+        // 直接发原始字节（不是 multipart）：服务端只有一个文件、没有别的字段，
+        // 而 raw 能让服务端按**文件内容**判断类型。这里带的 Content-Type 只是浏览器
+        // 给出的提示 —— 服务端不信它，真正的类型判断靠魔数嗅探。
+        data: file,
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        // 实例默认 30s，对「几 MB 的图 + 弱网」偏紧，这一条单独放宽
+        timeout: 60_000,
+      })
+      setForm((f) => ({ ...f, image: r.url }))
+      message.success('图片已上传')
+    } catch {
+      /* 已 toast */
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const onFileChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    // ★ 先清空 value 再去做上传：input.value 不清空的话，**再选同一个文件不会触发 change**。
+    //   典型场景是上传失败后重试同一张图 —— 界面毫无反应，看着像按钮坏了。
+    e.target.value = ''
+    if (!file) return
+    if (file.size > MAX_IMAGE_BYTES) {
+      message.warning(`图片不能超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB`)
+      return
+    }
+    void uploadImage(file)
   }
 
   const submitSlide = () => {
@@ -258,8 +328,8 @@ export default function HomeCarouselPage() {
       <div className="page-tip">
         小程序首页顶部的「创作入口」卡片。配 1 张时就是一张静态卡片（不轮播、不显示圆点），
         配 2 张以上才会自动轮播。<br />
-        图片填<b>可公开访问的完整 URL</b>（COS 上 <code>ACL: public-read</code> 的对象，例如
-        <code>static/mini/home/…</code>）；填对象键或相对路径小程序会显示白图。<br />
+        图片<b>直接上传</b>即可 —— 服务端会把它存到对象存储，并返回一条公开直链，不用手填地址。
+        建议 750×420（卡片是 3:1.68 的横向比例），支持 jpg / png / webp / gif，单张不超过 5MB。<br />
         清空全部并保存 = 回退到内置那张默认卡片。改动<b>保存后即时生效</b>，小程序下次进入首页即可看到。
       </div>
 
@@ -314,17 +384,31 @@ export default function HomeCarouselPage() {
       >
         <FieldGroup labelWidth={110}>
           <Field
-            label="图片地址"
+            label="图片"
             required
-            help="完整的 https 链接。建议 750×420 左右（卡片是 3:1.68 的横向比例），否则会被裁切"
+            help="建议 750×420（卡片是 3:1.68 的横向比例），否则会被裁切；支持 jpg / png / webp / gif，单张不超过 5MB"
           >
-            <Input value={form.image} onChange={(v) => setForm((f) => ({ ...f, image: v as string }))} placeholder="https://…/static/mini/home/banner-1.jpg" />
+            <div className="upload-field">
+              {form.image ? (
+                <img className="upload-field__preview" src={form.image} alt="" />
+              ) : (
+                <div className="upload-field__empty muted">未上传</div>
+              )}
+              <div className="upload-field__actions">
+                <Button size="small" loading={uploading} onClick={pickImage}>
+                  {form.image ? '更换图片' : '上传图片'}
+                </Button>
+                <span className="muted">上传后自动托管，地址由服务端生成，无需填写</span>
+              </div>
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              style={{ display: 'none' }}
+              onChange={onFileChange}
+            />
           </Field>
-          {!!form.image && /^https?:\/\//i.test(form.image) && (
-            <Field label=" ">
-              <img src={form.image} alt="" style={{ width: 300, height: 112, objectFit: 'cover', borderRadius: 6, background: '#eee' }} />
-            </Field>
-          )}
           <Field label="上方小字" help="留空则不显示">
             <Input value={form.kicker} onChange={(v) => setForm((f) => ({ ...f, kicker: v as string }))} placeholder="从一道菜开始" />
           </Field>
