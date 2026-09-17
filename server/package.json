@@ -41,7 +41,12 @@
     "input-trim:verify": "tsx scripts/verify-input-trim.ts",
     "color-preview:verify": "tsx scripts/verify-color-preview.ts",
     "profile:verify": "tsx scripts/verify-profile.ts",
-    "creation-archive:verify": "tsx scripts/verify-creation-archive.ts"
+    "creation-archive:verify": "tsx scripts/verify-creation-archive.ts",
+    "tutorial:verify": "tsx scripts/verify-tutorial.ts",
+    "chatcut:probe": "tsx scripts/chatcut-probe.ts",
+    "chatcut:authorize": "tsx scripts/chatcut-authorize.ts",
+    "chatcut:call": "tsx scripts/chatcut-call.ts",
+    "chatcut:smoke": "tsx scripts/chatcut-smoke.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

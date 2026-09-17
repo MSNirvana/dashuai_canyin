@@ -163,6 +163,11 @@ model Creation {
   storeId    BigInt    @map("store_id") @db.UnsignedBigInt()
   dishId     BigInt?   @map("dish_id") @db.UnsignedBigInt()
   title      String?   @db.VarChar(255)
+  // 「你想怎么拍？」—— 用户自己写的一句话（选填，≤200 字）。
+  // 会作为 {{userIdea}} 进提示词，且在文案与分镜两个场景里都是**最高优先级**的内容要求。
+  // 存成列而不是只当请求参数：重试 / 换一款 / 重新生成分镜时都要复用同一句话，
+  // 让用户重填一遍是没道理的（文案与分镜是两次独立调用，参数里各带一份很容易漂）。
+  userIdea   String?   @map("user_idea") @db.VarChar(200)
   track      String    @db.VarChar(24)
   complexity String    @db.VarChar(16)
   copyText   String?   @map("copy_text") @db.Text
@@ -263,6 +268,37 @@ model ExcellentWork {
   @@map("excellent_work")
 }
 
+// 教学中心（小程序「我的」页那个四宫格）：平台级运营内容，视频与封面都由后台管理员上传。
+//
+// ── 三件事与其它表不同，改这里之前先读 ──────────────────────────────────
+// 1) category 是**代码里的固定白名单**（src/lib/tutorial-categories.ts），故意不建分类表：
+//    四个入口的文案与图标本来就要写死在客户端（离线也要能显示），建表只会多一份会漂移的真相。
+//    schema 里存 String 是本项目一贯做法（全库没有 enum）。
+// 2) videoKey / coverKey 是**对象键**，前缀 `tutorials/`。
+//    ⚠ 必须同步进 gc-orphan-objects.ts::collectReferencedKeys()：漏了会在保留期（默认 24h）
+//      后把在用的教学视频当孤儿删掉 —— 延迟发作、且日志里没有任何报错。
+// 3) 删除是**硬删**（没有 deletedAt）：这一行是这些对象的唯一引用，软删会留下永久无法回收的
+//    大文件。adminRemoveTutorial() 会连存储里的对象一起删；删失败也不致命，
+//    孤儿由 GC 兜底（它比软删更晚，但终究会被回收）。
+model TutorialVideo {
+  id         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  // SHOOTING 拍摄技巧 / EDITING 剪辑教程 / OPERATION 运营知识 / MANUAL 使用手册
+  category   String   @db.VarChar(16)
+  title      String   @db.VarChar(128)
+  videoKey   String?  @map("video_key") @db.VarChar(512)
+  coverKey   String?  @map("cover_key") @db.VarChar(512)
+  // 由客户端上报（管理员无法从文件里读到时长），只用于列表右侧的「03:12」展示
+  durationMs Int?     @map("duration_ms") @db.UnsignedInt
+  sort       Int      @default(0)
+  // false = 下架：小程序端不再下发，但行与对象都保留（与「删除」区分开）
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  @@index([category, enabled, sort])
+  @@map("tutorial_video")
+}
+
 model RenderTask {
   id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
   merchantId    BigInt    @map("merchant_id") @db.UnsignedBigInt()
@@ -311,11 +347,11 @@ model BeanAccount {
   id            BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
   merchantId    BigInt   @unique @map("merchant_id") @db.UnsignedBigInt()
   balance       BigInt   @default(0)
-  /// 会员周期赠豆：随会员到期清零（由 grant-expiry 调度）
+  /// 会员周期赠积分：随会员到期清零（由 grant-expiry 调度）
   grantBalance  BigInt   @default(0) @map("grant_balance")
-  /// 注册赠豆：拉新奖励，**永久有效、不随会员到期清零**
+  /// 注册赠积分：拉新奖励，**永久有效、不随会员到期清零**
   /// 与 grantBalance 分开成桶，是因为两者性质不同（拉新承诺 vs 付费周期权益），
-  /// 混在一个桶里会导致「会员到期把注册赠豆一起清掉」，且账务上无法区分来源。
+  /// 混在一个桶里会导致「会员到期把注册赠积分一起清掉」，且账务上无法区分来源。
   grantRegisterBalance BigInt @default(0) @map("grant_register_balance")
   frozen        BigInt   @default(0)
   totalRecharge BigInt   @default(0) @map("total_recharge")
@@ -380,10 +416,10 @@ model BeanLedger {
   type         String   @db.VarChar(24)
   bucket       String   @default("RECHARGE") @db.VarChar(16)
   amount       BigInt
-  /// 本行 amount 中来自「赠豆桶」的绝对数量（>=0）。
-  /// bucket 只能标一个主桶，混合消费（赠豆 + 充值豆）时会失真，故单独留一列做精确对账。
+  /// 本行 amount 中来自「赠积分桶」的绝对数量（>=0）。
+  /// bucket 只能标一个主桶，混合消费（赠积分 + 充值积分）时会失真，故单独留一列做精确对账。
   grantAmount  BigInt   @default(0) @map("grant_amount")
-  /// 上一列中，来自「注册赠豆」桶的部分（会员赠豆用量 = grantAmount - grantRegisterAmount）。
+  /// 上一列中，来自「注册赠积分」桶的部分（会员赠积分用量 = grantAmount - grantRegisterAmount）。
   grantRegisterAmount BigInt @default(0) @map("grant_register_amount")
   balanceAfter BigInt   @map("balance_after")
   grantAfter   BigInt   @default(0) @map("grant_after")
@@ -595,9 +631,9 @@ model AiCallLog {
   totalTokens         Int      @default(0) @map("total_tokens") @db.UnsignedInt()
   costFen             Int      @default(0) @map("cost_fen") @db.UnsignedInt()
   beanCharged         BigInt   @default(0) @map("bean_charged")
-  /// 场景单次上限（ai_scene.bean_price）截断掉的豆数 = 应付 − 实收，由平台承担。
+  /// 场景单次上限（ai_scene.bean_price）截断掉的积分数 = 应付 − 实收，由平台承担。
   /// 没有这一列时，上限「是安全网还是常态折扣」完全看不出来 ——
-  /// 实测 copy_intro 10/10 次调用都被截断 3 豆，而日志里毫无痕迹。
+  /// 实测 copy_intro 10/10 次调用都被截断 3 积分，而日志里毫无痕迹。
   absorbedBeans       BigInt   @default(0) @map("absorbed_beans")
   beanBucket          String?  @map("bean_bucket") @db.VarChar(16)
   latencyMs           Int      @default(0) @map("latency_ms") @db.UnsignedInt()

@@ -9,6 +9,7 @@
     "server:dev": "cd server && npm run dev",
     "server:typecheck": "cd server && npm run typecheck",
     "mini:typecheck": "cd apps/mini && npm run typecheck",
+    "verify:home-banner": "node scripts/verify-home-banner-contract.mjs",
     "mini:build:prod": "bash scripts/build-weapp-prod.sh",
     "deploy:server": "bash deploy/deploy.sh"
   }

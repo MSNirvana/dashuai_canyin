@@ -22,6 +22,7 @@
     "typecheck": "tsc --noEmit",
     "verify:dist": "node scripts/verify-weapp-dist.mjs",
     "assets:upload": "node scripts/upload-static-assets.mjs",
+    "assets:slogan": "node scripts/render-slogan-banner.mjs",
     "tdesign:closure": "node scripts/tdesign-closure.mjs",
     "copy-paragraphs:verify": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-copy-paragraphs.ts"
   },
