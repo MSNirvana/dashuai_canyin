@@ -108,6 +108,29 @@ function guideSubscription() {
   })
 }
 
+/**
+ * 把 Taro.request 的**网络层**失败转成可读的 ApiError。
+ *
+ * ★ 为什么必须转：当请求压根没到服务端时（域名不在合法域名白名单、连接被拒、超时），
+ *   微信抛出的是 `{ errMsg: 'request:fail ...' }` —— 这个对象**没有 `message` 字段**。
+ *   而调用方普遍写 `(err as { message?: string })?.message ?? 'XX失败，请稍后重试'`，
+ *   于是真实原因被吞成一句毫无信息量的兜底文案：toast 上说"发送失败，请稍后重试"，
+ *   实际可能是"域名不在白名单"或"连不上后端"，排查时只能靠猜。
+ *   转成带 message 的 ApiError 后，toast 上直接能读出属于哪一类，
+ *   并在括号里附带原始 errMsg，真机排查不用再捞 console。
+ */
+function toNetworkError(e: unknown): ApiError {
+  const errMsg = (e as { errMsg?: string })?.errMsg ?? ''
+  const hint = /url not in domain list/i.test(errMsg)
+    ? '域名未加入小程序「合法域名」白名单'
+    : /ERR_CONNECTION|ECONNREFUSED|FAILED_TO_CONNECT|fail to connect/i.test(errMsg)
+      ? '连不上服务器（后端没启动／地址或端口不对／手机与电脑不同网段）'
+      : /timeout/i.test(errMsg)
+        ? '请求超时（网络慢或服务端无响应）'
+        : '网络异常'
+  return { code: -1, message: `${hint}〔${errMsg || 'request:fail'}〕` }
+}
+
 interface RequestOptions<T> {
   url: string
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
@@ -124,20 +147,25 @@ export async function request<T>(options: RequestOptions<T>): Promise<T> {
 
   const send = async (token?: string | null) => {
     const storeId = Taro.getStorageSync<string>(STORAGE_KEYS.currentStoreId)
-    const res = await Taro.request({
-      url: `${BASE_URL}${url}`,
-      method,
-      data: data as never,
-      timeout,
-      header: {
-        'content-type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        'X-Platform': PLATFORM,
-        ...(storeId ? { 'X-Store-Id': storeId } : {}),
-        ...header,
-      },
-    })
-    return res
+    try {
+      const res = await Taro.request({
+        url: `${BASE_URL}${url}`,
+        method,
+        data: data as never,
+        timeout,
+        header: {
+          'content-type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'X-Platform': PLATFORM,
+          ...(storeId ? { 'X-Store-Id': storeId } : {}),
+          ...header,
+        },
+      })
+      return res
+    } catch (e) {
+      // 网络层失败不会进到下面的 body 解析，必须在这里就转成带 message 的错误
+      throw toNetworkError(e)
+    }
   }
 
   let token = Taro.getStorageSync<string>(STORAGE_KEYS.token)

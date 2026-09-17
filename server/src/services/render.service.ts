@@ -22,6 +22,12 @@ export const RENDER_BEAN_RECOLOR = 10n
 
 export type RenderMode = 'FULL' | 'RECOLOR'
 
+/**
+ * 合成输出规格。**唯一源**：提交合成（写进 paramsJson）、worker 兜底、调色预览都用它。
+ * 调色预览必须与成片同分辨率 —— 锐化是像素半径卷积，换分辨率会让预览看起来比成片更锐/更糊。
+ */
+export const RENDER_OUTPUT = { width: 1080, height: 1920, fps: 30 } as const
+
 /** 产品档位：BASIC 粗剪 / AI 全自动 / PREMIUM 人工精剪 */
 export type RenderGrade = 'BASIC' | 'AI' | 'PREMIUM'
 
@@ -233,20 +239,19 @@ export function clipDurationMs(clip: RenderClip): number | null {
 }
 
 /** 提交合成：校验 → 组装 clips → 创建任务 → 两阶段扣豆 → (演示)模拟完成 */
-export async function submitRender(
+/**
+ * 取「本次合成要用的片段集合」（按分镜顺序）。
+ *
+ * ★ 为什么必须抽成一个函数：调色预览（render/preview.ts）要用**完全相同**的片段集合与顺序，
+ *   否则两侧算出的归一化缓存键不同 ⇒ 预览每次都判定缓存未命中 ⇒ 现场把素材全量归一化。
+ *   这就是「预览偶尔莫名很慢」的根因，而且不报任何错、只是慢。
+ */
+export async function buildRenderClips(
   prisma: PrismaClient,
   merchantId: bigint,
   creationId: bigint,
-  input: SubmitRenderInput,
-): Promise<{ task: RenderTaskView; duplicated: boolean }> {
-  const reqId = input.requestId ?? randomUUID()
-
-  // v5：订阅是使用合成出片的硬前提（在冻结积分之前拦截）
-  await requireSubscription(prisma, merchantId, '合成出片')
-
-  const creation = await getCreation(prisma, merchantId, creationId) // 校验归属
-
-  // 拉取带素材的分镜（按顺序）。Shot 未建 asset 关系，单独查 media_asset
+  storeId: bigint,
+): Promise<RenderClip[]> {
   const shots = await prisma.shot.findMany({
     where: { creationId, assetId: { not: null } },
     orderBy: { seq: 'asc' },
@@ -256,7 +261,7 @@ export async function submitRender(
   // 多个分镜可复用同一段素材，按 id 去重后再校验归属，避免重复计数导致误判越权
   const assetIds = [...new Set(shots.map((s) => s.assetId!))]
   const assets = await prisma.mediaAsset.findMany({
-    where: { id: { in: assetIds }, merchantId, storeId: creation.storeId, deletedAt: null },
+    where: { id: { in: assetIds }, merchantId, storeId, deletedAt: null },
   })
   if (assets.length !== assetIds.length) throw new Error('创作中的素材不属于当前商家门店或已被删除')
   const assetMap = new Map(assets.map((a) => [a.id, a]))
@@ -278,6 +283,22 @@ export async function submitRender(
     })
     .filter((c): c is RenderClip => c !== null)
   if (clips.length === 0) throw new RenderNoAssetError()
+  return clips
+}
+
+export async function submitRender(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  creationId: bigint,
+  input: SubmitRenderInput,
+): Promise<{ task: RenderTaskView; duplicated: boolean }> {
+  const reqId = input.requestId ?? randomUUID()
+
+  // v5：订阅是使用合成出片的硬前提（在冻结积分之前拦截）
+  await requireSubscription(prisma, merchantId, '合成出片')
+
+  const creation = await getCreation(prisma, merchantId, creationId) // 校验归属
+  const clips = await buildRenderClips(prisma, merchantId, creationId, creation.storeId)
 
   const mode: RenderMode = input.mode === 'RECOLOR' ? 'RECOLOR' : 'FULL'
   const color = input.color ?? DEFAULT_COLOR
@@ -366,7 +387,7 @@ export async function submitRender(
           chatcut,
           creationId: creationId.toString(),
           title: creation.title ?? `大帅餐饮成片-${creationId.toString()}`,
-          output: { width: 1080, height: 1920, fps: 30 },
+          output: RENDER_OUTPUT,
           clips,
         } as unknown as Prisma.InputJsonValue,
         requestId: reqId,

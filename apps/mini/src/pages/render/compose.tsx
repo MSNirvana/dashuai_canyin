@@ -3,7 +3,7 @@ import { View, Text, Button, Slider, Video, Image, Switch, Textarea } from '@tar
 import Taro, { useDidShow, useDidHide } from '@tarojs/taro'
 import { getCreation, type CreationDetail } from '../../services/creation'
 import {
-  submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl, getGradeCapabilities,
+  submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl, getGradeCapabilities, previewColor,
   type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions, CHATCUT_VOICES,
 } from '../../services/render'
 import { useMerchantStore } from '../../store/merchant'
@@ -26,6 +26,42 @@ const STATUS_LABEL: Record<string, string> = {
   QUEUED: '排队中', RUNNING: '合成中', MANUAL_PENDING: '等待接单', MANUAL_DOING: '人工剪辑中',
   SUCCESS: '已完成', FAILED: '失败', TIMEOUT: '超时', CANCELLED: '已取消',
   REFUND_PENDING: '退款确认中', SETTLEMENT_PENDING: '退款确认中',
+}
+
+/** 调色四轴：数组顺序即界面顺序。标签只用于展示，服务端只认 key */
+const COLOR_AXES: [keyof ColorGrade, string][] = [
+  ['brightness', '亮度'],
+  ['contrast', '对比度'],
+  ['saturation', '饱和度'],
+  ['sharpen', '锐化'],
+]
+
+/** 松手后等这么久再请求精确预览：连续微调只发最后一次，不把服务端打满 */
+const COLOR_PREVIEW_DEBOUNCE_MS = 800
+
+const isNoopColor = (c: ColorGrade) => !c.brightness && !c.contrast && !c.saturation && !c.sharpen
+const colorSignature = (c: ColorGrade) => `${c.brightness}/${c.contrast}/${c.saturation}/${c.sharpen}`
+
+/**
+ * 拖动滑块时的**近似**滤镜：只为「松手前先看到变化趋势」，精确结果一律以服务端预览为准。
+ * 与服务端 buildColorFilter（ffmpeg 的 eq / unsharp）的对应关系逐个说清：
+ *
+ *   · contrast / saturation —— 语义与 CSS contrast()/saturate() **一致**，公式也一致
+ *     （都是 1 + v/100），所以直接照搬。Slider 区间本就是 [-100,100]，
+ *     1+v/100 天然落在 ffmpeg 的 clamp 窗口（0..2 / 0..3）内，不需要再钳一次。
+ *   · brightness —— **只能近似，别当成准的**：ffmpeg eq 的 brightness 是**加法**偏移
+ *     （在 YUV 上加常数），而 CSS brightness() 是**乘法**缩放，加法没有等价的 CSS 写法。
+ *     这里用乘法做方向性近似，并刻意把系数压到 0.5：宁可欠一点，也不要过冲 ——
+ *     过冲会让用户朝反方向调回来，比「变化不明显」更糟。
+ *   · sharpen —— **故意不实现**：CSS 没有任何锐化滤镜。若拿 contrast 之类顶替，
+ *     「拖动锐化看不出变化」这个真实信息就被掩盖了，用户只会一路往上推 —— 那才是骗人。
+ *     锐化以松手后的服务端预览为准。
+ */
+function cssApproxFilter(c: ColorGrade): string {
+  const parts = [`contrast(${(1 + c.contrast / 100).toFixed(3)})`, `saturate(${(1 + c.saturation / 100).toFixed(3)})`]
+  // -100 时系数为 0.5（而不是 0，那会整幅变黑）；亮度放最前更符合阅读直觉
+  if (c.brightness) parts.unshift(`brightness(${Math.max(0, 1 + (c.brightness / 100) * 0.5).toFixed(3)})`)
+  return parts.join(' ')
 }
 
 // 仅作默认配置参考，不替代服务端实际结算。
@@ -58,15 +94,54 @@ export default function RenderCompose() {
   const [refreshingHistory, setRefreshingHistory] = useState(false)
   // P0-5：不可用档位 → 原因文案。空对象表示「都可用」（含能力接口拉取失败时的保守放行）
   const [gradeIssues, setGradeIssues] = useState<Partial<Record<RenderGrade, string>>>({})
+  // 整片调色预览：拖动中显示静帧近似，松手后才请求服务端的整片精确预览
+  const [draggingAxis, setDraggingAxis] = useState<keyof ColorGrade | null>(null)
+  const [colorPreviewUrl, setColorPreviewUrl] = useState<string | null>(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [previewError, setPreviewError] = useState('')
+  /**
+   * 已成功预览过的参数指纹（null = 当前没有可用的调色预览）。
+   *
+   * ★ 用 state 而不是 ref：它要参与**渲染判断**（决定画面显示静帧近似还是播视频），
+   *   放 ref 里改完不触发重渲染，画面会卡在静帧上出不来。
+   * ★ 用「当前指纹 vs 已预览指纹」推导「脏」，而不是另开一个 boolean 标志位：
+   *   标志位有两处要同步（改参数时置脏、预览成功时洗净），漏一处就是静默错画面
+   *   —— 典型表现是松手后画面闪回上一版旧预览。推导出来的值不可能失同步。
+   */
+  const [previewedSignature, setPreviewedSignature] = useState<string | null>(null)
   const submitLock = useRef(false)
   const previewVersion = useRef(0)
+  const colorPreviewVersion = useRef(0)
+  const colorPreviewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const loadVersion = useRef(0)
   const pendingTask = renders.find((task) => ACTIVE_STATUS.includes(task.status)) ?? null
   const lastSuccess = renders.find((task) => task.status === 'SUCCESS') ?? null
   const missingShots = detail?.shots.filter((shot) => !shot.assetId) ?? []
   const materialsReady = !!detail?.shots.length && missingShots.length === 0
 
+  /**
+   * 丢掉当前的调色预览态（并取消待发的防抖请求）。三个场景必须调用它：
+   *   ① 用户明确要看别的东西（点分镜、点成片）—— 播放器该换成他点的那条；
+   *   ② 有新成片成功产出 —— 成片比调色预览更该被看到；
+   *   ③ 离开本页 —— 预览链接是签名过的、会过期，留着下次回来多半播不了。
+   * version++ 的作用是让「已经发出去、还在飞」的那次请求回来时被丢弃，
+   * 否则它会把刚清掉的状态又写回去（表现为：明明点了成片，过两秒画面又跳回调色预览）。
+   */
+  const clearColorPreview = useCallback(() => {
+    if (colorPreviewTimer.current) {
+      clearTimeout(colorPreviewTimer.current)
+      colorPreviewTimer.current = undefined
+    }
+    colorPreviewVersion.current += 1
+    setPreviewedSignature(null)
+    setColorPreviewUrl(null)
+    setPreviewing(false)
+    setPreviewError('')
+    setDraggingAxis(null)
+  }, [])
+
   const showResult = useCallback(async (task: RenderTask) => {
+    clearColorPreview()
     const version = ++previewVersion.current
     setSelectedResult(task)
     setVideoUrl(null)
@@ -80,7 +155,7 @@ export default function RenderCompose() {
     } catch (error) {
       if (version === previewVersion.current) setResultError((error as Error).message || '获取成片失败，请重试')
     }
-  }, [])
+  }, [clearColorPreview])
 
   const load = useCallback(async () => {
     if (!id) { setLoadError('缺少创作编号'); return }
@@ -127,8 +202,14 @@ export default function RenderCompose() {
     setVisible(false)
     loadVersion.current += 1
     previewVersion.current += 1
+    // 预览链接是签名过的、会过期，离开就丢掉；下次回来按需重算（服务端有缓存，很快）
+    clearColorPreview()
   })
-  useEffect(() => () => { loadVersion.current += 1; previewVersion.current += 1 }, [])
+  useEffect(() => () => {
+    loadVersion.current += 1
+    previewVersion.current += 1
+    if (colorPreviewTimer.current) clearTimeout(colorPreviewTimer.current)
+  }, [])
 
   useEffect(() => {
     Taro.setNavigationBarTitle({ title: '合成成片' })
@@ -174,11 +255,36 @@ export default function RenderCompose() {
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [visible, id, pendingTask?.id, pollRetry, refreshMe, showResult])
 
+  /**
+   * 把播放窗滚进视野（**仅当它当前不在屏幕上**）。
+   *
+   * 「分镜素材」在播放窗**上方**，列表一长、或用户正停在列表中部时，播放窗其实在屏幕外 ——
+   * 点缩略图会「看着没反应」，用户以为按钮坏了。所以预览前先把播放窗露出来。
+   * ★ 已经在视野里就**绝不滚**：无条件滚动会把用户当前位置顶掉，列表短时尤其恼人。
+   * ★ 注意 boundingClientRect 的 top/bottom 是**视口相对**坐标（不是文档坐标），
+   *   所以直接和 windowHeight 比即可，不需要再叠一次 scrollTop。
+   */
+  const revealPreview = () => {
+    Taro.createSelectorQuery()
+      .select('#rcompose-preview')
+      .boundingClientRect()
+      .exec((res) => {
+        const rect = res[0] as { top: number; bottom: number } | null
+        if (!rect) return
+        const windowHeight = Taro.getWindowInfo().windowHeight
+        if (rect.top >= 0 && rect.bottom <= windowHeight) return
+        void Taro.pageScrollTo({ selector: '#rcompose-preview', duration: 260 })
+      })
+  }
+
   const previewShot = async (assetId: string) => {
+    clearColorPreview()
     const version = ++previewVersion.current
     setSelectedResult(null)
     setVideoUrl(null)
     setResultError('')
+    // 先滚再拉地址：等待期间用户就能看到播放窗，不至于「点了没反应」
+    revealPreview()
     try {
       const result = await getPlayUrl(assetId)
       if (version !== previewVersion.current) return
@@ -187,6 +293,68 @@ export default function RenderCompose() {
     } catch (error) {
       if (version === previewVersion.current) setResultError((error as Error).message || '素材播放失败，请重试')
     }
+  }
+
+  /**
+   * 请求服务端的「整片精确预览」。
+   *
+   * 触发时机：松手（Slider onChange）之后防抖 0.8s。**拖动过程中绝不发请求** —— 一次预览要跑
+   * 一遍整片重编码，跟着拖动频率发等于把服务器当计算器用（服务端也有滑动窗口限流兜底）。
+   */
+  const requestColorPreview = useCallback(async (next: ColorGrade) => {
+    if (!id) return
+    if (isNoopColor(next)) {
+      // 四轴都回到 0 = 没有可预览的变化，服务端会直接 4014 拒掉。客户端先自己收手，
+      // 顺手清掉上一次的预览，免得画面上留着「旧的调色」误导人。
+      clearColorPreview()
+      return
+    }
+    // 素材不齐时服务端必然 4003，别白跑一趟；页面上方的素材提示已经在引导用户去补素材
+    if (!materialsReady) return
+    const signature = colorSignature(next)
+    if (signature === previewedSignature) return
+    const version = ++colorPreviewVersion.current
+    setPreviewing(true)
+    setPreviewError('')
+    try {
+      const result = await previewColor(id, next)
+      if (version !== colorPreviewVersion.current) return
+      if (!result.url) throw new Error('预览地址暂不可用，请重试')
+      setPreviewedSignature(signature)
+      setColorPreviewUrl(result.url)
+    } catch (error) {
+      if (version !== colorPreviewVersion.current) return
+      // 失败时**不**记指纹：用户什么都不改再点一次「重新预览」应该是真的重试，
+      // 而不是被上面那句去重直接挡掉（那样看起来像按钮坏了）。
+      setPreviewError((error as Error).message || '预览生成失败，请重试')
+    } finally {
+      if (version === colorPreviewVersion.current) setPreviewing(false)
+    }
+  }, [id, materialsReady, previewedSignature, clearColorPreview])
+
+  /**
+   * Slider 的取值入口。分两个相位，这是本功能的核心约定：
+   *   · dragging（onChanging，拖动过程中）—— 只更新本地数值，让静帧跟手变色，**不发请求**。
+   *   · settled（onChange，松手或点一下）—— 清掉拖动标记，防抖后请求整片精确预览。
+   *
+   * 拖动中之所以用「静帧 + CSS 近似滤镜」而不是给 <video> 加滤镜：video 是原生组件，
+   * 官方明确「样式对原生组件内部无效」，这条路本来就不通（更何况锐化根本没有对应的 CSS 滤镜）。
+   */
+  const changeColor = (axis: keyof ColorGrade, value: number, phase: 'dragging' | 'settled') => {
+    const next = { ...color, [axis]: value }
+    setColor(next)
+    if (phase === 'dragging') {
+      setDraggingAxis(axis)
+      return
+    }
+    setDraggingAxis(null)
+    if (colorPreviewTimer.current) clearTimeout(colorPreviewTimer.current)
+    colorPreviewTimer.current = setTimeout(() => { void requestColorPreview(next) }, COLOR_PREVIEW_DEBOUNCE_MS)
+  }
+
+  const resetColor = () => {
+    setColor(DEFAULT_COLOR)
+    clearColorPreview()
   }
 
   const reloadHistory = async () => {
@@ -224,6 +392,21 @@ export default function RenderCompose() {
     } catch {
       setResultError('保存失败，请检查相册权限或复制下载链接。重复下载不扣积分。')
     } finally { setSaving(false) }
+  }
+
+  /**
+   * 底部「?」：把结算口径一次说清。
+   * 档位系数直接从 GRADE_RATIO 生成，**不在文案里另写一份数字** —— 费率改了这里跟着变，
+   * 不会出现「弹窗写着 1.5×、卡片上却是别的数」。
+   */
+  const showCostHelp = () => {
+    const ratios = GRADE_OPTIONS.map((option) => `${option.title} ${GRADE_RATIO[option.key].toFixed(1)}×`).join('、')
+    void Taro.showModal({
+      title: '积分怎么算',
+      content: `参考预估按每秒积分与档位系数计算（${ratios}），按实际时长结算，失败全额返还。`,
+      showCancel: false,
+      confirmText: '知道了',
+    })
   }
 
   const doRender = async (mode: 'FULL' | 'RECOLOR') => {
@@ -275,6 +458,29 @@ export default function RenderCompose() {
   const previewedGrade = selectedResult
     ? GRADE_OPTIONS.find((option) => option.key === selectedResult.grade)?.title || selectedResult.grade
     : ''
+  // 拖动中的近似预览需要一张静帧来承载 CSS 滤镜，取第一张有封面的分镜。
+  // 用静帧而不是「当前正在播的某一帧」，是因为 video 是原生组件、内部渲染吃不到样式 ——
+  // 这是刻意的取舍，不是图省事。
+  const stillCover = detail.shots.find((shot) => shot.assetId && shot.coverUrl)?.coverUrl ?? null
+  // 「当前参数还没被精确预览过」⇒ 该显示静帧近似。全 0 不算脏：那时根本没有可预览的变化。
+  const colorDirty = !isNoopColor(color) && colorSignature(color) !== previewedSignature
+  /**
+   * 显示静帧近似的条件，要盖住从「按下滑块」到「精确预览拿到」的**整段**窗口：
+   * 拖动中 → 松手后的 0.8s 防抖等待 → 请求中 → 请求失败（配错误提示收尾）。
+   * ⚠ 中间那段最容易漏：松手时 draggingAxis 已清空、而 previewing 要等防抖到期才置起，
+   *   少一项就会在这 ≤0.8s 里闪回上一版旧预览 —— 看着像操作失败。
+   * materialsReady 也是必要条件：素材不齐时预览不会发起（服务端 4003），
+   *   否则静帧会一直停在「正在生成…」上不动。
+   */
+  const showingStill = materialsReady && !!stillCover && (draggingAxis !== null || colorDirty || previewing || !!previewError)
+  const showingColorPreview = !showingStill && !!colorPreviewUrl
+  const playUrl = colorPreviewUrl ?? videoUrl
+  const previewBadge = showingStill ? '调色近似' : showingColorPreview ? '调色预览' : previewedGrade
+  const stillLabel = draggingAxis !== null ? '松手后生成整片精确预览' : '正在生成整片精确预览…'
+  // AI 档的调色参数**不会被应用**：worker 在 aiMode 下直接把成片交给 ChatCut 出片然后 return
+  // （server/src/render/worker.ts 的 processTask），调色只作用于「基础生成」。
+  // 所以这里不摆一组按了也不起作用的滑块 —— 有反应但没效果，比干脆说明更糟。
+  const colorUnsupported = grade === 'AI'
   return (
     <View className='rcompose'>
       <View className='rcompose__stage'>
@@ -292,17 +498,92 @@ export default function RenderCompose() {
         </Text>
       </View>
 
-      {/* ── 预览 ── */}
-      <View className='rcompose__preview'>
-        {videoUrl ? (
-          <Video className='rcompose__video' src={videoUrl} controls autoplay={false} onError={() => setResultError('播放失败，请重试获取地址')} />
+      {/* ── 分镜素材 ── 放在播放窗**上方**：点缩略图 → 紧邻的下方播放窗出片。
+          原来它在整页最底部（在生成方式/调色/任务/成片记录之后），点了要看结果得先滚半页 ——
+          点缩略图「像没反应」的根因就在这儿。卡片紧跟页头，所以用 --lead 去掉重复的 24rpx 上边距
+          （页头自己已经有 padding-bottom: 24rpx）。 */}
+      <View className='rcompose__card rcompose__card--lead'>
+        <View className='rcompose__history-heading'>
+          <Text className='rcompose__sectitle'>分镜素材 · 已上传 {detail.shots.length - missingShots.length}/{detail.shots.length}</Text>
+          {/* 「缺哪几个分镜」不再用文字说一遍 —— 缺素材的格子自己就写着「缺素材」，重复只是噪音。
+              但「去上传」这个**入口**必须留着：素材不齐就点不了「生成成片」，
+              没了入口用户只能退回上一页找路。 */}
+          {!materialsReady && (
+            <Button size='mini' onClick={() => Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })}>去上传素材</Button>
+          )}
+        </View>
+        {/* 一行两个。格子宽按 50% − 半个列间距算、不写死 rpx：卡片内外边距一改，
+            写死的宽度就会把第二个挤到下一行（同 dish/detail 的三列写法） */}
+        <View className='rcompose__clips'>
+          {detail.shots.map((shot) => (
+            <View className='rcompose__clip' key={shot.id}>
+              {/* 整块缩略图可点即预览：两列布局里放不下一个独立的「预览」按钮，
+                  居中的播放角标已经说明它能点（点下去能否看见由 revealPreview() 保证） */}
+              <View className='rcompose__clipthumbwrap' onClick={() => shot.assetId && previewShot(shot.assetId!)}>
+                {shot.assetId && shot.coverUrl ? (
+                  <Image className='rcompose__clipthumb' mode='aspectFill' src={shot.coverUrl} />
+                ) : (
+                  <View className='rcompose__clipthumbph'>
+                    <Text className='rcompose__clipthumbtip'>{shot.assetId ? '缩略图生成中' : '缺素材'}</Text>
+                  </View>
+                )}
+                {shot.assetId && <View className='rcompose__clipplay' />}
+                {/* 序号压在缩略图左上角：只留「序号 / 标题 / 标签」三项，让序号单独占一行太浪费 */}
+                <Text className='rcompose__clipseq'>{shot.seq}</Text>
+              </View>
+              {/* 只留标题 + 标签。口播文案（shot.line）本页不再展示 —— 这一块是「挑素材看效果」用的，
+                  要读文案该去分镜页 */}
+              <Text className='rcompose__cliptype'>{shot.shotType || '通用'}</Text>
+              {(!!shot.shotSize || !!shot.durationSuggest) && (
+                <View className='rcompose__cliptags'>
+                  {!!shot.shotSize && <Text className='rcompose__clipmeta'>{shot.shotSize}</Text>}
+                  {!!shot.durationSuggest && <Text className='rcompose__clipmeta'>建议 {shot.durationSuggest}s</Text>}
+                </View>
+              )}
+            </View>
+          ))}
+        </View>
+      </View>
+
+      {/* ── 预览 ── id 供 revealPreview() 定位用，别删 */}
+      <View className='rcompose__preview' id='rcompose-preview'>
+        {showingStill ? (
+          <>
+            {/* 拖动中/请求中的近似预览：CSS 滤镜是「乘法 + 曲线」体系，与服务端 ffmpeg（YUV）
+                必然有偏差（见 cssApproxFilter 的说明），所以角标写「调色近似」。 */}
+            <Image
+              className='rcompose__video'
+              mode='aspectFit'
+              src={stillCover!}
+              style={{ filter: cssApproxFilter(color) }}
+            />
+            <View className='rcompose__stillo'>{stillLabel}</View>
+          </>
+        ) : playUrl ? (
+          <Video className='rcompose__video' src={playUrl} controls autoplay={false} onError={() => setResultError('播放失败，请重试获取地址')} />
         ) : (
           <View className='rcompose__placeholder'>
-            {selectedResult ? '成片地址暂不可用，请稍后重试' : '点击下方分镜素材可预览视频'}
+            {selectedResult ? '成片地址暂不可用，请稍后重试' : '点击上方分镜素材可预览视频'}
           </View>
         )}
-        {!!previewedGrade && <Text className='rcompose__preview-badge'>{previewedGrade}</Text>}
+        {!!previewBadge && <Text className='rcompose__preview-badge'>{previewBadge}</Text>}
       </View>
+
+      {showingColorPreview && (
+        <Text className='rcompose__previewtip'>
+          已按当前参数出好整片预览（低码率，仅用于确认效果）。满意后点下方「按当前调色重新出片」得到正式成片。
+        </Text>
+      )}
+
+      {previewError && (
+        <View className='ds-notice rcompose__notice'>
+          <Text>
+            {previewError}
+            {stillCover ? '（画面为近似示意，未反映精确调色）' : ''}
+          </Text>
+          <Button size='mini' onClick={() => void requestColorPreview(color)}>重新预览</Button>
+        </View>
+      )}
 
       {resultError && <View className='ds-notice rcompose__notice'>{resultError}</View>}
 
@@ -337,6 +618,9 @@ export default function RenderCompose() {
                     Taro.showToast({ title: issue, icon: 'none', duration: 2500 })
                     return
                   }
+                  // 换档就丢掉调色预览：AI 档根本不应用调色参数，
+                  // 留着上一档的「调色预览」播在那儿会让人以为 AI 也会带上这套调色。
+                  if (option.key !== grade) clearColorPreview()
                   setGrade(option.key)
                 }}
               >
@@ -389,22 +673,43 @@ export default function RenderCompose() {
       {/* ── 整片调色 ── */}
       {grade !== 'PREMIUM' && (
         <View className='rcompose__card'>
-          <Text className='rcompose__sectitle'>整片调色</Text>
-          {([['brightness', '亮度'], ['contrast', '对比度'], ['saturation', '饱和度'], ['sharpen', '锐化']] as [keyof ColorGrade, string][]).map(([axis, label]) => (
-            <View className='rcompose__slider' key={axis}>
-              <Text className='rcompose__slabel'>{label}</Text>
-              <Slider
-                className='rcompose__sbar'
-                min={-100}
-                max={100}
-                value={color[axis]}
-                showValue
-                activeColor='#e1251b'
-                blockSize={22}
-                onChange={(event: { detail: { value: number } }) => setColor((previous) => ({ ...previous, [axis]: event.detail.value }))}
-              />
+          <View className='rcompose__colorhead'>
+            <Text className='rcompose__sectitle rcompose__sectitle--flush'>整片调色</Text>
+            {!colorUnsupported && !isNoopColor(color) && (
+              <Text className='rcompose__colorreset' onClick={resetColor}>重置</Text>
+            )}
+          </View>
+          {colorUnsupported ? (
+            <View className='ds-notice ds-notice--warn'>
+              AI 档暂不支持整片调色：该档由外部剪辑通道直接出片，调色参数不会被应用。需要调色请改选「基础生成」。
             </View>
-          ))}
+          ) : (
+            <>
+              {COLOR_AXES.map(([axis, label]) => (
+                <View className='rcompose__slider' key={axis}>
+                  <Text className='rcompose__slabel'>{label}</Text>
+                  <Slider
+                    className='rcompose__sbar'
+                    min={-100}
+                    max={100}
+                    value={color[axis]}
+                    showValue
+                    activeColor='#e1251b'
+                    blockSize={22}
+                    // 拖动中只改本地数值、给静帧上近似滤镜；松手才发请求拿整片精确预览。
+                    // showValue 照旧开着：数值本身就是最准的一档反馈。
+                    onChanging={(event: { detail: { value: number } }) => changeColor(axis, event.detail.value, 'dragging')}
+                    onChange={(event: { detail: { value: number } }) => changeColor(axis, event.detail.value, 'settled')}
+                  />
+                </View>
+              ))}
+              <Text className='rcompose__colorhint'>
+                {materialsReady
+                  ? '拖动时画面只是近似示意（锐化在拖动中不体现）。松手约 1 秒后生成整片精确预览，免费。'
+                  : '补齐全部分镜素材后即可生成整片调色预览。'}
+              </Text>
+            </>
+          )}
         </View>
       )}
 
@@ -462,48 +767,9 @@ export default function RenderCompose() {
         </View>
       )}
 
-      {/* ── 分镜素材 ── */}
-      <View className='rcompose__card'>
-        <Text className='rcompose__sectitle'>分镜素材 · 已上传 {detail.shots.length - missingShots.length}/{detail.shots.length}</Text>
-        {!materialsReady && (
-          <View className='ds-notice rcompose__notice'>
-            <Text>{detail.shots.length ? `缺少分镜 ${missingShots.map((shot) => shot.seq).join('、')} 的素材` : '尚无分镜'}</Text>
-            <Button size='mini' onClick={() => Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })}>去上传素材</Button>
-          </View>
-        )}
-        {detail.shots.map((shot) => (
-          <View className='rcompose__clip' key={shot.id}>
-            {/* 缩略图：有素材则展示，无则占位 */}
-            <View className='rcompose__clipthumbwrap' onClick={() => shot.assetId && previewShot(shot.assetId!)}>
-              {shot.assetId && shot.coverUrl ? (
-                <Image className='rcompose__clipthumb' mode='aspectFill' src={shot.coverUrl} />
-              ) : (
-                <View className='rcompose__clipthumbph'>
-                  <Text className='rcompose__clipthumbno'>{String(shot.seq).padStart(2, '0')}</Text>
-                  <Text className='rcompose__clipthumbtip'>{shot.assetId ? '缩略图生成中' : '缺素材'}</Text>
-                </View>
-              )}
-              {shot.assetId && <View className='rcompose__clipplay' />}
-            </View>
-            {/* 分镜信息 */}
-            <View className='rcompose__clipinfo'>
-              <View className='rcompose__cliphead'>
-                <Text className='rcompose__clipseq'>{shot.seq}</Text>
-                <Text className='rcompose__cliptype'>{shot.shotType || '通用'}</Text>
-                {!!shot.shotSize && <Text className='rcompose__clipmeta'>{shot.shotSize}</Text>}
-                {!!shot.durationSuggest && <Text className='rcompose__clipmeta'>建议 {shot.durationSuggest}s</Text>}
-              </View>
-              {!!shot.line && <Text className='rcompose__clipline'>{shot.line}</Text>}
-              {shot.assetId ? (
-                <Button className='rcompose__action' size='mini' onClick={() => void previewShot(shot.assetId!)}>预览</Button>
-              ) : (
-                <Text className='rcompose__clipstate'>未上传</Text>
-              )}
-            </View>
-          </View>
-        ))}
-      </View>
-
+      {/* 「重新导出」入口：复用归一化缓存，只跑「拼接 + 一遍调色」，所以比首次合成便宜。
+          只在已有 BASIC 成片、且当前仍选 BASIC 时出现 —— RECOLOR 的语义是「把上一版成片重调色」，
+          没有可复用的成片时这条路径不成立。 */}
       {lastSuccess && grade === 'BASIC' && (
         <Button
           className='rcompose__recolor'
@@ -511,7 +777,7 @@ export default function RenderCompose() {
           disabled={submitting || !!pendingTask || !materialsReady}
           onClick={() => void doRender('RECOLOR')}
         >
-          仅调色重生成（参考 {estimatePoints(detail.shots, grade, true)} 积分）
+          按当前调色重新出片（参考 {estimatePoints(detail.shots, grade, true)} 积分）
         </Button>
       )}
 
@@ -528,6 +794,11 @@ export default function RenderCompose() {
               可用 {available} · {isMember ? '已订阅' : '未订阅，生成前需开通'}
             </Text>
           </View>
+          {/* 那一行结算口径的小字收进这个问号：常驻时占掉一行高度却几乎没人读，
+              而底部条是固定定位 —— 省下的高度就是内容区的高度。点开才展开（原生弹窗，不挤压布局）。 */}
+          <View className='rcompose__help' hoverClass='ds-hover' onClick={showCostHelp}>
+            <t-icon name='help-circle' size='38rpx' color='#8e939a' />
+          </View>
           <Button
             className='ds-btn ds-btn--primary rcompose__render'
             hoverClass='ds-hover'
@@ -538,7 +809,6 @@ export default function RenderCompose() {
             {pendingTask ? '任务处理中' : lastSuccess ? '重新生成' : '生成成片'}
           </Button>
         </View>
-        <View className='ds-footer__note'>参考预估按每秒积分与档位系数计算，按实际时长结算，失败全额返还</View>
       </View>
     </View>
   )

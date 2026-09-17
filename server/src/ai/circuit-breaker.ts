@@ -7,14 +7,31 @@ export interface CircuitOptions {
   windowMs: number // 滑动窗口时长，默认 300s
   minSamples: number // 窗口内最小样本数，默认 20
   failThreshold: number // 失败率阈值，默认 0.5
-  openSeconds: number // 熔断时长，默认 60s
+  openSeconds: number // 熔断时长，默认 300s
 }
 
 export const DEFAULT_CIRCUIT: CircuitOptions = {
   windowMs: 300_000,
   minSamples: 20,
   failThreshold: 0.5,
-  openSeconds: 60,
+  /**
+   * ★ 熔断时长必须 ≥ 滑动窗口（300s），不能是 60s。
+   *
+   * 这个值只决定「失败率熔断」和 `isChannelLevelFailure` 的**主动熔断**冷藏多久。
+   * 而本项目的 AI 调用是**低频**的：两个场景加起来几分钟才几次，
+   * 60s 的冷藏期比两次请求的间隔还短 ⇒ 主动熔断刚打开就过期，
+   * 下一个请求照样先去那个坏通道上耗掉一次完整超时。
+   *
+   * 实测（2026-09-16）：主通道 tokenbox-gpt 直连探测 10s 超时（已不可用），
+   * 连续三次文案调用仍全部先试它、再退备用；分镜场景 timeout_ms=90s，
+   * 于是每个分镜请求白付 90 秒。把冷藏期对齐到 300s 后，
+   * 同一个坏通道在窗口内只会被真正试一次。
+   *
+   * ⚠ 代价：偶发性的 5xx/限流也会被冷藏 5 分钟。但 `isChannelLevelFailure`
+   *   只对 TIMEOUT / NETWORK / 401 / 403 / 429 / 5xx 这些**通道级硬故障**触发，
+   *   这些本来就不该在几十秒内反复重试，所以这个代价是对的。
+   */
+  openSeconds: 300,
 }
 
 export class CircuitBreaker {

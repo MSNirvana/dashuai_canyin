@@ -2,30 +2,6 @@
 .pline {
   width: 100%;
 
-  &__head {
-    display: flex;
-    align-items: center;
-    margin-bottom: 12rpx;
-  }
-
-  &__spacer {
-    flex: 1;
-  }
-
-  &__label {
-    font-size: 23rpx;
-    font-weight: 600;
-    color: var(--td-text-color-secondary);
-  }
-
-  &__value {
-    font-size: 23rpx;
-    font-weight: 700;
-    color: var(--td-brand-color);
-    font-variant-numeric: tabular-nums;
-    letter-spacing: -0.03em;
-  }
-
   &__track {
     width: 100%;
     height: 6rpx;
@@ -41,9 +17,41 @@
     transition: width 0.25s ease-out;
   }
 
+  // 文案 + 百分数：在进度条**下方**同一行（见 index.tsx 顶部说明）
+  &__foot {
+    display: flex;
+    align-items: center;
+    margin-top: 8rpx;
+  }
+
+  &__spacer {
+    flex: 1;
+  }
+
+  // max-width + 省略号：文案（如「素材 2/5」）再长也不会把百分数顶出去
+  &__label {
+    max-width: 76%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 22rpx;
+    font-weight: 500;
+    color: var(--td-text-color-secondary);
+  }
+
+  &__value {
+    flex: none;
+    margin-left: 10rpx;
+    font-size: 22rpx;
+    font-weight: 700;
+    color: var(--td-brand-color);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.03em;
+  }
+
   &__hint {
     display: block;
-    margin-top: 10rpx;
+    margin-top: 8rpx;
     font-size: 22rpx;
     color: var(--td-text-color-placeholder);
   }

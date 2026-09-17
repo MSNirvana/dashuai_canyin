@@ -13,9 +13,17 @@
  *   直接换下一个候选。
  *
  * 为什么「恢复后自动切回」不需要额外代码：
- *   熔断是 Redis 里一个 TTL=openSeconds(60s) 的 key，到期自动消失。
+ *   熔断是 Redis 里一个 TTL=openSeconds(300s) 的 key，到期自动消失。
  *   网关每次请求都重新读 isOpen()，所以没有「永久粘在备用通道」的粘性状态 ——
  *   主通道一到期就重新参与，试成功即为主通道。
+ *
+ *   ★ openSeconds 必须 ≥「单场景最坏一次尝试的耗时」，不能比它短：
+ *     熔断的意义是「别在坏通道上反复浪费用户时间」，而每次白试的代价就是
+ *     `ai_scene.timeout_ms`（分镜 90s）。TTL=60s 时，坏通道每 60 秒被重新试一次，
+ *     省下的时间还不如放过的时间多 —— 熔断形同虚设。
+ *     2026-09-16 实测：主通道 tokenbox-gpt 直连探测 10s 超时（不可用），
+ *     连续三次文案调用仍全部先试它再退备用，分镜请求每次白付 90 秒。
+ *     故调为 300s（= 滑动窗口），并保留「到期即自动切回」的语义。
  *
  * 用例（③~⑥ 全部用临时数据，不碰任何真实场景）：
  *   ① isChannelLevelFailure 判定矩阵
@@ -257,7 +265,11 @@ let backupId = 0n
   check(opened === true, '坏通道已被立即熔断（不等攒满 20 个样本）')
 
   const ttl = await redis.ttl(`ai:cb:open:${primaryId}`)
-  check(ttl > 0 && ttl <= 60, '熔断 key 的 TTL ≤ openSeconds(60s)', `ttl=${ttl}s`)
+  check(
+    ttl > 0 && ttl <= DEFAULT_CIRCUIT.openSeconds,
+    `熔断 key 的 TTL ≤ openSeconds(${DEFAULT_CIRCUIT.openSeconds}s)`,
+    `ttl=${ttl}s`,
+  )
 
   const log = await prisma.aiCallLog.findFirst({
     where: { sceneCode: SCENE, status: 'FALLBACK_USED' },
@@ -284,7 +296,7 @@ console.log('\n=== ④ 熔断期内再请求 → 直接跳过主通道 ===')
 // ────────────────────────────────────────────────────────────────
 console.log('\n=== ⑤ 熔断到期 → 自动切回主通道（无粘性）===')
 {
-  // 删 key 等价于 60s 到期：网关每次都重新读 isOpen()，不缓存结论
+  // 删 key 等价于 openSeconds 到期：网关每次都重新读 isOpen()，不缓存结论
   await circuit.reset(primaryId)
 
   const r3 = await gateway.runScene({
@@ -419,8 +431,17 @@ console.log('\n=== ⑨ 关键行为回归：熔断器参数未被改动 ===')
 {
   // 用例 ⑤ 依赖「熔断到期自动失效」，openSeconds 被调大就会拖长切换窗口；
   // minSamples 被调小又会让偶发抖动误熔断。锁住默认值，改的人必须是有意的。
+  //
+  // ★ openSeconds 的下界是硬约束（不是口味问题）：必须 ≥ 单场景最坏一次尝试的耗时
+  //   （ai_scene.timeout_ms 最大 90s）。比它短 ⇒ 坏通道会在熔断刚过期时立刻被重新试一次，
+  //   等于每次请求都白付一个完整超时，熔断就没起到作用。上界别太大：
+  //   它同时也是「主通道恢复后多久自动切回」的窗口。
   const d = { ...DEFAULT_CIRCUIT }
-  check(d.openSeconds === 60, 'openSeconds = 60（熔断 60s 后自动重试主通道）', `实际 ${d.openSeconds}`)
+  check(
+    d.openSeconds >= 90 && d.openSeconds <= 600,
+    'openSeconds ∈ [90, 600]（≥ 单场景最坏一次超时，且切回窗口不至于过长）',
+    `实际 ${d.openSeconds}`,
+  )
   check(d.minSamples === 20, 'minSamples = 20（失败率熔断的样本下限）', `实际 ${d.minSamples}`)
   check(d.failThreshold === 0.5, 'failThreshold = 0.5', `实际 ${d.failThreshold}`)
 }

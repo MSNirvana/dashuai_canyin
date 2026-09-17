@@ -73,6 +73,23 @@ export async function getSharedPlayUrlByKey(key: string, baseUrl?: string): Prom
   return signKey(key, bucket, region, baseUrl)
 }
 
+/**
+ * 签发**服务端自己拼出来的键**的播放地址（合成中间产物等）。
+ *
+ * 与 getPlayUrlByKey 的唯一区别：**不做商家前缀校验**。为什么这样是安全的 —— 传进来的键
+ * 不是请求参数，而是服务端按 `(merchantId, 素材集合, 参数指纹)` 自己算出来的，
+ * 商家无法让它指向别人的目录。
+ *
+ * ⚠ 使用纪律：只允许传服务端构造的键。任何来自请求参数（query / body / 路由）的键
+ *   都必须走 getPlayUrlByKey，否则就是一个任意对象读取漏洞。
+ */
+export async function getGeneratedPlayUrl(key: string, baseUrl?: string): Promise<PlayUrl> {
+  assertSafeObjectKey(key, 'generated key')
+  const bucket = process.env.COS_BUCKET ?? ''
+  const region = process.env.COS_REGION ?? ''
+  return signKey(key, bucket, region, baseUrl)
+}
+
 async function signKey(key: string, bucket: string, region: string, baseUrl?: string): Promise<PlayUrl> {
   if (isLocalStorage()) {
     const localBaseUrl = baseUrl

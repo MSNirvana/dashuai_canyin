@@ -7,8 +7,8 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createHash } from 'node:crypto'
 import { prisma } from '../db.js'
+import { normalizedClipKey } from './cache-keys.js'
 import {
   completeRender,
   failRender,
@@ -154,8 +154,9 @@ async function processTask(task: {
       const endMs = clip.trimEndMs ?? 0
       const normPath = join(dir, `norm_${i}.mp4`)
 
-      // 中间产物缓存：key 由 (assetId, trim, 尺寸) 决定，与调色无关，故重调色可复用
-      const cacheKey = `renders/_cache/${task.merchantId.toString()}/${intermediateKey(clip, startMs, endMs, output)}.mp4`
+      // 中间产物缓存：key 由 (assetId, trim, 尺寸) 决定，与调色无关，故重调色可复用。
+      // ⚠ 键的计算在 render/cache-keys.ts —— 调色预览要用**同一个键**才能命中这里的产物
+      const cacheKey = normalizedClipKey(task.merchantId, clip, output)
       if (await objectExists(cacheKey)) {
         await downloadToFile(cacheKey, normPath)
         hitCount++
@@ -393,26 +394,6 @@ async function finishChatCutTask(
     durationMs,
     cacheHit: false,
   }))
-}
-
-/**
- * 中间产物缓存版本：**归一化产出语义变化时必须递增**，否则会命中旧产物。
- *   v1 → v2：归一化从「丢弃原声挂静音轨」改为「保留原声」，v1 缓存全是静音片段，必须失效。
- */
-const INTERMEDIATE_CACHE_VERSION = 'v2'
-
-/**
- * 中间产物缓存键：(缓存版本, assetId, trim 起止, 输出尺寸) → sha1
- * 不含调色参数，因此「仅改调色重合成」能命中缓存，只跑一遍调色+拼接（对应 10 豆计费）
- */
-function intermediateKey(
-  clip: RenderClip,
-  startMs: number,
-  endMs: number,
-  output: { width: number; height: number },
-): string {
-  const raw = `${INTERMEDIATE_CACHE_VERSION}:${clip.assetId}:${startMs}:${endMs}:${output.width}x${output.height}`
-  return createHash('sha1').update(raw).digest('hex')
 }
 
 // ──────────────────────── 卡死任务恢复 sweeper ────────────────────────

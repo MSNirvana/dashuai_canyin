@@ -54,11 +54,12 @@
     }
   }
 
-  /* ── 预览 ── */
+  /* ── 预览 ── 现在紧跟「分镜素材」卡片之后，所以要自己带上边距 */
   &__preview {
     position: relative;
     width: 100%;
     height: 390rpx;
+    margin-top: 24rpx;
     background: #15161a;
     border-radius: var(--td-radius-default);
     overflow: hidden;
@@ -86,6 +87,25 @@
     background: rgba(0, 0, 0, 0.45);
     border-radius: var(--td-radius-small);
     padding: 6rpx 16rpx;
+  }
+  // 拖动中的「近似预览」：静帧 + CSS 滤镜。底部这行必须留着 ——
+  // 它负责把「这是近似、锐化不体现」讲明白，否则用户会拿它当出片效果去判断锐化。
+  &__stillo {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 12rpx 18rpx;
+    font-size: 21rpx;
+    color: rgba(255, 255, 255, 0.88);
+    background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.55) 100%);
+  }
+  &__previewtip {
+    display: block;
+    margin-top: 14rpx;
+    font-size: 22rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-placeholder);
   }
 
   &__notice {
@@ -115,6 +135,11 @@
     padding: 32rpx;
     box-shadow: var(--ds-shadow-card);
   }
+  // 紧跟页头的第一张卡（现为「分镜素材」）：页头自己已有 padding-bottom: 24rpx，
+  // 再叠一个 24rpx 会让卡片显得与页头脱开，所以这张不要上边距
+  &__card--lead {
+    margin-top: 0;
+  }
   &__sectitle {
     display: block;
     font-size: 34rpx;
@@ -122,6 +147,10 @@
     letter-spacing: -0.02em;
     color: var(--td-text-color-primary);
     margin-bottom: 24rpx;
+  }
+  // 标题带右侧动作（如「重置」）时用它 + 一个 flex 容器把下边距交给容器管
+  &__sectitle--flush {
+    margin-bottom: 0;
   }
 
   /* ── 三档生成方式 ── */
@@ -200,6 +229,18 @@
   &__note { width: 100%; min-height: 120rpx; box-sizing: border-box; padding: 18rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-default); font-size: 24rpx; }
 
   /* ── 调色 ── */
+  &__colorhead {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16rpx;
+    margin-bottom: 24rpx;
+  }
+  &__colorreset {
+    flex: none;
+    font-size: 24rpx;
+    color: var(--td-brand-color);
+  }
   &__slider {
     display: flex;
     align-items: center;
@@ -214,6 +255,13 @@
   &__sbar {
     flex: 1;
     margin: 0;
+  }
+  &__colorhint {
+    display: block;
+    margin-top: 18rpx;
+    font-size: 21rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-placeholder);
   }
 
   /* ── 成片记录 ── */
@@ -253,20 +301,25 @@
     line-height: 1.6;
   }
 
-  /* ── 分镜素材 ── */
-  &__clip {
+  /* ── 分镜素材 ── 一行两个；每格只有「序号（压角）+ 标题 + 标签」
+     卡片内宽 614rpx（678 − 32×2），列间距 20rpx ⇒ 单格 (614−20)/2 = 297rpx，
+     缩略图按 16:9 ⇒ 297 × 9/16 ≈ 167rpx 高。 */
+  &__clips {
     display: flex;
-    align-items: flex-start;
-    gap: 20rpx;
-    padding: 20rpx 0;
-    border-top: 1rpx solid var(--td-component-border);
+    flex-wrap: wrap;
+    gap: 28rpx 20rpx;
   }
-  // 缩略图
+  &__clip {
+    // 50% − 半个列间距，不写死 rpx：卡片内外边距一改，写死的宽度会把第二个挤到下一行
+    width: calc(50% - 10rpx);
+    display: flex;
+    flex-direction: column;
+  }
+  // 缩略图（整块可点 = 预览）
   &__clipthumbwrap {
     position: relative;
-    flex-shrink: 0;
-    width: 200rpx;
-    height: 144rpx;
+    width: 100%;
+    height: 167rpx;
     border-radius: var(--td-radius-default);
     overflow: hidden;
     background: var(--td-bg-color-page);
@@ -281,20 +334,12 @@
     width: 100%;
     height: 100%;
     display: flex;
-    flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 6rpx;
   }
-  &__clipthumbno {
-    font-size: 30rpx;
-    font-weight: 750;
-    line-height: 1;
-    color: var(--td-text-color-disabled);
-    letter-spacing: .06em;
-  }
+  // 「缺素材 / 缩略图生成中」—— **这里就是唯一的缺素材提示**，页面上不再另加一行文字
   &__clipthumbtip {
-    font-size: 20rpx;
+    font-size: 22rpx;
     color: var(--td-text-color-placeholder);
   }
   // 居中小播放按钮
@@ -319,22 +364,13 @@
       border-bottom: 10rpx solid transparent;
     }
   }
-  // 分镜信息
-  &__clipinfo {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 10rpx;
-    padding-top: 4rpx;
-  }
-  &__cliphead {
-    display: flex;
-    align-items: center;
-    gap: 12rpx;
-    flex-wrap: wrap;
-  }
+  // 序号：压在缩略图左上角（两列布局里让序号单独占一行太浪费）。
+  // ★ 用 40rpx 的**圆**、内缩 12rpx：外层是 20rpx 圆角 + overflow:hidden，
+  //   圆角只会切到「角」附近，而圆形角标离该角最近的点仍落在圆角弧内侧 ⇒ 不会被切。
   &__clipseq {
+    position: absolute;
+    left: 12rpx;
+    top: 12rpx;
     width: 40rpx;
     height: 40rpx;
     line-height: 40rpx;
@@ -345,10 +381,23 @@
     font-size: 22rpx;
     font-weight: 600;
   }
+  // 标题（分镜类型）
   &__cliptype {
+    display: block;
+    margin-top: 12rpx;
     font-size: 26rpx;
     font-weight: 600;
     color: var(--td-text-color-primary);
+    // 类型名长短不一，超长省略，别把格子撑高导致两列参差
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  &__cliptags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8rpx;
+    margin-top: 8rpx;
   }
   &__clipmeta {
     font-size: 20rpx;
@@ -357,21 +406,6 @@
     border: 1rpx solid var(--td-component-stroke);
     border-radius: 6rpx;
     padding: 2rpx 10rpx;
-  }
-  &__clipline {
-    font-size: 24rpx;
-    color: var(--td-text-color-secondary);
-    line-height: 1.5;
-    display: block;
-    // 最多两行
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  &__clipstate {
-    font-size: 22rpx;
-    color: var(--td-text-color-placeholder);
   }
 
   &__recolor {
@@ -419,6 +453,16 @@
     margin-top: 10rpx;
     font-size: 22rpx;
     color: var(--td-text-color-placeholder);
+  }
+  // 底部条里的「?」：图标本身 38rpx，外面留 56rpx 触摸区 ——
+  // 别只按图标大小给尺寸，那样点起来很难命中（项目里的小按钮不低于 64rpx 高度是同一道理）
+  &__help {
+    flex: none;
+    width: 56rpx;
+    height: 56rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   &__render {
     flex: 1;

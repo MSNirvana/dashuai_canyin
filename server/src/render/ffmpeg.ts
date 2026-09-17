@@ -126,6 +126,42 @@ export async function ffmpegNormalize(input: string, output: string, opts: Norma
 }
 
 /**
+ * 调色的编码档位。**只允许改编码参数，不允许改滤镜链** —— 这是「调色预览与最终成片
+ * 看起来一致」的唯一保证：预览与成片都走同一个 `buildColorFilter(color)`，
+ * 差别只在「压得糙不糙」。任何在预览侧额外挂 scale/crop/降帧的改动都会让
+ * 锐化（unsharp 是**像素半径**卷积）的观感失真，从而让预览变成误导。
+ */
+export interface ColorEncodeOpts {
+  preset?: string
+  crf?: number
+}
+
+const COLOR_ENCODE_DEFAULT: Required<ColorEncodeOpts> = { preset: 'veryfast', crf: 23 }
+
+/**
+ * 构建「调色」这一步的 ffmpeg 参数。抽成纯函数是为了让它**可被测试断言**：
+ * 预览与成片必须产出**完全相同的 `-vf`**（见 ColorEncodeOpts 的说明），
+ * 而这件事只有在能把参数拿出来比对时才是可验证的，否则只能靠人盯代码。
+ */
+export function buildApplyColorArgs(
+  input: string,
+  output: string,
+  color: ColorGrade,
+  encode?: ColorEncodeOpts,
+): string[] {
+  const cf = buildColorFilter(color)
+  if (!cf) throw new Error('调色参数全为 0，无需重编码（调用方应先判断）')
+  const { preset, crf } = { ...COLOR_ENCODE_DEFAULT, ...encode }
+  return [
+    '-i', input,
+    '-vf', cf,
+    '-c:v', 'libx264', '-preset', preset, '-crf', String(crf), '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+    '-c:a', 'copy',
+    '-y', output,
+  ]
+}
+
+/**
  * 第二级：调色（不可缓存，随参数变化）
  * 只重编码视频、音频直接 copy —— 一级产物已统一参数，这里开销远小于从源解码
  */
@@ -134,17 +170,9 @@ export async function ffmpegApplyColor(
   output: string,
   color: ColorGrade,
   timeoutMs = 120_000,
+  encode?: ColorEncodeOpts,
 ): Promise<void> {
-  const cf = buildColorFilter(color)
-  if (!cf) throw new Error('调色参数全为 0，无需重编码（调用方应先判断）')
-  const args = [
-    '-i', input,
-    '-vf', cf,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-    '-c:a', 'copy',
-    '-y', output,
-  ]
-  await runFfmpeg(args, timeoutMs)
+  await runFfmpeg(buildApplyColorArgs(input, output, color, encode), timeoutMs)
 }
 
 /** 硬切拼接（无转场）。所有片段编码参数一致，直接 copy 不重编码 */
