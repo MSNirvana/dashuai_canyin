@@ -225,23 +225,22 @@ export default function Recharge() {
           )}
           {beans.length === 0 && <View className='recharge__empty'>暂无加油包（后台未配置）</View>}
           {beans.map((p) => (
-            <View className={`recharge__card ${!isMember ? 'recharge__card--off' : ''}`} key={p.id}>
-              <View className='recharge__cardtop'>
-                <View className='recharge__cardmain'>
-                  <Text className='recharge__name'>{Number(p.beans) + Number(p.bonusBeans)} 积分</Text>
-                  <Text className='recharge__sub'>1 元 = 100 积分{Number(p.bonusBeans) > 0 ? ` · 额外赠送 ${p.bonusBeans}` : ''}</Text>
-                </View>
-                <View className='recharge__price'>
-                  <View className='recharge__now'>
-                    <Text className='recharge__cny'>¥</Text>
-                    <Text className='recharge__num ds-num'>{fenToYuan(p.priceFen)}</Text>
-                  </View>
-                  {!!p.tag && <Text className='recharge__tag'>{p.tag}</Text>}
-                </View>
+            <View className={`recharge__card recharge__card--row ${!isMember ? 'recharge__card--off' : ''}`} key={p.id}>
+              <View className='recharge__cardmain'>
+                <Text className='recharge__name'>{Number(p.beans) + Number(p.bonusBeans)} 积分</Text>
+                <Text className='recharge__sub'>1 元 = 100 积分{Number(p.bonusBeans) > 0 ? ` · 额外赠送 ${p.bonusBeans}` : ''}</Text>
               </View>
+              <View className='recharge__price'>
+                <View className='recharge__now'>
+                  <Text className='recharge__cny'>¥</Text>
+                  <Text className='recharge__num recharge__num--row ds-num'>{fenToYuan(p.priceFen)}</Text>
+                </View>
+                {!!p.tag && <Text className='recharge__tag'>{p.tag}</Text>}
+              </View>
+              {/* 行内小按钮刻意不挂原生 loading：它会在文字前插一个图标，把「贴着文字」的按钮撑宽（点一下跳一下）。
+                  反馈交给 disabled 态（原生 disabled 样式会把按钮压灰）与顶部「订单确认中」横幅。 */}
               <Button
-                className='recharge__buy'
-                loading={busy}
+                className='recharge__buy recharge__buy--row'
                 disabled={!isMember || busy}
                 onClick={() => pay('bean', p.id)}
               >

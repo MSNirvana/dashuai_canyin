@@ -10,6 +10,14 @@
     align-items: center;
     padding: 40rpx 36rpx 32rpx;
   }
+  // 外层只负责定位（不裁剪），给右下角的相机角标留位置
+  &__avatarbox {
+    position: relative;
+    flex: none;
+    margin-right: 28rpx;
+    width: 116rpx;
+    height: 116rpx;
+  }
   &__avatar {
     width: 116rpx;
     height: 116rpx;
@@ -21,9 +29,28 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-right: 28rpx;
-    flex: none;
+    // 方形头像图必须靠裁剪变圆（aspectFill 不裁形状），所以这里不能省
+    overflow: hidden;
     box-shadow: var(--ds-glow-red);
+  }
+  &__avatar-img {
+    width: 116rpx;
+    height: 116rpx;
+    display: block;
+  }
+  // 相机角标：提示「这个头像是可以点的」
+  &__avatar-badge {
+    position: absolute;
+    right: -4rpx;
+    bottom: -4rpx;
+    width: 40rpx;
+    height: 40rpx;
+    border-radius: 50%;
+    background: var(--td-text-color-primary);
+    border: 4rpx solid var(--td-bg-color-page);
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   &__info {
     flex: 1;
@@ -54,50 +81,8 @@
     }
   }
 
-  // ─────────── 积分卡 ───────────
-  &__bean {
-    margin: 0 36rpx;
-    background: var(--td-bg-color-container);
-    border-radius: var(--td-radius-large);
-    padding: 32rpx;
-    box-shadow: var(--ds-shadow-card);
-  }
-  &__beantop {
-    display: flex;
-    align-items: center;
-    gap: 20rpx;
-  }
-  &__beancell {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-  }
-  &__beandiv {
-    width: 1rpx;
-    align-self: stretch;
-    background: var(--td-component-border);
-  }
-  &__beannum {
-    font-size: 52rpx;
-    font-weight: 700;
-    line-height: 1;
-    letter-spacing: -0.04em;
-    color: var(--td-text-color-primary);
-    font-variant-numeric: tabular-nums;
-    &--gold {
-      color: var(--ds-member);
-    }
-  }
-  &__beanlabel {
-    display: block;
-    font-size: 22rpx;
-    color: var(--td-text-color-placeholder);
-    margin-top: 12rpx;
-  }
-  &__beanbtn {
-    width: 100%;
-    margin-top: 26rpx;
-  }
+  // 积分卡（`&__bean*`）连同组件一起搬到了 pages/profile/index.scss —— 页面级类名，
+  // 没留在本页当空壳，也刻意不抽公共类：只有一个使用方时不值得多一层间接。
 
   // ─────────── 空间 ───────────
   &__storage {
@@ -223,6 +208,45 @@
     line-height: 1.6;
   }
 
+  // ─────────── 协议入口 + 运营主体（登录前后都可见） ───────────
+  &__legal {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 28rpx 40rpx 0;
+  }
+  &__legal-link {
+    color: var(--td-text-color-placeholder);
+    font-size: 23rpx;
+    padding: 6rpx 4rpx;
+  }
+  &__legal-sep {
+    margin: 0 12rpx;
+    color: var(--td-text-color-disabled);
+    font-size: 23rpx;
+  }
+  &__legal-org {
+    display: block;
+    margin: 10rpx 40rpx 0;
+    text-align: center;
+    color: var(--td-text-color-disabled);
+    font-size: 20rpx;
+  }
+
+  // ─────────── 退出登录 ───────────
+  // 纯文字链而非实心按钮：全局约定「一屏只允许一个红色实心主按钮」，退出是低频负向操作。
+  // 颜色用次要文（黑灰 #5c6066）而**不是**危险红：这个位置对用户是「找到就走」的出口，
+  // 常驻一个红色告警块会喧宾夺主（页面尾部的红点/红字已足够多了）。
+  // 上下各留 26rpx padding，保证点按区域 ≥ 88rpx（微信建议的最小可点尺寸）。
+  &__logout {
+    margin: 56rpx 40rpx 16rpx;
+    padding: 26rpx 0;
+    text-align: center;
+    font-size: 28rpx;
+    color: var(--td-text-color-secondary);
+    letter-spacing: 2rpx;
+  }
+
   // ─────────── 登录弹层 ───────────
   &__login-mask {
     position: fixed;
@@ -307,5 +331,45 @@
     color: var(--td-text-color-disabled);
     font-size: 22rpx;
     line-height: 1.6;
+  }
+  // ─── 短信登录（备选通道）───
+  &__login-field {
+    display: flex;
+    align-items: center;
+    height: 96rpx;
+    margin-top: 24rpx;
+    padding: 0 24rpx;
+    box-sizing: border-box;
+    background: var(--td-bg-color-page);
+    border: 2rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+  }
+  &__login-input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    color: var(--td-text-color-primary);
+    font-size: 30rpx;
+    // Taro 会把 Input 渲染成原生 input，全局样式里可能带居中，这里显式左对齐
+    text-align: left;
+  }
+  &__login-code {
+    flex: none;
+    margin-left: 16rpx;
+    padding-left: 20rpx;
+    border-left: 2rpx solid var(--td-component-stroke);
+    color: var(--td-brand-color);
+    font-size: 26rpx;
+    font-weight: 600;
+    // 冷却中不给点：视觉上也要能看出来，否则用户会以为点不动
+    &.is-disabled {
+      color: var(--td-text-color-disabled);
+      font-weight: 400;
+    }
+  }
+  &__login-switch {
+    margin-top: 28rpx;
+    color: var(--td-brand-color);
+    font-size: 26rpx;
   }
 }

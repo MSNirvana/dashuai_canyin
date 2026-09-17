@@ -85,6 +85,13 @@
       opacity: 0.55;
     }
   }
+  // 加油包单行布局：信息(flex) | 价格 | 购买按钮
+  &__card--row {
+    display: flex;
+    align-items: center;
+    gap: 18rpx;
+    padding: 26rpx;
+  }
   // 「最超值」角标
   &__badge {
     position: absolute;
@@ -144,6 +151,10 @@
     letter-spacing: -0.04em;
     font-variant-numeric: tabular-nums;
   }
+  // 行内价格：跟着按钮一起收小，避免在单行里比按钮还高
+  &__num--row {
+    font-size: 40rpx;
+  }
   &__tag {
     margin-top: 8rpx;
     font-size: 20rpx;
@@ -155,21 +166,43 @@
     padding: 4rpx 14rpx;
   }
 
+  // ★ 别用 `line-height` 撑高度：原生 Button 自带默认行高与左右内边距，
+  //   文字会被顶偏。与全局 `.ds-btn` 同一套解法 —— flex 居中 + `line-height: 1`。
   &__buy {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 100%;
     height: 88rpx;
     margin: 26rpx 0 0;
+    padding: 0;
     background: var(--td-brand-color);
     color: #fff;
     font-size: 30rpx;
     font-weight: 600;
+    line-height: 1;
+    text-align: center;
     border-radius: var(--td-radius-default);
-    line-height: 88rpx;
     box-shadow: var(--ds-glow-red);
     &::after { border: none; }
   }
   &__buy--rec {
     box-shadow: var(--ds-glow-red);
+  }
+  // 加油包：按钮贴着文字（88rpx ≈ 文字 48rpx + 左右各 20rpx）。
+  // ★ 尺寸写死，并且用 `flex: 0 0 <w>` 直接钉住 flex 主尺寸 —— 不依赖 `width: auto`
+  //   （`width: auto` 在不同渲染器里可能被解析成「按内容」或「撑满」，实测不符合预期）；
+  // ★ 圆角 --td-radius-default（20rpx，非胶囊）—— 对齐设计稿；
+  // ★ 高度不下 64rpx，保住触摸目标。
+  &__buy--row {
+    flex: 0 0 88rpx;
+    width: 88rpx;
+    height: 64rpx;
+    margin: 0;
+    padding: 0;
+    font-size: 24rpx;
+    border-radius: var(--td-radius-default);
+    box-shadow: none;
   }
 
   &__footer {
