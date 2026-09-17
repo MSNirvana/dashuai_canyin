@@ -150,6 +150,7 @@ async function storeTokens(value: OAuthTokenResponse): Promise<string> {
   const expiresIn = Math.max(60, Number(value.expires_in ?? 3600))
   const expiresAtMs = Date.now() + expiresIn * 1000
   memoryToken = { accessToken, expiresAtMs }
+  tokenProvenInMemory = true
   try {
     await redis.set(TOKEN_CACHE_KEY, JSON.stringify(memoryToken), 'PX', expiresIn * 1000)
     if (value.refresh_token?.trim()) await redis.set(REFRESH_CACHE_KEY, value.refresh_token.trim())
@@ -249,16 +250,6 @@ async function accessToken(forceRefresh = false): Promise<string> {
   return token
 }
 
-function submitTool(): string {
-  const value = process.env.CHATCUT_MCP_SUBMIT_TOOL?.trim()
-  if (!value) throw new ChatCutToolMappingError('缺少 CHATCUT_MCP_SUBMIT_TOOL，完成 OAuth 后请按 tools/list 返回值配置')
-  return value
-}
-
-function statusTool(): string | null {
-  return process.env.CHATCUT_MCP_STATUS_TOOL?.trim() || null
-}
-
 export class ChatCutNotConfiguredError extends Error {
   constructor(message = 'ChatCut MCP 尚未授权，请配置 CHATCUT_MCP_ACCESS_TOKEN 或 OAuth refresh token') {
     super(message)
@@ -266,29 +257,35 @@ export class ChatCutNotConfiguredError extends Error {
   }
 }
 
-export class ChatCutToolMappingError extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ChatCutToolMappingError'
-  }
+/** 本进程内成功换过一次 token ⇒ 即便 .env 里只有 Redis 才有 refresh token，也算有凭证 */
+let tokenProvenInMemory = false
+
+function credentialPresent(): boolean {
+  return Boolean(
+    tokenProvenInMemory ||
+      envAccessToken() ||
+      (process.env.CHATCUT_OAUTH_TOKEN_URL?.trim() && process.env.CHATCUT_OAUTH_REFRESH_TOKEN?.trim()),
+  )
 }
 
 /**
- * 外部剪辑通道是否可用。
+ * 外部剪辑（AI 档）通道是否可用。
  *
- * 必须同时满足「有凭证」「提交工具」「查询工具」三项 —— 原来只查了提交工具，
- * 于是「配了提交、没配查询」的半配置状态会被判为可用：
- * 提交成功 → 任务进 RUNNING → 每轮轮询都抛 ChatCutToolMappingError → 任务卡到 30 分钟后才被 sweeper 退款。
- * 真正正确的做法是从一开始就认为「不可用」，让上层直接走本地管线 / 明确告知用户。
+ * ★ 语义已于 2026-09-17 改写。旧判据要求「凭证 + `CHATCUT_MCP_SUBMIT_TOOL` + `CHATCUT_MCP_STATUS_TOOL` 三样齐全」，
+ *   而这两个环境变量源自一个**错误假设**：以为 ChatCut 有一个「吃下整片配置、吐出一个 jobId」的工具。
+ *   实测 `tools/list` 的 59 个工具里**没有这样的工具**，ChatCut 是「多步驱动云端编辑器」。
+ *   ⇒ 继续按工具名判可用性，只会把「配不上」当成「不可用」，或者更糟：填两个名字让它「看起来可用」，
+ *   结果 AI 档从「直接置灰」变成「可点但一点就失败」。
+ *
+ * 新判据 = 有凭证 ∧ 适配层没被显式关掉。
+ * `CHATCUT_ADAPTER_ENABLED=false` 是**运维急停开关**（额度异常 / 商务条款未谈拢时一键停 AI 档，
+ * 不必去删凭证）。关掉后：能力表 available=false、提交时 409/4013、worker 侧也不会进 ChatCut 分支。
  */
 export function chatCutConfigured(): boolean {
-  // 注意：这里必须读原始环境变量，不能调 submitTool() —— 它缺配置时抛错，
-  // 会让「是否可用」判断变成抛异常，调用方（例如 /system/settings 探测）会 500。
-  return Boolean(
-    (envAccessToken() || process.env.CHATCUT_OAUTH_REFRESH_TOKEN?.trim()) &&
-      process.env.CHATCUT_MCP_SUBMIT_TOOL?.trim() &&
-      process.env.CHATCUT_MCP_STATUS_TOOL?.trim(),
-  )
+  // 注意：这里必须读原始环境变量，不能调会抛错的取配置函数 ——
+  // 否则「是否可用」判断会变成抛异常，调用方（/system/settings 探测、能力表）会 500。
+  if (process.env.CHATCUT_ADAPTER_ENABLED?.trim().toLowerCase() === 'false') return false
+  return credentialPresent()
 }
 
 async function rpc<T>(method: string, params?: unknown, timeoutMs = 30_000): Promise<T> {
@@ -355,76 +352,71 @@ export async function listChatCutTools(): Promise<Array<{ name: string; descript
   return result.tools ?? []
 }
 
+/**
+ * 从 tools/call 的结果里取出**工具结果本体**。
+ *
+ * ★ 实测（2026-09-17）踩到的坑：结果里有两个地方可能放数据 ——
+ *   `content[].text`（工具真正的返回，通常是一段 JSON 字符串）
+ *   与 `structuredContent`（**宿主/编辑器上下文**，含 `browserHandoff`、
+ *   `status:"active-project"`、`surface:"editor-workbench"` 这类字段）。
+ *   原实现优先取 `structuredContent`，于是 `track_export` 读到的 `status` 是
+ *   `"active-project"` —— 既不是 SUCCESS 也不是 FAILED ⇒ 被判成「还在跑」，
+ *   成片其实 23 秒就出来了，轮询却永远不结束（两轮冒烟都卡死在这里）。
+ * ⇒ 优先级必须是「先 content[].text，再 structuredContent」。
+ */
 function extractStructured(result: McpToolResult): Record<string, unknown> {
   if (result.isError) {
     const message = result.content?.map((item) => item.text).filter(Boolean).join('\n') || 'ChatCut 工具执行失败'
     throw new Error(message)
   }
-  if (result.structuredContent && typeof result.structuredContent === 'object') {
-    return result.structuredContent as Record<string, unknown>
-  }
   const text = result.content?.map((item) => item.text).filter(Boolean).join('\n') || ''
-  if (!text) return {}
-  try {
-    return JSON.parse(text) as Record<string, unknown>
-  } catch {
-    return { message: text }
+  const structured = result.structuredContent && typeof result.structuredContent === 'object'
+    ? (result.structuredContent as Record<string, unknown>)
+    : null
+
+  if (text) {
+    try {
+      const parsed = JSON.parse(text) as unknown
+      if (Array.isArray(parsed)) {
+        // ⚠ 有的工具回的是**数组**（`edit_track action=list` 就是轨道数组）。
+        //   早先这里只接对象、把数组也塞进 message，等于把结构化数据降级成了字符串。
+        //   统一包成 { items }，调用方按 items 取；原文留在 message 里备正则兜底。
+        return { items: parsed as unknown[], message: text }
+      }
+      if (parsed && typeof parsed === 'object' && Object.keys(parsed).length > 0) {
+        return parsed as Record<string, unknown>
+      }
+    } catch {
+      // 不是 JSON：ChatCut 有一部分工具回的是给 LLM 看的人话
+      // （例如 submit_export 的 "Submitted export.\n  renderId: xxx"）。
+      // 这类情况必须把原文留成 message，让上层用正则兜底，不能只吞结构化字段。
+    }
   }
+  if (structured) return text ? { ...structured, message: text } : structured
+  return text ? { message: text } : {}
 }
 
-async function callTool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
+/**
+ * 调一个 ChatCut 工具并取回结构化结果。
+ * 导出给 `chatcut-driver.ts` / 自检脚本用 —— 适配层之所以能拆出去，
+ * 是因为「鉴权 + JSON-RPC」这一层是好的，坏的只有上面那层 job 抽象。
+ */
+export async function callTool(name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
   const result = await rpc<McpToolResult>('tools/call', { name, arguments: args }, Number(process.env.CHATCUT_MCP_TIMEOUT_MS ?? 120_000))
   return extractStructured(result)
 }
 
-function mapJob(value: Record<string, unknown>, fallbackId: string): ChatCutJobResult {
-  const rawStatus = String(value.status ?? value.state ?? 'QUEUED').toUpperCase()
-  const status: ChatCutJobResult['status'] = rawStatus === 'SUCCESS' || rawStatus === 'COMPLETED'
-    ? 'SUCCESS'
-    : rawStatus === 'FAILED' || rawStatus === 'ERROR'
-      ? 'FAILED'
-      : rawStatus === 'RUNNING' || rawStatus === 'PROCESSING'
-        ? 'RUNNING'
-        : 'QUEUED'
-  return {
-    externalJobId: String(value.jobId ?? value.job_id ?? value.taskId ?? value.task_id ?? fallbackId),
-    projectId: value.projectId ? String(value.projectId) : value.project_id ? String(value.project_id) : undefined,
-    editorUrl: value.editorUrl ? String(value.editorUrl) : value.editor_url ? String(value.editor_url) : undefined,
-    status,
-    resultUrl: value.resultUrl ? String(value.resultUrl) : value.result_url ? String(value.result_url) : undefined,
-    resultKey: value.resultKey ? String(value.resultKey) : value.result_key ? String(value.result_key) : undefined,
-    errorMessage: value.errorMessage ? String(value.errorMessage) : value.error ? String(value.error) : undefined,
-  }
-}
-
-export async function submitChatCutJob(input: ChatCutJobInput): Promise<ChatCutJobResult> {
-  const value = await callTool(submitTool(), {
-    idempotencyKey: `dashuai-render-${input.taskId}`,
-    projectName: input.title,
-    source: 'dashuai-mini-program',
-    keywords: input.options.note,
-    render: {
-      aspectRatio: '9:16',
-      width: input.output.width,
-      height: input.output.height,
-      fps: input.output.fps,
-    },
-    voice: { presetId: input.options.voiceId },
-    captions: { enabled: input.options.subtitles, style: input.options.subtitleStyle },
-    audio: { bgm: input.options.bgm, normalize: input.options.normalizeAudio },
-    editing: {
-      pacing: input.options.pacing,
-      transitions: input.options.transitions,
-      removeSilence: input.options.removeSilence,
-    },
-    clips: input.clips,
-  })
-  return mapJob(value, input.taskId)
-}
-
-export async function getChatCutJob(externalJobId: string): Promise<ChatCutJobResult> {
-  const tool = statusTool()
-  if (!tool) throw new ChatCutToolMappingError('缺少 CHATCUT_MCP_STATUS_TOOL，无法轮询 ChatCut 任务')
-  const value = await callTool(tool, { jobId: externalJobId })
-  return mapJob(value, externalJobId)
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// ★ 原来的 `submitChatCutJob()` / `getChatCutJob()` 已删除（2026-09-17）。
+//
+// 它们按「提交一个作业 → 拿 jobId → 轮询 jobId」发请求，而 ChatCut 没有这种接口：
+//   submitChatCutJob 发的 10 个字段（idempotencyKey/projectName/source/keywords/render/
+//     voice/captions/audio/editing/clips）真实工具一个都不认；
+//   getChatCutJob 发的 { jobId } 同样不认。
+// 留着它只会让「AI 档为什么一点就失败」变得更难查，所以删掉而不是标注 deprecated。
+//
+// 真正的多步驱动在 `./chatcut-driver.ts`：
+//   startChatCutRender() / pollChatCutRender()
+// 本文件只负责三件事：取 token（含 OAuth 刷新与单飞锁）、发 JSON-RPC（callTool）、
+// 以及对外声明「AI 档现在能不能用」（chatCutConfigured）。
+// ─────────────────────────────────────────────────────────────────────────────

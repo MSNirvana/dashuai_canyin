@@ -1,4 +1,4 @@
-// 合成 Worker：轮询 RenderTask(QUEUED) → 拉素材 → FFmpeg 粗剪 → 回传 COS → 结算扣豆
+// 合成 Worker：轮询 RenderTask(QUEUED) → 拉素材 → FFmpeg 粗剪 → 回传 COS → 结算扣积分
 // 与 API 服务解耦：CPU 密集的转码不在请求线程里跑，可独立进程/独立机器部署
 // 计费铁律：submitRender 只 freeze 预留；本 worker 成功才 consume，失败 unfreeze 全额释放
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -33,12 +33,14 @@ import { activeTtsProvider } from '../services/tts-provider.service.js'
 import { signedObjectUrl } from '../lib/cos.js'
 import {
   chatCutConfigured,
-  submitChatCutJob,
-  getChatCutJob,
   DEFAULT_CHATCUT_OPTIONS,
   type ChatCutOptions,
-  type ChatCutJobResult,
 } from './chatcut.js'
+import {
+  pollChatCutRender,
+  startChatCutRender,
+  type ChatCutJobState,
+} from './chatcut-driver.js'
 
 const POLL_MS = Math.max(1000, Number(process.env.FFMPEG_POLL_MS ?? 3000))
 const TASK_TIMEOUT_MS = Math.max(30_000, Number(process.env.FFMPEG_TASK_TIMEOUT_MS ?? 600_000))
@@ -188,7 +190,7 @@ async function processTask(task: {
 
     // 3) 整片调色：放在拼接后做单一 pass，而不是逐镜头各做一次。
     //    这样 N 个镜头只编码 1 次；重调色时可完全复用归一化缓存，只跑「拼接 + 一遍调色」，
-    //    相比首次合成省掉全部源解码与缩放 —— 这正是 RECOLOR 只收 10 豆的成本依据
+    //    相比首次合成省掉全部源解码与缩放 —— 这正是 RECOLOR 只收 10 积分的成本依据
     let finalPath = concatPath
     if (buildColorFilter(color)) {
       finalPath = join(dir, 'final.mp4')
@@ -227,7 +229,7 @@ async function processTask(task: {
     const size = await uploadFile(finalPath, key, 'video/mp4')
     const durationMs = await probeDurationMs(finalPath)
 
-    // 4) 结算扣豆 + 落产物（幂等：requestId rc:<taskId>）
+    // 4) 结算扣积分 + 落产物（幂等：requestId rc:<taskId>）
     await prisma.$transaction((tx) =>
       completeRender(tx, task.merchantId, task.id, {
         resultKey: key,
@@ -241,6 +243,14 @@ async function processTask(task: {
   }
 }
 
+/**
+ * AI 档（外部剪辑）—— 走 ChatCut 多步驱动。
+ *
+ * ★ 这里只负责「启动」：建项目、推素材、排轨、设角色，返回一个待轮询的状态。
+ *   导出**不在这一轮提交** —— 字幕依赖配音轨的 ASR 转录，转录要几分钟，
+ *   不能在一次 tick 里干等。后续阶段（开字幕 → 提交导出 → 轮询成片）由
+ *   `pollChatCutTasks()` 每轮推进，状态存在 `paramsJson.chatcutJob` 里。
+ */
 async function processChatCutTask(
   task: { id: bigint; merchantId: bigint; creationId: bigint; paramsJson: unknown },
   params: {
@@ -261,7 +271,7 @@ async function processChatCutTask(
     durationMs: clip.durationMs,
     line: clip.line,
   })))
-  const result = await submitChatCutJob({
+  const result = await startChatCutRender({
     taskId: task.id.toString(),
     merchantId: task.merchantId.toString(),
     creationId: params.creationId ?? task.creationId.toString(),
@@ -270,12 +280,18 @@ async function processChatCutTask(
     options: params.chatcut ?? DEFAULT_CHATCUT_OPTIONS,
     output: params.output ?? { width: 1080, height: 1920, fps: 30 },
   })
-  await storeChatCutState(task.id, result)
-  if (result.status === 'FAILED') throw new Error(result.errorMessage || 'ChatCut 提交任务失败')
-  if (result.status === 'SUCCESS') await finishChatCutTask(task, result)
+  await storeChatCutState(task.id, result.state, result.status)
+  for (const notice of result.state.notices ?? []) {
+    console.warn(`[render-worker] ChatCut 任务 ${task.id} 提示：${notice}`)
+  }
+  if (result.status === 'FAILED') throw new Error(result.errorMessage || 'ChatCut 启动失败')
 }
 
-async function storeChatCutState(taskId: bigint, result: ChatCutJobResult): Promise<void> {
+async function storeChatCutState(
+  taskId: bigint,
+  chatcutJob: ChatCutJobState,
+  status: 'RUNNING' | 'SUCCESS' | 'FAILED',
+): Promise<void> {
   const task = await prisma.renderTask.findUnique({ where: { id: taskId } })
   if (!task) return
   const params = (task.paramsJson ?? {}) as Record<string, unknown>
@@ -283,16 +299,9 @@ async function storeChatCutState(taskId: bigint, result: ChatCutJobResult): Prom
     where: { id: taskId },
     data: {
       // 外部任务已受理后，本地固定为 RUNNING，避免下一轮 Worker 重复提交。
-      status: result.status === 'FAILED' ? 'FAILED' : 'RUNNING',
-      progress: result.status === 'RUNNING' ? 45 : result.status === 'QUEUED' ? 30 : 20,
-      paramsJson: {
-        ...params,
-        chatcutJob: {
-          externalJobId: result.externalJobId,
-          projectId: result.projectId,
-          editorUrl: result.editorUrl,
-        },
-      } as never,
+      status: status === 'FAILED' ? 'FAILED' : 'RUNNING',
+      progress: chatcutJob.phase === 'RENDER' ? 60 : 30,
+      paramsJson: { ...params, chatcutJob } as never,
     },
   })
 }
@@ -305,31 +314,31 @@ async function pollChatCutTasks(): Promise<void> {
     take: 5,
   })
   for (const task of tasks) {
-    const params = (task.paramsJson ?? {}) as { chatcutJob?: { externalJobId?: string } }
-    const externalJobId = params.chatcutJob?.externalJobId
-    if (!externalJobId) continue
+    const params = (task.paramsJson ?? {}) as { chatcutJob?: ChatCutJobState }
+    const state = params.chatcutJob
+    // 没有状态 = 还没启动过（或旧格式的历史任务），交给 processTask 去启动
+    if (!state?.projectId) continue
     try {
-      const result = await getChatCutJob(externalJobId)
+      const result = await pollChatCutRender(state)
+      await storeChatCutState(task.id, result.state, result.status)
+      for (const notice of result.state.notices ?? []) {
+        if (!state.notices?.includes(notice)) console.warn(`[render-worker] ChatCut 任务 ${task.id} 提示：${notice}`)
+      }
       if (result.status === 'FAILED') {
         await failRender(prisma, task.id, 'CHATCUT_FAILED', result.errorMessage || 'ChatCut 处理失败')
       } else if (result.status === 'SUCCESS') {
         try {
-          await finishChatCutTask(task, result)
+          await finishChatCutTask(task, result.resultUrl)
         } catch (e) {
           if (e instanceof ExternalResultInvalidError) {
             // 上游报成功但产物不可用：立即退款 + 终态，不让用户为坏片付费，
             // 也不把任务留在 RUNNING 等 30 分钟 sweeper 兜底
-            const state = await failRender(prisma, task.id, 'EXTERNAL_RESULT_INVALID', `成片校验未通过：${e.detail}`)
-            console.warn(`[render-worker] ChatCut 任务 ${task.id} 成片无效，已退款（结果 ${state}）：${e.detail}`)
+            const state2 = await failRender(prisma, task.id, 'EXTERNAL_RESULT_INVALID', `成片校验未通过：${e.detail}`)
+            console.warn(`[render-worker] ChatCut 任务 ${task.id} 成片无效，已退款（结果 ${state2}）：${e.detail}`)
           } else {
             throw e
           }
         }
-      } else {
-        await prisma.renderTask.update({
-          where: { id: task.id },
-          data: { status: 'RUNNING', progress: result.status === 'RUNNING' ? 60 : 30 },
-        })
       }
     } catch (error) {
       // 网络抖动 / 查询失败：保持 RUNNING，下一轮重试（超时由 stuck-sweeper 兜底退款）
@@ -348,52 +357,35 @@ export class ExternalResultInvalidError extends Error {
 
 async function finishChatCutTask(
   task: { id: bigint; merchantId: bigint },
-  result: ChatCutJobResult,
+  resultUrl: string | undefined,
 ): Promise<void> {
-  let resultKey = result.resultKey
-  let resultSize: bigint | undefined
-  let durationMs: number | null | undefined
+  // ChatCut 只给成片地址（它不会把产物推到我们的 COS），所以只有一条分支。
+  // ★ 扣费前必须校验：HTTP 200 只代表「下载成功」，不代表「内容是视频」。
+  //   上游返回 HTML 错误页 / JSON / 0 字节文件时，旧代码会把坏文件当真成片入库并扣全额积分。
+  if (!resultUrl) throw new ExternalResultInvalidError('ChatCut 已完成但未返回成片地址')
 
-  if (!resultKey) {
-    // 分支 A：上游只给 URL，我们自己下载 + 回传 COS（本地有文件，可直接 ffprobe）
-    if (!result.resultUrl) throw new ExternalResultInvalidError('ChatCut 已完成但未返回成片地址')
-    const dir = await mkdtemp(join(tmpdir(), 'dashuai-chatcut-'))
-    try {
-      const target = join(dir, 'result.mp4')
-      const response = await fetch(result.resultUrl, { signal: AbortSignal.timeout(TASK_TIMEOUT_MS) })
-      if (!response.ok || !response.body) throw new Error(`下载 ChatCut 成片失败：HTTP ${response.status}`)
-      await pipeline(Readable.fromWeb(response.body as never), createWriteStream(target))
+  const dir = await mkdtemp(join(tmpdir(), 'dashuai-chatcut-'))
+  try {
+    const target = join(dir, 'result.mp4')
+    const response = await fetch(resultUrl, { signal: AbortSignal.timeout(TASK_TIMEOUT_MS) })
+    if (!response.ok || !response.body) throw new Error(`下载 ChatCut 成片失败：HTTP ${response.status}`)
+    await pipeline(Readable.fromWeb(response.body as never), createWriteStream(target))
 
-      // ★ 扣费前必须校验：HTTP 200 只代表「下载成功」，不代表「内容是视频」。
-      //   上游返回 HTML 错误页 / JSON / 0 字节文件时，旧代码会把坏文件当真成片入库并扣全额豆。
-      const probe = await probeVideo(target)
-      if (!probe.ok) throw new ExternalResultInvalidError(probe.reason ?? '下载到的文件不是可播放视频')
-      durationMs = probe.durationMs
+    const probe = await probeVideo(target)
+    if (!probe.ok) throw new ExternalResultInvalidError(probe.reason ?? '下载到的文件不是可播放视频')
 
-      resultKey = `renders/${task.merchantId.toString()}/${task.id.toString()}.mp4`
-      resultSize = BigInt(await uploadFile(target, resultKey, 'video/mp4'))
-    } finally {
-      await rm(dir, { recursive: true, force: true })
-    }
-  } else {
-    // 分支 B：上游已把成片传到我们的 COS，只给 key。
-    //   同样必须校验：objectExists 只证明「有这个对象」，不证明内容可播。
-    //   用签名 URL 让 ffprobe 直接读远端（避免整包下载），失败即判坏片。
-    if (!(await objectExists(resultKey))) {
-      throw new ExternalResultInvalidError(`成片对象不存在：${resultKey}`)
-    }
-    const url = await signedObjectUrl(resultKey, 600)
-    const probe = await probeVideo(url)
-    if (!probe.ok) throw new ExternalResultInvalidError(probe.reason ?? 'COS 上的成片不是可播放视频')
-    durationMs = probe.durationMs
+    const resultKey = `renders/${task.merchantId.toString()}/${task.id.toString()}.mp4`
+    const resultSize = BigInt(await uploadFile(target, resultKey, 'video/mp4'))
+
+    await prisma.$transaction((tx) => completeRender(tx, task.merchantId, task.id, {
+      resultKey,
+      resultSize,
+      durationMs: probe.durationMs,
+      cacheHit: false,
+    }))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
   }
-
-  await prisma.$transaction((tx) => completeRender(tx, task.merchantId, task.id, {
-    resultKey: resultKey!,
-    resultSize,
-    durationMs,
-    cacheHit: false,
-  }))
 }
 
 // ──────────────────────── 卡死任务恢复 sweeper ────────────────────────
@@ -444,7 +436,7 @@ async function sweepStuck(): Promise<void> {
   }
 
   // 结算悬空补偿：原 sweeper 只扫 RUNNING/QUEUED，SETTLEMENT_PENDING 会永久卡住、
-  // 预留额度永久占用、用户账上冻结豆永远解不开（前端一直显示「退款确认中」）。
+  // 预留额度永久占用、用户账上冻结积分永远解不开（前端一直显示「退款确认中」）。
   try {
     const r = await sweepSettlementPending(prisma)
     if (r.scanned > 0) {
