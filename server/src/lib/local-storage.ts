@@ -163,6 +163,10 @@ export function contentTypeForKey(key: string): string {
   const ext = extname(key).toLowerCase()
   if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg'
   if (ext === '.png') return 'image/png'
+  // webp/gif 是后补的：漏掉它们会落到下面的 video/mp4 默认值，
+  // 于是头像（/api/v1/media/file）返回的 Content-Type 是视频，部分端直接不渲染
+  if (ext === '.webp') return 'image/webp'
+  if (ext === '.gif') return 'image/gif'
   if (ext === '.webm') return 'video/webm'
   if (ext === '.mov') return 'video/quicktime'
   return 'video/mp4'

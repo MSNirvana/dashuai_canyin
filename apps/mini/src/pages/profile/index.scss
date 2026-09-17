@@ -1,0 +1,168 @@
+// 个人主页样式：与「我的」页共用设计令牌（styles/theme.scss），不引入新的色值
+.profile {
+  min-height: 100vh;
+  padding-bottom: 60rpx;
+  background: var(--td-bg-color-page);
+
+  // ── 头像 ──
+  &__avatarwrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 64rpx 0 8rpx;
+  }
+  // 外层不裁剪，只用来给角标定位
+  &__avatarbox {
+    position: relative;
+    width: 176rpx;
+    height: 176rpx;
+  }
+  &__avatar {
+    width: 176rpx;
+    height: 176rpx;
+    border-radius: 50%;
+    background: var(--td-brand-color);
+    box-shadow: var(--ds-glow-red);
+    // 头像图片是方形的，圆形容器必须裁剪，否则 aspectFill 会溢出成方块
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  &__avatar-img {
+    width: 176rpx;
+    height: 176rpx;
+    display: block;
+  }
+  &__avatar-text {
+    color: var(--td-text-color-anti);
+    font-size: 68rpx;
+    font-weight: 600;
+  }
+  // 相机角标：压在圆形右下角，靠外层 avatarbox 定位（见上面的说明）
+  &__avatar-badge {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 52rpx;
+    height: 52rpx;
+    border-radius: 50%;
+    background: var(--td-text-color-primary);
+    border: 4rpx solid var(--td-bg-color-page);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  &__avatar-tip {
+    margin-top: 20rpx;
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
+  // ── 表单卡片 ──
+  &__form {
+    margin: 0 24rpx;
+    padding: 0 28rpx;
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-large);
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__row {
+    display: flex;
+    align-items: center;
+    min-height: 108rpx;
+    & + & {
+      border-top: 1rpx solid var(--td-component-border);
+    }
+  }
+  &__key {
+    width: 150rpx;
+    flex: none;
+    font-size: 30rpx;
+    color: var(--td-text-color-primary);
+  }
+  &__input {
+    flex: 1;
+    height: 108rpx;
+    font-size: 30rpx;
+    color: var(--td-text-color-primary);
+  }
+  &__readonly {
+    flex: 1;
+    font-size: 30rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__hint {
+    display: block;
+    margin: 16rpx 34rpx 0;
+    font-size: 24rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-placeholder);
+  }
+
+  // ── 积分卡 ── 自「我的」页整体搬来；侧边距改成本页的 24rpx（与上面的表单卡对齐），
+  //    其余尺寸原样保留。本页是页面级类名，所以不与「我的」页共用（那边已删除，不会漂移）。
+  &__bean {
+    margin: 0 24rpx;
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-large);
+    padding: 32rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__beantop {
+    display: flex;
+    align-items: center;
+    gap: 20rpx;
+  }
+  &__beancell {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  &__beandiv {
+    width: 1rpx;
+    align-self: stretch;
+    background: var(--td-component-border);
+  }
+  &__beannum {
+    // 52 → 44rpx（2026-09-17）：这一行是**三个数字并排**（可用积分 / 赠积分 / 冻结中），
+    // 不是订阅页那种单个大金额，52rpx 会把数字撑得比标签还抢眼。
+    // 顺带解决溢出：卡片可用宽 638rpx(=750−24×2 外边距−32×2 内边距)，
+    // 减去 4 个 gap(20rpx) 与 2 条分隔线后每格约 185rpx（数字按 tabular-nums，
+    // 每位≈0.51em）；52rpx 时 7 位数≈186rpx 会顶破格宽，44rpx 时≈157rpx，留得住。
+    font-size: 44rpx;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    color: var(--td-text-color-primary);
+    font-variant-numeric: tabular-nums;
+    &--gold {
+      color: var(--ds-member);
+    }
+  }
+  &__beanlabel {
+    display: block;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+    margin-top: 12rpx;
+  }
+  &__beanbtn {
+    width: 100%;
+    margin-top: 26rpx;
+  }
+  // 与上面的 __hint 同一边距，两行提示在视觉上成一列
+  &__tip {
+    margin: 16rpx 34rpx 0;
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
+  // ── 保存 ──
+  &__save {
+    margin: 56rpx 24rpx 0;
+    width: auto;
+    &.is-disabled {
+      opacity: 0.5;
+    }
+  }
+}

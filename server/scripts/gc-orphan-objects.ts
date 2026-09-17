@@ -19,7 +19,7 @@
  *    的对象。本地模式下 multer 的中转目录 `.incoming/` 也会被列表实现跳过。
  *
  * 3) 对象键列**漏一列 = 误删一类在用文件**。所以已引用的键由下面 `collectReferencedKeys()`
- *    集中定义，覆盖 schema 里全部 14 个对象键列 / 7 张表（含软删行，宽松保护）。
+ *    集中定义，覆盖 schema 里全部 15 个对象键列 / 8 张表（含软删行，宽松保护）。
  *
  * 另外一并处理一类「看不见的垃圾」——**未完成的分片上传（碎片）**：
  *   上传中途失败会留下 UploadId 与已上传分片，它们照样占存储、照样计费，
@@ -113,15 +113,18 @@ async function collectReferencedKeys(): Promise<Set<string>> {
     if (v) keys.add(v)
   }
 
-  const [stores, dishes, mediaAssets, dishMedia, shotLibrary, excellentWorks, renderTasks] = await Promise.all([
-    prisma.store.findMany({ select: { coverKey: true, videoKey: true } }),
-    prisma.dish.findMany({ select: { coverKey: true, videoKey: true } }),
-    prisma.mediaAsset.findMany({ select: { cosKey: true, coverKey: true } }),
-    prisma.dishMedia.findMany({ select: { cosKey: true, coverKey: true } }),
-    prisma.shotLibrary.findMany({ select: { demoVideoKey: true, demoCoverKey: true } }),
-    prisma.excellentWork.findMany({ select: { coverKey: true, videoKey: true } }),
-    prisma.renderTask.findMany({ select: { resultKey: true, previewKey: true } }),
-  ])
+  const [stores, dishes, mediaAssets, dishMedia, shotLibrary, excellentWorks, renderTasks, merchants] =
+    await Promise.all([
+      prisma.store.findMany({ select: { coverKey: true, videoKey: true } }),
+      prisma.dish.findMany({ select: { coverKey: true, videoKey: true } }),
+      prisma.mediaAsset.findMany({ select: { cosKey: true, coverKey: true } }),
+      prisma.dishMedia.findMany({ select: { cosKey: true, coverKey: true } }),
+      prisma.shotLibrary.findMany({ select: { demoVideoKey: true, demoCoverKey: true } }),
+      prisma.excellentWork.findMany({ select: { coverKey: true, videoKey: true } }),
+      prisma.renderTask.findMany({ select: { resultKey: true, previewKey: true } }),
+      // 商家自传头像（个人主页）。注意只取 avatarKey：avatarUrl 是微信侧外部链接，不是存储键。
+      prisma.merchant.findMany({ select: { avatarKey: true } }),
+    ])
 
   for (const r of stores) {
     add(r.coverKey)
@@ -150,6 +153,9 @@ async function collectReferencedKeys(): Promise<Set<string>> {
   for (const r of renderTasks) {
     add(r.resultKey)
     add(r.previewKey)
+  }
+  for (const r of merchants) {
+    add(r.avatarKey)
   }
   return keys
 }

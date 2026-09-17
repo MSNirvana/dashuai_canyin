@@ -95,6 +95,8 @@ const GUARDED: Array<{ file: string; fields: string[] }> = [
   { file: '../src/routes/dishes.ts', fields: ['name', 'intro', 'sellingPoints'] },
   { file: '../src/routes/creations.ts', fields: ['title', 'copyText'] },
   { file: '../src/routes/persona.ts', fields: ['bossTags', 'activity'] },
+  // 昵称是用户可见文本，同样不许退回裸 z.string()；avatarKey 是对象键，**故意**不走工厂函数
+  { file: '../src/routes/profile.ts', fields: ['nickname'] },
 ]
 const HELPERS = ['requiredText(', 'optionalText(', 'nullableText(']
 

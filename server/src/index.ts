@@ -20,6 +20,7 @@ import personaRouter from './routes/persona.js'
 import shotLibraryRouter from './routes/shot-library.js'
 import worksRouter from './routes/works.js'
 import accountRouter from './routes/account.js'
+import profileRouter from './routes/profile.js'
 import previewCollageRouter from './routes/preview-collage.js'
 import renderCapabilitiesRouter from './routes/render-capabilities.js'
 import systemSettingsRouter from './routes/system-settings.js'
@@ -75,6 +76,8 @@ app.use('/api/v1/shot-library', shotLibraryRouter)
 // 首页「优秀作品」（运营内容，只读）
 app.use('/api/v1/works', worksRouter)
 app.use('/api/v1/account', accountRouter)
+// 个人资料（个人主页）：昵称 + 头像。商户级、可写，刻意与只读的 account 分开
+app.use('/api/v1/profile', profileRouter)
 // 公开（不鉴权）合成档位能力探测：客户端据此把不可用档位标灰
 // ⚠ 必须挂在 `app.use('/api/v1/render', ...)` 之前：Express 按注册顺序做前缀匹配，
 //   后注册的更深路径虽然通常能靠 next() 兜到，但依赖它太脆弱，直接把精确路由放前面。

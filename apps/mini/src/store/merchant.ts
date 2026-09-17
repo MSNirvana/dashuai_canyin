@@ -6,6 +6,7 @@ import Taro from '@tarojs/taro'
 import { STORAGE_KEYS } from '../config'
 import * as authApi from '../services/auth'
 import * as orderApi from '../services/order'
+import * as profileApi from '../services/profile'
 import * as storeApi from '../services/store'
 import type { StoreItem } from '../services/store'
 
@@ -27,6 +28,13 @@ interface MerchantState {
   token: string
   refreshToken: string
   merchant: MerchantInfo | null
+  /**
+   * 头像**展示地址**（服务端现签、1 小时过期）。
+   *
+   * 刻意只放内存、**不写 storage**：签名地址过期后是红叉，比回落到「首字母圆头像」难看。
+   * 冷启动时会短暂显示首字母，等 refreshProfile() 回来即换成真头像。
+   */
+  avatarUrl: string
   isMember: boolean
   memberEndAt: string | null
   memberPlanName: string | null
@@ -51,6 +59,10 @@ interface MerchantState {
   currentStore: () => StoreItem | undefined
   refreshBean: () => Promise<void>
   refreshMe: () => Promise<void>
+  /** 拉取商户资料（昵称 + 头像展示地址）。登录态下才有意义，未登录直接返回 */
+  refreshProfile: () => Promise<void>
+  /** 写入资料结果（个人主页改完昵称/头像后调用，避免再发一次请求） */
+  setProfile: (p: { nickname: string | null; avatarUrl: string | null }) => void
   logout: () => void
 }
 
@@ -58,6 +70,7 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
   token: '',
   refreshToken: '',
   merchant: null,
+  avatarUrl: '',
   isMember: false,
   memberEndAt: null,
   memberPlanName: null,
@@ -90,6 +103,8 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
       token: res.token,
       refreshToken: res.refreshToken,
       merchant: res.merchant,
+      // 换账号登录：上一个账号的头像签名地址必须清掉，否则会闪出别人的头像
+      avatarUrl: '',
       isMember: res.member.isMember,
       memberEndAt: res.member.endAt,
       available: res.bean.available,
@@ -157,12 +172,32 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
     }
   },
 
+  refreshProfile: async () => {
+    if (!get().token) return
+    const p = await profileApi.getProfile()
+    get().setProfile({ nickname: p.nickname, avatarUrl: p.avatarUrl })
+  },
+
+  setProfile: ({ nickname, avatarUrl }) => {
+    const merchant = get().merchant
+    if (merchant) {
+      // 昵称写进 storage（稳定值，下次冷启动直接可用）；
+      // avatarUrl 是 1 小时过期的签名地址，只进内存 —— 见 state 里的说明
+      const next: MerchantInfo = { ...merchant, nickname }
+      Taro.setStorageSync(STORAGE_KEYS.merchant, next)
+      set({ merchant: next, avatarUrl: avatarUrl ?? '' })
+      return
+    }
+    set({ avatarUrl: avatarUrl ?? '' })
+  },
+
   logout: () => {
     authApi.clearSession()
     set({
       token: '',
       refreshToken: '',
       merchant: null,
+      avatarUrl: '',
       isMember: false,
       memberEndAt: null,
       available: '0',
