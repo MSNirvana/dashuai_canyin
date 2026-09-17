@@ -22,10 +22,16 @@ function mediaBaseUrl(req: import('express').Request): string {
   return `${req.protocol}://${req.get('host')}/api/v1/media`
 }
 
+// 「你想怎么拍？」用户自填的一句话，选填、≤200 字。字段名与列名（user_idea）一致。
+// 必须走 optionalText 而不是 z.string().max(200)：后者数的是**长度**，`"   "` 能过，
+// 而这句会被原样喂给模型（见 lib/validators.ts 顶部说明）。
+const userIdeaField = optionalText(200)
+
 const createInput = z.object({
   storeId: z.string().min(1),
   dishId: z.string().optional(),
   title: requiredText(255).optional(),
+  userIdea: userIdeaField,
   track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
 })
@@ -34,6 +40,8 @@ const creationPatch = z.object({
   title: requiredText(255).optional(),
   // 口播文案会作为 {{copyText}} 喂给分镜提示词，纯空白值同样要 trim
   copyText: optionalText(20000),
+  // 允许改「你想怎么拍？」：改完重新生成时用得上（空串 = 清空）
+  userIdea: userIdeaField,
   track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
 })
@@ -72,6 +80,7 @@ router.post('/', async (req, res) => {
       storeId: idParam(input.storeId, 'storeId'),
       dishId: optionalIdParam(input.dishId, 'dishId'),
       title: input.title,
+      userIdea: input.userIdea,
       track: input.track,
       complexity: input.complexity,
     })
@@ -85,7 +94,7 @@ router.post('/', async (req, res) => {
   }
 })
 
-/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度（编辑不扣积分） */
+/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度 / 「你想怎么拍？」（编辑不扣积分） */
 router.patch('/:id', async (req, res) => {
   try {
     const input = creationPatch.parse(req.body)
@@ -258,7 +267,7 @@ function handleAiErr(e: unknown, res: import('express').Response) {
   if (!(e instanceof BeanNotEnoughError) && !(e instanceof creationSvc.CreationNotFoundError) && !(e instanceof ScenePendingError) && !(e instanceof SubscriptionRequiredError) && !(e instanceof RequestConflictError)) {
     console.error('[creations] AI 调用异常:', e)
   }
-  if (e instanceof BeanNotEnoughError) return fail(res, 2001, 'AI豆不足，请充值', 400)
+  if (e instanceof BeanNotEnoughError) return fail(res, 2001, '积分不足，请充值', 400)
   if (e instanceof creationSvc.CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
   if (e instanceof SubscriptionRequiredError) return fail(res, 2005, e.message, 403)
   if (e instanceof RequestConflictError) return fail(res, 2007, e.message, 409)

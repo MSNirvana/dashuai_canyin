@@ -1,5 +1,5 @@
 // 创作服务：把「门店/菜品上下文」喂给 AI 网关生成文案与分镜，并持久化分镜
-// 计费通过 runBilledScene 内部完成（文案 5 豆 / 分镜 10 豆），这里只负责上下文与落库
+// 计费通过 runBilledScene 内部完成（文案 5 积分 / 分镜 10 积分），这里只负责上下文与落库
 import type { PrismaClient, Shot } from '@prisma/client'
 import type { AiGateway } from '../ai/gateway.js'
 import { runBilledScene, ScenePendingError } from '../ai/ai.service.js'
@@ -77,6 +77,8 @@ export interface CreateCreationInput {
   storeId: bigint
   dishId?: bigint
   title?: string
+  /** 「你想怎么拍？」用户自填的一句话（选填，≤200 字），进提示词且权重最高 */
+  userIdea?: string
   track?: CopyTrack
   complexity?: Complexity
 }
@@ -230,6 +232,7 @@ export async function createCreation(
       storeId: input.storeId,
       dishId: input.dishId,
       title: input.title,
+      userIdea: input.userIdea,
       track: input.track ?? DEFAULT_COPY_TRACK,
       complexity: input.complexity ?? DEFAULT_COMPLEXITY,
     },
@@ -414,6 +417,21 @@ export function formatPersona(p: { bossTags?: string | null; activity?: string |
 }
 
 /**
+ * 「你想怎么拍？」的变量值 —— ★ **这个函数永不返回空串**。
+ *
+ * 模板里那一段的标题写的是「最高优先级」。用户没填时若原样渲染出一个**没有内容的空标题**，
+ * 模型很可能把那个标题当成一条待满足的要求自己脑补（"用户要求……"）。
+ * 所以没填时塞一句明确的「这次没有特别要求」，把这一行本身变成一条指令。
+ *
+ * 不做长度截断：200 字上限由 zod（`optionalText(200)`）和列类型 `VarChar(200)` 共同兜住，
+ * 这里再截一次只会把「上游漏了校验」这个信号悄悄吃掉。
+ */
+function buildUserIdea(raw: string | null | undefined): string {
+  const t = (raw ?? '').trim()
+  return t || '（用户这次没有特别要求，按下面的要求正常发挥即可）'
+}
+
+/**
  * 拼装 AI 提示词变量：门店（含门店介绍）+ 菜品 + 门店人设 + 已生成文案 + 款式/复杂度 + 镜头库
  * （人设跟随门店）。导出仅供 scripts/verify-prompt-vars.ts 做变量契约测试，
  * 业务调用请走 generateCopy / generateShots。
@@ -442,6 +460,8 @@ export async function buildVariables(
     dishIntro: c.dish?.intro ?? '',
     sellingPoints: c.dish?.sellingPoints ?? '',
     persona: formatPersona(c.store.persona),
+    // 用户自填的「你想怎么拍？」。注意它**不是** `c.userIdea ?? ''`：见 buildUserIdea 的说明。
+    userIdea: buildUserIdea(c.userIdea),
     copyText: c.copyText ?? '',
     track,
     trackLabel: COPY_TRACKS[track].label,
@@ -517,12 +537,15 @@ export async function updateCreation(
   prisma: PrismaClient,
   merchantId: bigint,
   creationId: bigint,
-  input: { copyText?: string; title?: string; track?: CopyTrack; complexity?: Complexity },
+  input: { copyText?: string; title?: string; userIdea?: string; track?: CopyTrack; complexity?: Complexity },
 ) {
   await getCreation(prisma, merchantId, creationId)
-  const data: { copyText?: string; title?: string; track?: string; complexity?: string } = {}
+  const data: { copyText?: string; title?: string; userIdea?: string | null; track?: string; complexity?: string } = {}
   if (input.copyText !== undefined) data.copyText = input.copyText
   if (input.title !== undefined) data.title = input.title
+  // 允许改回「没写」：路由层的 optionalText 会把纯空白串收敛成 '',这里把 '' 落成 null，
+  // 免得库里同时存在 null 和 '' 两种「没填」。
+  if (input.userIdea !== undefined) data.userIdea = input.userIdea.trim() === '' ? null : input.userIdea
   if (input.track !== undefined) data.track = input.track
   if (input.complexity !== undefined) data.complexity = input.complexity
   if (Object.keys(data).length === 0) return getCreation(prisma, merchantId, creationId)

@@ -22,6 +22,11 @@ export const COMPLEXITY_OPTIONS: { value: Complexity; label: string; desc: strin
 export interface CreationItem {
   id: string
   title: string | null
+  /**
+   * 「你想拍什么风格？」用户自填的一句话（≤200 字，未填为 null）。
+   * 详情接口（getCreation）会带回来用于回填；列表接口不一定返回，所以是可选的。
+   */
+  userIdea?: string | null
   storeId: string
   dishId: string | null
   track: string
@@ -119,16 +124,18 @@ export function createCreation(input: {
   storeId: string
   dishId?: string
   title?: string
+  /** 「你想拍什么风格？」选填，≤200 字。会作为最高优先级要求喂给模型 */
+  userIdea?: string
   track?: CopyTrack
   complexity?: Complexity
 }) {
   return http.post<CreationDetail>('/creations', input)
 }
 
-/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度（不扣积分） */
+/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度 / 「你想拍什么风格？」（不扣积分） */
 export function updateCreation(
   id: string,
-  input: { title?: string; copyText?: string; track?: CopyTrack; complexity?: Complexity },
+  input: { title?: string; copyText?: string; userIdea?: string; track?: CopyTrack; complexity?: Complexity },
 ) {
   return http.patch<CreationDetail>(`/creations/${id}`, input)
 }
@@ -140,7 +147,7 @@ export function updateCreation(
  *   · 主通道（gpt-5.5）健康时，文案 14~16s、分镜 20~26s；
  *   · 主通道不可用退到备用通道（deepseek-v4-flash 是思考模型，completion 动辄上万 token）时，
  *     分镜要 46~72s。
- * 30 秒卡在中间 ⇒ 服务端其实还在跑、最后也确实成功（豆照扣、分镜也落了库），
+ * 30 秒卡在中间 ⇒ 服务端其实还在跑、最后也确实成功（积分照扣、分镜也落了库），
  * 但**前端先超时**，`runAuto` 走 catch → 用户被弹回编辑页，看到的是「生成文案」「生成分镜」
  * 两个手动按钮 —— 像是刚才那次点击根本没自动生成。2026-09-16 实测就是这个形状
  * （服务端 72.4s 成功落库 6 条分镜，前端 30s 就断了）。

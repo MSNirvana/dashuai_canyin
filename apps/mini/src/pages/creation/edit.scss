@@ -6,7 +6,12 @@
 .cedit {
   min-height: 100vh;
   background: var(--td-bg-color-page);
-  padding: 24rpx 36rpx 220rpx;
+  // 底部留白 160rpx：页脚现在是**一行**（问号 + 半宽按钮），高 24 + 96 + 24 = 144rpx。
+  // 沿革：260（多一行常驻小字） → 220（小字收进气泡，但按钮还是整行、下面仍有常驻小字一行）
+  //      → 160（那行小字也收进气泡了，页脚真的只剩一行）。
+  // 「正在读取同款配方…」那一行会让页脚临时长到 ~189rpx，但它是**瞬时态**，
+  // 而底部留白要按**绝大多数时候**的高度取，否则平时会多出一大块空白。
+  padding: 24rpx 36rpx 160rpx;
 
   &__tip {
     text-align: center;
@@ -116,7 +121,80 @@
   &__new-head { padding: 10rpx 4rpx 30rpx; }
   &__new-kicker, &__stage-kicker { display: block; color: var(--td-brand-color); font-size: 20rpx; font-weight: 700; letter-spacing: .12em; }
   &__new-title { display: block; margin-top: 14rpx; color: var(--td-text-color-primary); font-size: 46rpx; font-weight: 750; line-height: 1.25; letter-spacing: -.035em; }
-  &__new-desc { display: block; margin-top: 14rpx; color: var(--td-text-color-secondary); font-size: 25rpx; line-height: 1.6; }
+  // 原页顶那行副标题（new-desc）的最终归宿 = 页脚「?」的气泡（见下面的 `&__help-bubble`）。
+  // 它中间当过一版页脚常驻小字，后来判定它讲的是「填完这几项会发生什么」，
+  // 属于**按需了解**的信息 —— 常驻只会占掉按按钮前最后一眼的注意力。
+  // 同理，「生成后会消耗积分，失败全额返还」也被收进同一个气泡（原来它也是页脚常驻的一行）。
+  // 这里不留空壳：留着会让人以为页脚还有这么一行。
+  //
+  /* ── 页脚：问号 + 半宽主按钮 · 成组居中 ──
+     「按钮做小一倍」= **只改宽度、不动高度**：
+     · 宽度 —— `&__submit` 给一个定宽（整行的约一半），并去掉 `ds-btn--block`
+       （它写死 `width:100%`，留着就压不掉）；
+     · 高度 —— 原样沿用 `.ds-btn` 的 96rpx，一个字没改。
+     按钮从整行缩到半行后，若还把问号顶在最左边，右侧会空出一大块像布局坏掉，
+     所以让「问号 + 按钮」整组居中：视觉重心回到页面中轴，右侧的空白读起来是留白而不是缺失。
+     ★ 居中容器不能直接是 `<Button>`：小程序原生 button 自带一套样式，
+       给它设 `display:flex` 会影响其内部渲染，所以外面包了一层 `&__footrow`。 */
+  &__footrow {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    // 16 → 24rpx：按钮变小之后，两者挨太近会粘成一个整体，认不出哪个是「点我」的
+    gap: 24rpx;
+  }
+  // 宽 300rpx：整行可用宽 = 750 - 36×2 = 678rpx，原来按钮吃掉问号之外的 590rpx，取一半 ≈ 295。
+  // 取整到 300 是为了好读；「生成 / 生成中…」最长 4 字 ≈ 128rpx，撑不满也不会挤。
+  &__submit {
+    width: 300rpx;
+  }
+  // 问号挨着主按钮，是让「想先了解一下」和「按下去」挨在一起，不必回头找。
+  // `flex: none` 是必须的：`&__footrow` 是 flex 容器，少了它会跟着按钮一起被压缩变形（从圆变椭圆）。
+  &__help {
+    flex: none;
+    width: 72rpx;
+    height: 72rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 28rpx;
+    font-weight: 700;
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-secondary);
+  }
+  // 展开时点亮：让「这段话是从哪冒出来的」有明确出处 —— 不点亮的话气泡飘在上方，看不出归属
+  &__help--on {
+    color: var(--td-brand-color);
+    background: var(--td-brand-color-light);
+  }
+  &__help-bubble {
+    position: absolute;
+    // 左右 36rpx 与 `.ds-footer` 的水平内边距同值 ⇒ 气泡与**页脚**左右两端对齐。
+    // （注意不是与按钮对齐：按钮现在是半宽居中的，「跟按钮对齐」会把气泡挤成窄窄一条。）
+    left: 36rpx;
+    right: 36rpx;
+    // 100% = 页脚上沿，再让开 12rpx 免得贴在一起
+    bottom: 100%;
+    margin-bottom: 12rpx;
+    padding: 22rpx 26rpx;
+    font-size: 24rpx;
+    line-height: 1.7;
+    // 用 secondary(#5c6066) 而不是它当脚注时的 disabled(#bfc3c9)：这些话是要读进去的说明，
+    // 淡到看不清就等于白藏了 —— 收起来是为了不抢注意力，不是为了让人读不了。
+    color: var(--td-text-color-secondary);
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+    box-shadow: 0 12rpx 40rpx rgba(17, 17, 20, 0.12);
+  }
+  // 气泡里的每一行说明。`<Text>` 在微信里默认是 inline，不显式 block 会两行挤成一行。
+  &__help-line {
+    display: block;
+  }
+  &__help-line + &__help-line {
+    margin-top: 8rpx;
+  }
   &__stage { margin-top: 22rpx; padding: 22rpx 24rpx; border-radius: var(--td-radius-default); background: var(--td-brand-color-light); }
   &__stage-title { display: block; margin-top: 8rpx; color: var(--td-text-color-primary); font-size: 27rpx; font-weight: 600; }
 
@@ -216,6 +294,26 @@
     gap: 16rpx;
     margin-bottom: 24rpx;
   }
+  // 卡片内的小节标题行：「你想拍什么风格？」这类标题右边跟一枚「选填」小徽标。
+  // 徽标用浅灰底而不是品牌红 —— 它只是提示可跳过，不该抢成第二视觉焦点。
+  //
+  // 这里给了 20rpx 下边距，补的是原来那行 `&__hint` 的位置：「写一句你的想法」被删掉后，
+  // 标题与输入框之间就只剩 0 间距，textarea 会像贴在标题上。
+  &__sechead {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    margin-bottom: 20rpx;
+  }
+  &__optional {
+    flex: none;
+    font-size: 20rpx;
+    line-height: 1.5;
+    color: var(--td-text-color-placeholder);
+    background: var(--td-bg-color-secondary);
+    border-radius: var(--td-radius-small);
+    padding: 2rpx 12rpx;
+  }
   &__sectitle {
     display: block;
     font-size: 34rpx;
@@ -238,17 +336,109 @@
     padding: 4rpx 2rpx;
   }
 
-  /* 分段控件上方的说明 / 下方的款式描述 */
-  &__hint {
-    display: block;
-    font-size: 24rpx;
-    color: var(--td-text-color-placeholder);
-    margin-bottom: 16rpx;
-  }
+  /* 分段控件下方的款式描述 */
+  // 原来分段控件上方那行灰说明（hint）已就地删除：仅剩的两处用法都改成了
+  // `&__spec-note`（与标题同行），留着会让人以为这里还有一行说明。
   &__desc {
     display: block;
     margin-top: 16rpx;
     font-size: 24rpx;
+    color: var(--td-brand-color);
+  }
+
+  /* ── 规格块（文案款式 / 镜头复杂度）的标题行 ──
+     原来这里是「34rpx 粗体标题独占一行 + 一行灰说明 + 分段控件」，
+     也就是全站「卡内小节标题」的写法。反馈「看着像分类，下面没有东西」的症结就在这：
+     标题被读成分类名，而下面的控件没被看成它的内容。所以：
+     ① 标题降到 30rpx（明确轻于真正的小节标题 `&__sectitle` 的 34rpx）；
+     ② 说明挪到同一行右侧 —— 标题不再独占一行，整块收成「标题行 + 选项组」一个紧凑单元；
+     ③ 控件本身换成描边容器 + 选中项实心品牌红（见文件末尾 `.cedit .cedit__seg`）。 */
+  &__spec-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16rpx;
+    margin-bottom: 18rpx;
+  }
+  &__spec-title {
+    flex: none;
+    font-size: 30rpx;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    color: var(--td-text-color-primary);
+  }
+  // 说明贴右对齐、字号比标题小两档：它说的是「这组选项管什么」，
+  // 是注解不是正文，与标题同行之后视线不会被多出来的一行灰字打断。
+  &__spec-note {
+    flex: 1;
+    min-width: 0;
+    text-align: right;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+
+  // 合并成一张卡后，两组规格之间的细分隔线。
+  // 上下留白刻意偏大：上面那块最后一行是描边选项条，线贴太近会被读成某一项的底边。
+  &__split {
+    height: 1rpx;
+    background: var(--td-component-border);
+    margin: 36rpx 0 32rpx;
+  }
+
+  /* ── 竖排选项列表（文案款式 / 镜头复杂度）──
+     一行一个选项、右侧一句小字说明、选中时**整条**飘红。
+     为什么不是一排并排的窄格（原来那排 `Segmented`）：窄格放不下说明 ⇒
+     说明只能落到控件下方单独占一行，而且只显示「当前选中那个」的解释，
+     于是整块看上去「像分类、下面没有东西」，想比较两个款式还得来回点。 */
+  &__opts {
+    display: flex;
+    flex-direction: column;
+    // 每条之间留 16rpx：留缝才看得出「一条一条」；贴着排就成表格了，
+    // 而且选中态的整条高亮会跟邻项糊在一起。
+    gap: 16rpx;
+  }
+  &__opt {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20rpx;
+    // 88rpx ≈ 44px：单行列表的舒适点击高度
+    min-height: 88rpx;
+    padding: 0 24rpx;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+  }
+  &__opt--hover {
+    opacity: 0.6;
+  }
+  // 选中 = **整条**：底色 + 描边 + 左右两行字一起转品牌红。
+  // 只用浅红底、不填充实心红：这里最多会同时出现 4+3 条，
+  // 实心块会把整张卡刷成一片红，反而分不出哪条是选中的。
+  &__opt--on {
+    background: var(--td-brand-color-light);
+    border-color: var(--td-brand-color);
+  }
+  &__opt-label {
+    flex: none;
+    font-size: 28rpx;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+  }
+  // 两级类名（`.cedit__opt--on .cedit__opt-label`）：与 `.cedit__opt-label` 同文件，
+  // 但这里同样不赌书写顺序 —— 多一级祖先就与顺序无关。
+  &__opt--on &__opt-label {
+    font-weight: 650;
+    color: var(--td-brand-color);
+  }
+  &__opt-desc {
+    flex: 1;
+    min-width: 0;
+    text-align: right;
+    font-size: 23rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__opt--on &__opt-desc {
     color: var(--td-brand-color);
   }
 
@@ -277,11 +467,14 @@
     color: var(--td-text-color-primary);
     text-align: right;
   }
+  // 标题行：文字与占位提示**左对齐**（原来跟上面两行一样右对齐）。
+  // 门店/菜品的值是短词，贴右更好扫；标题的占位提示是一整句话（「选填，默认门店+菜品名」），
+  // 右对齐会把它压到最右边、左边空出一大块，看着像没对齐 —— 所以让它跟 label 一样从左边起。
   &__input {
     flex: 1;
     font-size: 30rpx;
     color: var(--td-text-color-primary);
-    text-align: right;
+    text-align: left;
   }
   &__ph {
     color: var(--td-text-color-placeholder);
@@ -432,6 +625,29 @@
     border-radius: var(--td-radius-default);
     margin-bottom: 16rpx;
   }
+  // 「你想拍什么风格？」的自由输入框。刻意与上面的 &__textarea（编辑文案用）同款 —— 同一个页面里
+  // 两种输入框应当长得一样 —— 只把高度抬到 200rpx（这里填的是一段话，不是一行字），
+  // 并去掉 margin-bottom：它下面跟的是字数计数，不是一排按钮。
+  &__idea {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 200rpx;
+    padding: 24rpx 26rpx;
+    font-size: 28rpx;
+    line-height: 1.7;
+    color: var(--td-text-color-primary);
+    background: var(--td-bg-color-secondary);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+  }
+  // 字数计数（右对齐、贴输入框下沿）。上限 200 与输入框 maxlength、服务端 zod、库列同值
+  &__count {
+    display: block;
+    margin-top: 10rpx;
+    text-align: right;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
   &__row {
     display: flex;
     align-items: center;
@@ -460,5 +676,39 @@
     border-radius: var(--td-radius-default);
     padding: 20rpx 24rpx;
     margin-top: 16rpx;
+  }
+}
+
+/* ── 分段控件（`components/segmented`）在本页的覆写 ──
+   ★ 为什么写在本页而不是改组件：这个组件同时被「协议」「创作列表」「充值」三页用着，
+     那三处要的是原来的「浅灰底 + 白色药丸」观感；只有本页的规格块需要
+     「一眼看出哪个被选中了」，所以按实例覆写，不动组件本体。
+   ★ 为什么选择器要写两级类名 `.cedit .cedit__seg` 而不是单个 `.cedit__seg`：
+     组件自己的 `.segmented__item--on` / `.segmented__label` 都是单类名（特异度 0,1,0），
+     单类名也是 0,1,0 —— 同级就只剩「两份 wxss 谁排在后」这一条判据，
+     而页面样式与组件样式的打包顺序不该被当成判据（换构建配置就会翻）。
+     多挂一级祖先把特异度抬到 0,2,0 起，与顺序无关。
+   ★ 观感变化：容器从「灰底」换成「白底 + 1rpx 描边」，选中项从
+     「白底 + 轻投影」换成「实心品牌红 + 白字」。原来的白药丸浮在浅灰底上对比太弱，
+     整排控件看上去像一块空白 —— 这正是「下面没有东西」的来源之一。
+     实心眼随全站既有做法（`&__shotseq`、`&__gen-btn--primary` 都是实心品牌红）。 */
+.cedit .cedit__seg {
+  padding: 6rpx;
+  background: var(--td-bg-color-container);
+  border: 1rpx solid var(--td-component-stroke);
+  border-radius: var(--td-radius-default);
+
+  .segmented__item {
+    // 68 → 76rpx：4 个选项并排时每一格的点击面积要够，太薄也压不住描边容器
+    min-height: 76rpx;
+    border-radius: 10rpx;
+  }
+  .segmented__item--on {
+    background: var(--td-brand-color);
+    box-shadow: none;
+  }
+  .segmented__item--on .segmented__label {
+    color: #fff;
+    font-weight: 650;
   }
 }

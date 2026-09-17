@@ -63,6 +63,47 @@ function shotToText(s: ShotItem) {
   return body ? `${head}\n${body}` : head
 }
 
+/**
+ * 竖排选项列表：一行一个选项，右边跟一句小字说明，选中时**整条**飘红。
+ *
+ * 取代本页原来那排 `Segmented`（几个并排的窄格）。窄格的问题是：
+ * ① 放不下说明 ⇒ 说明只能挪到控件下方单独占一行；② 那一行只显示「当前选中那个」的解释，
+ * 想比较两个款式得来回点；③ 选中态只是窄格里的一个小色块，「整条被选中」无从体现。
+ *
+ * ★ 与 `components/segmented` 的分工（别顺手把那边也换掉）：
+ *   那边留给「换一款 / 换版式」这类**紧凑切换**场景 —— 编辑页在已生成后是收起状态，
+ *   点开只为快速替换，竖排 4 行会把整页撑高；本页是**初次选择**，需要把每条讲清楚。
+ */
+function OptionList({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: string; label: string; desc: string }[]
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <View className='cedit__opts'>
+      {options.map((o) => {
+        const on = o.value === value
+        return (
+          <View
+            key={o.value}
+            className={`cedit__opt ${on ? 'cedit__opt--on' : ''}`}
+            hoverClass={on ? 'none' : 'cedit__opt--hover'}
+            // 再点一次已选中的那条不做事：既没有语义，也会白发一次落库请求
+            onClick={() => { if (!on) onChange(o.value) }}
+          >
+            <Text className='cedit__opt-label'>{o.label}</Text>
+            <Text className='cedit__opt-desc'>{o.desc}</Text>
+          </View>
+        )
+      })}
+    </View>
+  )
+}
+
 export default function CreationEdit() {
   const params = Taro.getCurrentInstance().router?.params ?? {}
   // 从「优秀作品」带过来的同款配方：workId 预填款式/复杂度，用户仍可改
@@ -75,18 +116,41 @@ export default function CreationEdit() {
   const [stores, setStores] = useState<StoreItem[]>([])
   const [dishes, setDishes] = useState<DishItem[]>([])
   const [storeIdx, setStoreIdx] = useState(0)
-  const [dishIdx, setDishIdx] = useState(-1)
+  /**
+   * 菜品是**必选项**，默认落在第一个（下标 0，不再有「不指定」）。
+   *
+   * 门店下一条菜都没有时这里会取到 undefined —— 由 onCreate 的守卫给出明确提示，
+   * 而不是把「没得选」伪装成「可以跳过」：一条没菜的文案喂给 AI，`{{dishname}}` 会是空串，
+   * 生成出来的东西跟这家店没关系，用户还得到最后一步才发现。
+   */
+  const [dishIdx, setDishIdx] = useState(0)
   const [title, setTitle] = useState('')
+  /**
+   * 「你想拍什么风格？」——选填，最多 200 字。会作为**最高优先级**的要求同时喂给文案与分镜两个提示词。
+   *
+   * 提交时**空串不发送**（见 onCreate 的 `userIdea.trim() || undefined`）：
+   * 库列是 nullable 的，若这里把 '' 也发出去，「没填」就会同时存在 null 和 '' 两种形态，
+   * 后面凡是判断「用户有没有写过」的地方都得写两遍。
+   */
+  const [userIdea, setUserIdea] = useState('')
   const [copyLoading, setCopyLoading] = useState(false)
   const [boardLoading, setBoardLoading] = useState(false)
   // P0-7 再入锁：state 更新是异步的，而且 tdesign 组件的 loading 要经 native setData 下发，
   // 快速连点时有真实窗口两次点击都看到 loading=false。两次调用会各自 newRequestId()，
-  // 服务端幂等是按 requestId 建的 → 幂等失效 → 两次 AI 调用 + 两笔扣豆。
+  // 服务端幂等是按 requestId 建的 → 幂等失效 → 两次 AI 调用 + 两笔扣积分。
   // 所以闸门必须是**同步**的 ref：先置位再发请求，不与渲染节奏赛跑。
   const copyLockRef = useRef(false)
   const boardLockRef = useRef(false)
   const createLockRef = useRef(false)
   const [creating, setCreating] = useState(false)
+  /**
+   * 页脚「?」的说明气泡是否展开。
+   *
+   * 纯本地开关，不落库、不需要跨页保持 —— 它收的是原来常驻在按钮下方的那句
+   * 「选好门店、菜品和表达方向，文案与分镜会自动整理好」：属于**按需了解**的信息，
+   * 常驻只会占掉按按钮前最后一眼的注意力，收到问号里更合适。
+   */
+  const [showHelp, setShowHelp] = useState(false)
   // ── 同款配方（来自优秀作品） ──
   const [workRecipe, setWorkRecipe] = useState<WorkRecipe | null>(null)
   const [workTitle, setWorkTitle] = useState('')
@@ -205,7 +269,8 @@ export default function CreationEdit() {
   const onStoreChange = (e: { detail: { value: string | number } }) => {
     const idx = Number(e.detail.value)
     setStoreIdx(idx)
-    setDishIdx(-1)
+    // 换店后菜品列表整体换掉，回到第一个（菜品必选，没有「不指定」可以退）
+    setDishIdx(0)
     const sid = stores[idx]?.id
     if (sid) {
       // 同步为全局当前门店，保证首页/菜品/人设上下文一致
@@ -220,7 +285,7 @@ export default function CreationEdit() {
     const idx = stores.findIndex((s) => s.id === currentStoreId)
     if (idx < 0 || idx === storeIdx) return
     setStoreIdx(idx)
-    setDishIdx(-1)
+    setDishIdx(0)
     listDishes(currentStoreId).then(setDishes).catch(() => undefined)
   }, [currentStoreId, stores])
 
@@ -239,7 +304,7 @@ export default function CreationEdit() {
    *
    * ★ 失败**不再退出到编辑视图**：留在等待态、把失败的那一步和「重试」摆出来。
    *   原因见 `autoFailedRef` 的说明 —— 退出会让用户面对手动按钮，像是没自动生成。
-   * ★ 重试是**续跑**：已生成过的步骤跳过，不重复扣豆。
+   * ★ 重试是**续跑**：已生成过的步骤跳过，不重复扣积分。
    *   `skipCopy` 由调用方按本地 detail 传入；再叠加一次服务端读回的判据做双保险。
    *
    * ⚠ 每一步仍然各自 `newRequestId()`，**别「优化」成复用同一个 requestId**：
@@ -265,7 +330,7 @@ export default function CreationEdit() {
         const cr = await generateCopy(id, newRequestId(), track)
         // 等待期间被「取消生成」：不再发起分镜请求。
         // 已经发出去的这一笔文案请求撤不回来（请求层没有 abort 能力），
-        // 但它的结果会落库 —— 为它付的那笔豆不浪费，用户可从「创作」进入接着用。
+        // 但它的结果会落库 —— 为它付的那笔积分不浪费，用户可从「创作」进入接着用。
         if (waitingExit() === 'cancel') return
         usedFallback = cr.isFallbackTemplate
       }
@@ -290,7 +355,7 @@ export default function CreationEdit() {
       }
     } finally {
       // 成败都要把详情落回页面：一是失败时页面停在可重试的状态，
-      // 二是重试时要能按 detail 判断哪一步已经完成了（跳过它，不重复扣豆）。
+      // 二是重试时要能按 detail 判断哪一步已经完成了（跳过它，不重复扣积分）。
       // 只置 autoRunning=false 而不拉详情，detail 仍是 null，页面会卡在「加载中…」。
       // 「关闭等待」会先离开本页，此时再拉一次只是白发一个请求（setState 也不会生效）。
       if (mountedRef.current) {
@@ -307,15 +372,31 @@ export default function CreationEdit() {
       Taro.showToast({ title: '请选择门店', icon: 'none' })
       return
     }
-    // 一次点击 = 创建 + 生成文案 + 生成分镜（连续两笔扣豆），连点会重复创建并双扣
+    /**
+     * 菜品必选。取不到时按「列表还没回来 / 该门店真没菜」分别给话，
+     * 但不能放过去 —— 那样 `{{dishname}}` 会渲染成空串（网关对未命中的变量静默填空），
+     * AI 只能凭空写一条跟这家店无关的文案，用户要到拍摄页才发现白扣了积分。
+     */
+    const did = dishes[dishIdx]?.id
+    if (!did) {
+      Taro.showToast({
+        title: dishes.length ? '请选择菜品' : '该门店还没有菜品，请先添加',
+        icon: 'none',
+      })
+      return
+    }
+    // 一次点击 = 创建 + 生成文案 + 生成分镜（连续两笔扣积分），连点会重复创建并双扣
     if (createLockRef.current) return
     createLockRef.current = true
     setCreating(true)
     try {
       const c = await createCreation({
         storeId: sid,
-        dishId: dishIdx >= 0 ? dishes[dishIdx]?.id : undefined,
+        dishId: did,
         title: title || undefined,
+        // 空串不发：库里「没填」只留 null 一种形态（见 userIdea state 的说明）。
+        // 纯空格也算没填 —— 服务端 optionalText 同样会 trim，这里先收敛掉少发一个字段。
+        userIdea: userIdea.trim() || undefined,
         track,
         complexity,
       })
@@ -333,7 +414,7 @@ export default function CreationEdit() {
   /**
    * 取消生成：立刻停止等待，并且不再发起后续步骤。
    * 已经发出去的那一笔撤不回来（请求层没有 abort 能力），但它的结果会落库，
-   * 所以「已扣的豆换来的文案」不丢掉 —— 用户从「创作」进入仍能看到并用它。
+   * 所以「已扣的积分换来的文案」不丢掉 —— 用户从「创作」进入仍能看到并用它。
    */
   const onCancelGenerate = async () => {
     autoExitRef.current = 'cancel'
@@ -353,7 +434,7 @@ export default function CreationEdit() {
 
   /**
    * 失败后原地重试：**只补跑没成功的那一步**。
-   * 已生成过的步骤跳过 —— 文案那次调用是已经扣过豆的，重跑会再扣一次。
+   * 已生成过的步骤跳过 —— 文案那次调用是已经扣过积分的，重跑会再扣一次。
    * 本地 detail 就是判据（它由 finally 里的 loadDetail 落回来，是最新的）。
    */
   const onRetryAuto = () => {
@@ -515,7 +596,9 @@ export default function CreationEdit() {
         <View className='cedit__new-head'>
           <Text className='cedit__new-kicker'>NEW PROJECT</Text>
           <Text className='cedit__new-title'>今天想为哪道菜拍一条？</Text>
-          <Text className='cedit__new-desc'>选好门店、菜品和表达方向，AI 会帮你把想法整理成文案与分镜。</Text>
+          {/* 原来这里的副标题（「选好门店、菜品和表达方向，AI 会帮你…」）已挪到页脚做小字提醒。
+              它说的是「接下来要做什么」，摆在标题下方会先于表单占掉一屏注意力；
+              而且带「AI」的说法在这里是多余的 —— 按钮和页脚已经说清会发生什么。 */}
         </View>
 
         <View className='cedit__card'>
@@ -527,13 +610,15 @@ export default function CreationEdit() {
           </View>
           <View className='cedit__field'>
             <Text className='cedit__label'>菜品</Text>
+            {/* 必选：range 里不再有「不指定」这一项，所以下标与 dishes 一一对应，
+                这里也就不再需要 `- 1` 换算（旧写法是「下标 -1 = 不指定」的约定）。 */}
             <Picker
               mode='selector'
-              range={['不指定', ...dishes.map((d) => d.name)]}
-              onChange={(e: { detail: { value: string | number } }) => setDishIdx(Number(e.detail.value) - 1)}
-              disabled={!stores[storeIdx]}
+              range={dishes.map((d) => d.name)}
+              onChange={(e: { detail: { value: string | number } }) => setDishIdx(Number(e.detail.value))}
+              disabled={!stores[storeIdx] || !dishes.length}
             >
-              <View className='cedit__picker'>{dishIdx >= 0 ? dishes[dishIdx]?.name : '不指定（可选）'}</View>
+              <View className='cedit__picker'>{dishes[dishIdx]?.name || '请选择菜品'}</View>
             </Picker>
           </View>
           <View className='cedit__field cedit__field--last'>
@@ -542,10 +627,35 @@ export default function CreationEdit() {
               className='cedit__input'
               value={title}
               onInput={(e: { detail: { value: string } }) => setTitle(e.detail.value)}
-              placeholder='选填，留空用门店+菜品名'
+              placeholder='选填，默认门店+菜品名'
               placeholderClass='cedit__ph'
             />
           </View>
+        </View>
+
+        {/* ── 你想拍什么风格？──
+            这是用户唯一能自由表达的地方，也是提示词里权重最高的一段：
+            服务端把它渲染进「用户对怎么拍的要求 · 本次最高优先级」那一行，
+            并在写作要求里明确「与其它任何一条冲突时以用户为准」（文案与分镜两个场景都是）。
+            所以这个框不是「补充信息」，它排在前面的门店/菜品之后、规格选项之前 ——
+            先说你想要什么风格，再用下面的选项微调。
+            ★ 原来标题下还有一行「写一句你的想法，会优先按它来写」——删掉了：
+              标题已经把「这里填什么」说清，那行只是把同一件事又说一遍，白占一行高。 */}
+        <View className='cedit__card'>
+          <View className='cedit__sechead'>
+            <Text className='cedit__sectitle'>你想拍什么风格？</Text>
+            <Text className='cedit__optional'>选填</Text>
+          </View>
+          {/* ★ maxlength 必须显式写：小程序 textarea 默认只让输 140 字，与服务端的 200 上限对不上 */}
+          <Textarea
+            className='cedit__idea'
+            value={userIdea}
+            maxlength={200}
+            placeholder='例如：接地气的老板口播风、烟火气十足；或深夜食堂的治愈感、慢镜头特写'
+            placeholderClass='cedit__ph'
+            onInput={(e: { detail: { value: string } }) => setUserIdea(e.detail.value)}
+          />
+          <Text className='cedit__count'>{userIdea.length}/200</Text>
         </View>
 
         {/* 来自「优秀作品」的同款配方：只预填，不替用户做决定 */}
@@ -565,41 +675,74 @@ export default function CreationEdit() {
           </View>
         )}
 
+        {/* ── 规格：文案款式 + 镜头复杂度（原来两张卡，现合成一张）──
+            拆开时是「标题 + 说明 + 一排控件」各来一套，看起来像两个互不相干的入口；
+            但用户心智里这是同一件事 —— 这条片子要什么调性、拆几个镜头。
+            合成一张、中间一条细线分断，两组各自保留标题行。
+            ★ 选项本身已改成**竖排单列**（见 OptionList）：一行一个、右边带小字说明、选中整条飘红。
+              原来那排并排窄格里放不下说明，说明只能落到控件下方单独占一行、而且只显示选中项的，
+              于是整块看上去「像分类、下面没有东西」。说明进了每一行之后，那一行 `&__desc` 也就撤掉了
+              —— 现在所有选项的解释同时可见，不用来回点着比。 */}
         <View className='cedit__card'>
-          <Text className='cedit__sectitle'>文案款式</Text>
-          <Text className='cedit__hint'>决定 AI 写文案的侧重点</Text>
-          <Segmented
-            options={COPY_TRACK_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-            value={track}
-            onChange={onPickTrack}
-          />
-          <Text className='cedit__desc'>{COPY_TRACK_OPTIONS.find((o) => o.value === track)?.desc}</Text>
-        </View>
+          <View className='cedit__spec-head'>
+            <Text className='cedit__spec-title'>文案款式</Text>
+            {/* 原来的「决定 AI 写文案的侧重点」去掉了「AI」：同一页里只说一次「谁在写」就够了 */}
+            <Text className='cedit__spec-note'>决定文案的侧重点</Text>
+          </View>
+          <OptionList options={COPY_TRACK_OPTIONS} value={track} onChange={onPickTrack} />
 
-        <View className='cedit__card'>
-          <Text className='cedit__sectitle'>镜头复杂度</Text>
-          <Text className='cedit__hint'>自动决定分镜数量</Text>
-          <Segmented
-            options={COMPLEXITY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-            value={complexity}
-            onChange={onPickComplexity}
-          />
-          <Text className='cedit__desc'>{COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.desc}</Text>
+          {/* 细分隔线：两组选项直接贴在一起会糊成一整块，看不出这是两组独立选项 */}
+          <View className='cedit__split' />
+
+          <View className='cedit__spec-head'>
+            <Text className='cedit__spec-title'>镜头复杂度</Text>
+            <Text className='cedit__spec-note'>自动决定分镜数量</Text>
+          </View>
+          <OptionList options={COMPLEXITY_OPTIONS} value={complexity} onChange={onPickComplexity} />
         </View>
 
         <View className='ds-footer'>
-          <Button
-            className='ds-btn ds-btn--primary ds-btn--block'
-            hoverClass='ds-hover'
-            loading={creating}
-            disabled={creating || (!!workId && !workLoaded)}
-            onClick={onCreate}
-          >
-            {creating ? '生成中…' : '生成文案与分镜'}
-          </Button>
-          <View className='ds-footer__note'>
-            {!!workId && !workLoaded ? '正在读取同款配方…' : '生成后会消耗 AI 豆，失败全额返还'}
+          {/* 问号与主按钮**成组居中**。
+              不再套 `ds-footer__row`：它那条 `.ds-footer__row .ds-btn--block { flex:1; width:auto }`
+              是给「上一步 + 下一步」那种一窄一宽的排法用的，会把按钮撑满整行，
+              而这一版要的是半宽按钮（见 scss 的 `&__submit`）。
+              ★ 居中容器不能直接是 `<Button>` —— 小程序原生 button 自带一套样式，
+                给它设 `display:flex` 会影响其内部渲染，所以外面必须再包一层 View。 */}
+          <View className='cedit__footrow'>
+            <View
+              className={`cedit__help ${showHelp ? 'cedit__help--on' : ''}`}
+              hoverClass='ds-hover'
+              onClick={() => setShowHelp((v) => !v)}
+            >
+              ?
+            </View>
+            <Button
+              className='ds-btn ds-btn--primary cedit__submit'
+              hoverClass='ds-hover'
+              loading={creating}
+              disabled={creating || (!!workId && !workLoaded)}
+              onClick={onCreate}
+            >
+              {creating ? '生成中…' : '生成'}
+            </Button>
           </View>
+          {/* 这一行**只在「读同款配方」的瞬时态出现**：它讲的是此刻正在发生什么，
+              与「点了会发生什么」不同 —— 收进气泡里用户就看不到进度了，所以必须留在外面。
+              非读取态整行不渲染，页脚自然回到「只有一行按钮」的高度。 */}
+          {!!workId && !workLoaded && (
+            <View className='ds-footer__note'>正在读取同款配方…</View>
+          )}
+          {/* 点「?」弹出来的说明。.ds-footer 是 position:fixed，所以这里 absolute + bottom:100%
+              就浮在页脚上沿，不会把按钮往下推（展开/收起时页脚高度不变）。
+              两行都是**按需了解**的信息：读一遍就不用再看第二遍，不配常驻抢按按钮前最后一眼的注意力。 */}
+          {showHelp && (
+            <View className='cedit__help-bubble'>
+              <Text className='cedit__help-line'>
+                选好门店、菜品和表达方向，文案与分镜会自动整理好
+              </Text>
+              <Text className='cedit__help-line'>生成后会消耗积分，失败全额返还</Text>
+            </View>
+          )}
         </View>
 
         {/* 生成中的悬浮窗：盖在「初始页面」之上，而不是把整页替换掉 ——
@@ -614,7 +757,7 @@ export default function CreationEdit() {
                   <View className='cedit__gen-icon'>!</View>
                   <Text className='cedit__gen-title'>生成没有完成</Text>
                   <Text className='cedit__gen-sub'>
-                    {autoError}。已经生成好的部分不会重复扣豆，点「重试」接着跑就行。
+                    {autoError}。已经生成好的部分不会重复扣积分，点「重试」接着跑就行。
                   </Text>
                   <View className='cedit__gen-actions'>
                     <View
@@ -712,7 +855,12 @@ export default function CreationEdit() {
 
         {trackPickerVisible && (
           <>
+            {/* 编辑页这两处仍是 `Segmented`（紧凑切换），只是套上本页的观感覆写
+                `.cedit .cedit__seg`（白底描边 + 选中项实心品牌红）。
+                没换成 OptionList 是有意的：这里通常已生成过文案，「换一款」是**快捷替换**，
+                竖排 4 行会把这一屏撑高；初次选择才需要把每条讲清楚。 */}
             <Segmented
+              className='cedit__seg'
               options={COPY_TRACK_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
               value={track}
               onChange={onPickTrack}
@@ -813,6 +961,7 @@ export default function CreationEdit() {
         {complexityPickerVisible && (
           <>
             <Segmented
+              className='cedit__seg'
               options={COMPLEXITY_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
               value={complexity}
               onChange={onPickComplexity}

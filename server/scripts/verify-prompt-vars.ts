@@ -2,7 +2,7 @@
  * 变量契约验证：提示词的「模板 ↔ 变量 ↔ 场景白名单」三者必须严丝合缝。
  *
  * 背景：`ai_scene.prompt_template` 存在数据库里，`{{变量}}` 由网关做**纯字符串替换** ——
- * 取不到的键替换成空串：不报错、提示词那一段渲染成空白、这次调用照常扣豆。
+ * 取不到的键替换成空串：不报错、提示词那一段渲染成空白、这次调用照常扣积分。
  * 也就是说这类缺陷**没有任何错误日志**，只能靠契约测试钉死。本脚本覆盖四类：
  *   ① 模板层：所有创建场景模板 / 兜底模板的占位符都在白名单内，且改动后确实引用了
  *      门店介绍与老板人设（这两个字段此前根本没进提示词）
@@ -106,6 +106,20 @@ for (const t of TEMPLATES) {
   check(t.tpl.includes('{{persona}}'), `${t.label} 引用了门店人设 {{persona}}`)
 }
 
+// 「你想怎么拍？」({{userIdea}}) 是用户唯一的自由输入 —— 掉出提示词 = 这个功能**静默失效**
+// （前端照常填、照常扣积分、生成结果就是没理他）。所以 6 个模板逐个钉住。
+// 同时必须**只出现一次**：同一句话在上下文里出现两遍会被模型当成两条独立要求放大。
+for (const t of TEMPLATES) {
+  const n = (t.tpl.match(/\{\{userIdea\}\}/g) ?? []).length
+  check(n === 1, `${t.label} 恰好引用一次 {{userIdea}}`, `实际 ${n} 次`)
+}
+// 文案与分镜都要认这个变量：一个场景漏登记白名单的话，后台一保存就报「未支持的变量」
+check(
+  findUnknownPlaceholders('copy_traffic', '{{userIdea}}').length === 0 &&
+    findUnknownPlaceholders('storyboard_generate', '{{userIdea}}').length === 0,
+  'userIdea 已在文案与分镜两个场景的白名单里',
+)
+
 // 兜底文案刻意保持短，不塞门店介绍（见 prisma/prompts.ts 注释）
 check(
   TEMPLATES.filter((t) => t.code.startsWith('copy_')).every((t) => !t.fallback.includes('{{storeIntro}}')),
@@ -197,7 +211,13 @@ check(formatPersona(null) === '', '门店没有填写过任何东西 → 空串'
 section('④ 真实数据链路：临时门店 → buildVariables → 渲染')
 
 /** 造一家临时门店：intro / persona 由参数决定，返回所需 id */
-async function makeStore(merchantId: bigint, tag: string, intro: string | null, persona: { bossTags: string | null; activity: string | null } | null) {
+async function makeStore(
+  merchantId: bigint,
+  tag: string,
+  intro: string | null,
+  persona: { bossTags: string | null; activity: string | null } | null,
+  userIdea?: string | null,
+) {
   const store = await prisma.store.create({
     data: { merchantId, name: `契约测试门店-${tag}`, category: '川菜', city: '济南', intro },
   })
@@ -209,7 +229,13 @@ async function makeStore(merchantId: bigint, tag: string, intro: string | null, 
   const dish = await prisma.dish.create({
     data: { storeId: store.id, name: `契约测试菜品-${tag}`, intro: '现做现卖，出锅即上桌', sellingPoints: '分量实在 / 价格透明' },
   })
-  const creation = await createCreation(prisma, merchantId, { storeId: store.id, dishId: dish.id, track: 'TRAFFIC', complexity: 'COMPLEX' })
+  const creation = await createCreation(prisma, merchantId, {
+    storeId: store.id,
+    dishId: dish.id,
+    track: 'TRAFFIC',
+    complexity: 'COMPLEX',
+    userIdea: userIdea ?? undefined,
+  })
   await prisma.creation.update({ where: { id: creation.id }, data: { copyText: '测试用口播文案正文' } })
   return { storeId: store.id, dishId: dish.id, creationId: creation.id }
 }
@@ -217,6 +243,8 @@ async function makeStore(merchantId: bigint, tag: string, intro: string | null, 
 const INTRO = '开了十二年的老川菜馆，招牌是每天现炒的辣子鸡。'
 const BOSS_TAGS = '90后老板 / 退伍军人'
 const ACTIVITY = '开业酬宾 8 折'
+/** 用户在「你想怎么拍？」里自己写的一句话：要验证它**原样**进提示词，不被截断/改写 */
+const USER_IDEA = '想让老板出镜讲两句，重点拍锅里现炒的画面，结尾说「报我名字送例汤」'
 
 let dbReady = true
 try {
@@ -233,7 +261,7 @@ if (dbReady) {
     merchantId = merchant.id
 
     // 4.1 信息填全的门店
-    const full = await makeStore(merchantId, 'full', INTRO, { bossTags: BOSS_TAGS, activity: ACTIVITY })
+    const full = await makeStore(merchantId, 'full', INTRO, { bossTags: BOSS_TAGS, activity: ACTIVITY }, USER_IDEA)
     const v = await buildVariables(prisma, full.creationId, { track: 'TRAFFIC' })
     check(v.storeIntro === INTRO, 'buildVariables 产出了门店介绍', `storeIntro=${JSON.stringify(v.storeIntro).slice(0, 40)}`)
     check(
@@ -243,11 +271,20 @@ if (dbReady) {
     )
     check(v.dishName === '契约测试菜品-full', '菜品名称仍在变量里')
     check(v.sellingPoints === '分量实在 / 价格透明', '菜品卖点仍在变量里')
+    check(v.userIdea === USER_IDEA, '「你想怎么拍？」原样带出来（没被删改）', v.userIdea)
 
     // 渲染一次真模板，确认值真的落到了提示词里（而不只是变量对象里有）
     const rendered = renderTemplate(COPY_TRAFFIC_PROMPT, v as unknown as Record<string, string>)
     check(rendered.includes(INTRO), '渲染后提示词含门店介绍正文')
     check(rendered.includes(BOSS_TAGS) && rendered.includes(ACTIVITY), '渲染后提示词含门店人设两字段')
+    check(rendered.includes(USER_IDEA), '渲染后提示词含用户原话（「最高优先级」那一段）')
+    check(
+      rendered.includes('最高优先级'),
+      '提示词里明确标了这句话的优先级（否则模型容易把它当成一条普通的补充信息）',
+    )
+    // 分镜那一侧也要吃到同一句话：两次调用是两个场景，漏一个就等于「只有文案听了」
+    const renderedStory = renderTemplate(STORY_PROMPT, v as unknown as Record<string, string>)
+    check(renderedStory.includes(USER_IDEA), '分镜提示词同样含用户原话')
     check(!rendered.includes('{{'), '渲染后提示词已无残留占位符', rendered.match(/\{\{[^}]*\}\}/g)?.join('、') ?? '')
     check(rendered.includes('【门店介绍】'), '提示词保留了【门店介绍】段落标题')
 
@@ -256,8 +293,15 @@ if (dbReady) {
     const v2 = await buildVariables(prisma, bare.creationId, { track: 'TRAFFIC' })
     check(v2.storeIntro === '', '未填门店介绍 → storeIntro 为空串（不会变成 undefined）')
     check(v2.persona === '', '未填人设 → persona 为空串（不留空标签）')
+    // ★ 与上面两条相反：userIdea **不允许**为空串。它的标题写着「最高优先级」，
+    //   留下一个没有内容的空标题，模型很可能自己脑补出一条要求（"用户要求……"）。
+    check(v2.userIdea.length > 0, '未填「你想怎么拍？」→ 变量仍非空（空标题会让模型自己编要求）', v2.userIdea)
     const rendered2 = renderTemplate(COPY_TRAFFIC_PROMPT, v2 as unknown as Record<string, string>)
     check(!rendered2.includes('老板人设标签：') && !rendered2.includes('最近想重点告诉顾客：'), '渲染后不出现空的人设标签')
+    check(
+      !/【用户对怎么拍的要求[^\n]*】\s*(\n|$)/.test(rendered2),
+      '未填时「最高优先级」那一段也不是空标题（变量兜住了）',
+    )
     check(!rendered2.includes('{{'), '未填内容的门店渲染后同样无残留占位符')
 
     // 4.3 后台保存场景的闸门：非法模板必须被拒，且库里内容不变

@@ -2,14 +2,23 @@
 //
 // 为什么需要它：模板里的 {{占位符}} 由网关做字符串替换，取不到值时返回空串 ——
 // 也就是说后台把 {{dishName}} 写成 {{dishname}} 不会报错，只会让那一段在提示词里
-// 渲染成空白，而且这次调用照常扣豆。所以在保存场景时校验：模板里出现的占位符
+// 渲染成空白，而且这次调用照常扣积分。所以在保存场景时校验：模板里出现的占位符
 // 必须落在该场景的白名单里。
 
-/** 文案类场景可用变量（= creation.service.ts::buildVariables 的产出，4 款 + 通用兜底共用） */
+/**
+ * 文案类场景可用变量（= creation.service.ts::buildVariables 的产出，4 款 + 通用兜底共用）
+ *
+ * `userIdea` = 用户在「你想怎么拍？」里自己写的一句话。★ 它**永远是非空串**：
+ * 没填时 buildVariables 会塞一句「用户这次没有特别要求」的说明，而不是空串 ——
+ * 模板里那一行写的是「最高优先级」，留下一个没有内容的空标题会让模型自己脑补要求。
+ * 分镜场景同样要用（用户说的多半就是怎么拍），所以它进 COPY_VARS，
+ * STORYBOARD_VARS / SYNTH_VARS 由展开自动继承。
+ */
 const COPY_VARS = [
   'storeName', 'storeIntro', 'category', 'city',
   'dishName', 'dishIntro', 'sellingPoints',
   'persona',
+  'userIdea',
 ] as const
 
 /** 分镜场景：在文案变量之上，多了文案正文与镜头数/镜头库 */
