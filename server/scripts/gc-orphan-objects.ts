@@ -19,7 +19,7 @@
  *    的对象。本地模式下 multer 的中转目录 `.incoming/` 也会被列表实现跳过。
  *
  * 3) 对象键列**漏一列 = 误删一类在用文件**。所以已引用的键由下面 `collectReferencedKeys()`
- *    集中定义，覆盖 schema 里全部 15 个对象键列 / 8 张表（含软删行，宽松保护）。
+ *    集中定义，覆盖 schema 里全部 17 个对象键列 / 9 张表（含软删行，宽松保护）。
  *
  * 另外一并处理一类「看不见的垃圾」——**未完成的分片上传（碎片）**：
  *   上传中途失败会留下 UploadId 与已上传分片，它们照样占存储、照样计费，
@@ -41,7 +41,7 @@
  *   --cache-retention-hours=H    缓存的保留期（默认 168 = 7 天）
  *   --abort-fragments            中止陈旧的未完成分片上传（缺省只报告）
  *   --fragment-retention-hours=H 碎片的保留期（默认 24）
- *   --prefix=uploads/,renders/   扫描前缀（默认这两个）
+ *   --prefix=uploads/,renders/,tutorials/   扫描前缀（默认这三个）
  */
 import '../src/env.js' // 必须最先加载 .env，否则读不到 COS_*/STORAGE_MODE
 import { PrismaClient } from '@prisma/client'
@@ -70,7 +70,7 @@ const LIMIT = Math.max(1, Math.floor(numArg('limit', 100)))
 const RETENTION_HOURS = numArg('retention-hours', 24)
 const CACHE_RETENTION_HOURS = numArg('cache-retention-hours', 168)
 const FRAGMENT_RETENTION_HOURS = numArg('fragment-retention-hours', 24)
-const PREFIXES = (argValue('prefix') ?? 'uploads/,renders/').split(',').map((p) => p.trim()).filter(Boolean)
+const PREFIXES = (argValue('prefix') ?? 'uploads/,renders/,tutorials/').split(',').map((p) => p.trim()).filter(Boolean)
 
 /** 渲染中间产物缓存前缀：内容寻址、从不落库，见文件头说明 ① */
 const CACHE_PREFIX = 'renders/_cache/'
@@ -113,7 +113,7 @@ async function collectReferencedKeys(): Promise<Set<string>> {
     if (v) keys.add(v)
   }
 
-  const [stores, dishes, mediaAssets, dishMedia, shotLibrary, excellentWorks, renderTasks, merchants] =
+  const [stores, dishes, mediaAssets, dishMedia, shotLibrary, excellentWorks, tutorialVideos, renderTasks, merchants] =
     await Promise.all([
       prisma.store.findMany({ select: { coverKey: true, videoKey: true } }),
       prisma.dish.findMany({ select: { coverKey: true, videoKey: true } }),
@@ -121,6 +121,8 @@ async function collectReferencedKeys(): Promise<Set<string>> {
       prisma.dishMedia.findMany({ select: { cosKey: true, coverKey: true } }),
       prisma.shotLibrary.findMany({ select: { demoVideoKey: true, demoCoverKey: true } }),
       prisma.excellentWork.findMany({ select: { coverKey: true, videoKey: true } }),
+      // 教学中心视频（平台级，前缀 tutorials/）。删的是硬删，但行在一天内消失前仍要保护其对象。
+      prisma.tutorialVideo.findMany({ select: { videoKey: true, coverKey: true } }),
       prisma.renderTask.findMany({ select: { resultKey: true, previewKey: true } }),
       // 商家自传头像（个人主页）。注意只取 avatarKey：avatarUrl 是微信侧外部链接，不是存储键。
       prisma.merchant.findMany({ select: { avatarKey: true } }),
@@ -149,6 +151,10 @@ async function collectReferencedKeys(): Promise<Set<string>> {
   for (const r of excellentWorks) {
     add(r.coverKey)
     add(r.videoKey)
+  }
+  for (const r of tutorialVideos) {
+    add(r.videoKey)
+    add(r.coverKey)
   }
   for (const r of renderTasks) {
     add(r.resultKey)
@@ -289,7 +295,7 @@ if (!DELETE && !ABORT_FRAGMENTS) {
         failed++
         continue
       }
-      if (!o.key.startsWith('uploads/') && !o.key.startsWith('renders/')) {
+      if (!o.key.startsWith('uploads/') && !o.key.startsWith('renders/') && !o.key.startsWith('tutorials/')) {
         console.log(`  ✗ 跳过前缀外键：${o.key}`)
         failed++
         continue

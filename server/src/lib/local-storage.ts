@@ -1,12 +1,31 @@
 // 本地开发文件存储：键格式与 COS 保持一致，方便明天无缝切换。
-import { copyFile, mkdir, readdir, stat, unlink } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { assertSafeObjectKey } from './object-key.js'
 
 export type StorageMode = 'local' | 'cos'
 
-const ALLOWED_PREFIXES = ['uploads/', 'renders/']
+/**
+ * 允许本地落盘的键前缀白名单。
+ *
+ * `static/` 是「运营公开图」（首页轮播等）的前缀，由 services/public-asset.service.ts 写入。
+ * 它与前两个的区别有两点，加新前缀前请一起确认：
+ *   1) **公开可读**：COS 模式下上传时对每个对象单独设 `ACL: public-read`（桶仍是私有桶）；
+ *   2) **不在 GC 扫描范围内**：gc-orphan-objects.ts 的「默认扫描前缀」与「删除前的硬编码
+ *      前缀白名单」两处都只含 `uploads/,renders/,tutorials/`，**都没有 `static/`** ⇒
+ *      这个前缀下的对象永远不会被当成孤儿回收。★ 这一条对它尤其关键：它**从不落库**
+ *      （只存在 system_setting 的 JSON 里），所以「登记进 GC 的已引用键集合」这条常规
+ *      保命路径对它完全无效，真正保命的就是「不在扫描前缀里」。挪进 uploads/ 会立刻踩雷。
+ *      加新前缀时，请同时核对上面那两处名单。
+ *
+ * `tutorials/` 是「教学中心」视频与封面的前缀，由 services/tutorial.service.ts 写入。
+ * 它是**平台级**资源（不属于任何商户），所以不能塞进 `uploads/{merchantId}/`
+ * —— 那条前缀被 upload.service.ts 的越权校验与门店归属校验锁死。
+ * 与 static/ 相反，它**必须**在 GC 扫描范围内：这些对象体积大（视频），
+ * 而删除教学视频是硬删，靠 GC 兜底回收残留对象。
+ */
+const ALLOWED_PREFIXES = ['uploads/', 'renders/', 'static/', 'tutorials/']
 const DEFAULT_ROOT = join(process.cwd(), 'storage')
 
 /**
@@ -64,6 +83,20 @@ export async function copyFileToLocalObject(sourcePath: string, key: string): Pr
   await mkdir(dirname(target), { recursive: true })
   await copyFile(sourcePath, target)
   return (await stat(sourcePath)).size
+}
+
+/**
+ * 从内存写到本地对象（运营公开图上传用）。
+ *
+ * 为什么单独一个函数：`copyFileToLocalObject` 的入口是**文件路径**（合成 worker 的产物、
+ * multer 的中转文件都是落盘的），而公开图上传走的是 raw body —— 字节已经在内存里，
+ * 再落一次临时文件纯属多余。
+ */
+export async function writeLocalObject(key: string, body: Buffer): Promise<number> {
+  const target = localPathForKey(key)
+  await mkdir(dirname(target), { recursive: true })
+  await writeFile(target, body)
+  return body.length
 }
 
 export async function localObjectExists(key: string): Promise<boolean> {

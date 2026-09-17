@@ -24,13 +24,25 @@ declare module 'cos-nodejs-sdk-v5' {
   }
   type GetObjectCallback = (err: Error | null, data?: GetObjectResult) => void
 
-  // 上传：Body 传 fs.ReadStream
+  // 上传：Body 传 fs.ReadStream / Buffer。
+  // ★ 本文件用 `declare module` **整体覆盖**了 SDK 自带的 index.d.ts ⇒ 这里没写的字段
+  //   在项目里就等于不存在（类型报错「does not exist in type 'PutObjectParams'」，
+  //   哪怕 node_modules 里的 d.ts 明明声明了）。加字段时改这里，别去改 node_modules。
   interface PutObjectParams {
     Bucket: string
     Region: string
     Key: string
     Body?: unknown
     ContentType?: string
+    /**
+     * 对象级预设 ACL。**故意只放开 'public-read' 这一个值**：
+     * 不传 = 保持私有（其余所有调用方要的就是这个），而明确要公开的只有
+     * `lib/cos.ts::uploadPublicObject`（运营公开图）。桶里还有商家私密素材，
+     * 把整份 ACL 枚举放开，等于给「误把一个私密文件传成公开」留了口子。
+     */
+    ACL?: 'public-read'
+    /** RFC 2616 缓存指令，作为对象元数据保存 */
+    CacheControl?: string
   }
   interface PutObjectResult {
     headers?: Record<string, string>

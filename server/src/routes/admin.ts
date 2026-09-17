@@ -1,15 +1,22 @@
 // 后台管理路由（/admin/api/v1，单角色全权限）
 // 范围：管理员登录 / TTS 供应商 / 仪表盘 / 商家 / 套餐 / 账务与调账 / AI 配置 / 镜头库 / 系统配置 / 合成任务
 import { createRouter } from '../lib/async-router.js'
+import express, { type NextFunction, type Request, type Response } from 'express'
+import multer from 'multer'
+import { join } from 'node:path'
 import { InvalidIdParamError, idParam, optionalIdParam } from '../lib/params.js'
 import { z } from 'zod'
 import { prisma } from '../db.js'
 import { ok, fail } from '../lib/result.js'
 import { adminAuth } from '../middleware/admin-auth.js'
+import { localStorageRoot, removeLocalFile } from '../lib/local-storage.js'
+import { tutorialCategoryEnum } from '../lib/tutorial-categories.js'
 import * as adminSvc from '../services/admin.service.js'
 import * as adminExtra from '../services/admin-extra.service.js'
 import * as adminAi from '../services/admin-ai.service.js'
 import * as workSvc from '../services/work.service.js'
+import * as publicAssetSvc from '../services/public-asset.service.js'
+import * as tutorialSvc from '../services/tutorial.service.js'
 import { getSharedPlayUrlByKey } from '../services/media.service.js'
 import * as ttsSvc from '../services/tts-provider.service.js'
 import { PackageNotFoundError } from '../services/order.service.js'
@@ -91,7 +98,7 @@ router.post('/merchants/:id/status', async (req, res) => {
 })
 
 // 后台手动开通 / 续期会员（备案未过、支付未开放期间，用户线下付款后的兜底通道）。
-// 走的是与微信支付回调**完全相同**的结算链：赠豆进会员桶、随会员到期清零、重复调用＝续期顺延。
+// 走的是与微信支付回调**完全相同**的结算链：赠积分进会员桶、随会员到期清零、重复调用＝续期顺延。
 const openMembershipInput = z.object({ remark: z.string().max(200).optional() })
 router.post('/merchants/:id/membership', async (req, res) => {
   try {
@@ -795,6 +802,71 @@ router.get('/media/preview', async (req, res) => {
   }
 })
 
+// ──────────────────────── 运营公开图上传 ────────────────────────
+/**
+ * 上传一张运营公开图（首页轮播图 / 首页口号图），返回可匿名访问的 CDN 直链。
+ * 存储策略与「为什么不能复用商家那套上传」见 services/public-asset.service.ts 顶部。
+ *
+ * ── 为什么收 raw body 而不是 multipart ────────────────────────────────────
+ * 只有一个文件、没有别的字段，multipart 纯属多余；而 raw 让字节直接以 Buffer 到手，
+ * 正好用于**魔数嗅探**（图片类型必须按内容判断，不信 Content-Type 也不信文件名）。
+ * 少一层表单解析就少一类「boundary 丢了 / 字段名写错 ⇒ 服务端报『缺少上传文件』」
+ * 的排查成本 —— 那类故障的表现与原因之间几乎看不出关系。
+ *
+ * `type: () => true` 是**刻意**的：无论客户端声明什么 Content-Type，都先把原始字节交给我，
+ * 再由魔数决定收不收。让 body parser 按「客户端声明的类型」决定要不要解析，
+ * 等于把校验权交给客户端。
+ *
+ * ★ 路由从下面这张表统一注册：下面的「body 超限」错误分支也要用到同一张表 ——
+ *   两处各写一份路径清单，早晚会出现「新加了上传接口、但超限时回的还是『请求内容过大』」
+ *   这种只在传大图时才现形的错配。
+ */
+interface PublicImageRoute {
+  path: string
+  /** 出错时打日志用的中文名 */
+  label: string
+  save: (buffer: Buffer) => Promise<publicAssetSvc.PublicImage>
+}
+
+const PUBLIC_IMAGE_ROUTES: readonly PublicImageRoute[] = [
+  { path: '/uploads/carousel-image', label: '轮播图', save: publicAssetSvc.saveCarouselImage },
+  { path: '/uploads/slogan-banner-image', label: '口号图', save: publicAssetSvc.saveSloganBannerImage },
+]
+
+for (const route of PUBLIC_IMAGE_ROUTES) {
+  router.post(
+    route.path,
+    express.raw({ type: () => true, limit: publicAssetSvc.MAX_PUBLIC_IMAGE_BYTES }),
+    async (req, res) => {
+      try {
+        if (!Buffer.isBuffer(req.body)) return fail(res, 400, '缺少上传内容', 400)
+        ok(res, await route.save(req.body))
+      } catch (e) {
+        if (e instanceof publicAssetSvc.UnsupportedImageError) return fail(res, 400, e.message, 400)
+        console.error(`[admin] ${route.label}上传失败:`, e)
+        fail(res, 500, '上传失败', 500)
+      }
+    },
+  )
+}
+
+/**
+ * body-parser 的超限错误（`entity.too.large`）抛在**中间件层**，会直接进全局错误处理器，
+ * 被归类成「未归类异常」返回 500「服务器内部错误」。运营看到的现象是：传了张稍大的图，
+ * 后台报服务器错误 —— 完全看不出是自己图片太大。
+ *
+ * ⚠ 必须用 `originalUrl` 区分来源：全局的 `express.json({ limit: '2mb' })` 超限时
+ *   抛的是同一个 `type`，若一律回「图片不能超过 5MB」，会把一个无关的报错指向图片。
+ */
+router.use((err: unknown, req: Request, res: Response, next: NextFunction) => {
+  if ((err as { type?: string }).type !== 'entity.too.large') return next(err)
+  const isImageUpload = PUBLIC_IMAGE_ROUTES.some((r) => req.originalUrl.includes(r.path))
+  if (isImageUpload) {
+    return fail(res, 400, `图片不能超过 ${publicAssetSvc.MAX_PUBLIC_IMAGE_BYTES / 1024 / 1024}MB`, 400)
+  }
+  return fail(res, 400, '请求内容过大', 400)
+})
+
 // ──────────────────────── 系统配置 ────────────────────────
 router.get('/settings', async (_req, res) => {
   try {
@@ -891,6 +963,138 @@ router.delete('/tts/providers/:code', async (req, res) => {
     ok(res, await ttsSvc.removeTtsProvider(prisma, req.params.code))
   } catch {
     fail(res, 500, '删除失败', 500)
+  }
+})
+
+// ──────────────────────── 教学中心（平台级教学视频） ────────────────────────
+//
+// 与镜头库 / 优秀作品最大的区别：视频由后台**直接上传**，不再手填对象键
+// （后台此前根本没有上传端点，见 apps/admin/src/pages/HomeCarousel.tsx 顶部注释）。
+// 这条上传通道是**平台级**的，刻意不复用商家那套 `/api/v1/upload/local`：
+// 那条强制 storeId 必填且必须属于当前商家、强制 `uploads/{merchantId}/` 前缀、
+// 还要过商家存储配额 —— 教学视频一样都不适用。
+// 对象落 `tutorials/` 前缀（见 services/tutorial.service.ts）。
+
+const tutorialUpload = multer({
+  dest: join(localStorageRoot(), '.incoming'),
+  // 单文件上限，与 MAX_TUTORIAL_VIDEO_BYTES 同一个数字（超限的文件根本不落盘）
+  limits: { fileSize: tutorialSvc.MAX_TUTORIAL_VIDEO_BYTES },
+})
+
+/**
+ * 包一层，把 multer 的错误转成可读的业务码。
+ * 不拦的话 multer 走 `next(err)` 一路落到全局 errorHandler，变成「服务器内部错误 500」
+ * —— 运营看到 500 完全不知道是自己的文件太大。
+ * ⚠ 注意 client_max_body_size：nginx 先于本层拒绝时返回的是 413 页面，
+ *   与本函数无关（deploy/nginx/dashuai-admin.conf 已同步放开到 110m）。
+ */
+function adminUploadSingle(req: Request, res: Response, next: NextFunction): void {
+  tutorialUpload.single('file')(req, res, (err: unknown) => {
+    if (!err) return next()
+    const tooLarge = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE'
+    const maxMb = Math.round(tutorialSvc.MAX_TUTORIAL_VIDEO_BYTES / 1024 / 1024)
+    fail(res, 400, tooLarge ? `文件不能超过 ${maxMb}MB` : '文件上传失败，请重试', 400)
+  })
+}
+
+router.get('/tutorials', async (req, res) => {
+  try {
+    const q = z
+      .object({
+        category: z.string().max(16).optional(),
+        // 刻意不用 z.coerce.boolean()：它把字符串 'false' 当成 true（非空串即真）
+        enabled: z.enum(['true', 'false']).optional(),
+      })
+      .parse(req.query)
+    ok(
+      res,
+      await tutorialSvc.adminListTutorials(prisma, {
+        ...(q.category ? { category: q.category } : {}),
+        ...(q.enabled === undefined ? {} : { enabled: q.enabled === 'true' }),
+      }),
+    )
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    console.error('[admin] 查询教学视频失败:', e)
+    fail(res, 500, '查询失败', 500)
+  }
+})
+
+const tutorialInput = z.object({
+  category: z.enum(tutorialCategoryEnum),
+  title: z.string().min(1).max(128),
+  videoKey: z.string().max(512).nullable().optional(),
+  coverKey: z.string().max(512).nullable().optional(),
+  durationMs: z.number().int().min(0).nullable().optional(),
+  sort: z.number().int().optional(),
+  enabled: z.boolean().optional(),
+})
+
+router.post('/tutorials', async (req, res) => {
+  try {
+    ok(res, await tutorialSvc.adminUpsertTutorial(prisma, undefined, tutorialInput.parse(req.body)))
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    console.error('[admin] 创建教学视频失败:', e)
+    fail(res, 500, '创建失败', 500)
+  }
+})
+
+router.put('/tutorials/:id', async (req, res) => {
+  try {
+    ok(res, await tutorialSvc.adminUpsertTutorial(prisma, idParam(req.params.id, 'id'), tutorialInput.parse(req.body)))
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof tutorialSvc.TutorialNotFoundError) return fail(res, 4049, e.message, 404)
+    console.error('[admin] 更新教学视频失败:', e)
+    fail(res, 500, '更新失败', 500)
+  }
+})
+
+/** 硬删：连存储里的视频与封面一起删（删对象失败不致命，残留由 GC 兜底） */
+router.delete('/tutorials/:id', async (req, res) => {
+  try {
+    ok(res, await tutorialSvc.adminRemoveTutorial(prisma, idParam(req.params.id, 'id')))
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof tutorialSvc.TutorialNotFoundError) return fail(res, 4049, e.message, 404)
+    console.error('[admin] 删除教学视频失败:', e)
+    fail(res, 500, '删除失败', 500)
+  }
+})
+
+/**
+ * 教学视频 / 封面上传（multipart，字段名固定为 `file`，另有 `kind=video|cover`）。
+ * 返回对象键而不是可播放地址：键要存进 tutorial_video，地址每次读时现签。
+ */
+router.post('/tutorials/upload', adminUploadSingle, async (req, res) => {
+  const file = req.file
+  if (!file) return fail(res, 3001, '缺少上传文件', 400)
+
+  // kind 从 query 或表单字段取（两种调用方式都支持）
+  let kind: 'video' | 'cover'
+  try {
+    kind = z.enum(['video', 'cover']).parse(req.query.kind ?? (req.body as { kind?: string })?.kind)
+  } catch {
+    await removeLocalFile(file.path)
+    return fail(res, 400, '参数错误：kind 必须是 video 或 cover', 400)
+  }
+
+  try {
+    if (kind === 'cover') {
+      if (file.size > tutorialSvc.MAX_TUTORIAL_COVER_BYTES) {
+        await removeLocalFile(file.path)
+        const maxMb = Math.round(tutorialSvc.MAX_TUTORIAL_COVER_BYTES / 1024 / 1024)
+        return fail(res, 400, `封面不能超过 ${maxMb}MB`, 400)
+      }
+      return ok(res, await tutorialSvc.saveTutorialCover(file.path))
+    }
+    ok(res, await tutorialSvc.saveTutorialVideo(file.path))
+  } catch (e) {
+    if (e instanceof tutorialSvc.TutorialUploadError) return fail(res, 400, e.message, 400)
+    console.error('[admin] 教学素材上传失败:', e)
+    fail(res, 500, '上传失败', 500)
   }
 })
 

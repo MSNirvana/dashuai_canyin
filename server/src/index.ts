@@ -24,6 +24,7 @@ import profileRouter from './routes/profile.js'
 import previewCollageRouter from './routes/preview-collage.js'
 import renderCapabilitiesRouter from './routes/render-capabilities.js'
 import systemSettingsRouter from './routes/system-settings.js'
+import tutorialsRouter from './routes/tutorials.js'
 import { ensureLocalStorage, isLocalStorage, localStorageRoot } from './lib/local-storage.js'
 import { smsTestCodeConfig } from './auth/sms.js'
 
@@ -75,6 +76,8 @@ app.use('/api/v1/stores/:storeId/persona', personaRouter)
 app.use('/api/v1/shot-library', shotLibraryRouter)
 // 首页「优秀作品」（运营内容，只读）
 app.use('/api/v1/works', worksRouter)
+// 教学中心（平台级运营内容，只读；视频由后台 /admin/api/v1/tutorials 上传维护）
+app.use('/api/v1/tutorials', tutorialsRouter)
 app.use('/api/v1/account', accountRouter)
 // 个人资料（个人主页）：昵称 + 头像。商户级、可写，刻意与只读的 account 分开
 app.use('/api/v1/profile', profileRouter)
@@ -157,8 +160,8 @@ async function bootstrap() {
     })
     .catch((e) => console.error('[membership-reminder] 启动失败:', (e as Error).message))
 
-  // 赠豆到期清零：会员到期后把赠送的 AI 豆清零（docs/05 计费规则）
-  // 修复「expireGrant 已实现但零调用」——不跑这个 job，订阅到期后赠豆永久保留，续费失去意义
+  // 赠积分到期清零：会员到期后把赠送的积分清零（docs/05 计费规则）
+  // 修复「expireGrant 已实现但零调用」——不跑这个 job，订阅到期后赠积分永久保留，续费失去意义
   void import('./services/grant-expiry.service.js')
     .then((m) => {
       m.startGrantExpirySweeper(prisma)

@@ -10,6 +10,7 @@ import {
   isLocalStorage,
   listLocalObjects,
   localObjectExists,
+  writeLocalObject,
   type StorageObject,
 } from './local-storage.js'
 import { assertSafeObjectKey } from './object-key.js'
@@ -103,6 +104,47 @@ export async function uploadFile(localPath: string, key: string, contentType = '
   })
   const st = await statP(localPath)
   return st.size
+}
+
+/**
+ * 上传一个**匿名可读**的对象 —— 对象级设 `ACL: public-read`。
+ *
+ * ── 为什么必须与 `uploadFile()` 分开，而不是给它加个 acl 参数 ──────────────
+ * 本桶是**私有桶**（里面还有商家上传的菜品图、人设图、成片）。`uploadFile()` 不传 ACL，
+ * 传上去的对象默认私有；而公开图必须匿名可读。把 ACL 做成 uploadFile 的一个可选参数，
+ * 意味着以后有人在私密素材的调用点上误传了 public，**不会报任何错**，只是那个文件
+ * 悄无声息地对全世界开放了。所以这里用一个**独立函数名**把「这个对象会公开」
+ * 写在调用点上，让代码审查时一眼可见。
+ *
+ * 另：不动桶级权限。项目已有的公开图（static/mini/… 首页那批）也是这么做的，
+ * 理由见 apps/mini/scripts/upload-static-assets.mjs 顶部注释。
+ */
+export async function uploadPublicObject(key: string, body: Buffer, contentType: string): Promise<void> {
+  assertSafeObjectKey(key, 'public object key')
+  if (isLocalStorage()) {
+    await writeLocalObject(key, body)
+    return
+  }
+  const c = getClient()
+  if (!c) throw new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）')
+  await c.putObject({
+    Bucket: process.env.COS_BUCKET!,
+    Region: process.env.COS_REGION!,
+    Key: key,
+    Body: body,
+    ContentType: contentType,
+    ACL: 'public-read',
+    // 键里带随机段（每次上传都是新键），内容不会原地变化 ⇒ 可以放心长缓存
+    CacheControl: 'public, max-age=604800',
+  })
+}
+
+/**
+ * 公开读对象的访问地址。**只对 `uploadPublicObject` 写过的对象有效** ——
+ * 其它对象是私有的，拿这个 URL 去访问会 403。
+ */
+export function publicObjectUrl(key: string): string {
+  return `https://${process.env.COS_BUCKET ?? ''}.cos.${process.env.COS_REGION ?? ''}.myqcloud.com/${key}`
 }
 
 /** 单页列举上限。COS 默认 1000，显式写出便于看清分页行为。 */

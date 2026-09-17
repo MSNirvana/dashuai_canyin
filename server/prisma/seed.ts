@@ -66,11 +66,11 @@ const memberPlans = [
 const LEGACY_PLAN_CODES = ['MONTH', 'SEASON', 'YEAR']
 // v4 遗留充值档位（10/30/68/198/398 元）：v5 由加油包替代，软下线
 const LEGACY_PACKAGE_NAMES = [
-  '10元 · 1000豆',
-  '30元 · 3200豆',
-  '68元 · 7600豆',
-  '198元 · 22800豆',
-  '398元 · 51800豆',
+  '10元 · 1000积分',
+  '30元 · 3200积分',
+  '68元 · 7600积分',
+  '198元 · 22800积分',
+  '398元 · 51800积分',
 ]
 
 // ================= AI 通道 / 模型 / 场景 =================
@@ -736,6 +736,32 @@ async function seedSettings() {
     update: {}, // 不覆盖：运营改过的轮播必须能在重跑 seed 后活下来
   })
   console.log('[seed] home carousel: 已保证存在（不覆盖已有配置）')
+
+  // ── 首页口号图：同样只在缺行时插入 ──
+  // 运营上传过就绝不能被 seed 洗掉（跟轮播一个道理），所以 update 也是空对象。
+  //
+  // ★ 默认值是**空串**：空 = 「没配，用小程序内置的那张」。不用「把内置图的 URL 抄进来」
+  //   当默认值 —— 那样内置图以后改了版，库里这条陈旧地址会把新版**永久遮住**，
+  //   而且从库里完全看不出这是「默认值」还是「运营上传的」。
+  // ★ valueType 用 STRING 而不是 JSON：值就是一个地址，没有第二个字段。
+  //   JSON 类型在公开接口那边会被 parse 完再 stringify，小程序拿到的是字符串、
+  //   还得再 parse 一次（轮播那边的坑）；单标量用 STRING 直接读，少一层可以错的转换。
+  await prisma.systemSetting.upsert({
+    where: { groupKey_settingKey: { groupKey: 'home', settingKey: 'sloganBanner' } },
+    create: {
+      groupKey: 'home',
+      settingKey: 'sloganBanner',
+      settingVal: '',
+      valueType: 'STRING',
+      displayName: '首页口号图',
+      description:
+        '小程序首页顶部的口号海报（默认是代码生成的红白黑三色图）。留空/删除本项 = 用内置默认图；上传后小程序下次进入首页生效。建议 1125×411（约 2.74:1）。',
+      sort: 1,
+      isPublic: true,
+    },
+    update: {}, // 不覆盖：运营上传过的口号图必须活过重跑 seed
+  })
+  console.log('[seed] home slogan banner: 已保证存在（不覆盖已有配置）')
 }
 
 async function main() {
