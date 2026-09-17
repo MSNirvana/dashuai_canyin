@@ -10,6 +10,8 @@ dist/
 .idea/
 
 # build / cache
+# dist.bak/：构建前手工备份的上一版产物（排查「客户端跑的是旧编译」时用），同样是产物，不入库
+dist.bak/
 .cache/
 *.log
 apps/mini/.swc/

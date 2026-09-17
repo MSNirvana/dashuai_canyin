@@ -673,7 +673,7 @@ const HOME_CAROUSEL_SEED = [
     image: 'https://dashuai-1485028436.cos.ap-beijing.myqcloud.com/static/mini/home/create-hero.jpg',
     kicker: '从一道菜开始',
     title: '做一条能带来客人的视频',
-    desc: 'AI 帮你想文案、排分镜，现场拍完就能出片',
+    desc: '', // 副标题已按需求下线（2026-09-16）
     actionText: '开始创作',
     link: 'CREATE',
     workId: '',

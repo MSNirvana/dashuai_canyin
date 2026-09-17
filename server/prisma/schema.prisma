@@ -17,7 +17,13 @@ model Merchant {
   wechatOpenid         String?   @unique @map("wechat_openid") @db.VarChar(64)
   wechatUnionid        String?   @map("wechat_unionid") @db.VarChar(64)
   nickname             String?   @db.VarChar(64)
+  // 两列不同源，**不要互相覆盖**：
+  //   avatarUrl = 微信侧返回的**外部**头像链接（原样存，可能是 https 链接）
+  //   avatarKey = 我们自己存储里的**对象键**（用户在「个人主页」自传的头像）
+  // ⚠ avatarKey 是对象键列 ⇒ 必须同步进 gc-orphan-objects.ts::collectReferencedKeys()，
+  //   否则 GC 会在保留期后把在用的头像当孤儿删掉。
   avatarUrl            String?   @db.VarChar(512)
+  avatarKey            String?   @map("avatar_key") @db.VarChar(512)
   status               String    @default("ACTIVE") @db.VarChar(16)
   registerGrantGranted Boolean   @default(false) @map("register_grant_granted")
   lastLoginAt          DateTime? @map("last_login_at") @db.DateTime(3)
@@ -163,7 +169,12 @@ model Creation {
   status     String    @default("DRAFT") @db.VarChar(24)
   createdAt  DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt  DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+  // 软删除：非空即"已删"，列表一律排除。本项目既有的删除语义就是这个
+  // （listCreations 早就在过滤 deletedAt: null），不要再另造一套物理删除。
   deletedAt  DateTime? @map("deleted_at") @db.DateTime(3)
+  // 归档：非空即"已归档"，默认列表排除、只在「归档」分类里出现。
+  // 与 status 正交 —— status 目前恒为 DRAFT、从不写入，不能拿它当筛选依据。
+  archivedAt DateTime? @map("archived_at") @db.DateTime(3)
 
   merchant    Merchant     @relation(fields: [merchantId], references: [id])
   store       Store        @relation(fields: [storeId], references: [id])
