@@ -7,13 +7,13 @@ import { listWorks, listWorkCategories, markWorkClone, type WorkCategory, type W
 import { FALLBACK_SLIDE, getHomeCarousel, type HomeCarouselSlide } from '../../services/home'
 import StoreSwitcher from '../../components/store-switcher'
 import logoPng from '../../assets/logo.png'
-import sloganBanner from '../../assets/home/slogan-banner.svg'
 // 展示图走 CDN（见 src/constants/static-assets.ts 的说明）：它们不需要跟版本走，
 // 留在包里会白占 2MB 主包额度、并踩「图片资源超过 200K」的代码质量建议项。
 // 图片源文件仍在 src/assets/home/ 下，改图后跑 `npm run assets:upload` 重新上传即可。
 // ⚠ 轮播用的图不再从这里取：改由后台配置（services/home.ts），
 //   兜底那张才用 static-assets 里的 HOME_CREATE_HERO。
 import {
+  HOME_SLOGAN_BANNER as sloganBannerPng,
   HOME_WORK_FOOD as workFoodPng,
   HOME_WORK_EDUCATION as workEducationPng,
   HOME_WORK_BEAUTY as workBeautyPng,
@@ -205,8 +205,10 @@ export default function HomePage() {
         <StoreSwitcher />
         <View className='home__icon-btn' onClick={goMine}><t-icon name='user' size='20px' /></View>
       </View>
+      {/* 品牌口号海报：白底已扣成透明（见 src/assets/home/README.md），
+          直接落在卡片的奶油底色上，不会出现一个白色方块 */}
       <View className='home__slogan-banner'>
-        <Image className='home__slogan-image' src={sloganBanner} mode='widthFix' />
+        <Image className='home__slogan-image' src={sloganBannerPng} mode='aspectFit' />
       </View>
     </View>
 
@@ -271,7 +273,7 @@ export default function HomePage() {
                 <Text className='home__recent-title'>{c.title || '未命名创作'}</Text>
                 <View className='home__recent-meta'>
                   {!!c.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{c.trackLabel}</Text>}
-                  <Text className='home__recent-sub'>分镜 {c._count?.shots ?? 0}</Text>
+                  <Text className='home__recent-sub'>分镜 {c.shotsTotal}</Text>
                 </View>
               </View>
               <Text className='home__recent-arrow'>›</Text>

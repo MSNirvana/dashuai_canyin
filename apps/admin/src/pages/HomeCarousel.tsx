@@ -86,7 +86,7 @@ const SEED_SLIDE: Slide = {
   image: SEED_IMAGE,
   kicker: '从一道菜开始',
   title: '做一条能带来客人的视频',
-  desc: 'AI 帮你想文案、排分镜，现场拍完就能出片',
+  desc: '', // 副标题已按需求下线（2026-09-16）
   actionText: '开始创作',
   link: 'CREATE',
   workId: '',
@@ -332,7 +332,7 @@ export default function HomeCarouselPage() {
             <Input value={form.title} onChange={(v) => setForm((f) => ({ ...f, title: v as string }))} placeholder="做一条能带来客人的视频" />
           </Field>
           <Field label="描述" help="留空则不显示">
-            <Input value={form.desc} onChange={(v) => setForm((f) => ({ ...f, desc: v as string }))} placeholder="AI 帮你想文案、排分镜，现场拍完就能出片" />
+            <Input value={form.desc} onChange={(v) => setForm((f) => ({ ...f, desc: v as string }))} placeholder="一句话说明卖点，可留空" />
           </Field>
           <Field label="按钮文字" help="留空则不显示按钮（整张卡片仍可点击）">
             <Input value={form.actionText} onChange={(v) => setForm((f) => ({ ...f, actionText: v as string }))} placeholder="开始创作" />

@@ -33,14 +33,22 @@ const DRY_RUN = process.argv.includes('--dry-run')
 
 /** 需要上 CDN 的图（相对 src/assets）。
  *
- * ★ 只有这 6 张照片上 CDN，logo 与 tabBar 图标**故意留在包里**：
+ * ★ 7 张展示图全部上 CDN，logo 与 tabBar 图标**故意留在包里**：
  *   - `app.json` 的 `tabBar.iconPath` 只接受**本地路径**，压根没法上 CDN；
  *   - `logo.png` 展示尺寸最大 64rpx(=32pt)，96px 已是 3x 屏的极限，14KB；
- *   三者合计约 32KB，离微信 200K 的建议线还差得远，
+ *   两者合计约 32KB，离微信 200K 的建议线还差得远，
  *   而留在本地能让品牌标与 tabBar **零延迟渲染**，不用等网络。
+ *
+ * ★ `home/slogan-banner.png` 为什么从「本地内联的 1.2KB SVG」换成「CDN 上的 73KB PNG」：
+ *   那张手绘口号图换成了一版成品海报（深色字 + 橙色描边 + 胶片带 + 半透明菜品照）。
+ *   它带**透明底**且是照相级内容 ⇒ base64 内联会让包体涨 100KB 以上，
+ *   而换成调色板 PNG（256 色 + tRNS，半透明保留 111 档）后只有 73KB。
+ *   尺寸 1125×411（宽高比 2.737 ⇒ 卡片里展示高 248rpx），裁切基准与踩坑见
+ *   `src/assets/home/README.md`「垂直构图」一节。
  */
 const FILES = [
   'home/create-hero.jpg',
+  'home/slogan-banner.png',
   'home/work-food.jpg',
   'home/work-education.jpg',
   'home/work-beauty.jpg',

@@ -49,7 +49,9 @@ export const FALLBACK_SLIDE: HomeCarouselSlide = {
   image: HOME_CREATE_HERO,
   kicker: '从一道菜开始',
   title: '做一条能带来客人的视频',
-  desc: 'AI 帮你想文案、排分镜，现场拍完就能出片',
+  // 副标题已按需求下线（2026-09-16）。置空即可 —— home/index.tsx 对 desc 是
+  // 条件渲染（`{!!s.desc && ...}`），不会留下空隙。
+  desc: '',
   actionText: '开始创作',
   link: 'CREATE',
   workId: '',
