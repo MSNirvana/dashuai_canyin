@@ -25,7 +25,6 @@ export interface StoreInput {
   city?: string
   district?: string
   address?: string
-  contact?: string
   coverKey?: string | null
   /** 门店介绍，最多 500 字，门店详情页统一展示 */
   intro?: string | null
@@ -45,7 +44,6 @@ export async function listStores(prisma: PrismaClient, merchantId: bigint) {
       city: true,
       district: true,
       address: true,
-      contact: true,
       coverKey: true,
       intro: true,
       videoKey: true,
@@ -84,7 +82,6 @@ export async function createStore(prisma: PrismaClient, merchantId: bigint, inpu
       city: input.city,
       district: input.district,
       address: input.address,
-      contact: input.contact,
       intro: input.intro ?? null,
       isDefault: isFirst, // 首店自动为默认
     },
@@ -121,7 +118,6 @@ export async function updateStore(
       city: input.city,
       district: input.district,
       address: input.address,
-      contact: input.contact,
       ...(input.coverKey !== undefined ? { coverKey: input.coverKey } : {}),
       ...(input.intro !== undefined ? { intro: input.intro } : {}),
       ...(input.videoKey !== undefined ? { videoKey: input.videoKey } : {}),

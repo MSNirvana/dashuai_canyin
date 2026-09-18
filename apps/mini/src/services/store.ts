@@ -9,7 +9,6 @@ export interface StoreItem {
   city: string | null
   district: string | null
   address: string | null
-  contact: string | null
   coverKey: string | null
   intro: string | null
   videoKey: string | null
@@ -25,7 +24,6 @@ export interface StoreInput {
   city?: string
   district?: string
   address?: string
-  contact?: string
   coverKey?: string | null
   intro?: string | null
   videoKey?: string | null

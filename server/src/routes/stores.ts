@@ -20,7 +20,6 @@ const storeInput = z.object({
   city: optionalText(64),
   district: optionalText(64),
   address: optionalText(255),
-  contact: optionalText(64),
   coverKey: z.string().max(512).nullable().optional(),
   intro: nullableText(500),
   videoKey: z.string().max(512).nullable().optional(),

@@ -16,7 +16,6 @@ interface FormState {
   city: string
   district: string
   address: string
-  contact: string
   isDefault: boolean
   coverKey: string
   intro: string
@@ -30,7 +29,6 @@ const EMPTY: FormState = {
   city: '',
   district: '',
   address: '',
-  contact: '',
   isDefault: false,
   coverKey: '',
   intro: '',
@@ -77,7 +75,6 @@ export default function StoreEditPage() {
           city: area.city,
           district: area.district,
           address: s.address ?? '',
-          contact: s.contact ?? '',
           isDefault: s.isDefault,
           coverKey: s.coverKey ?? '',
           intro: s.intro ?? '',
@@ -175,7 +172,6 @@ export default function StoreEditPage() {
         city: form.city || undefined,
         district: form.district || undefined,
         address: form.address || undefined,
-        contact: form.contact || undefined,
         intro: form.intro.trim() || null,
         isDefault: form.isDefault || undefined,
       }
@@ -354,11 +350,6 @@ export default function StoreEditPage() {
             maxlength={255}
             autoHeight
           />
-        </View>
-
-        <View className='field'>
-          <Text className='field__label'>联系电话</Text>
-          <Input className='field__input' placeholder='顾客可联系的电话' value={form.contact} onInput={(e) => set('contact', e.detail.value)} maxlength={64} />
         </View>
 
         <View className='field'>

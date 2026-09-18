@@ -91,7 +91,9 @@ section('⑤ 源码守护：这几个字段不许退回裸 z.string()')
 
 /** 用户可见 / 会喂给 AI 的文本字段 → 必须走工厂函数 */
 const GUARDED: Array<{ file: string; fields: string[] }> = [
-  { file: '../src/routes/stores.ts', fields: ['name', 'category', 'province', 'city', 'district', 'address', 'contact', 'intro'] },
+  // 门店的 `contact`（联系电话）已于 2026-09-18 从整条链路移除，**不要再加回来** ——
+  // 数据库列 store.contact 仍在（只留存量数据，不读不写），所以本清单里也不该出现它。
+  { file: '../src/routes/stores.ts', fields: ['name', 'category', 'province', 'city', 'district', 'address', 'intro'] },
   { file: '../src/routes/dishes.ts', fields: ['name', 'intro', 'sellingPoints'] },
   { file: '../src/routes/creations.ts', fields: ['title', 'copyText'] },
   { file: '../src/routes/persona.ts', fields: ['bossTags', 'activity'] },

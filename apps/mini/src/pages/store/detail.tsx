@@ -11,7 +11,7 @@ interface InfoRow {
   value: string
 }
 
-/** 门店详情页：门店资料（主图 / 视频 / 介绍 / 地址电话）的统一展示入口 */
+/** 门店详情页：门店资料（主图 / 视频 / 介绍 / 地址）的统一展示入口 */
 export default function StoreDetailPage() {
   const router = useRouter()
   // ★ 编号必须当场校验，不能拿「路由里的原值」直接去请求：
@@ -109,7 +109,6 @@ export default function StoreDetailPage() {
   const isCurrent = detail.id === currentStoreId
   const rows: InfoRow[] = [
     { label: '地址', value: [location, detail.address].filter(Boolean).join(' ') || '未填写' },
-    { label: '联系电话', value: detail.contact || '未填写' },
     { label: '菜品', value: `${detail._count?.dishes ?? 0} 道` },
   ]
 
@@ -142,7 +141,7 @@ export default function StoreDetailPage() {
             <Text className='store-detail__health-title'>品牌资料完整度</Text>
             <Text className='store-detail__health-desc'>资料越完整，AI 越懂你的门店</Text>
           </View>
-          <Text className='store-detail__health-value'>{Math.round(([coverUrl, videoUrl, detail.intro, detail.category, detail.address, detail.contact].filter(Boolean).length / 6) * 100)}%</Text>
+          <Text className='store-detail__health-value'>{Math.round(([coverUrl, videoUrl, detail.intro, detail.category, detail.address].filter(Boolean).length / 5) * 100)}%</Text>
         </View>
 
         <View className='store-detail__section-head'>
@@ -168,7 +167,7 @@ export default function StoreDetailPage() {
         )}
 
         <View className='store-detail__section-head'>
-          <View><Text className='store-detail__label'>到店信息</Text><Text className='store-detail__section-desc'>顾客找到你、联系你需要的信息</Text></View>
+          <View><Text className='store-detail__label'>到店信息</Text><Text className='store-detail__section-desc'>顾客找到你需要的信息</Text></View>
           <Text className='store-detail__section-no'>03</Text>
         </View>
         <View className='store-detail__rows'>
