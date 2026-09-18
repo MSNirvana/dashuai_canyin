@@ -1,8 +1,14 @@
 // 首页「优秀作品」服务
 // 作品是运营内容：与商家数据解耦，支持分类筛选 / 分页 / 排序 / 上下架
 // 核心是 recipeJson（同款配方）——「生成同款」把它预填进创作流
+import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import type { PrismaClient, Prisma } from '@prisma/client'
-import { ensureVideoCoverKey } from '../lib/thumbnail.js'
+import { uploadFile } from '../lib/cos.js'
+import { contentTypeForKey, localStorageRoot, removeLocalFile } from '../lib/local-storage.js'
+import { detectVideoType, readFileHead } from '../lib/media-type.js'
+import { ensureVideoCoverKey, generateVideoCover } from '../lib/thumbnail.js'
+import { detectImageType } from './profile.service.js'
 
 export class WorkNotFoundError extends Error {
   constructor() {
@@ -25,6 +31,60 @@ export class WorkCoverError extends Error {
     super(message)
     this.name = 'WorkCoverError'
   }
+}
+
+/** 后台本地上传作品视频/封面时的可读错误（不是运行时故障，是「这个文件不能用」） */
+export class WorkUploadError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'WorkUploadError'
+  }
+}
+
+/**
+ * 作品对象键前缀。
+ *
+ * ★ 新增这个前缀要同步**四处**，漏一处就是一类静默失效：
+ *   1) lib/local-storage.ts 的 ALLOWED_PREFIXES —— 漏了本地模式落盘直接报错；
+ *   2) gc-orphan-objects.ts 的默认**扫描前缀** PREFIXES —— 漏了它下面的对象永远扫不到；
+ *   3) gc-orphan-objects.ts 的**删除白名单** DELETABLE_PREFIXES —— 漏了扫得到但删不掉；
+ *   4) gc-orphan-objects.ts 的 collectReferencedKeys()（excellentWork 两列，已就位）
+ *      —— 漏了会在保留期（默认 24h）后把在用的作品视频当孤儿删掉。
+ *   另外 works.ts 的签名守卫（isSignableWorkKey）也按前缀放行，同样要跟着改。
+ */
+export const WORK_KEY_PREFIX = 'works/'
+
+/**
+ * 单个作品视频上限，100MB。与教学视频同值 —— 两者都是「运营出片」的量级。
+ *
+ * ⚠ 三处必须一起改，漏掉 nginx 那处的话本地开发（vite 直连 3000，不过 nginx）
+ *   永远测不出问题，上线才 413：
+ *     1) 本常量（服务端权威校验）
+ *     2) apps/admin/src/pages/Works.tsx 的上传前预校验文案
+ *     3) deploy/nginx/dashuai-admin.conf 的 `/admin/api/v1/` location 里 client_max_body_size
+ */
+export const MAX_WORK_VIDEO_BYTES = 100 * 1024 * 1024
+
+/** 作品封面上限。与轮播图 / 教学封面同值，都是「运营出图」的量级 */
+export const MAX_WORK_COVER_BYTES = 5 * 1024 * 1024
+
+/**
+ * 作品对象键的前缀白名单（签名守卫用）。
+ *
+ * 为什么要有这道守卫：`getSharedPlayUrlByKey` 本身**不校验前缀**（它是给平台共享资源用的），
+ * 而作品的 coverKey / videoKey 是后台可以手工填的文本框。没有守卫的话，谁把那两列填成
+ * `uploads/2/xxx.mp4`，任何登录商户请求这条作品的详情都会**拿到商户 2 私有文件的签名地址**
+ * —— 越权读，且日志里看不出异常。
+ *
+ * `renders/` 必须一起放行：存量作品（从成片入库那条路）落的就是 `renders/{merchantId}/…`。
+ * 注意 `renders/` 也是商户渲染产物所在，但那条路径下**只有本商户**能读（creations 路由有归属校验），
+ * 而优秀作品是运营从成片里主动挑出来公开给所有商户看的 —— 放行是刻意的产品语义。
+ */
+const SIGNABLE_WORK_PREFIXES = [WORK_KEY_PREFIX, 'renders/']
+
+/** 这条作品的某个键是否允许签名成播放地址 */
+export function isSignableWorkKey(key: string | null | undefined): key is string {
+  return !!key && SIGNABLE_WORK_PREFIXES.some((p) => key.startsWith(p))
 }
 
 /** 同款配方：与 creation 的 track / complexity 取值对齐 */
@@ -329,4 +389,106 @@ export async function regenerateWorkCover(prisma: PrismaClient, id: bigint) {
   if (!cover.ok) throw new WorkCoverError(cover.reason)
 
   return prisma.excellentWork.update({ where: { id }, data: { coverKey: cover.coverKey } })
+}
+
+// ──────────────────────── 后台上传（本地文件 → 对象存储） ────────────────────────
+//
+// 为什么要这条通道：在此之前后台只能**手填对象键**（运营得先自己把视频传进 COS 再抄键），
+// 而「从管理后台本地导入视频」是本模块的常规操作。与教学视频那条通道同构，
+// 区别只在键前缀（见 WORK_KEY_PREFIX 的说明）。
+//
+// 为什么是服务端收流（multipart）而不是像商家素材那样走 STS 直传：
+// 直传那套要求 storeId + 商户前缀 + 存储配额，平台级运营内容三样都不适用；
+// 而**魔数嗅探必须拿到真实字节**，服务端收流正好顺手做了。
+
+/** 20260918 —— 按天分目录，方便在 COS 控制台按时间人工排查/清理 */
+function dateSegment(): string {
+  const d = new Date()
+  const m = `${d.getMonth() + 1}`.padStart(2, '0')
+  const day = `${d.getDate()}`.padStart(2, '0')
+  return `${d.getFullYear()}${m}${day}`
+}
+
+/**
+ * 对象键。随机段是**故意**的：微信与 CDN 都按 URL 缓存媒体，
+ * 用固定键覆盖上传的话运营换了视频、用户那边还播旧的，且没有任何报错。
+ */
+function workKey(ext: string): string {
+  return `${WORK_KEY_PREFIX}${dateSegment()}/${randomUUID().replaceAll('-', '')}${ext}`
+}
+
+/** 抽帧产物落盘位置：与 multer 的中转区同一个目录，抽完立即删 */
+function tmpCoverPath(): string {
+  return join(localStorageRoot(), '.incoming', `work_cover_${randomUUID().replaceAll('-', '')}.jpg`)
+}
+
+export interface WorkVideoUploadResult {
+  videoKey: string
+  contentType: string
+  sizeBytes: number
+  /**
+   * 服务端抽帧得到的封面键（可能为 null）。抽帧失败**不算上传失败**
+   * —— 某些编码本机 ffmpeg 抽不出来，而作品列表还有「重抽封面」按钮可补，
+   * 不该因为封面把整个上传退掉（那样运营连视频都白传了）。
+   */
+  coverKey: string | null
+}
+
+/**
+ * 保存后台选中的作品视频。`tempPath` 是 multer 的中转文件路径。
+ *
+ * **无论成败都会清掉它** —— multer 全部落在 storage/.incoming/，不清会一直堆积。
+ */
+export async function saveWorkVideo(tempPath: string): Promise<WorkVideoUploadResult> {
+  const head = await readFileHead(tempPath, 32)
+  const type = head ? detectVideoType(head) : null
+  if (!type) {
+    await removeLocalFile(tempPath)
+    throw new WorkUploadError('只支持 MP4 / MOV / WebM / AVI 视频')
+  }
+
+  const videoKey = workKey(type.ext)
+  let sizeBytes = 0
+  try {
+    sizeBytes = await uploadFile(tempPath, videoKey, type.contentType)
+  } catch (e) {
+    await removeLocalFile(tempPath)
+    throw e
+  }
+
+  let coverKey: string | null = null
+  try {
+    const outKey = workKey('.jpg')
+    const outPath = tmpCoverPath()
+    const { ok } = await generateVideoCover(tempPath, outPath)
+    if (ok) {
+      // 私有对象 + 现签，与作品视频同一条通道，不走 uploadPublicObject
+      await uploadFile(outPath, outKey, 'image/jpeg')
+      coverKey = outKey
+    }
+    await removeLocalFile(outPath)
+  } catch (e) {
+    console.warn('[works] 封面抽帧失败（不阻断上传）:', (e as Error).message)
+    coverKey = null
+  } finally {
+    await removeLocalFile(tempPath)
+  }
+
+  return { videoKey, contentType: contentTypeForKey(videoKey), sizeBytes, coverKey }
+}
+
+/** 保存后台单独上传的作品封面（运营想用一张比首帧更好看的图时） */
+export async function saveWorkCover(tempPath: string): Promise<{ coverKey: string; sizeBytes: number }> {
+  const head = await readFileHead(tempPath, 16)
+  const type = head ? detectImageType(head) : null
+  if (!type) {
+    await removeLocalFile(tempPath)
+    throw new WorkUploadError('封面只支持 JPG / PNG / WebP / GIF 图片')
+  }
+  const key = workKey(type.ext)
+  try {
+    return { coverKey: key, sizeBytes: await uploadFile(tempPath, key, type.contentType) }
+  } finally {
+    await removeLocalFile(tempPath)
+  }
 }

@@ -4,6 +4,8 @@ import { Card, Descriptions, Tag, Button, Input, message } from 'tdesign-react'
 import DataTable from '../lib/table'
 import { request } from '../lib/http'
 import { confirmDialog } from '../lib/confirm'
+// 时间一律走这里：后台唯一口径「2026-09-18 10:59」（原来这里混着带秒与不带秒两种写法）
+import { fmtMinute, fmtDay } from '../lib/datetime'
 import dayjs from 'dayjs'
 
 interface BeanAccount {
@@ -121,8 +123,8 @@ export default function MerchantDetailPage() {
       `确认为「${data.phone}」${current ? '续期' : '开通'}会员？\n\n` +
         `套餐：${plan?.name ?? '订阅会员'}（¥${feeYuan} / ${days} 天）\n` +
         `将立即赠送 ${grantPoints} 积分（会员积分，随会员到期清零）\n` +
-        `到期时间：${willEnd.format('YYYY-MM-DD HH:mm')}` +
-        (current ? `\n（在现有到期时间 ${dayjs(current.endAt).format('YYYY-MM-DD')} 上顺延 ${days} 天）` : '') +
+        `到期时间：${fmtMinute(willEnd)}` +
+        (current ? `\n（在现有到期时间 ${fmtDay(current.endAt)} 上顺延 ${days} 天）` : '') +
         `\n\n此操作会生成一张 0 元会员订单用于留痕，不可撤销。`,
     )
     if (!okd) return
@@ -134,7 +136,7 @@ export default function MerchantDetailPage() {
         data: { remark: remark.trim() || undefined },
       })
       message.success(
-        `已${r.renewed ? '续期' : '开通'}会员，有效期至 ${dayjs(r.endAt).format('YYYY-MM-DD')}，赠送 ${r.grantPoints} 积分`,
+        `已${r.renewed ? '续期' : '开通'}会员，有效期至 ${fmtDay(r.endAt)}，赠送 ${r.grantPoints} 积分`,
       )
       setRemark('')
       load()
@@ -201,7 +203,7 @@ export default function MerchantDetailPage() {
           <Descriptions.DescriptionsItem label="状态">
             <Tag theme={data.status === 'ACTIVE' ? 'success' : 'danger'}>{data.status}</Tag>
           </Descriptions.DescriptionsItem>
-          <Descriptions.DescriptionsItem label="注册时间">{dayjs(data.createdAt).format('YYYY-MM-DD HH:mm:ss')}</Descriptions.DescriptionsItem>
+          <Descriptions.DescriptionsItem label="注册时间">{fmtMinute(data.createdAt)}</Descriptions.DescriptionsItem>
           <Descriptions.DescriptionsItem label="门店 / 创作 / 合成任务">
             {data._count.stores} / {data._count.creations} / {data._count.renderTasks}
           </Descriptions.DescriptionsItem>
@@ -231,7 +233,7 @@ export default function MerchantDetailPage() {
           </Descriptions.DescriptionsItem>
           <Descriptions.DescriptionsItem label="套餐">{current?.package.name ?? '—'}</Descriptions.DescriptionsItem>
           <Descriptions.DescriptionsItem label="到期时间">
-            {current ? dayjs(current.endAt).format('YYYY-MM-DD HH:mm') : '—'}
+            {current ? fmtMinute(current.endAt) : '—'}
           </Descriptions.DescriptionsItem>
           <Descriptions.DescriptionsItem label="剩余天数">
             {current ? `${dayjs(current.endAt).diff(dayjs(), 'day')} 天` : '—'}
@@ -249,8 +251,8 @@ export default function MerchantDetailPage() {
               data={data.memberships}
               columns={[
                 { colKey: 'package', title: '套餐', render: ({ row }: any) => row.package?.name ?? '—' },
-                { colKey: 'startAt', title: '开始', width: 170, render: ({ row }: any) => dayjs(row.startAt).format('YYYY-MM-DD HH:mm') },
-                { colKey: 'endAt', title: '到期', width: 170, render: ({ row }: any) => dayjs(row.endAt).format('YYYY-MM-DD HH:mm') },
+                { colKey: 'startAt', title: '开始', width: 170, render: ({ row }: any) => fmtMinute(row.startAt) },
+                { colKey: 'endAt', title: '到期', width: 170, render: ({ row }: any) => fmtMinute(row.endAt) },
                 { colKey: 'status', title: '状态', width: 100, render: ({ row }: any) => (row.status === 'ACTIVE' && dayjs(row.endAt).isAfter(dayjs()) ? '有效' : row.status) },
               ]}
             />
@@ -289,7 +291,7 @@ export default function MerchantDetailPage() {
           rowKey="id"
           data={data.ledgers}
           columns={[
-            { colKey: 'createdAt', title: '时间', width: 170, render: ({ row }: any) => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss') },
+            { colKey: 'createdAt', title: '时间', width: 170, render: ({ row }: any) => fmtMinute(row.createdAt) },
             { colKey: 'type', title: '类型', width: 100 },
             { colKey: 'amount', title: '变动' },
             { colKey: 'balanceAfter', title: '余额' },
@@ -311,7 +313,7 @@ export default function MerchantDetailPage() {
             { colKey: 'orderType', title: '类型' },
             { colKey: 'amountFen', title: '金额(分)' },
             { colKey: 'status', title: '状态' },
-            { colKey: 'paidAt', title: '支付时间', render: ({ row }: any) => row.paidAt ? dayjs(row.paidAt).format('YYYY-MM-DD HH:mm') : '—' },
+            { colKey: 'paidAt', title: '支付时间', render: ({ row }: any) => fmtMinute(row.paidAt) },
             {
               colKey: 'action',
               title: '操作',

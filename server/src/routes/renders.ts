@@ -64,7 +64,9 @@ router.post('/:id/render', async (req, res) => {
     if (e instanceof BeanNotEnoughError) return fail(res, 2001, '积分不足，请充值', 400)
     if (e instanceof CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
     if (e instanceof renderSvc.RenderNoAssetError) return fail(res, 4003, '请先为分镜上传素材', 400)
-    if (e instanceof renderSvc.RenderAlreadyRunningError) return fail(res, 4001, '已有合成任务进行中', 409)
+    // ★ 用 e.message 而不是写死的「已有合成任务进行中」：三档互不干扰之后，
+    //   真正被占住的是**某一个档位**，文案必须说清是哪一档，否则用户会以为整页都不能提交。
+    if (e instanceof renderSvc.RenderAlreadyRunningError) return fail(res, 4001, e.message, 409)
     if (e instanceof renderSvc.RenderDurationUnknownError) return fail(res, 4009, e.message, 400)
     if (e instanceof renderSvc.RenderGradeUnavailableError) return fail(res, 4013, e.message, 409)
     if (e instanceof SubscriptionRequiredError) return fail(res, 2005, e.message, 403)

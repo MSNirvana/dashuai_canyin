@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
-import { Image, ScrollView, Swiper, SwiperItem, Text, View } from '@tarojs/components'
-import Taro, { useDidShow, useReachBottom } from '@tarojs/taro'
+import { CoverView, Image, ScrollView, Swiper, SwiperItem, Text, Video, View } from '@tarojs/components'
+import Taro, { useDidHide, useDidShow, useReachBottom } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
+import { guideLogin } from '../../utils/login-guide'
 import { listCreations, type CreationItem } from '../../services/creation'
-import { listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
+import { getWork, listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
 import {
   DEFAULT_SLOGAN_BANNER,
   FALLBACK_SLIDE,
@@ -34,6 +35,12 @@ const WORK_COVER_FALLBACKS: Record<string, string> = {
 
 /** 优秀作品每页条数（两列，即 3 行） */
 const WORK_PAGE_SIZE = 6
+/**
+ * 已取到的作品播放地址的复用窗口。
+ * 详情接口签出来的地址 1 小时后失效，这里按 45 分钟保守复用 —— 复用窗口若超过签名有效期，
+ * 就会变成「点了播放却播不了」这种最难查的静默失败。
+ */
+const WORK_PLAY_URL_TTL_MS = 45 * 60 * 1000
 /** 分类横滑的「全部」选项：接口只返回有作品的分类 */
 const WORK_CATEGORY_ALL = ''
 
@@ -62,6 +69,14 @@ export default function HomePage() {
   const [workLoading, setWorkLoading] = useState(false)
   const workPageRef = useRef(0)
   const workLoadedRef = useRef(false)
+  /**
+   * 正在卡片里就地播放的作品。**同一时刻只允许一个** —— 小卡片里同时播几个视频既看不清、
+   * 又白费流量，而且 Video 是原生组件、层级最高，多开几个会把整块网格的点击搞得很难预测。
+   */
+  const [playing, setPlaying] = useState<{ id: string; url: string } | null>(null)
+  /** 正在取播放地址的作品 id：取地址要发一次请求，期间让按钮有反馈 */
+  const [playPending, setPlayPending] = useState<string | null>(null)
+  const playUrlRef = useRef<Record<string, { url: string; at: number }>>({})
   const storeName = stores.find((s) => s.id === currentStoreId)?.name ?? ''
 
   /** 拉作品列表：reset=true 拉第一页并替换，否则追加下一页 */
@@ -75,6 +90,11 @@ export default function HomePage() {
       setWorkTotal(r.total)
       setWorkHasMore(r.hasMore)
       setWorks((prev) => (opts.reset ? r.items : [...prev, ...r.items]))
+      // ★ 只有真的拉到数据才算「首次加载完成」。
+      //   原来是在 useDidShow 的 if 里置位，于是一次网络抖动（或接口报错）就等于
+      //   「作品区一直空白到杀进程重开」：useDidShow 每次回首页都会跑，但那个 ref 已经是 true。
+      //   失败时留着 false，下次回首页自动重试。
+      workLoadedRef.current = true
     } catch {
       // 作品区失败不遮挡积分与门店，仅提示
       setError('优秀作品加载失败，点此重试')
@@ -126,13 +146,28 @@ export default function HomePage() {
       setError('最近创作加载失败，请重试')
     }
   }
+  /**
+   * 顶部提示条的统一点击动作。
+   * 原来只调 refresh()（门店 / 账户），而首页最常失败的其实是作品区 ——
+   * 那时候点提示条等于什么都没重试，用户只会觉得「点了没反应」。
+   */
+  const retryHome = () => {
+    void refresh()
+    void loadWorkCategories()
+    void loadWorks({ reset: true })
+  }
+
   useDidShow(() => {
     void refresh()
     // 轮播与口号图都是运营内容，每次回首页重拉一遍（内容没变时上面会跳过 setState）
     void loadHomeLayout()
-    // 作品是公共内容，只在首次进入时拉；切分类与上拉由下面各自触发
+    // ★ 作品是**公开内容**（服务端 routes/works.ts 故意不鉴权），所以这里**不看登录态**：
+    //   未登录也照样拉、照样渲染 —— 作品区就是给未登录用户的引流素材。
+    //   反过来如果让它按登录态早退，代价是一次 401 引发的连锁：
+    //   请求层 redirectToLogin() → 300ms 后 switchTab 到「我的」——
+    //   用户一打开小程序就被从首页弹走，连口号都留不住。
+    //   ref 的置位在 loadWorks 的**成功分支**里（失败要能自动重试，见那里）。
     if (!workLoadedRef.current) {
-      workLoadedRef.current = true
       void loadWorkCategories()
       void loadWorks({ reset: true })
     }
@@ -144,6 +179,9 @@ export default function HomePage() {
     setWorkCategory(c)
     setWorks([])
     workPageRef.current = 0
+    // 列表被整体替换，正在播的那条多半已不在新列表里 —— 停掉，
+    // 别留一个看不见、却还在后台播的实例
+    setPlaying(null)
     void loadWorks({ reset: true, category: c })
   }
 
@@ -153,24 +191,12 @@ export default function HomePage() {
   }
   useReachBottom(() => { loadMoreWorks() })
 
-  const goMine = () => Taro.switchTab({ url: '/pages/mine/index' })
+  // 离开首页就把播放态收掉：Video 不会因为页面切走而自己停，留着它继续吃流量，
+  // 回来还会看到一张「播完停在最后一帧」的卡片。
+  useDidHide(() => { setPlaying(null) })
 
-  if (!merchant) return <View className='home'>
-    {/* 未登录分支原来也有一条同样的顶栏（品牌字标 + 头像按钮），一并去掉：
-        顶栏没了之后「大帅餐饮」仍由原生导航栏标题承载（index.config.ts），品牌不会丢。 */}
-    <View className='home__top'>
-      <View className='home__guest-hero'>
-        <Text className='home__eyebrow'>门店短视频创作助手</Text>
-        <Text className='home__hero-title'>把今天的招牌菜，拍成明天的客流。</Text>
-        <Text className='home__hero-desc'>从菜品卖点到口播、分镜和成片，一条创作流完成。</Text>
-      </View>
-    </View>
-    <View className='ds-card home__guest'>
-      <Text className='home__guest-title'>登录后开始创作</Text>
-      <Text className='home__guest-desc'>进入「我的」完成微信一键登录</Text>
-      <View className='ds-btn ds-btn--primary ds-btn--block' hoverClass='ds-hover' onClick={goMine}>去登录</View>
-    </View>
-  </View>
+  // 未登录时它是「登录后开始创作」那张引导卡上的按钮（原来首页未登录是整页早退，现在只换这一块）
+  const goMine = () => Taro.switchTab({ url: '/pages/mine/index' })
 
   const goStores = () => Taro.navigateTo({ url: '/pages/store/list' })
   const goCreations = () => Taro.switchTab({ url: '/pages/creation/list' })
@@ -179,9 +205,46 @@ export default function HomePage() {
   // 点卡片进详情（看视频 + 配方说明）；点「生成同款」直接带着配方进创作流
   const openWork = (work: WorkItem) => Taro.navigateTo({ url: `/pages/work/detail?id=${work.id}` })
   const goCloneWork = (work: WorkItem) => {
+    // 未登录先给一句解释，别把用户丢去门店页吃一个 401、再被请求层弹到「我的」（见 utils/login-guide.ts）
+    if (!merchant) { guideLogin({ reason: '生成同款需要先登录' }); return }
     if (!currentStoreId) { goStores(); return }
     void markWorkClone(work.id).catch(() => undefined)
     Taro.navigateTo({ url: `/pages/creation/edit?workId=${work.id}` })
+  }
+
+  const stopPlay = () => setPlaying(null)
+
+  /**
+   * 点卡片**正中间那个播放按钮**：不跳页，就地换成 video 播放。
+   * 卡片其他地方仍然是「进详情」—— 两者的区别只由 `stopPropagation` 决定，
+   * 与下面「生成同款」按钮用的是同一套写法（本项目已验证可用）。
+   *
+   * 为什么这里要请求一次详情拿地址：列表接口**刻意只签封面**（见后端 routes/works.ts 的说明），
+   * 不带 videoUrl。若为了「列表能直接播」而让列表把每条作品的视频都签一遍，等于每次翻页
+   * 都白签一批 1 小时有效的地址，只为那少数几次点击。所以改成点播时才取，并按作品缓存
+   * （签名会过期，缓存窗口见 WORK_PLAY_URL_TTL_MS）。
+   */
+  const playWork = async (work: WorkItem) => {
+    if (playPending) return
+    // 重复点正在播的那条 = 收起。播放中按钮已被 Video 盖住，这一步主要挡快速连点
+    if (playing?.id === work.id) { setPlaying(null); return }
+    setPlayPending(work.id)
+    try {
+      const cached = playUrlRef.current[work.id]
+      const url = cached && Date.now() - cached.at < WORK_PLAY_URL_TTL_MS
+        ? cached.url
+        : (await getWork(work.id)).videoUrl
+      if (!url) throw new Error('这条作品还没有可播放的成片')
+      playUrlRef.current[work.id] = { url, at: Date.now() }
+      setPlaying({ id: work.id, url })
+    } catch (error) {
+      // 拿不到地址就把缓存清掉：留着一个坏地址，用户下次点还是同一条死路
+      delete playUrlRef.current[work.id]
+      setPlaying(null)
+      void Taro.showToast({ title: (error as Error).message || '播放失败，请稍后重试', icon: 'none', duration: 2500 })
+    } finally {
+      setPlayPending(null)
+    }
   }
 
   /**
@@ -249,41 +312,61 @@ export default function HomePage() {
       </Swiper>
 
       {!!error && (
-        <View className='ds-notice home__error' onClick={() => void refresh()}>
-          <Text>{error}，点此重试</Text>
+        <View className='ds-notice home__error' onClick={retryHome}>
+          <Text>{error}</Text>
         </View>
       )}
 
-      {/* ── 最近创作 ── */}
-      <View className='home__sec'>
-        <View>
-          <Text className='home__sec-title'>接着上次拍</Text>
-          <Text className='home__sec-desc'>未完成的灵感，不用从头再来</Text>
-        </View>
-        <View className='home__sec-more' onClick={goCreations}><Text>全部创作 ›</Text></View>
-      </View>
-
-      {recent.length === 0 ? (
-        <View className='home__recent-empty' hoverClass='ds-hover' onClick={goCreate}>
-          <Text className='home__recent-empty-text'>
-            {currentStoreId ? `「${storeName || '当前门店'}」还没有创作，点这里开始` : '还没有门店，先创建一家门店'}
-          </Text>
-        </View>
-      ) : (
-        <View className='home__recent'>
-          {recent.map((c) => (
-            <View className='home__recent-item' key={c.id} hoverClass='ds-hover' onClick={() => openCreation(c.id)}>
-              <View className='home__recent-cover'><t-icon name='movie-clapper' size='36rpx' /></View>
-              <View className='home__recent-main'>
-                <Text className='home__recent-title'>{c.title || '未命名创作'}</Text>
-                <View className='home__recent-meta'>
-                  {!!c.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{c.trackLabel}</Text>}
-                  <Text className='home__recent-sub'>分镜 {c.shotsTotal}</Text>
-                </View>
-              </View>
-              <Text className='home__recent-arrow'>›</Text>
+      {merchant ? (
+        <>
+          {/* ── 最近创作 ── */}
+          <View className='home__sec'>
+            <View>
+              <Text className='home__sec-title'>接着上次拍</Text>
+              <Text className='home__sec-desc'>未完成的灵感，不用从头再来</Text>
             </View>
-          ))}
+            <View className='home__sec-more' onClick={goCreations}><Text>全部创作 ›</Text></View>
+          </View>
+
+          {recent.length === 0 ? (
+            <View className='home__recent-empty' hoverClass='ds-hover' onClick={goCreate}>
+              <Text className='home__recent-empty-text'>
+                {currentStoreId ? `「${storeName || '当前门店'}」还没有创作，点这里开始` : '还没有门店，先创建一家门店'}
+              </Text>
+            </View>
+          ) : (
+            <View className='home__recent'>
+              {recent.map((c) => (
+                <View className='home__recent-item' key={c.id} hoverClass='ds-hover' onClick={() => openCreation(c.id)}>
+                  {/* 有已上传的视频就显示它的封面（与创作列表同一份服务端字段），没有才退回默认图标 */}
+                  <View className='home__recent-cover'>
+                    {c.coverUrl ? (
+                      <Image className='home__recent-cover-image' src={c.coverUrl} mode='aspectFill' />
+                    ) : (
+                      <t-icon name='movie-clapper' size='36rpx' />
+                    )}
+                  </View>
+                  <View className='home__recent-main'>
+                    <Text className='home__recent-title'>{c.title || '未命名创作'}</Text>
+                    <View className='home__recent-meta'>
+                      {!!c.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{c.trackLabel}</Text>}
+                      <Text className='home__recent-sub'>分镜 {c.shotsTotal}</Text>
+                    </View>
+                  </View>
+                  <Text className='home__recent-arrow'>›</Text>
+                </View>
+              ))}
+            </View>
+          )}
+        </>
+      ) : (
+        /* 未登录：原来这里是一整页的早退分支（文字 hero + 登录卡），现在只替换
+           「接着上次拍」这一块。首页其余部分 —— 口号海报、轮播、优秀作品 ——
+           对未登录用户同样是有效内容，尤其作品区：那才是给未登录用户的引流素材。 */
+        <View className='ds-card home__guest home__guest--inline'>
+          <Text className='home__guest-title'>登录后开始创作</Text>
+          <Text className='home__guest-desc'>进入「我的」完成微信一键登录</Text>
+          <View className='ds-btn ds-btn--primary ds-btn--block' hoverClass='ds-hover' onClick={goMine}>去登录</View>
         </View>
       )}
 
@@ -328,6 +411,34 @@ export default function HomePage() {
             const cover = w.coverUrl || WORK_COVER_FALLBACKS[w.category]
             const hasCover = !!cover
             const hasVideo = !!w.videoKey
+            const playingUrl = playing?.id === w.id ? playing.url : null
+            /**
+             * 播放态**单独一个分支 return**，不去改常态那棵 DOM 树。
+             * 原因：Video 是原生组件、层级最高，会把标签 / 标题 / 播放按钮统统盖住 ——
+             * 与其再加一套 display:none 去藏（小程序 wxss 的选择器支持面本来就窄），
+             * 不如播放时根本不渲染它们。顺带也保证了「点其他地方进详情」在播放时不会误触发。
+             */
+            if (playingUrl) {
+              return (
+                <View className='home__work home__work--playing' key={w.id}>
+                  <Video
+                    className='home__work-video'
+                    src={playingUrl}
+                    autoplay
+                    controls
+                    objectFit='cover'
+                    onEnded={stopPlay}
+                    onError={() => {
+                      stopPlay()
+                      void Taro.showToast({ title: '播放失败，请稍后重试', icon: 'none', duration: 2500 })
+                    }}
+                  >
+                    {/* cover-view 是唯一能覆盖在原生组件之上的元素，所以退出播放的入口只能是它 */}
+                    <CoverView className='home__work-stop' onClick={stopPlay}>收起</CoverView>
+                  </Video>
+                </View>
+              )
+            }
             return (
               <View
                 className={`home__work ${hasCover ? '' : 'home__work--empty'}`}
@@ -354,7 +465,13 @@ export default function HomePage() {
                 </View>
 
                 {hasVideo && (
-                  <View className='home__work-play'>
+                  /* 播放按钮是**独立命中区**：它吃掉这次点击（stopPropagation），
+                     其余区域留给卡片自己的「进详情」—— 与下面「生成同款」是同一套写法。 */
+                  <View
+                    className={`home__work-play ${playPending === w.id ? 'home__work-play--pending' : ''}`}
+                    hoverClass='ds-hover--press'
+                    onClick={(e) => { e.stopPropagation(); void playWork(w); }}
+                  >
                     <View className='home__work-play-icon'>
                       <View className='home__work-play-triangle' />
                     </View>

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Select, Tag, Input } from 'tdesign-react'
 import DataTable from '../lib/table'
 import { useListQuery } from '../lib/useListQuery'
-import dayjs from 'dayjs'
+import { fmtMinute } from '../lib/datetime'
 
 interface CallLog {
   id: string
@@ -57,7 +57,7 @@ export default function AiCallLogsPage() {
         loading={loading}
         pagination={pagination}
         columns={[
-          { colKey: 'createdAt', title: '时间', width: 170, render: ({ row }: any) => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss') },
+          { colKey: 'createdAt', title: '时间', width: 170, render: ({ row }: any) => fmtMinute(row.createdAt) },
           { colKey: 'merchant', title: '商家', width: 130, render: ({ row }: any) => row.merchant?.phone ?? '—' },
           { colKey: 'sceneCode', title: '场景', width: 140 },
           { colKey: 'provider', title: '通道·模型', render: ({ row }: any) => `${row.provider.code} / ${row.model.modelCode}` },

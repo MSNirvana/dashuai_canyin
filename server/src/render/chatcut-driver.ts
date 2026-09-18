@@ -23,12 +23,15 @@
  *
  * ★ 上传助手另外做的本地预处理（ffmpeg 转码/抽缩略图探测响度/抽转录音轨）
  *   不是协议要求，是它为了「不知道上游素材长什么样」而做的自我保护。
- *   我们的素材在进这条管道前已经过 `ffmpegNormalize` 归一化成 9:16，
- *   所以只做「声明正确的元数据」，不需要那套预处理。
+ *   我们只做「声明正确的元数据」，不需要那套预处理 ——
+ *   ⚠ 但「正确」是硬要求：这条管道推的是**原始素材**（不是本地管线那份 9:16 归一化产物），
+ *     所以宽高必须真去探。缺 width/height 时它直接回 400
+ *     `helper import registration for video requires complete metadata so the backend
+ *      does not process large files locally` —— 声明错的尺寸比不声明更糟，
+ *     拿画布尺寸凑数会让云端按错误比例处理（见 remoteSource）。
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { createReadStream, statSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -36,6 +39,7 @@ import { callTool, type ChatCutJobInput } from './chatcut.js'
 import { prisma } from '../db.js'
 import { activeTtsProvider } from '../services/tts-provider.service.js'
 import { synthesizeNarration } from './tts.js'
+import { probeClipMeta, probeDurationMs } from './ffmpeg.js'
 
 /** 一个上传会话最多导 4 个素材（官方助手的硬限制），超了要重开会话 */
 const SESSION_BATCH_SIZE = 4
@@ -326,6 +330,20 @@ export async function importAsset(
  * 一个上传会话最多导 4 个素材，所以按批开会话。
  * ⚠ 会话有 30 分钟 TTL：大素材多的时候要留意别把会话用过期。
  */
+/**
+ * Node 的 fetch 失败只给一句 `TypeError: fetch failed`，真因藏在 `cause` 里
+ * （ENOENT = 请求体的来源流打不开 / ECONNRESET / 证书过期…）。
+ * ★ 不把 cause 带出来，线上就只能看到一个完全无法定位的「导入失败」——
+ *   本轮排「TTS 临时文件被提前删掉」这个 bug 时，第一手线索就是这么一句空话。
+ */
+function describeImportError(error: unknown): string {
+  const base = (error as Error)?.message ?? String(error)
+  const cause = (error as { cause?: unknown })?.cause
+  const detail =
+    cause instanceof Error ? `${cause.name}: ${cause.message}` : cause == null ? '' : String(cause)
+  return detail && !base.includes(detail) ? `${base}（${detail}）` : base
+}
+
 export async function importAssets(
   projectId: string,
   sources: ChatCutUploadSource[],
@@ -335,7 +353,12 @@ export async function importAssets(
     const batch = sources.slice(start, start + SESSION_BATCH_SIZE)
     const session = await createImportSession(projectId)
     for (const source of batch) {
-      results.push({ assetId: await importAsset(session, source), filename: source.filename })
+      try {
+        results.push({ assetId: await importAsset(session, source), filename: source.filename })
+      } catch (error) {
+        // 带上文件名 + 真因：批量导入时「哪个素材、哪一步」比一句 fetch failed 有用得多
+        throw new Error(`素材 ${source.filename} 导入失败：${describeImportError(error)}`)
+      }
     }
   }
   return results
@@ -422,7 +445,13 @@ export async function trackChatCutProgress(
   target: 'upload' | 'transcription',
   assetIds?: string[],
 ): Promise<Record<string, unknown>> {
-  const args: Record<string, unknown> = { projectId, target }
+  // ★★ `action` 是**必填**，漏了会被 MCP 直接拒：
+  //   `-32602 Input validation error: Invalid option: expected one of "params"|"status"|"wait" (path: action)`
+  //   先前没传 ⇒ **每次轮询都抛错** ⇒ 被 `pollChatCutTasks` 的 catch 当成「网络抖动」无限重试
+  //   ⇒ 任务永远停在 PREPARE 的 30%（实测 990028 卡了 6 分钟、零进展）。
+  //   三档语义：`status` = 读一次当前状态（外层本来就在每轮 tick 轮询，不需要服务端阻塞）；
+  //   `wait` 同样是即时读；`params` 是契约自述。这里用 `status`。
+  const args: Record<string, unknown> = { action: 'status', projectId, target }
   if (assetIds?.length) args.assetIds = assetIds.join(',')
   return callTool('track_progress', args)
 }
@@ -595,6 +624,24 @@ export interface ChatCutJobState {
   prepareStartedAtMs?: number
   /** 已记录的原因（字幕被放弃等），用于排查「为什么没有字幕」 */
   notices?: string[]
+  /**
+   * 阶段内的细粒度进度（0~1），供 worker 换算成用户可见的百分比。
+   *
+   * ★ 为什么需要：PREPARE 要等「上传就绪」再等「转录就绪」，**分钟级**；而进度在这整段时间里
+   *   只显示阶段起点（30%），用户看到的就是「又卡住了」。远端 `track_progress` 每条 entry 自带
+   *   `progress`（0~1），取均值就能让进度真的在动。拿不到就不给（worker 退回显示阶段起点值）。
+   */
+  stageRatio?: number
+  /**
+   * 连续轮询失败次数。
+   *
+   * ★ 为什么需要：轮询失败的 catch 会「保持 RUNNING，下一轮重试」—— 这条策略本身对（网络抖动
+   *   不该杀任务），但它有个致命副作用：**只要存在一个必然失败的理由，任务就会安静地无限重试**。
+   *   实测就踩到了：`track_progress` 漏传必填的 `action`，每次调用都被 MCP 拒（-32602），
+   *   而那条错误只出现在被吞掉的 catch 里 ⇒ 任务在 PREPARE/30% 卡了 6 分钟、库里零线索。
+   *   所以失败要计数，超过上限**明确失败并带上真实原因**，而不是永远安静地转圈。
+   */
+  pollErrors?: number
 }
 
 export interface ChatCutRenderResult {
@@ -621,17 +668,53 @@ const VOICE_ENV_KEYS: Record<string, string> = {
   'energetic-youth': 'CHATCUT_TTS_VOICE_ENERGETIC_YOUTH',
 }
 
-/** 从 COS 签名 URL 拉素材：先 HEAD 拿字节数（finalize 会核对），再给流 */
+/**
+ * 从探测响应里取**对象总字节数**。
+ * Range 命中：`Content-Range: bytes 0-0/619077` ⇒ 取分母（这才是完整长度）。
+ * 对方忽略 Range 而回了完整响应时，退回落 `Content-Length`。
+ */
+function readTotalSize(res: Response): number {
+  const total = Number((res.headers.get('content-range') ?? '').split('/').pop())
+  if (Number.isFinite(total) && total > 0) return total
+  return Number(res.headers.get('content-length') ?? 0)
+}
+
+/**
+ * 从 COS 签名 URL 拉素材：先探一次字节数（finalize 会核对），再给流。
+ *
+ * ★★ 探测**绝不能用 HEAD** —— COS 的 q-signature **把 HTTP 方法算进签名**，
+ *    而 SDK 签出来的临时 URL 是按 **GET** 签的。拿 HEAD 去请求同一个 URL，
+ *    COS 判签名不匹配、直接回 **403**（不是 404、也不是 405，看着像「没权限」，
+ *    极难往「方法不对」上想）。2026-09-18 实测同一个 URL：
+ *      `HEAD → 403`、`GET → 200`、`GET + Range: bytes=0-0 → 206`。
+ *    后果是 AI 档**每次合成都卡在第一步**，抛「取素材大小失败（HTTP 403）：shot-3.mp4」，
+ *    100% 失败 —— 而且因为异常发生在推素材之前，看起来像素材本身有问题。
+ *
+ *    改用「带 Range 的 GET」：服务端只回 1 个字节，代价与 HEAD 相当，
+ *    总长度从 `Content-Range` 的分母里取（见 readTotalSize）。
+ */
 async function remoteSource(
   url: string,
   filename: string,
   contentType: string,
   durationMs: number | null,
 ): Promise<ChatCutUploadSource> {
-  const head = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(30_000) })
-  if (!head.ok) throw new Error(`取素材大小失败（HTTP ${head.status}）：${filename}`)
-  const size = Number(head.headers.get('content-length') ?? 0)
-  if (!Number.isFinite(size) || size <= 0) throw new Error(`素材 ${filename} 的 content-length 非法：${size}`)
+  const probe = await fetch(url, { headers: { range: 'bytes=0-0' }, signal: AbortSignal.timeout(30_000) })
+  if (!probe.ok) throw new Error(`取素材大小失败（HTTP ${probe.status}）：${filename}`)
+  // 探针会带回 1 个字节的 body：不读掉就会一直占着这条连接（keep-alive 下尤其明显）
+  await probe.arrayBuffer().catch(() => undefined)
+  const size = readTotalSize(probe)
+  if (!Number.isFinite(size) || size <= 0) throw new Error(`素材 ${filename} 的字节数非法：${size}`)
+
+  // ★★ 必须声明**完整且正确**的元数据。缺 width/height 时 ChatCut 的 import registration
+  //    直接回 400 —— 实测 990025：`helper import registration for video requires complete
+  //    metadata so the backend does not process large files locally`。
+  //    而 `media_asset.width/height` 由客户端在上传确认时**选择性**上报（视频仅 25/56 有值），
+  //    所以只能现探；探不到就**明确报错**，绝不拿画布尺寸凑数（错的比例比缺失更糟）。
+  const meta = await probeClipMeta(url)
+  if (!meta.ok || !meta.width || !meta.height) {
+    throw new Error(`素材 ${filename} 的元数据不全，无法提交云端合成：${meta.reason ?? '缺少视频宽高'}`)
+  }
   return {
     filename,
     contentType,
@@ -646,22 +729,64 @@ async function remoteSource(
       return Readable.fromWeb(response.body as never)
     },
     meta: {
-      ...(durationMs ? { durationInSeconds: durationMs / 1000 } : {}),
-      // ⚠ 不声明 width/height：原始素材尺寸未知，声明错的比不声明更糟。
-      //   画布适配交给 edit_item 的 fit:"cover"（按画布裁切填满），不依赖这里的声明。
-      hasAudioTrack: true,
+      width: meta.width,
+      height: meta.height,
+      // 时长以**探到的真实值**为准（客户端上报的 durationMs 可能缺/偏）；两个都没有就不声明
+      ...(meta.durationMs || durationMs
+        ? { durationInSeconds: (meta.durationMs ?? durationMs!) / 1000 }
+        : {}),
+      hasAudioTrack: meta.hasAudioTrack,
     },
   }
 }
 
+/**
+ * 时间轴帧数。★ **必须向下取整，不能四舍五入。**
+ *
+ * ChatCut 会拿源素材的**真实**时长校验 `fromFrame + durationInFrames ≤ 素材时长`，超出**直接拒单**：
+ *   `Source range exceeds video asset duration: … plus 90 frame(s) … ends at 3s,
+ *    but asset … is 2.968s. Use durationInFrames <= 89`
+ * 而客户端上报的分镜时长是**取整值**（实测 3000ms，真实只有 2968ms）⇒ 用 round 算出 90 帧就注定越界。
+ * 所以时间轴一律按「探到的真实时长 + 向下取整」排帧（真实时长由 `remoteSource` 探测得到）。
+ * `+1e-6` 是防浮点边界：本该整除时算出 89.999999 会白掉一帧。
+ */
 function framesOf(ms: number, fps: number): number {
-  return Math.max(1, Math.round((ms / 1000) * fps))
+  return Math.max(1, Math.floor((ms / 1000) * fps + 1e-6))
+}
+
+/**
+ * 把探测到的宽高回填 `media_asset`（**只在原本为空时写**）。
+ *
+ * 客户端是选择性上报宽高的，实测视频仅 25/56 有值 —— 不回填的话，同一批素材会被
+ * 每个 AI 任务重新探一遍。这是纯缓存性质的优化：任何失败都吞掉（调用点已 catch），
+ * 绝不能因为它让一条本来能出的片子失败。
+ */
+async function backfillClipMeta(assetId: string, meta: ChatCutUploadSource['meta']): Promise<void> {
+  if (!/^\d+$/.test(assetId)) return
+  if (!meta?.width || meta.width <= 0 || !meta.height || meta.height <= 0) return
+  await prisma.mediaAsset.updateMany({
+    where: { id: BigInt(assetId), width: null },
+    data: { width: meta.width, height: meta.height },
+  })
+}
+
+/**
+ * 阶段上报的安全包装。`onPhase` 是 worker 注入的可观测性钩子，
+ * 它写库/打日志失败**绝不能把一条本来能出的片子搞失败**。
+ */
+function safePhase(input: ChatCutJobInput, ratio: number, label: string): void {
+  try {
+    input.onPhase?.({ ratio, label })
+  } catch (error) {
+    console.warn(`[chatcut] onPhase 回调异常（已忽略）：${(error as Error).message}`)
+  }
 }
 
 export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCutRenderResult> {
   const clips = input.clips.filter((clip) => clip.sourceUrl)
   if (clips.length === 0) throw new Error('AI 档没有可用分镜素材')
   const notices: string[] = []
+  safePhase(input, 0.02, '准备项目')
 
   const project = await createChatCutProject({
     name: input.title || `大帅餐饮成片-${input.taskId}`,
@@ -672,11 +797,34 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
   })
   const projectId = project.projectId
   const videoTrackId = project.trackIds[0]
+  safePhase(input, 0.08, '已创建项目')
 
   // ── 1) 分镜素材：直接推 COS 原始字节（不本地转码，画布适配交给 fit:"cover"）
   const clipSources = await Promise.all(
-    clips.map((clip, index) => remoteSource(clip.sourceUrl, `shot-${index + 1}.mp4`, 'video/mp4', clip.durationMs)),
+    clips.map(async (clip, index) => {
+      const source = await remoteSource(clip.sourceUrl, `shot-${index + 1}.mp4`, 'video/mp4', clip.durationMs)
+      // 顺手回填素材表宽高，后续任务零探测成本（失败不影响合成）
+      await backfillClipMeta(clip.assetId, source.meta).catch(() => undefined)
+      return source
+    }),
   )
+  safePhase(input, 0.16, `素材已探明（${clips.length} 段）`)
+
+  // ★ 每个分镜的**真实素材时长**（探测所得）。时间轴一律以它为准，不用客户端上报的取整值 ——
+  //   上报 3000ms / 真实 2968ms，按上报值排帧必被 ChatCut 拒单（见 framesOf 的注释）。
+  const clipAssetMs = clipSources.map((source) => {
+    const sec = source.meta?.durationInSeconds
+    return typeof sec === 'number' && sec > 0 ? Math.round(sec * 1000) : null
+  })
+  /** 分镜在时间轴上的有效时长（毫秒）：以真实素材时长为准，并受 trim 约束（二者都要，缺一就超界） */
+  const shotMs = (index: number): number => {
+    const clip = clips[index]!
+    const assetMs = clipAssetMs[index] ?? clip.durationMs ?? clip.trimEndMs ?? 0
+    if (assetMs <= 0) return 0
+    const start = Math.max(0, clip.trimStartMs ?? 0)
+    const end = clip.trimEndMs && clip.trimEndMs > start ? Math.min(clip.trimEndMs, assetMs) : assetMs
+    return Math.max(0, end - start)
+  }
 
   // ── 2) 配音：逐镜头合成，时长对齐该镜头（与本地管线的语义一致）
   const dir = await mkdtemp(join(tmpdir(), 'dashuai-chatcut-'))
@@ -695,26 +843,44 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
 
     for (let index = 0; index < clips.length; index += 1) {
       const clip = clips[index]!
-      const durationMs = clip.durationMs ?? clip.trimEndMs ?? 0
+      // ★ 用**探到的真实素材时长**，不是客户端上报的取整值（见 framesOf 注释）
+      const durationMs = shotMs(index)
+      const shotFrames = framesOf(durationMs, fps)
       if (!clip.line?.trim() || durationMs <= 0) {
-        cursorFrame += framesOf(durationMs, fps)
+        cursorFrame += shotFrames
         continue
       }
       const outPath = join(dir, `voice-${index + 1}.m4a`)
       await synthesizeNarration(clip.line, durationMs, outPath, voiceOverride, 90_000)
-      const size = statSync(outPath).size
+      safePhase(input, 0.16 + 0.34 * ((index + 1) / clips.length), `配音 ${index + 1}/${clips.length}`)
+      // ★★ 必须把字节读进内存，**不能**留 `createReadStream(outPath)` 这种「延迟打开」：
+      //    上面那个 `finally` 里 `dir` 在 TTS 循环一结束就整个删掉了，而真正推字节
+      //    （`importAssets` → `putStream`）发生在那之后 ⇒ 延迟 open 会去读一个**已删除**的
+      //    路径；`createReadStream` 不抛错、只异步 emit error，被 undici 包装成一句毫无线索的
+      //    `TypeError: fetch failed`（真因 ENOENT 藏在 `cause` 里）。
+      //    实测任务 990026 就是这么失败的，合成复现见本轮排查记录。
+      //    配音 m4a 只有几十 KB，缓存进内存零成本，而且 `open()` 可重复调用（PUT 重试要用）。
+      const bytes = await readFile(outPath)
+      // 配音的**真实音频时长**：metadata 声明必须用它，占位还得跟它取小 ——
+      // 占位超过音频素材，会和视频那条一样被 ChatCut 拒单（`Source range exceeds … asset duration`）
+      const voiceMs = (await probeDurationMs(outPath)) ?? durationMs
       voiceSources.push({
         filename: `voice-${index + 1}.m4a`,
         contentType: 'audio/mp4',
         assetType: 'audio',
-        size,
-        open: () => createReadStream(outPath),
-        meta: { durationInSeconds: durationMs / 1000 },
+        size: bytes.length,
+        open: () => Readable.from(bytes),
+        meta: { durationInSeconds: voiceMs / 1000 },
         // ★ 只有配音轨要 ASR：字幕就是从它的转录派生的（分镜素材开转录纯属烧额度）
         startTranscription: input.options.subtitles,
       })
-      voiceSpans.push({ index, fromFrame: cursorFrame, durationInFrames: framesOf(durationMs, fps) })
-      cursorFrame += framesOf(durationMs, fps)
+      voiceSpans.push({
+        index,
+        fromFrame: cursorFrame,
+        // 取小：超过音频素材会被拒单，超过分镜时长会盖到下一个镜头的配音
+        durationInFrames: Math.max(1, Math.min(shotFrames, framesOf(voiceMs, fps))),
+      })
+      cursorFrame += shotFrames
     }
   } finally {
     // 字节已经被推上去了（流式读完），文件可以删
@@ -722,7 +888,10 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
   }
 
   // ── 3) 一次导入全部素材（每 4 个开一个上传会话，importAssets 内部处理）
+  //    上传是最慢的一步（要把全部原始字节推给 ChatCut），前后各报一次让进度可见
+  safePhase(input, 0.55, '上传素材')
   const imported = await importAssets(projectId, [...clipSources, ...voiceSources])
+  safePhase(input, 0.85, '素材已上传')
   const assetIdOf = (filename: string): string => {
     const found = imported.find((item) => item.filename === filename)
     if (!found) throw new Error(`素材 ${filename} 导入失败`)
@@ -736,12 +905,10 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     const clip = clips[index]!
     const assetId = assetIdOf(`shot-${index + 1}.mp4`)
     const trimStartMs = clip.trimStartMs ?? 0
-    const trimEndMs = clip.trimEndMs && clip.trimEndMs > trimStartMs ? clip.trimEndMs : null
-    const durationFrames = clip.durationMs
-      ? framesOf(clip.durationMs, fps)
-      : trimEndMs
-        ? framesOf(trimEndMs - trimStartMs, fps)
-        : undefined
+    // ★ 统一走 shotMs：「真实素材时长 ∧ trim」双重约束后的有效时长（见 framesOf 注释）。
+    //   旧写法用客户端上报的 durationMs 排帧 ⇒ 90 帧 vs 2.968s，被 ChatCut 直接拒单。
+    const durationMs = shotMs(index)
+    const durationFrames = durationMs > 0 ? framesOf(durationMs, fps) : undefined
     adds.push({
       type: 'video',
       assetId,
@@ -765,6 +932,7 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     })
   }
   const added = await addChatCutItems(projectId, adds)
+  safePhase(input, 0.95, '排轨完成')
 
   // ── 5) 人声轨设为 anchor（引擎据此让 follower 轨自动闪避；不设则谁都不让位）
   const audioTrackId = [...JSON.stringify(added).matchAll(/"trackId":"([0-9a-f]{8,})"/g)]
@@ -799,6 +967,7 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     prepareStartedAtMs: Date.now(),
     notices,
   }
+  safePhase(input, 1, '启动完成，转入云端渲染')
   return { status: 'RUNNING', state }
 }
 
@@ -829,6 +998,19 @@ function progressState(value: Record<string, unknown>): 'ready' | 'failed' | 'wa
   return ready ? 'ready' : 'waiting'
 }
 
+/**
+ * 取远端 `track_progress` 的**条目均值进度**（0~1）。
+ * entries 里每条自带的 `progress` 实测就是 0~1（ready 时 = 1）；拿不到就返回 0 ——
+ * 进度停在阶段起点，绝不倒退。
+ */
+function averageProgress(value: Record<string, unknown>): number {
+  const ratios = resultEntries(value)
+    .map((entry) => Number(entry.progress))
+    .filter((n) => Number.isFinite(n) && n >= 0)
+  if (ratios.length === 0) return 0
+  return Math.max(0, Math.min(1, ratios.reduce((sum, n) => sum + n, 0) / ratios.length))
+}
+
 export async function pollChatCutRender(state: ChatCutJobState): Promise<ChatCutRenderResult> {
   const notices = [...(state.notices ?? [])]
 
@@ -836,7 +1018,8 @@ export async function pollChatCutRender(state: ChatCutJobState): Promise<ChatCut
     // ── ① 等上传就绪：导出是**需要云端字节**的操作，素材没 ready 就导出等于白等
     const upload = await trackChatCutProgress(state.projectId, 'upload', state.uploadAssetIds)
     if (progressState(upload) !== 'ready') {
-      return { status: 'RUNNING', state: { ...state, notices } }
+      // stageRatio 落在 [0, 0.5)：整个「上传就绪」占 PREPARE 前半段
+      return { status: 'RUNNING', state: { ...state, notices, stageRatio: averageProgress(upload) * 0.5 } }
     }
 
     // ── ② 等转录就绪（字幕依赖它），预算有限，超时就放弃字幕直接出片
@@ -846,7 +1029,11 @@ export async function pollChatCutRender(state: ChatCutJobState): Promise<ChatCut
       if (progress === 'waiting') {
         const waited = Date.now() - (state.prepareStartedAtMs ?? Date.now())
         if (waited < TRANSCRIPTION_WAIT_MS) {
-          return { status: 'RUNNING', state: { ...state, notices } }
+          // 「等转录」整体占 PREPARE 的后半段（这里最容易一停就是几分钟，必须让进度动）
+          return {
+            status: 'RUNNING',
+            state: { ...state, notices, stageRatio: 0.5 + averageProgress(transcription) * 0.4 },
+          }
         }
         notices.push(`转录等待超过 ${Math.round(TRANSCRIPTION_WAIT_MS / 1000)}s 仍未就绪 ⇒ 本片不烧字幕直接出片`)
         state = { ...state, transcriptionAssetIds: [], notices }

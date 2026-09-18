@@ -285,6 +285,92 @@ export async function probeVideo(input: string, timeoutMs = 60_000): Promise<Vid
   }
 }
 
+/**
+ * 找系统根证书包。**直读 https 时必须显式传给 ffprobe**：
+ * keg-only / homebrew 装的 ffmpeg 链的是它自带的 openssl，不认系统钥匙串，
+ * 于是 `[tls] Peer certificate failed verification: Input/output error`。
+ * 实测同一个 COS 签名 URL：不加参数**必失败**，加 `-ca_file /etc/ssl/cert.pem` 正常（≈500ms）。
+ * 一个候选都不存在就返回 null，交回 ffmpeg 默认行为 —— 不猜路径。
+ */
+function probeCaFile(): string | null {
+  const candidates = [
+    process.env.FFPROBE_CA_FILE?.trim(),
+    '/etc/ssl/cert.pem', // macOS
+    '/etc/ssl/certs/ca-certificates.crt', // Debian / Ubuntu
+    '/etc/pki/tls/certs/ca-bundle.crt', // RHEL / CentOS
+  ].filter((p): p is string => Boolean(p))
+  return candidates.find((p) => existsSync(p)) ?? null
+}
+
+export interface ClipProbe {
+  ok: boolean
+  width: number | null
+  height: number | null
+  durationMs: number | null
+  hasAudioTrack: boolean
+  reason?: string
+}
+
+/**
+ * 探测素材元数据（宽高 / 时长 / 有无音轨）。
+ *
+ * ★ input 可以是 **http(s) 签名 URL**：ffprobe 原生支持网络输入，不必先整包下载。
+ *   这对云端剪辑通道是必需的 —— 它的 import registration 对视频**要求完整 metadata**
+ *   （缺宽高直接回 400 `requires complete metadata`），而素材表的 width/height 经常为空
+ *   （由客户端在上传确认时**选择性**上报，实测视频仅 25/56 有值）。
+ *
+ * ★ 拿不到视频流时 `ok=false`，调用方**不能**拿画布尺寸之类的假值去凑 ——
+ *   声明错的尺寸比不声明更糟（云端会按错的比例处理）。
+ */
+export async function probeClipMeta(input: string, timeoutMs = 30_000): Promise<ClipProbe> {
+  const caFile = probeCaFile()
+  try {
+    const { stdout } = await execFileP(ffprobeBin(), [
+      '-v', 'error',
+      // 网络输入读取超时（微秒）：上游挂住时不要陪着一起卡
+      '-rw_timeout', '15000000',
+      ...(caFile ? ['-ca_file', caFile] : []),
+      '-show_entries', 'stream=codec_type,width,height:format=duration',
+      '-of', 'json',
+      input,
+    ], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 })
+
+    const parsed = JSON.parse(String(stdout)) as {
+      format?: { duration?: string }
+      streams?: Array<{ codec_type?: string; width?: number; height?: number }>
+    }
+    const streams = parsed.streams ?? []
+    const video = streams.find((s) => s.codec_type === 'video')
+    if (!video?.width || !video?.height) {
+      return {
+        ok: false,
+        width: null,
+        height: null,
+        durationMs: null,
+        hasAudioTrack: false,
+        reason: '未能从素材中解析出视频宽高（可能不是视频文件）',
+      }
+    }
+    const sec = Number(parsed.format?.duration)
+    return {
+      ok: true,
+      width: video.width,
+      height: video.height,
+      durationMs: Number.isFinite(sec) && sec > 0 ? Math.round(sec * 1000) : null,
+      hasAudioTrack: streams.some((s) => s.codec_type === 'audio'),
+    }
+  } catch (e) {
+    return {
+      ok: false,
+      width: null,
+      height: null,
+      durationMs: null,
+      hasAudioTrack: false,
+      reason: `元数据探测失败：${conciseProbeError(e)}`,
+    }
+  }
+}
+
 /** ffprobe 的报错是一整段带命令行的 stderr，取最后一行有效信息即可（要写进用户可见的 errorMsg） */
 function conciseProbeError(e: unknown): string {
   const raw = String((e as { stderr?: string; message?: string }).stderr ?? (e as Error).message ?? e)

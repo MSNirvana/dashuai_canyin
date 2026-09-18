@@ -12,6 +12,7 @@ import {
   ControlPlatformIcon,
   TimeIcon,
   ImageIcon,
+  AssignmentUserIcon,
 } from 'tdesign-icons-react'
 import { useAuth } from '../context/AuthContext'
 
@@ -22,6 +23,9 @@ const MENU = [
   { label: '会员套餐', icon: <MoneyIcon />, path: '/member-packages' },
   { label: '积分流水', icon: <ChartIcon />, path: '/bean-ledger' },
   { label: '合成任务', icon: <VideoIcon />, path: '/render-tasks' },
+  // 精品（人工剪辑）单拉一页：它按「接单 → 剪 → 交付」的人工节奏走，
+  // 和另两个机器档位混在一张表里时，剪辑师得先筛档位再在几百条里找自己那几条。
+  { label: '精品接单', icon: <AssignmentUserIcon />, path: '/premium-orders' },
   { label: 'AI 通道', icon: <ServiceIcon />, path: '/ai/providers' },
   { label: 'AI 模型', icon: <ControlPlatformIcon />, path: '/ai/models' },
   { label: 'AI 场景', icon: <ServerIcon />, path: '/ai/scenes' },

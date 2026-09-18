@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
-import type { ChangeEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { Button, Tag, Dialog, Input, InputNumber, Select, Switch, message } from 'tdesign-react'
 import DataTable from '../lib/table'
 import Field, { FieldGroup } from '../components/Field'
+import AssetUploader from '../components/AssetUploader'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -72,110 +72,6 @@ const EMPTY_FORM: FormState = {
   durationSec: null,
   sort: 0,
   enabled: true,
-}
-
-/** 服务端 upload 接口的返回（两种 kind 的字段不同） */
-interface UploadResult {
-  videoKey?: string
-  coverKey?: string
-  sizeBytes: number
-  contentType?: string
-}
-
-/**
- * 单个素材的上传控件：选文件 → 上传 → 回填对象键。
- *
- * 做成一体的原因：这个页面有视频和封面两个位置，拆成「按钮 + 状态 + 进度 + 清空」
- * 四套 state 会让页面主体被上传逻辑淹没，而两处的行为完全一样（只有大小上限与 accept 不同）。
- */
-function AssetUploader({
-  kind,
-  accept,
-  maxMb,
-  uploadLabel,
-  value,
-  hint,
-  onUploaded,
-  onClear,
-}: {
-  kind: 'video' | 'cover'
-  accept: string
-  maxMb: number
-  uploadLabel: string
-  value: string
-  hint?: string
-  onUploaded: (r: UploadResult) => void
-  onClear: () => void
-}) {
-  const inputRef = useRef<HTMLInputElement>(null)
-  const [busy, setBusy] = useState(false)
-  const [pct, setPct] = useState(0)
-
-  const pick = () => {
-    if (busy) return
-    inputRef.current?.click()
-  }
-
-  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    // 立刻清空 input 的值：不清的话「再选同一个文件」不会触发 change，运营会以为按钮坏了
-    e.target.value = ''
-    if (!file) return
-
-    const mb = file.size / 1024 / 1024
-    if (mb > maxMb) {
-      message.error(`${kind === 'video' ? '视频' : '封面'}不能超过 ${maxMb}MB（当前 ${mb.toFixed(1)}MB）`)
-      return
-    }
-
-    setBusy(true)
-    setPct(0)
-    try {
-      const fd = new FormData()
-      // 字段名固定 file（服务端 multer.single('file')），不能改
-      fd.append('file', file)
-      const r = await request<UploadResult>({
-        url: `/tutorials/upload?kind=${kind}`,
-        method: 'POST',
-        data: fd,
-        // 默认 30s 不够：100MB 上传（尤其运营在弱网下）轻松超时
-        timeout: 0,
-        onUploadProgress: (ev) => {
-          if (ev.total) setPct(Math.round((ev.loaded / ev.total) * 100))
-        },
-      })
-      message.success(`${kind === 'video' ? '视频' : '封面'}已上传`)
-      onUploaded(r)
-    } catch {
-      /* 失败原因已在 request 层 toast（含后端那句「只支持 MP4 / MOV / WebM / AVI 视频」） */
-    } finally {
-      setBusy(false)
-      setPct(0)
-    }
-  }
-
-  return (
-    <div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <input ref={inputRef} type="file" accept={accept} style={{ display: 'none' }} onChange={onFile} />
-        <Button size="small" variant="outline" loading={busy} onClick={pick}>
-          {busy ? `上传中 ${pct}%` : value ? '重新上传' : uploadLabel}
-        </Button>
-        {value ? (
-          <>
-            <Tag theme="success">已上传</Tag>
-            <Button size="small" variant="text" onClick={onClear}>
-              清除
-            </Button>
-          </>
-        ) : null}
-      </div>
-      {value ? (
-        <div style={{ marginTop: 6, fontSize: 12, color: '#888', wordBreak: 'break-all' }}>{value}</div>
-      ) : null}
-      {hint ? <div style={{ marginTop: 6, fontSize: 12, color: '#999' }}>{hint}</div> : null}
-    </div>
-  )
 }
 
 export default function TutorialsPage() {
@@ -412,6 +308,7 @@ export default function TutorialsPage() {
             help={`支持 MP4 / MOV / WebM / AVI，不超过 ${MAX_VIDEO_MB}MB。小程序端建议用 H.264 编码的 MP4，兼容性最好。`}
           >
             <AssetUploader
+              endpoint="/tutorials/upload"
               kind="video"
               accept="video/*"
               maxMb={MAX_VIDEO_MB}
@@ -430,6 +327,7 @@ export default function TutorialsPage() {
           </Field>
           <Field label="封面" help={`选填。留空时用视频首帧；单独上传可换成更好看的图，不超过 ${MAX_COVER_MB}MB。`}>
             <AssetUploader
+              endpoint="/tutorials/upload"
               kind="cover"
               accept="image/*"
               maxMb={MAX_COVER_MB}

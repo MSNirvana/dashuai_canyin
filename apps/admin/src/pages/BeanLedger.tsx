@@ -4,7 +4,7 @@ import DataTable from '../lib/table'
 import { useListQuery } from '../lib/useListQuery'
 import Field, { FieldGroup } from '../components/Field'
 import { request } from '../lib/http'
-import dayjs from 'dayjs'
+import { fmtMinute } from '../lib/datetime'
 
 interface LedgerRow {
   id: string
@@ -83,7 +83,7 @@ export default function BeanLedgerPage() {
         loading={loading}
         pagination={pagination}
         columns={[
-          { colKey: 'createdAt', title: '时间', width: 170, render: ({ row }: any) => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm:ss') },
+          { colKey: 'createdAt', title: '时间', width: 170, render: ({ row }: any) => fmtMinute(row.createdAt) },
           { colKey: 'merchant', title: '商家', width: 160, render: ({ row }: any) => row.merchant ? `${row.merchant.phone}` : `ID:${row.merchantId}` },
           { colKey: 'type', title: '类型', width: 100 },
           { colKey: 'bucket', title: '桶', width: 90 },

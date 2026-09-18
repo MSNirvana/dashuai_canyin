@@ -6,6 +6,7 @@ import { prisma } from '../db.js'
 import type { Db } from '../bean/bean.service.js'
 import { completeRender, failRender, type RenderClip } from '../services/render.service.js'
 import { getSharedPlayUrlByKey } from '../services/media.service.js'
+import { assertSafeObjectKey } from '../lib/object-key.js'
 
 export class PremiumTaskStateError extends Error {
   constructor(
@@ -59,6 +60,39 @@ export interface DeliverInput {
   durationMs?: number | null
 }
 
+/**
+ * 成片对象键必须落在**本任务的商户**名下。
+ *
+ * ── 为什么这不是「多此一举的格式校验」──────────────────────────────────────
+ * 用户端拿成片地址走 `GET /media/play-url?key=…` ⇒ `media.service.ts::getPlayUrlByKey()`，
+ * 那里的闸门只放行 `uploads/{merchantId}/` 与 `renders/{merchantId}/`。也就是说
+ * **前缀错了 = 交付会成功、task 状态变 SUCCESS、积分照扣，而用户端永远播不出来**，
+ * 且没有任何日志能指向原因（`resultKey` 只是一列字符串，没人会去质疑它）。
+ * 后台交付弹窗允许手工填键，所以这条错法是真会发生的。
+ * 另一面：这是个**越权面** —— 把键写成别的商户的前缀，等于让本次交付去引用别人的私有文件。
+ *
+ * 两种前缀都放行是因为它们各自都有正当来源：`renders/` 是平台产物（含人工剪辑成片），
+ * `uploads/` 是商家自己传的素材（整片调色那条链路会把 clips[0].cosKey 当结果）。
+ */
+function assertResultKeyOwnership(key: string, merchantId: bigint): void {
+  try {
+    assertSafeObjectKey(key, 'resultKey')
+  } catch (e) {
+    // InvalidObjectKeyError 是「键本身不合法」，属于入参问题（400）而不是服务端故障。
+    // 不转换的话它会落到路由的兜底分支、回 500「交付失败」—— 运营只会看到「交付失败」，
+    // 完全看不出是自己把键填坏了（这类「报错与原因看不出关系」在本项目已踩过多次）。
+    throw new PremiumTaskStateError((e as Error).message, 4014, 400)
+  }
+  const mine = [`renders/${merchantId.toString()}/`, `uploads/${merchantId.toString()}/`]
+  if (!mine.some((p) => key.startsWith(p))) {
+    throw new PremiumTaskStateError(
+      `成片键必须落在 ${mine.join(' 或 ')} 下，否则用户端签不出播放地址`,
+      4014,
+      400,
+    )
+  }
+}
+
 /** 交付成片：consume 结算 + 落产物（幂等：requestId rc:<taskId>） */
 export async function deliverPremiumTask(prisma: PrismaClient, taskId: bigint, input: DeliverInput) {
   const task = await getTaskOrThrow(taskId)
@@ -66,6 +100,7 @@ export async function deliverPremiumTask(prisma: PrismaClient, taskId: bigint, i
     if (task.status === 'SUCCESS') return task
     throw new PremiumTaskStateError(`任务状态 ${task.status} 不可交付`)
   }
+  assertResultKeyOwnership(input.resultKey, task.merchantId)
   await prisma.$transaction(async (tx: Db) => {
     await completeRender(tx, task.merchantId, taskId, {
       resultKey: input.resultKey,

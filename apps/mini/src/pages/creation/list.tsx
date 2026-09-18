@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { View, Text } from '@tarojs/components'
+import { Image, View, Text } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import {
   archiveCreation,
@@ -13,6 +13,8 @@ import StoreSwitcher from '../../components/store-switcher'
 import Segmented from '../../components/segmented'
 import ProgressLine from '../../components/progress-line'
 import SwipeActions, { type SwipeAction } from '../../components/swipe-actions'
+// 超过 7 天的绝对时间走统一入口（原来这里手拼 MM-DD，缺年份）
+import { formatMinute } from '../../utils/time'
 import './list.scss'
 
 type Filter = 'ALL' | 'DOING' | 'READY' | 'ARCHIVED'
@@ -116,7 +118,12 @@ function progressOf(c: CreationItem): Progress {
   return { pct, label, renderReady: !!c.copyText && total > 0 }
 }
 
-/** 相对时间：2 小时前 / 昨天 / 09-11 */
+/**
+ * 列表时间：近 7 天用相对时间（刚刚 / x 分钟前 / x 小时前 / 昨天 / x 天前），
+ * 更早的直接给**统一口径的绝对时间** `2026-09-11 14:30`（走 utils/time 的 formatMinute）。
+ * ★ 原来更早那一档是 `MM-DD`（连年份都没有）：跨年时「01-05」分不清是哪一年，
+ *   而且它是全项目唯一一个绕开统一入口的绝对时间。
+ */
 function fmtRelTime(iso: string): string {
   const then = new Date(iso).getTime()
   const now = Date.now()
@@ -129,8 +136,7 @@ function fmtRelTime(iso: string): string {
   const d = Math.floor(h / 24)
   if (d === 1) return '昨天'
   if (d < 7) return `${d} 天前`
-  const date = new Date(iso)
-  return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+  return formatMinute(iso)
 }
 
 /** 创作列表：跟随左上角当前门店（门店为最高层，内容全部跟门店走） */
@@ -331,8 +337,15 @@ export default function CreationList() {
           >
             <View className='clist__card' hoverClass='ds-hover--press'>
               <View className='clist__row'>
+                {/* 卡片缩略图：有已上传的视频就显示它的封面，没有才退回默认图标。
+                    coverUrl 由服务端算好（第一个已上传视频的封面），前端不做判断 —— 
+                    与分镜页/合成页的「有素材就显示缩略图」保持同一套判据。 */}
                 <View className='clist__cover'>
-                  <t-icon name='movie-clapper' size='36rpx' />
+                  {c.coverUrl ? (
+                    <Image className='clist__cover-image' src={c.coverUrl} mode='aspectFill' />
+                  ) : (
+                    <t-icon name='movie-clapper' size='36rpx' />
+                  )}
                 </View>
                 <View className='clist__main'>
                   <Text className='clist__name'>{c.title || '未命名创作'}</Text>

@@ -43,7 +43,10 @@ export function listGradeCapabilities(): GradeCapability[] {
     {
       key: 'AI',
       available: aiReady,
-      reason: aiReady ? null : 'AI 智能档暂不可用（外部剪辑通道未配置完整），请先使用基础档',
+      // ★ 文案会**原样展示**给商户（客户端拿去做档位卡片下方的说明），所以只说「能不能用」，
+      //   不写「外部剪辑通道未配置完整」这类集成细节 —— 用户既看不懂也无从操作，
+      //   还顺带把服务端的实现依赖抖了出来。
+      reason: aiReady ? null : 'AI 生成正在升级维护，请先选择基础生成',
     },
     {
       key: 'PREMIUM',

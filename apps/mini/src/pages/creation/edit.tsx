@@ -23,6 +23,7 @@ import StoreSwitcher from '../../components/store-switcher'
 import Segmented from '../../components/segmented'
 import Steps from '../../components/steps'
 import { splitCopyParagraphs, copyTextParagraphs } from '../../utils/copy-text'
+import { isNumericId } from '../../utils/route-id'
 import './edit.scss'
 
 function newRequestId() {
@@ -155,6 +156,19 @@ export default function CreationEdit() {
   const [workRecipe, setWorkRecipe] = useState<WorkRecipe | null>(null)
   const [workTitle, setWorkTitle] = useState('')
   const [workLoaded, setWorkLoaded] = useState(false)
+  /**
+   * 同款配方里的**分镜骨架**（滤掉全空条目，后台允许留空行）。
+   *
+   * 有值时「生成」会把骨架一起提交（服务端在创建的事务里落成初始分镜），并**跳过 AI 分镜**
+   * —— 这是本次改动的要点：用户从「生成同款」进来，拿到的是这条作品已经拆好的镜头结构，
+   * 可以直接去拍摄页，不用先买一次分镜。不满意再点「重新生成」走 AI，那条路会整批替换。
+   *
+   * 判据只用「有没有内容」而不是长度：后台录入时可能出现空行，
+   * 只发给服务端有意义的条目（否则会给出一条条空白分镜）。
+   */
+  const recipeSkeleton = (workRecipe?.shotSkeleton ?? []).filter(
+    (s) => !!(s.shotType || s.shotSize || s.line || s.visualReq || s.durationSuggest),
+  )
   const [autoRunning, setAutoRunning] = useState(false)
   /**
    * 悬浮窗上的出口，用**同步 ref** 记录：
@@ -312,7 +326,7 @@ export default function CreationEdit() {
    *   复用会撞上 `ScenePendingError` → 2006「任务进行中或上次失败，请换 requestId 重试」，
    *   或者在上一步 FAILED 时直接返回兜底模板而不再真的重试。这是服务端刻意的契约。
    */
-  const runAuto = async (id: string, opts?: { skipCopy?: boolean }) => {
+  const runAuto = async (id: string, opts?: { skipCopy?: boolean; skipBoard?: boolean }) => {
     autoExitRef.current = 'stay'
     autoIdRef.current = id
     autoFailedRef.current = false
@@ -334,24 +348,35 @@ export default function CreationEdit() {
         if (waitingExit() === 'cancel') return
         usedFallback = cr.isFallbackTemplate
       }
-      failing = '分镜'
-      const br = await generateStoryboard(id, newRequestId(), complexity)
-      // 「关闭等待」：两步照常跑完落库（用户稍后从「创作」进入），只是不再自动跳拍摄页
-      if (waitingExit() !== 'stay') return
-      if (!br.parsed || br.shots.length === 0) {
-        // 没有分镜就没法拍摄，停在本页让用户重试，避免落到一个空的拍摄列表
-        throw new Error('分镜内容没解析出来')
+      // 分镜已经生成过时跳过（重试专用）：每次生成都是一笔真实扣费，
+      // 跳转失败后重试不该再买一遍同样的分镜。
+      if (!opts?.skipBoard) {
+        failing = '分镜'
+        const br = await generateStoryboard(id, newRequestId(), complexity)
+        // 「关闭等待」：两步照常跑完落库（用户稍后从「创作」进入），只是不再自动跳拍摄页
+        if (waitingExit() !== 'stay') return
+        if (!br.parsed || br.shots.length === 0) {
+          // 没有分镜就没法拍摄，停在本页让用户重试，避免落到一个空的拍摄列表
+          throw new Error('分镜内容没解析出来')
+        }
+        usedFallback = usedFallback || br.isFallbackTemplate
       }
-      usedFallback = usedFallback || br.isFallbackTemplate
+      // ★ 生成阶段到此结束，后面再出问题就不是「生成」的问题了。
+      //   不清零的话跳转失败会被报成「分镜这一步没成功」，用户点重试就再买一次分镜
+      //   —— 明明内容早就在库里（实测：同一条创作白扣了两笔分镜积分）。
+      failing = ''
       if (usedFallback) {
         Taro.showToast({ title: 'AI 繁忙，部分内容用了兜底', icon: 'none' })
       }
+      // 编号必须落到 URL 里：拿不到就不跳，否则会跳到 `?id=undefined`，
+      // 合成页拿这个字符串当编号去查，只会得到一句「参数不合法」。
+      if (!isNumericId(id)) throw new Error('编号丢失')
       Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })
     } catch {
       // 用户主动取消时的失败不必再报「生成中断」——那是他自己按掉的
       if (waitingExit() === 'stay') {
         autoFailedRef.current = true
-        setAutoError(failing ? `${failing}这一步没成功` : '生成没有完成')
+        setAutoError(failing ? `${failing}这一步没成功` : '内容已生成，但没能打开拍摄页，请点重试')
       }
     } finally {
       // 成败都要把详情落回页面：一是失败时页面停在可重试的状态，
@@ -399,10 +424,15 @@ export default function CreationEdit() {
         userIdea: userIdea.trim() || undefined,
         track,
         complexity,
+        // 同款的分镜骨架：服务端在创建的事务里一并落成分镜。
+        // 空数组不发 —— 服务端对「没传」与「传了空数组」的处理一致，但少发一个字段更省事。
+        ...(recipeSkeleton.length ? { shotSkeleton: recipeSkeleton } : {}),
       })
       setLocalId(c.id)
-      // 创建即生成：款式已选定，直接出文案和分镜，然后进拍摄页
-      await runAuto(c.id)
+      // 创建即生成：款式已选定，直接出文案和分镜，然后进拍摄页。
+      // ★ 带着骨架进来时**跳过 AI 分镜**（skipBoard）—— 分镜已经在了，再生成一次
+      //   既会把预置内容整批替换掉，又是一笔真实的扣费。用户要换 AI 版就去页面上点「重新生成」。
+      await runAuto(c.id, { skipBoard: recipeSkeleton.length > 0 })
     } catch {
       /* 错误已在 request 层 toast */
     } finally {
@@ -440,7 +470,25 @@ export default function CreationEdit() {
   const onRetryAuto = () => {
     const id = autoIdRef.current
     if (!id) return
-    void runAuto(id, { skipCopy: !!detail?.copyText })
+    // 两步各自判「已经成功过就别再买一次」：**失败重试绝不能重复扣积分**。
+    // 分镜的判据取自库里是否已有分镜（detail 由 finally 里的 loadDetail 落回，是最新的）。
+    // 少了 skipBoard 的后果实测过：分镜早已生成、只是跳转失败，用户点一次重试就再买一遍分镜。
+    void runAuto(id, { skipCopy: !!detail?.copyText, skipBoard: !!detail?.shots?.length })
+  }
+
+  /**
+   * 去拍摄页。**编号必须落进 URL**，拿不到就当场说清、绝不跳。
+   *
+   * 漏检的后果不是「跳过去报个错」这么轻：`?id=${undefined}` 会拼成字符串
+   * `'undefined'`，拍摄页与合成页都把它当成真编号去请求，服务端回一句
+   * 「参数不合法」—— 用户完全不知道该做什么（已实测复现）。
+   */
+  const navToShots = (targetId: string | undefined) => {
+    if (!isNumericId(targetId)) {
+      Taro.showToast({ title: '编号丢失，请回到「创作」重新进入', icon: 'none' })
+      return
+    }
+    Taro.navigateTo({ url: `/pages/creation/shots?id=${targetId}` })
   }
 
   /**
@@ -669,9 +717,19 @@ export default function CreationEdit() {
               {!workLoaded
                 ? '正在读取配方…'
                 : workRecipe
-                  ? `已预填「${trackLabel}」+「${complexityLabel}」，可自行调整`
+                  ? recipeSkeleton.length
+                    ? `已预填「${trackLabel}」+「${complexityLabel}」，并按同款预置 ${recipeSkeleton.length} 个分镜`
+                    : `已预填「${trackLabel}」+「${complexityLabel}」，可自行调整`
                   : '配方读取失败，请手动选择文案款式与镜头复杂度'}
             </Text>
+            {/* 预置分镜这件事必须说清**省了什么**：用户最怕的是白扣积分。
+                所以这里不写「已预置」，而是直接写「这次不再生成分镜、少扣一笔」，
+                并给出换 AI 版的出口（原话：「不满意再点重新生成走 AI，两条路都留着」）。 */}
+            {workLoaded && recipeSkeleton.length > 0 && (
+              <Text className='cedit__recipe-warn'>
+                这次只生成文案，不再生成分镜（少扣一笔）。分镜可逐条改；想换 AI 版就点「重新生成」
+              </Text>
+            )}
           </View>
         )}
 
@@ -779,7 +837,9 @@ export default function CreationEdit() {
               ) : (
                 <>
                   <View className='cedit__gen-spinner' />
-                  <Text className='cedit__gen-title'>正在生成文案与分镜…</Text>
+                  <Text className='cedit__gen-title'>
+                    {recipeSkeleton.length ? '正在生成文案…' : '正在生成文案与分镜…'}
+                  </Text>
                   <Text className='cedit__gen-sub'>
                     关闭等待后仍会继续生成，可稍后从「创作」再次进入
                   </Text>
@@ -1097,7 +1157,7 @@ export default function CreationEdit() {
           className={`ds-btn ds-btn--primary ds-btn--block ${hasShots ? '' : 'ds-btn--disabled'}`}
           hoverClass='ds-hover'
           disabled={!hasShots}
-          onClick={() => Taro.navigateTo({ url: `/pages/creation/shots?id=${localId}` })}
+          onClick={() => navToShots(localId)}
         >
           下一步
         </Button>

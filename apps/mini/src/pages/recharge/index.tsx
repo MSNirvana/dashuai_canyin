@@ -12,18 +12,14 @@ import {
 } from '../../services/order'
 import { useMerchantStore } from '../../store/merchant'
 import Segmented from '../../components/segmented'
+// 到期日只要「到日为止」，但仍走统一入口（原来这里有一份自己的 fmtDate，三个页面各写一份必然漂移）
+import { formatDay } from '../../utils/time'
 import './index.scss'
 
 type Tab = 'subscribe' | 'bean'
 
 function fenToYuan(fen: number): string {
   return (fen / 100).toFixed(fen % 100 === 0 ? 0 : 2)
-}
-
-function fmtDate(s: string | null): string {
-  if (!s) return ''
-  const d = new Date(s)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export default function Recharge() {
@@ -181,7 +177,7 @@ export default function Recharge() {
       {tab === 'subscribe' && (
         <View className='recharge__list'>
           {isMember && (
-            <View className='recharge__hint'>已订阅 · 至 {fmtDate(memberEndAt)}，续费可叠加时长与赠积分</View>
+            <View className='recharge__hint'>已订阅 · 至 {formatDay(memberEndAt)}，续费可叠加时长与赠积分</View>
           )}
           {plans.length === 0 && <View className='recharge__empty'>暂无订阅套餐（后台未配置）</View>}
           {plans.map((p, idx) => {

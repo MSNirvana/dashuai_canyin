@@ -17,7 +17,7 @@ log()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m[warn] %s\033[0m\n' "$*"; }
 die()  { printf '\033[1;31m[error] %s\033[0m\n' "$*" >&2; exit 1; }
 
-[ -d "$SERVER_DIR" ] || die "找不到 $SERVER_DIR，先把代码放到 $APP_DIR"
+[ -d "$SERVER_DIR" ] || die "找不到 ${SERVER_DIR}，先把代码放到 $APP_DIR"
 cd "$APP_DIR"
 
 # ───────── 1. 依赖检查 ─────────
@@ -57,7 +57,7 @@ if command -v ffmpeg >/dev/null; then
     if [ -d "$d" ]; then CJK_FONT_DIR="$d"; break; fi
   done
   if [ -n "$CJK_FONT_DIR" ]; then
-    echo "    CJK字体: 可用（$CJK_FONT_DIR）"
+    echo "    CJK字体: 可用（${CJK_FONT_DIR}）"
   else
     warn "未找到中文字体，字幕烧录会降级为『仅配音无字幕』：apt install -y fonts-noto-cjk"
   fi
@@ -73,11 +73,11 @@ ADMIN_API_DOMAIN="$(grep -E '^WX_PAY_NOTIFY_URL=' "$SERVER_DIR/.env" | sed -E 's
 echo "    调用域名（来自 WX_PAY_NOTIFY_URL）: ${ADMIN_API_DOMAIN:-未配置}"
 
 # 环境一致性体检：NODE_ENV 与 PAYMENTS_ENABLED 的组合直接决定哪批守卫生效，配错代价很大
-ENV_NODE="$(grep -E '^NODE_ENV=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ')"
-ENV_PAY="$(grep -E '^PAYMENTS_ENABLED=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ')"
+ENV_NODE="$(grep -E '^NODE_ENV=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ' || true)"
+ENV_PAY="$(grep -E '^PAYMENTS_ENABLED=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ' || true)"
 echo "    NODE_ENV=$ENV_NODE  PAYMENTS_ENABLED=${ENV_PAY:-未设置（=开启）}"
 if [ "$ENV_NODE" != "production" ]; then
-  warn "NODE_ENV=$ENV_NODE（非 production）：JWT_SECRET / APP_MASTER_KEY / CORS_ORIGIN / DEV_LOGIN /"
+  warn "NODE_ENV=${ENV_NODE}（非 production）：JWT_SECRET / APP_MASTER_KEY / CORS_ORIGIN / DEV_LOGIN /"
   warn "  MOCK_AI / FFMPEG_WORKER / STORAGE_MODE / COS_* 这八个守卫全部【不会】生效。"
   warn "  对外提供服务时这很危险，请改用 NODE_ENV=production + PAYMENTS_ENABLED=false。"
 elif [ "$ENV_PAY" != "false" ]; then
@@ -85,6 +85,27 @@ elif [ "$ENV_PAY" != "false" ]; then
   warn "  商户号未下来前会启动失败。若本意是灰度关闭支付，请在 .env 加 PAYMENTS_ENABLED=false。"
 else
   log "    支付校验已显式关闭，其余八个生产守卫正常生效"
+fi
+
+# 开发登录后门体检（体验版测试期专用）——
+# SMS_TEST_CODE / SMS_TEST_CODE_PHONES / SMS_TEST_CODE_ALLOW_PROD 这三个变量的
+# 「生效/失效」组合很难靠肉眼判断，且失效时用户只看到一句
+# 「测试期仅名单内的测试号码可登录」，看不出是自己漏了 ALLOW_PROD，故在这里点明。
+ENV_SMS_CODE="$(grep -E '^SMS_TEST_CODE=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ' || true)"
+ENV_SMS_PHONES="$(grep -E '^SMS_TEST_CODE_PHONES=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ' || true)"
+ENV_SMS_ALLOW="$(grep -E '^SMS_TEST_CODE_ALLOW_PROD=' "$SERVER_DIR/.env" | head -1 | cut -d= -f2- | tr -d '"' | tr -d ' ' || true)"
+if [ -z "$ENV_SMS_CODE" ] || [ -z "$ENV_SMS_PHONES" ]; then
+  echo "    短信测试码: 未启用（SMS_TEST_CODE 与 SMS_TEST_CODE_PHONES 必须同时非空才可能生效）"
+elif [ "$ENV_NODE" = "production" ] && [ "$ENV_SMS_ALLOW" != "true" ]; then
+  warn "配了 SMS_TEST_CODE 但缺 SMS_TEST_CODE_ALLOW_PROD=true ⇒ 生产环境下【整块失效】，"
+  warn "  测试者点「获取验证码」只会看到『测试期仅名单内的测试号码可登录』（真因看不出来）。"
+  warn "  这多半是故意的（防本地 .env 整份复制上线）；确实要给测试者开就补上那行。"
+elif [ "$ENV_NODE" = "production" ]; then
+  warn "⚠⚠ 生产环境的登录后门【已启用】：白名单手机号可用固定码登录。"
+  warn "  测试期结束 / 备案通过后，必须把 SMS_TEST_CODE / SMS_TEST_CODE_PHONES /"
+  warn "  SMS_TEST_CODE_ALLOW_PROD 这三个变量【一起】删掉 —— 只删一两个 = 后门还开着。"
+else
+  echo "    短信测试码: 已配置（env=${ENV_NODE}，非生产环境本就允许）"
 fi
 
 # ───────── 3. 起依赖服务 ─────────

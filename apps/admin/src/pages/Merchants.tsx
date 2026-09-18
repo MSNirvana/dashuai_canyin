@@ -3,7 +3,7 @@ import { Input, Select, Tag, Space, Button } from 'tdesign-react'
 import DataTable from '../lib/table'
 import { Link } from 'react-router-dom'
 import { request } from '../lib/http'
-import dayjs from 'dayjs'
+import { fmtMinute } from '../lib/datetime'
 
 interface MerchantRow {
   id: string
@@ -115,7 +115,7 @@ export default function MerchantsPage() {
           },
           { colKey: 'stores', title: '门店数', width: 90, render: ({ row }: { row: MerchantRow }) => row._count?.stores },
           { colKey: 'creations', title: '创作', width: 80, render: ({ row }: { row: MerchantRow }) => row._count?.creations },
-          { colKey: 'createdAt', title: '注册时间', width: 170, render: ({ row }: { row: MerchantRow }) => dayjs(row.createdAt).format('YYYY-MM-DD HH:mm') },
+          { colKey: 'createdAt', title: '注册时间', width: 170, render: ({ row }: { row: MerchantRow }) => fmtMinute(row.createdAt) },
           {
             colKey: 'op', title: '操作', width: 90, fixed: 'right',
             render: ({ row }: { row: MerchantRow }) => (

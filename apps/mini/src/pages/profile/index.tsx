@@ -10,6 +10,8 @@ import { Image, Input, Text, View } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import * as profileApi from '../../services/profile'
 import { useMerchantStore } from '../../store/merchant'
+// 会员 / 赠积分到期日只到日（formatDay），不带时分；与「我的」页、订阅页同一入口
+import { formatDay } from '../../utils/time'
 import './index.scss'
 
 /** 与服务端 `nullableText(20)` 对齐；Input 的 maxlength 也用它，三处不能各写一个数 */
@@ -17,13 +19,6 @@ const NICKNAME_MAX = 20
 
 function errText(e: unknown, fallback: string): string {
   return (e as { message?: string })?.message || fallback
-}
-
-/** 会员 / 赠积分到期日：与「我的」页、订阅页同一写法（只到日，不带时间） */
-function fmtDate(s: string | null): string {
-  if (!s) return ''
-  const d = new Date(s)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 export default function Profile() {
@@ -189,7 +184,7 @@ export default function Profile() {
         </View>
       </View>
       {/* 数字与文案必须写在同一行：View 的多个子文本节点之间会插入空白，断行会多出一个空格 */}
-      <View className='profile__tip'>购买积分 {rechargeBalance}{memberEndAt ? ' · 赠积分到期 ' + fmtDate(memberEndAt) : ''}</View>
+      <View className='profile__tip'>购买积分 {rechargeBalance}{memberEndAt ? ' · 赠积分到期 ' + formatDay(memberEndAt) : ''}</View>
 
       {/* 用 View + ds-btn 而不是 taro Button：省掉 Button 的默认边框/背景覆盖（项目里其它页同样写法） */}
       <View

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Row, Col, Tag } from 'tdesign-react'
 import { request } from '../lib/http'
-import dayjs from 'dayjs'
+// 日期走统一口径（fmtDay = YYYY-MM-DD）
+import { fmtDay } from '../lib/datetime'
 
 interface Dashboard {
   merchants: { total: number; active: number; todayNew: number }
@@ -46,7 +47,7 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <div className="page-header"><h2>仪表盘 · {dayjs().format('YYYY-MM-DD')}</h2></div>
+      <div className="page-header"><h2>仪表盘 · {fmtDay(new Date())}</h2></div>
 
       <h3 style={{ marginTop: 0, marginBottom: 12 }}>商家与内容</h3>
       <Row gutter={16}>

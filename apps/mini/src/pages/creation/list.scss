@@ -83,6 +83,15 @@
     flex: none;
   }
 
+  // 缩略图必须撑满并裁切：cover 盒是 flex 居中，图片若不写死宽高会按原比例撑开、
+  // 把圆角裁切顶破（aspectFill 只在容器有确定尺寸时才等于 cover）
+  &__cover-image {
+    width: 100%;
+    height: 100%;
+    border-radius: 18rpx;
+    display: block;
+  }
+
   &__main {
     flex: 1;
     min-width: 0;

@@ -41,7 +41,7 @@
  *   --cache-retention-hours=H    缓存的保留期（默认 168 = 7 天）
  *   --abort-fragments            中止陈旧的未完成分片上传（缺省只报告）
  *   --fragment-retention-hours=H 碎片的保留期（默认 24）
- *   --prefix=uploads/,renders/,tutorials/   扫描前缀（默认这三个）
+ *   --prefix=uploads/,renders/,tutorials/,works/   扫描前缀（默认这四个）
  */
 import '../src/env.js' // 必须最先加载 .env，否则读不到 COS_*/STORAGE_MODE
 import { PrismaClient } from '@prisma/client'
@@ -70,10 +70,21 @@ const LIMIT = Math.max(1, Math.floor(numArg('limit', 100)))
 const RETENTION_HOURS = numArg('retention-hours', 24)
 const CACHE_RETENTION_HOURS = numArg('cache-retention-hours', 168)
 const FRAGMENT_RETENTION_HOURS = numArg('fragment-retention-hours', 24)
-const PREFIXES = (argValue('prefix') ?? 'uploads/,renders/,tutorials/').split(',').map((p) => p.trim()).filter(Boolean)
+const PREFIXES = (argValue('prefix') ?? 'uploads/,renders/,tutorials/,works/').split(',').map((p) => p.trim()).filter(Boolean)
 
 /** 渲染中间产物缓存前缀：内容寻址、从不落库，见文件头说明 ① */
 const CACHE_PREFIX = 'renders/_cache/'
+
+/**
+ * 删除前的**硬编码前缀白名单**（与「扫描前缀」PREFIXES 是两份清单，别合并）。
+ *
+ * 两者方向相反：PREFIXES 决定「去哪里找孤儿」，这份决定「找到的孤儿敢不敢删」。
+ * 白名单里**故意没有 `static/`** —— 运营公开图从不落库（只存在 system_setting 的
+ * JSON 里），一旦让它可删，就是在没有任何引用记录可依据的情况下删公网在用的图。
+ * 新增落库的对象前缀时，local-storage.ts 的 ALLOWED_PREFIXES 与这里要**同时**加：
+ * 只加前者 ⇒ 扫得到但删不掉（对象永远回收不了）；只加后者 ⇒ 白名单形同虚设。
+ */
+const DELETABLE_PREFIXES = ['uploads/', 'renders/', 'tutorials/', 'works/']
 
 const RETENTION_MS = RETENTION_HOURS * 3_600_000
 const CACHE_RETENTION_MS = CACHE_RETENTION_HOURS * 3_600_000
@@ -120,6 +131,10 @@ async function collectReferencedKeys(): Promise<Set<string>> {
       prisma.mediaAsset.findMany({ select: { cosKey: true, coverKey: true } }),
       prisma.dishMedia.findMany({ select: { cosKey: true, coverKey: true } }),
       prisma.shotLibrary.findMany({ select: { demoVideoKey: true, demoCoverKey: true } }),
+      // 优秀作品（平台级，新上传落在 works/，存量是 renders/{merchantId}/）。
+      // 表是**软删**，而这里刻意不过滤 deletedAt（宽松保护）⇒ 软删后它的两个大对象仍被保护。
+      // 也就是说「作品在后台删掉」并**不会**回收存储，要手工清理（这是既有的保守取舍，
+      // 宁可多留也不误删，改之前先想清「怎么证明这个对象真的没人用了」）。
       prisma.excellentWork.findMany({ select: { coverKey: true, videoKey: true } }),
       // 教学中心视频（平台级，前缀 tutorials/）。删的是硬删，但行在一天内消失前仍要保护其对象。
       prisma.tutorialVideo.findMany({ select: { videoKey: true, coverKey: true } }),
@@ -295,7 +310,7 @@ if (!DELETE && !ABORT_FRAGMENTS) {
         failed++
         continue
       }
-      if (!o.key.startsWith('uploads/') && !o.key.startsWith('renders/') && !o.key.startsWith('tutorials/')) {
+      if (!DELETABLE_PREFIXES.some((p) => o.key.startsWith(p))) {
         console.log(`  ✗ 跳过前缀外键：${o.key}`)
         failed++
         continue

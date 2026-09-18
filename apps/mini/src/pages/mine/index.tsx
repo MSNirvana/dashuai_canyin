@@ -8,13 +8,9 @@ import { TUTORIAL_CATEGORIES, listTutorialStats } from '../../services/tutorial'
 import { STORAGE_KEYS } from '../../config'
 import { useMerchantStore } from '../../store/merchant'
 import logoPng from '../../assets/logo.png'
+// 会员到期日只到日（formatDay），与「订阅」页、个人资料页同一入口
+import { formatDay } from '../../utils/time'
 import './index.scss'
-
-function fmtDate(s: string | null): string {
-  if (!s) return ''
-  const d = new Date(s)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
 
 function humanBytes(b: string): string {
   const n = Number(b)
@@ -334,7 +330,7 @@ export default function Mine() {
               <Text className='ds-pill ds-pill--gold mine__vip--on'>
                 <t-icon name='user-vip' size='24rpx' color='#a8741f' /> {memberPlanName}
               </Text>
-              <Text className='mine__vipend'>至 {fmtDate(memberEndAt)}</Text>
+              <Text className='mine__vipend'>至 {formatDay(memberEndAt)}</Text>
             </View>
           ) : (
             <View className='mine__vipwrap' onClick={() => go('/pages/recharge/index')}>

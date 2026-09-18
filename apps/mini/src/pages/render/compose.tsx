@@ -7,6 +7,9 @@ import {
   type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions, CHATCUT_VOICES,
 } from '../../services/render'
 import { useMerchantStore } from '../../store/merchant'
+import { readRouteId, isNumericId } from '../../utils/route-id'
+// 时间一律走这里：接口给的是 UTC 的 ISO 串（…T…Z），直接渲染/截串都会露 T、Z 且差 8 小时
+import { formatMinute } from '../../utils/time'
 import ProgressLine from '../../components/progress-line'
 import './compose.scss'
 
@@ -28,6 +31,13 @@ const STATUS_LABEL: Record<string, string> = {
   REFUND_PENDING: '退款确认中', SETTLEMENT_PENDING: '退款确认中',
 }
 
+/**
+ * 档位的中文名。三档可以**同时**各有任务在跑（见下面的 activeTasks），所以凡是「说到某一个任务」
+ * 的地方都必须带上档位名 —— 否则「任务处理中」这句话在一个页面上出现两次就没法区分了。
+ */
+const gradeTitle = (value: RenderGrade | string | null | undefined) =>
+  GRADE_OPTIONS.find((option) => option.key === value)?.title || '合成'
+
 /** 调色四轴：数组顺序即界面顺序。标签只用于展示，服务端只认 key */
 const COLOR_AXES: [keyof ColorGrade, string][] = [
   ['brightness', '亮度'],
@@ -41,6 +51,63 @@ const COLOR_PREVIEW_DEBOUNCE_MS = 800
 
 const isNoopColor = (c: ColorGrade) => !c.brightness && !c.contrast && !c.saturation && !c.sharpen
 const colorSignature = (c: ColorGrade) => `${c.brightness}/${c.contrast}/${c.saturation}/${c.sharpen}`
+
+/**
+ * 两组调色参数是否一致。
+ * 成片任务自带 `color`（服务端原样回传提交时的四轴），所以「画面上的调色有没有正式成片」
+ * 可以直接比对数值，不需要另存一份标志位。
+ */
+const sameColor = (a: ColorGrade | null | undefined, b: ColorGrade) => !!a && colorSignature(a) === colorSignature(b)
+
+function isColorGrade(value: unknown): value is ColorGrade {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return COLOR_AXES.every(([axis]) => Number.isFinite(record[axis]))
+}
+
+/**
+ * 离开页面时的界面快照。
+ *
+ * 为什么需要它：小程序切到后台再回来有两种命运 ——
+ *   · 五秒内回来是热启动，React state 还在，本文件这段逻辑完全不参与；
+ *   · 被系统回收后再打开是**冷启动恢复**，页面组件会被重建、state 全丢，
+ *     连 Taro 的 current.router 都可能还没挂上（渲染期读到空编号 ⇒ 用户看到「编号丢失」）。
+ * 所以编号与三项关键选择（档位、调色、正在看的那条成片）必须落一份到 storage。
+ *
+ * ★ 只存**能重建的**：绝不存任何播放地址 —— 它们是签名 URL、会过期，存下来回来必然播不了。
+ *   成片一律记 resultId，回来后在重新拉到的任务列表里按 id 找。
+ */
+const COMPOSE_SNAPSHOT_KEY = 'dashuai.compose.snapshot'
+/** 快照有效期。过期的快照当没存过：隔天再进来该是一条干净的页面，而不是昨天拖到一半的滑块 */
+const COMPOSE_SNAPSHOT_TTL_MS = 12 * 60 * 60 * 1000
+
+interface ComposeSnapshot {
+  id: string
+  grade: RenderGrade
+  color: ColorGrade
+  resultId: string | null
+  updatedAt: number
+}
+
+function readComposeSnapshot(): ComposeSnapshot | null {
+  try {
+    const raw = Taro.getStorageSync(COMPOSE_SNAPSHOT_KEY) as ComposeSnapshot | '' | null
+    if (!raw || typeof raw !== 'object') return null
+    const snap = raw as ComposeSnapshot
+    if (!isNumericId(snap.id)) return null
+    if (!GRADE_OPTIONS.some((option) => option.key === snap.grade)) return null
+    if (!isColorGrade(snap.color)) return null
+    if (!Number.isFinite(snap.updatedAt) || Date.now() - snap.updatedAt > COMPOSE_SNAPSHOT_TTL_MS) return null
+    return snap
+  } catch {
+    return null
+  }
+}
+
+function writeComposeSnapshot(snap: ComposeSnapshot): void {
+  // 存不下（超限/隐私模式）纯属体验增强失效，不该把用户的正常操作打断
+  try { Taro.setStorageSync(COMPOSE_SNAPSHOT_KEY, snap) } catch { /* ignore */ }
+}
 
 /**
  * 拖动滑块时的**近似**滤镜：只为「松手前先看到变化趋势」，精确结果一律以服务端预览为准。
@@ -75,21 +142,51 @@ function estimatePoints(shots: CreationDetail['shots'], grade: RenderGrade, reco
 }
 
 export default function RenderCompose() {
-  const id = Taro.getCurrentInstance().router?.params.id
+  // ★ 编号当场校验，绝不把「拿到的原值」直接用去发请求。
+  //   最典型的坑是字符串 'undefined'：`?id=${undefined}` 会让 URL 看着完全正常，
+  //   但服务端 idParam 对非纯数字串一律回 `{"code":4000,"message":"参数不合法"}` ——
+  //   用户看到的是一句指向不了任何操作的报错（详见 utils/route-id.ts）。
+  // ★ 但「当场校验」不等于「只在这里读一次就定终身」：冷启动恢复时路由参数可能还没就绪，
+  //   所以页面每次显示都会再确认一遍（见 useDidShow），而不是把空值当成结论。
+  const routeParams = () => Taro.getCurrentInstance().router?.params as Record<string, unknown> | undefined
+  const [boot] = useState(() => {
+    const routeId = readRouteId(routeParams())
+    const snap = readComposeSnapshot()
+    // 快照只在「编号对得上」时认领：从列表点进另一条创作时，
+    // 绝不能把上一条的档位、调色、选中成片张冠李戴过来
+    return { id: routeId, snap: snap && (!routeId || snap.id === routeId) ? snap : null }
+  })
   const { available, isMember, refreshMe } = useMerchantStore()
+  const [id, setId] = useState<string | null>(boot.id)
+  const idRef = useRef<string | null>(boot.id)
+  const snapshotRef = useRef<ComposeSnapshot | null>(null)
+  /** 离开时正在看的那条成片；重新拉到任务列表后优先把它选回来 */
+  const resultPrefRef = useRef<string | null>(boot.snap?.resultId ?? null)
   const [detail, setDetail] = useState<CreationDetail | null>(null)
-  const [color, setColor] = useState<ColorGrade>(DEFAULT_COLOR)
-  const [grade, setGrade] = useState<RenderGrade>('BASIC')
+  const [color, setColor] = useState<ColorGrade>(boot.snap?.color ?? DEFAULT_COLOR)
+  const [grade, setGrade] = useState<RenderGrade>(boot.snap?.grade ?? 'BASIC')
   const [chatcut, setChatcut] = useState<ChatCutOptions>(DEFAULT_CHATCUT)
   const [renders, setRenders] = useState<RenderTask[]>([])
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [selectedResult, setSelectedResult] = useState<RenderTask | null>(null)
-  const [submitting, setSubmitting] = useState(false)
+  const [submittingGrades, setSubmittingGrades] = useState<RenderGrade[]>([])
+  const submitting = submittingGrades.includes(grade)
   const [saving, setSaving] = useState(false)
   const [visible, setVisible] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [resultError, setResultError] = useState('')
   const [pollError, setPollError] = useState('')
+  /**
+   * 任务**收敛失败**的通知（每条带档位）。
+   *
+   * ★ 为什么不复用 pollError：两者生命周期不同 ——
+   *   · pollError 是「查询/等待类」问题（网络抖动、30 分钟上限），一次成功查询就该清掉；
+   *   · 任务失败的通知**不能**被别的档位的成功查询顺手擦掉。
+   *   三档并行时共用一格就是：「A 档失败了、B 档还在跑」→ B 的下一次成功轮询把
+   *   A 的失败提示清成空串，用户永远看不到 A 为什么失败。
+   *   清空时机只有两个：用户重新提交、或点「重新查询」。
+   */
+  const [taskNotices, setTaskNotices] = useState<string[]>([])
   const [pollRetry, setPollRetry] = useState(0)
   const [refreshingHistory, setRefreshingHistory] = useState(false)
   // P0-5：不可用档位 → 原因文案。空对象表示「都可用」（含能力接口拉取失败时的保守放行）
@@ -109,13 +206,53 @@ export default function RenderCompose() {
    *   —— 典型表现是松手后画面闪回上一版旧预览。推导出来的值不可能失同步。
    */
   const [previewedSignature, setPreviewedSignature] = useState<string | null>(null)
-  const submitLock = useRef(false)
+  /**
+   * 提交锁按**档位**分开（不是单一布尔）。
+   *
+   * ★ 为什么：三档互不干扰之后，用户在 AI 提交尚未返回时可以立刻点基础生成。
+   *   单一布尔会让第二次点击命中 `submitLock.current` 后**静默返回** ——
+   *   既没提交、也没有任何提示，用户只会觉得「按钮坏了、点了没反应」。
+   *   用集合按档位去重，才既防了同档双击、又不吞掉异档提交。
+   */
+  const submitLock = useRef<Set<RenderGrade>>(new Set())
   const previewVersion = useRef(0)
   const colorPreviewVersion = useRef(0)
   const colorPreviewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const loadVersion = useRef(0)
-  const pendingTask = renders.find((task) => ACTIVE_STATUS.includes(task.status)) ?? null
+  /**
+   * 三档并行 ⇒ 两个派生量，别混用：
+   *   · `activeTasks` —— **全部**未收敛的任务。用于「进度卡片」与轮询：漏掉哪一档，
+   *     那一档的进度就没人更新（页面停在旧百分比上，看着像卡死）。
+   *   · `pendingTask` —— **当前档位**的未收敛任务。只用于判断「这一档现在能不能点生成」：
+   *     三档互不干扰是产品约定（AI 档在跑时基础档照样要能提交），所以按钮只该被本档挡住。
+   *     ⚠ 这两者用反了就是本轮修的那个 bug（按钮被别的档位锁住）或者进度条不刷新。
+   */
+  const activeTasks = renders.filter((task) => ACTIVE_STATUS.includes(task.status))
+  const pendingTask = activeTasks.find((task) => task.grade === grade) ?? null
   const lastSuccess = renders.find((task) => task.status === 'SUCCESS') ?? null
+  /**
+   * 「保存到相册 / 复制链接」该下载哪条成片。
+   *
+   * ★ 判据必须落在**产物自身的调色值**上，而不是「参数脏没脏」这类标志位。
+   *   标志位有「改参数时置脏、出片后洗净」两处要同步，漏一处就是静默存错片；
+   *   而用户这次报的 bug 正是同一型：原实现只认 selectedResult，调色版成片压根没被看过一眼，
+   *   于是「调完色点保存」拿到的永远是那条最初的基础成片。比对数值不可能失同步。
+   * ★ 四轴全 0 也走同一条规则（它对应「按基础参数出的那条」），特判反而会在
+   *   「已经有调色成片、用户又随手把滑块拖回 0」时取错。
+   * ★ 优先取用户正在看的那条：他在成片记录里点开某条、色值又恰好一致，就该存那条。
+   */
+  const colorMatchedTask =
+    renders.find((task) => task.status === 'SUCCESS' && !!task.resultKey && sameColor(task.color, color)) ?? null
+  let saveTargetTask: RenderTask | null = null
+  if (selectedResult && selectedResult.resultKey && sameColor(selectedResult.color, color)) {
+    saveTargetTask = selectedResult
+  } else if (colorMatchedTask) {
+    saveTargetTask = colorMatchedTask
+  } else if (isNoopColor(color) && selectedResult?.resultKey) {
+    // 调色已被清零：用户要的就是「不调色」，此时不能再拿「当前调色还没出片」拦人。
+    // 没有色值全 0 的成片可选（例如第一条成片就带着调色出生），就把画面这条给他。
+    saveTargetTask = selectedResult
+  }
   const missingShots = detail?.shots.filter((shot) => !shot.assetId) ?? []
   const materialsReady = !!detail?.shots.length && missingShots.length === 0
 
@@ -144,6 +281,9 @@ export default function RenderCompose() {
     clearColorPreview()
     const version = ++previewVersion.current
     setSelectedResult(task)
+    // 记下「用户正在看这条」：离开页面时写进快照，回来优先选回它，
+    // 而不是永远跳回最新一条成功任务
+    resultPrefRef.current = task.id
     setVideoUrl(null)
     setResultError('')
     try {
@@ -157,22 +297,27 @@ export default function RenderCompose() {
     }
   }, [clearColorPreview])
 
-  const load = useCallback(async () => {
-    if (!id) { setLoadError('缺少创作编号'); return }
+  const load = useCallback(async (targetId?: string | null) => {
+    // 显式传编号的调用方（useDidShow）手里那个才是准的：它可能在本次渲染之后才拿到，
+    // 而 state 要等下一次渲染才更新，这里若去读 state 就会用旧的 null 把页面判成编号丢失
+    const target = targetId ?? idRef.current
+    if (!target) { setLoadError('页面编号丢失，请回到「创作」重新进入'); return }
     const version = ++loadVersion.current
     setLoadError('')
     try {
-      const [creation, tasks] = await Promise.all([getCreation(id), listRenders(id)])
+      const [creation, tasks] = await Promise.all([getCreation(target), listRenders(target)])
       if (version !== loadVersion.current) return
       setDetail(creation)
       const sorted = [...tasks].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       setRenders(sorted)
-      const success = sorted.find((task) => task.status === 'SUCCESS')
+      // 优先恢复离开时正在看的那条；它已不可用（被删/失败）才退回最新一条成功任务
+      const preferred = sorted.find((task) => task.id === resultPrefRef.current && task.status === 'SUCCESS')
+      const success = preferred ?? sorted.find((task) => task.status === 'SUCCESS')
       if (success) void showResult(success)
     } catch (error) {
       if (version === loadVersion.current) setLoadError((error as Error).message || '加载失败，请重试')
     }
-  }, [id, showResult])
+  }, [showResult])
 
   /**
    * P0-5 档位能力：服务端环境决定 AI 档能不能用（依赖外部剪辑通道配置）。
@@ -192,19 +337,58 @@ export default function RenderCompose() {
     }
   }, [])
 
+  /**
+   * 把当前界面落进快照。写成读 ref 的函数，是因为它要被 useDidHide 调用 ——
+   * 那是页面不可见的瞬间，读不到当次渲染的最新 state 就白存了。
+   */
+  const persistSnapshot = useCallback(() => {
+    if (snapshotRef.current) writeComposeSnapshot({ ...snapshotRef.current, updatedAt: Date.now() })
+  }, [])
+
+  useEffect(() => { idRef.current = id }, [id])
+
+  /**
+   * 持续记快照（防抖 400ms）。拖调色滑块会高频改 color，
+   * 每拖一格同步写一次 storage 是没必要的 IO；真正不能丢的最后一次由 useDidHide 立刻补写。
+   */
+  useEffect(() => {
+    if (!id) return
+    snapshotRef.current = { id, grade, color, resultId: selectedResult?.id ?? null, updatedAt: Date.now() }
+    const timer = setTimeout(persistSnapshot, 400)
+    return () => clearTimeout(timer)
+  }, [id, grade, color, selectedResult?.id, persistSnapshot])
+
+  /** 「本次显示还没找回调色预览」标记，交给 requestColorPreview 之后的那个 effect 消费 */
+  const previewRestorePending = useRef(false)
+
   useDidShow(() => {
     setVisible(true)
-    void load()
+    // ★ 编号要在页面**每次显示时重新确认**，不能渲染期读一次就定终身：
+    //   冷启动恢复时 Taro 重建页面组件，渲染期的 current.router 可能还没挂上，
+    //   读到空编号就把页面判成「编号丢失」；而此后若没有任何 state 变化触发重渲染，
+    //   页面会一直卡在错误态 —— 用户点一下「重新加载」才好，正是那次点击带来了重渲染。
+    //   路由仍然给不出编号时，才用快照里记的那条顶一次（快照只在编号对得上时才被认领）。
+    const live = readRouteId(routeParams()) ?? idRef.current ?? boot.snap?.id ?? null
+    if (live !== idRef.current) {
+      idRef.current = live
+      setId(live)
+    }
+    previewRestorePending.current = true
+    void load(live)
     void loadCapabilities()
     void refreshMe().catch(() => setLoadError('账户刷新失败，请重试'))
   })
+
   useDidHide(() => {
     setVisible(false)
+    // 页面可能就此被系统回收，快照必须**立刻**落盘，不能还等那 400ms 防抖
+    persistSnapshot()
     loadVersion.current += 1
     previewVersion.current += 1
     // 预览链接是签名过的、会过期，离开就丢掉；下次回来按需重算（服务端有缓存，很快）
     clearColorPreview()
   })
+
   useEffect(() => () => {
     loadVersion.current += 1
     previewVersion.current += 1
@@ -215,11 +399,21 @@ export default function RenderCompose() {
     Taro.setNavigationBarTitle({ title: '合成成片' })
   }, [])
 
+  /**
+   * 活跃任务集合的指纹，用作轮询 effect 的依赖。
+   * 用**字符串**而不是数组：数组每次渲染都是新引用，effect 会无限重启（每 3 秒重排一次计时器，
+   * 轮询实际永远不会按节奏跑）。集合内容不变时这个串不变。
+   */
+  const activeIdsKey = activeTasks.map((task) => task.id).sort().join(',')
+
   useEffect(() => {
-    if (!visible || !id || !pendingTask) return
+    if (!visible || !id || activeTasks.length === 0) return
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | undefined
     let failures = 0
+    // 本轮要盯的任务集合：取进入本次 effect 时的快照。集合一变（新提交 / 某条收敛）
+    // activeIdsKey 就会变，effect 重启后自然拿到新的集合。
+    const ids = activeTasks.map((task) => task.id)
     // 轮询必须封顶：服务端 sweeper 正常时任务 30 分钟内一定收敛，但如果 sweeper 挂了 /
     // 任务卡在 sweeper 不认的状态里，客户端原实现会每 3 秒请求一次、永不停止 ——
     // 用户把页面留在后台就是一整晚的网络与电量消耗。超过上限就停下来并明确告知。
@@ -228,14 +422,36 @@ export default function RenderCompose() {
     setPollError('')
     const poll = async () => {
       try {
-        const latest = await getRender(id, pendingTask.id)
+        // 逐条查、**单条失败不影响其他条**：一条任务的查询失败（比如刚好被并发清理）
+        // 不该让另外两档的进度一起停更。
+        const results = await Promise.all(ids.map(async (taskId) => {
+          try { return await getRender(id, taskId) } catch { return null }
+        }))
         if (cancelled) return
+        const latestList = results.filter((item): item is RenderTask => item !== null)
+        if (latestList.length === 0) throw new Error('进度查询失败')
         failures = 0
         setPollError('')
-        setRenders((tasks) => tasks.map((task) => task.id === latest.id ? latest : task))
-        if (!ACTIVE_STATUS.includes(latest.status)) {
-          if (latest.status === 'SUCCESS') void showResult(latest)
-          else setPollError(latest.errorMsg || '任务已结束，请查看任务状态与积分账户')
+        setRenders((tasks) => tasks.map((task) => latestList.find((item) => item.id === task.id) ?? task))
+        const finished = latestList.filter((item) => !ACTIVE_STATUS.includes(item.status))
+        if (finished.length > 0) {
+          // ★ 收敛的任务逐条处理。旧的单任务实现是在这里直接 return 结束轮询的 ——
+          //   三档并行之后不能这么干：一条失败就 return，会让仍在跑的另一档进度永远停更。
+          //   集合已变 ⇒ activeIdsKey 变 ⇒ effect 会重启并把剩下的活跃任务接着盯。
+          for (const item of finished) {
+            if (item.status === 'SUCCESS') void showResult(item)
+          }
+          const failed = finished
+            .filter((item) => item.status !== 'SUCCESS')
+            .map((item) => `「${gradeTitle(item.grade)}」未完成：${item.errorText || '请在下方成片记录查看，积分以账户记录为准'}`)
+          if (failed.length > 0) {
+            // 逐条并入而不是覆盖：同一次轮询里两档同时失败时，两条都要留下
+            setTaskNotices((list) => {
+              const merged = [...list]
+              for (const text of failed) if (!merged.includes(text)) merged.push(text)
+              return merged
+            })
+          }
           void refreshMe().catch(() => setPollError('任务已结束，账户刷新失败，请重试'))
           return
         }
@@ -253,7 +469,7 @@ export default function RenderCompose() {
     }
     void poll()
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
-  }, [visible, id, pendingTask?.id, pollRetry, refreshMe, showResult])
+  }, [visible, id, activeIdsKey, pollRetry, refreshMe, showResult])
 
   /**
    * 把播放窗滚进视野（**仅当它当前不在屏幕上**）。
@@ -333,6 +549,21 @@ export default function RenderCompose() {
   }, [id, materialsReady, previewedSignature, clearColorPreview])
 
   /**
+   * 回到页面时把整片调色预览重新要来。
+   *
+   * 不补这一次，画面会永远停在「正在生成整片精确预览…」上 —— 那句话本是给 0.8 秒防抖
+   * 窗口用的，而离开时预览链接已经被丢掉，不会有任何请求再回来改写它。
+   * 服务端按内容寻址缓存，同参数基本秒回，代价可以忽略。
+   */
+  useEffect(() => {
+    if (!previewRestorePending.current) return
+    if (!visible || !id || !materialsReady) return
+    previewRestorePending.current = false
+    if (isNoopColor(color) || colorSignature(color) === previewedSignature) return
+    void requestColorPreview(color)
+  }, [visible, id, materialsReady, color, previewedSignature, requestColorPreview])
+
+  /**
    * Slider 的取值入口。分两个相位，这是本功能的核心约定：
    *   · dragging（onChanging，拖动过程中）—— 只更新本地数值，让静帧跟手变色，**不发请求**。
    *   · settled（onChange，松手或点一下）—— 清掉拖动标记，防抖后请求整片精确预览。
@@ -355,6 +586,10 @@ export default function RenderCompose() {
   const resetColor = () => {
     setColor(DEFAULT_COLOR)
     clearColorPreview()
+    // 画面要跟着回到「没有调色」的那条成片：不然用户看着上一版调色成片、保存下来的却是基础版，
+    // 「所见非所存」要到保存那一刻才暴露，那时已经解释不清了
+    const plain = renders.find((task) => task.status === 'SUCCESS' && !!task.resultKey && !!task.color && isNoopColor(task.color))
+    if (plain && plain.id !== selectedResult?.id) void showResult(plain)
   }
 
   const reloadHistory = async () => {
@@ -369,29 +604,6 @@ export default function RenderCompose() {
     } finally {
       setRefreshingHistory(false)
     }
-  }
-
-  const resultUrl = async () => {
-    if (!selectedResult?.resultKey) throw new Error('请先选择已完成成片')
-    const result = await getResultPlayUrl(selectedResult.resultKey)
-    if (!result.url) throw new Error('下载地址暂不可用，请重试')
-    return result.url
-  }
-  const copyDownload = async () => {
-    try { await Taro.setClipboardData({ data: await resultUrl() }) }
-    catch (error) { setResultError((error as Error).message || '复制下载链接失败') }
-  }
-  const saveResult = async () => {
-    if (saving) return
-    setSaving(true)
-    try {
-      const file = await Taro.downloadFile({ url: await resultUrl() })
-      if (file.statusCode !== 200) throw new Error('下载失败，请重试或复制下载链接')
-      await Taro.saveVideoToPhotosAlbum({ filePath: file.tempFilePath })
-      void Taro.showToast({ title: '已保存到相册', icon: 'success' })
-    } catch {
-      setResultError('保存失败，请检查相册权限或复制下载链接。重复下载不扣积分。')
-    } finally { setSaving(false) }
   }
 
   /**
@@ -410,7 +622,14 @@ export default function RenderCompose() {
   }
 
   const doRender = async (mode: 'FULL' | 'RECOLOR') => {
-    if (!id || !detail || submitLock.current || pendingTask) return
+    if (!id || !detail || submitLock.current.has(grade)) return
+    // ★ 只拦**本档**：三档互不干扰（服务端同样按档位判，见 render.service.ts 的 running 查询）。
+    //   这里必须给出提示而不是静默 return —— 按钮虽已置灰，但状态可能刚变（比如另一台设备
+    //   提交了同一档），静默返回会表现为「点了没反应」。
+    if (pendingTask) {
+      setLoadError(`${gradeTitle(grade)}已有任务在进行中，请等它完成后再提交这一档（其他档位不受影响）`)
+      return
+    }
     if (!materialsReady) { setLoadError('请先补齐全部分镜素材'); return }
     // P0-5 纵深防御：UI 已把不可用档位标灰，但状态可能过期（例如页面停留期间服务端改了配置），
     // 这里再拦一道，并顺手刷新一次能力表，避免用户反复点到同一个拒绝。
@@ -419,8 +638,12 @@ export default function RenderCompose() {
       void loadCapabilities()
       return
     }
-    submitLock.current = true
-    setSubmitting(true)
+    submitLock.current.add(grade)
+    setSubmittingGrades((list) => (list.includes(grade) ? list : [...list, grade]))
+    // 新一次提交 = 新的一轮等待：上一轮的失败通知与查询错误都该收走，
+    // 否则新任务刚排上队，页面上还挂着「上次失败」的横幅，看着像这次也失败了。
+    setTaskNotices([])
+    setPollError('')
     try {
       await refreshMe()
       const account = useMerchantStore.getState()
@@ -450,14 +673,97 @@ export default function RenderCompose() {
     } catch (error) {
       setLoadError((error as Error).message || '提交失败，请刷新任务列表后重试')
       void load()
-    } finally { submitLock.current = false; setSubmitting(false) }
+    } finally {
+      submitLock.current.delete(grade)
+      setSubmittingGrades((list) => list.filter((item) => item !== grade))
+    }
   }
 
-  if (!detail) return <View className='rcompose__tip'>{loadError || '加载中…'}{loadError && <Button onClick={() => void load()}>重新加载</Button>}</View>
+  /**
+   * 「画面上的调色还没有对应成片」时唯一的出路。
+   *
+   * ★ 为什么不能直接存画面里那条：整片调色预览是 ultrafast/crf32 的低码率示意
+   *   （server/src/render/preview.ts 的 PREVIEW_ENCODE），存进相册不报错、只是很糊 ——
+   *   用户根本不会发现，这才是最坏的结果。所以这里明确挡住，并把出口指出来。
+   */
+  const offerColorRender = async () => {
+    if (grade !== 'BASIC') {
+      setResultError('整片调色只对「基础生成」生效。要保存调色效果，请先切回基础生成并出片。')
+      return
+    }
+    if (pendingTask) {
+      setResultError(`「${gradeTitle(grade)}」有任务正在处理中，等它完成就能保存这一版成片。`)
+      return
+    }
+    const cost = estimatePoints(detail?.shots ?? [], grade, true)
+    const { confirm } = await Taro.showModal({
+      title: '调色还没出片',
+      content: `画面里的调色效果是低码率预览，不能存进相册。先按当前调色重新出片（参考 ${cost} 积分，按实际时长结算），出片完成后回到本页即可保存。`,
+      confirmText: '去出片',
+      cancelText: '知道了',
+    })
+    if (confirm) await doRender('RECOLOR')
+  }
+
+  /**
+   * 解析保存/复制真正要下载的地址。返回 null 表示**本次不发请求**
+   * （已经在引导出片、或已经把原因写进提示），不是一个需要再报一次的失败。
+   */
+  const resolveSaveUrl = async (): Promise<string | null> => {
+    const target = saveTargetTask
+    if (!target) { await offerColorRender(); return null }
+    try {
+      const result = await getResultPlayUrl(target.resultKey!)
+      if (!result.url) { setResultError('下载地址暂不可用，请稍后重试'); return null }
+      return result.url
+    } catch (error) {
+      setResultError((error as Error).message || '下载地址获取失败，请稍后重试')
+      return null
+    }
+  }
+
+  const copyDownload = async () => {
+    setResultError('')
+    const url = await resolveSaveUrl()
+    if (!url) return
+    try { await Taro.setClipboardData({ data: url }) }
+    catch (error) { setResultError((error as Error).message || '复制下载链接失败') }
+  }
+
+  const saveResult = async () => {
+    if (saving) return
+    setSaving(true)
+    setResultError('')
+    try {
+      const url = await resolveSaveUrl()
+      if (!url) return
+      const file = await Taro.downloadFile({ url })
+      if (file.statusCode !== 200) { setResultError('下载失败，请重试或改用「复制链接」'); return }
+      await Taro.saveVideoToPhotosAlbum({ filePath: file.tempFilePath })
+      void Taro.showToast({ title: '已保存到相册', icon: 'success' })
+    } catch {
+      // 能走到这里的都是小程序原生失败（绝大多数是相册权限被拒），原文案对用户没有意义
+      setResultError('保存失败，请检查相册权限，或改用「复制链接」自行下载。')
+    } finally { setSaving(false) }
+  }
+
+  // 出错时的按钮要**分情况**：编号丢了的话「重新加载」只会再错一次，
+  // 那是个假出路；这时唯一有意义的动作是回列表重进。
+  if (!detail) {
+    return (
+      <View className='rcompose__tip'>
+        {loadError || '加载中…'}
+        {!!loadError &&
+          (id ? (
+            <Button onClick={() => void load()}>重新加载</Button>
+          ) : (
+            <Button onClick={() => Taro.switchTab({ url: '/pages/creation/list' })}>回到创作列表</Button>
+          ))}
+      </View>
+    )
+  }
   const cost = estimatePoints(detail.shots, grade)
-  const previewedGrade = selectedResult
-    ? GRADE_OPTIONS.find((option) => option.key === selectedResult.grade)?.title || selectedResult.grade
-    : ''
+  const previewedGrade = selectedResult ? gradeTitle(selectedResult.grade) : ''
   // 拖动中的近似预览需要一张静帧来承载 CSS 滤镜，取第一张有封面的分镜。
   // 用静帧而不是「当前正在播的某一帧」，是因为 video 是原生组件、内部渲染吃不到样式 ——
   // 这是刻意的取舍，不是图省事。
@@ -471,8 +777,12 @@ export default function RenderCompose() {
    *   少一项就会在这 ≤0.8s 里闪回上一版旧预览 —— 看着像操作失败。
    * materialsReady 也是必要条件：素材不齐时预览不会发起（服务端 4003），
    *   否则静帧会一直停在「正在生成…」上不动。
+   * ⚠ AI 档必须排除：该档不渲染调色滑块，带着基础档的非 0 参数切过来时 previewedSignature
+   *   已被清空 ⇒ colorDirty 恒为 true，而没有任何请求会再回来洗净它，画面就永久停在静帧上
+   *   （角标还写着「正在生成整片精确预览…」，等于骗人）。
    */
-  const showingStill = materialsReady && !!stillCover && (draggingAxis !== null || colorDirty || previewing || !!previewError)
+  const showingStill =
+    grade !== 'AI' && materialsReady && !!stillCover && (draggingAxis !== null || colorDirty || previewing || !!previewError)
   const showingColorPreview = !showingStill && !!colorPreviewUrl
   const playUrl = colorPreviewUrl ?? videoUrl
   const previewBadge = showingStill ? '调色近似' : showingColorPreview ? '调色预览' : previewedGrade
@@ -663,7 +973,7 @@ export default function RenderCompose() {
           <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>配乐</Text><View className='rcompose__choices'>{(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.bgm === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, bgm: value }))}>{value === 'NONE' ? '无配乐' : value === 'LIGHT' ? '轻柔' : value === 'UPBEAT' ? '活力' : '高级感'}</Text>)}</View></View>
           <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>剪辑节奏</Text><View className='rcompose__choices'>{(['NATURAL', 'FAST', 'STORY'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.pacing === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, pacing: value }))}>{value === 'NATURAL' ? '自然' : value === 'FAST' ? '明快' : '叙事'}</Text>)}</View></View>
           <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>转场风格</Text><View className='rcompose__choices'>{(['CLEAN', 'SMOOTH', 'DYNAMIC'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.transitions === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, transitions: value }))}>{value === 'CLEAN' ? '干净利落' : value === 'SMOOTH' ? '平滑自然' : '动感切换'}</Text>)}</View></View>
-          <View className='rcompose__optionrow'><View><Text className='rcompose__optiontitle'>清理停顿</Text><Text className='rcompose__optiondesc'>交给 ChatCut 处理语音空白</Text></View><Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' /></View>
+          <View className='rcompose__optionrow'><View><Text className='rcompose__optiontitle'>清理停顿</Text><Text className='rcompose__optiondesc'>自动剪掉口播之间的空白</Text></View><Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' /></View>
           <View className='rcompose__optionrow'><View><Text className='rcompose__optiontitle'>统一音量</Text><Text className='rcompose__optiondesc'>平衡配音、原声与配乐响度</Text></View><Switch checked={chatcut.normalizeAudio} onChange={(event) => setChatcut((value) => ({ ...value, normalizeAudio: event.detail.value }))} color='#e1251b' /></View>
           <Text className='rcompose__fieldlabel'>备注与关键字</Text>
           <Textarea className='rcompose__note' maxlength={300} placeholder='例如：突出招牌菜、适合小红书种草' value={chatcut.note} onInput={(event) => setChatcut((value) => ({ ...value, note: event.detail.value }))} />
@@ -681,7 +991,7 @@ export default function RenderCompose() {
           </View>
           {colorUnsupported ? (
             <View className='ds-notice ds-notice--warn'>
-              AI 档暂不支持整片调色：该档由外部剪辑通道直接出片，调色参数不会被应用。需要调色请改选「基础生成」。
+              AI 生成暂不支持整片调色：该档由云端智能剪辑直接出片，调色参数不会被应用。需要调色请改选「基础生成」。
             </View>
           ) : (
             <>
@@ -713,20 +1023,47 @@ export default function RenderCompose() {
         </View>
       )}
 
-      {/* ── 进行中的任务 ── */}
-      {pendingTask && (
-        <View className='rcompose__card'>
+      {/* ── 进行中的任务 ──
+          三档互不干扰 ⇒ 可能同时有多条，因此必须**逐条列出**（不能像以前那样只显示 find 到的第一条）：
+          少列一条，用户就会以为那一档没提交成功，然后再点一次 —— 服务端虽然会拦（4001），
+          但用户看到的是「点了没反应 + 一条报错」，体验很差。
+          每张卡片都带档位名：「合成中」在一页里出现两次而不说是哪一档，等于没说。 */}
+      {activeTasks.map((task) => (
+        <View className='rcompose__card' key={task.id}>
+          <View className='rcompose__history-heading'>
+            <Text className='rcompose__sectitle'>{gradeTitle(task.grade)} · 进行中</Text>
+          </View>
           <ProgressLine
-            percent={pendingTask.progress}
-            label={STATUS_LABEL[pendingTask.status] || pendingTask.status}
-            hint={pendingTask.deadlineAt ? `预计交付 ${pendingTask.deadlineAt}` : '处理中，请保持页面打开'}
+            percent={task.progress}
+            label={STATUS_LABEL[task.status] || task.status}
+            hint={task.deadlineAt ? `预计交付 ${formatMinute(task.deadlineAt)}` : '处理中，请保持页面打开'}
           />
         </View>
+      ))}
+      {activeTasks.length > 0 && (
+        <Text className='rcompose__colorhint'>三个档位互不影响，其他档位现在也可以提交生成。</Text>
       )}
+      {/* 任务收敛失败的通知：与「查询类」的 pollError 分开展示 —— 它们清空的时机不同
+          （见 taskNotices 的声明处），合并成一个 state 会让另一档的成功轮询擦掉这一档的失败原因。 */}
+      {taskNotices.map((text) => (
+        <View className='ds-notice rcompose__notice' key={text}>
+          <Text>{text}</Text>
+        </View>
+      ))}
       {pollError && (
         <View className='ds-notice rcompose__notice'>
           <Text>{pollError}</Text>
-          <Button size='mini' onClick={() => { setPollRetry((value) => value + 1); void load() }}>重新查询</Button>
+          <Button
+            size='mini'
+            onClick={() => {
+              setTaskNotices([])
+              setPollError('')
+              setPollRetry((value) => value + 1)
+              void load()
+            }}
+          >
+            重新查询
+          </Button>
         </View>
       )}
 
@@ -740,9 +1077,7 @@ export default function RenderCompose() {
           {renders.map((task) => (
             <View className='rcompose__history' key={task.id}>
               <View className='rcompose__history-top'>
-                <Text className='rcompose__history-title'>
-                  {GRADE_OPTIONS.find((option) => option.key === task.grade)?.title || task.grade}
-                </Text>
+                <Text className='rcompose__history-title'>{gradeTitle(task.grade)}</Text>
                 <Text
                   className={`ds-pill ${
                     task.status === 'SUCCESS'
@@ -756,9 +1091,12 @@ export default function RenderCompose() {
                 </Text>
               </View>
               <Text className='rcompose__history-meta'>
-                {task.finishAt || task.createdAt} · {task.status === 'SUCCESS' ? '结算' : '任务积分'} {task.beanCharged} 积分
+                {formatMinute(task.finishAt || task.createdAt)} · {task.status === 'SUCCESS' ? '结算' : '任务积分'} {task.beanCharged} 积分
               </Text>
-              {task.errorMsg && <Text className='rcompose__history-err'>{task.errorMsg}</Text>}
+              {/* ★ 只读 errorText（服务端已脱敏），**绝不**去读原始 error_msg：
+                  那条里会有第三方产品名、服务端本机绝对路径、HTTP 报文原文。详见
+                  apps/mini/src/services/render.ts 里 errorText 的说明。 */}
+              {task.errorText && <Text className='rcompose__history-err'>{task.errorText}</Text>}
               {task.status === 'SUCCESS' && (
                 <Button className='rcompose__action' size='mini' onClick={() => void showResult(task)}>播放成片</Button>
               )}
@@ -803,10 +1141,12 @@ export default function RenderCompose() {
             className='ds-btn ds-btn--primary rcompose__render'
             hoverClass='ds-hover'
             loading={submitting}
+            // ★ disabled 只看**本档**（pendingTask 已按当前 grade 过滤）：
+            //   别的档位在跑不该锁住这个按钮 —— 这正是本轮要修的交互。
             disabled={submitting || !!pendingTask || !materialsReady}
             onClick={() => void doRender('FULL')}
           >
-            {pendingTask ? '任务处理中' : lastSuccess ? '重新生成' : '生成成片'}
+            {pendingTask ? '正在生成中' : lastSuccess ? '重新生成' : '生成成片'}
           </Button>
         </View>
       </View>

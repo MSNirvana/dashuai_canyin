@@ -70,7 +70,14 @@ export interface RenderTask {
   resultSize: string | null
   durationMs: number | null
   errorCode: string | null
-  errorMsg: string | null
+  /**
+   * **用户可见**的失败文案（服务端已脱敏）。
+   *
+   * ★ 服务端返回的是 `errorText` 而不是原始的 `error_msg`：后者是运维字段，里面有第三方
+   *   产品名、服务端本机绝对路径、HTTP 报文原文（实测踩过）。展示错误**一律**只读这个字段，
+   *   别去接口里找原文 —— 给用户的失败提示必须是能指导动作的一句话。
+   */
+  errorText: string | null
   createdAt: string
   finishAt: string | null
   assignedAt: string | null

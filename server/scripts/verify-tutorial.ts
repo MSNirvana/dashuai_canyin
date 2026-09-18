@@ -32,12 +32,12 @@ import {
   adminListTutorials,
   adminRemoveTutorial,
   adminUpsertTutorial,
-  detectVideoType,
   listByCategory,
   listCategoryStats,
   saveTutorialCover,
   saveTutorialVideo,
 } from '../src/services/tutorial.service.js'
+import { detectVideoType } from '../src/lib/media-type.js'
 import { TUTORIAL_CATEGORY_CODES, tutorialCategoryEnum } from '../src/lib/tutorial-categories.js'
 import { isLocalStorage, localPathForKey } from '../src/lib/local-storage.js'
 import { assertSafeObjectKey } from '../src/lib/object-key.js'

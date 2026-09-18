@@ -10,6 +10,7 @@ import BeanPackagesPage from './pages/BeanPackages'
 import MemberPackagesPage from './pages/MemberPackages'
 import BeanLedgerPage from './pages/BeanLedger'
 import RenderTasksPage from './pages/RenderTasks'
+import PremiumOrdersPage from './pages/PremiumOrders'
 import AiProvidersPage from './pages/AiProviders'
 import AiModelsPage from './pages/AiModels'
 import AiScenesPage from './pages/AiScenes'
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/member-packages" element={<MemberPackagesPage />} />
           <Route path="/bean-ledger" element={<BeanLedgerPage />} />
           <Route path="/render-tasks" element={<RenderTasksPage />} />
+          <Route path="/premium-orders" element={<PremiumOrdersPage />} />
           <Route path="/ai/providers" element={<AiProvidersPage />} />
           <Route path="/ai/models" element={<AiModelsPage />} />
           <Route path="/ai/scenes" element={<AiScenesPage />} />

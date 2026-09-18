@@ -44,6 +44,11 @@ export interface CreationItem {
   shotsReady: number
   /** 最新一条渲染任务的 status；null = 从未发起过合成 */
   renderStatus: string | null
+  /**
+   * 列表卡片缩略图：**第一个已上传视频**的封面签名 URL。
+   * 服务端按分镜顺序找「已上传 + 封面已生成」的那一个，没有则为 null ⇒ 前端退回默认图标。
+   */
+  coverUrl?: string | null
 }
 
 /** 分镜匹配到的镜头库拍摄手法 */
@@ -128,6 +133,17 @@ export function createCreation(input: {
   userIdea?: string
   track?: CopyTrack
   complexity?: Complexity
+  /**
+   * 同款作品的分镜骨架：服务端会在创建的同时把它落成初始分镜（同一个事务）。
+   * 传了就**不要再调 generateStoryboard** —— 那会整批替换掉它、还白扣一次积分。
+   */
+  shotSkeleton?: Array<{
+    shotType?: string
+    shotSize?: string
+    durationSuggest?: number
+    line?: string
+    visualReq?: string
+  }>
 }) {
   return http.post<CreationDetail>('/creations', input)
 }

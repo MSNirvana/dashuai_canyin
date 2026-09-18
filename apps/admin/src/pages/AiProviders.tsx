@@ -3,6 +3,8 @@ import { Button, Tag, Dialog, Input, InputNumber, Switch, Select, message, Space
 import DataTable from '../lib/table'
 import Field, { FieldGroup } from '../components/Field'
 import { confirmDialog } from '../lib/confirm'
+// 时间走统一口径（原来是 toLocaleString()，格式随浏览器语言变、还带秒）
+import { fmtMinute } from '../lib/datetime'
 import { request } from '../lib/http'
 
 interface Provider {
@@ -147,7 +149,7 @@ export default function AiProvidersPage() {
             render: ({ row }: any) => <Tag theme={row.healthStatus === 'DOWN' ? 'danger' : row.healthStatus === 'DEGRADED' ? 'warning' : 'success'}>{row.healthStatus}</Tag>,
           },
           { colKey: 'lastTest', title: '最近测试', width: 180,
-            render: ({ row }: any) => row.lastTestAt ? `${new Date(row.lastTestAt).toLocaleString()} · ${row.lastTestStatus}` : '—',
+            render: ({ row }: any) => row.lastTestAt ? `${fmtMinute(row.lastTestAt)} · ${row.lastTestStatus}` : '—',
           },
           { colKey: 'budget', title: '月预算(分)/已用', width: 150, render: ({ row }: any) => row.monthlyBudgetFen ? `${row.usedBudgetFen}/${row.monthlyBudgetFen}` : '不限' },
           { colKey: 'op', title: '操作', width: 240, fixed: 'right',

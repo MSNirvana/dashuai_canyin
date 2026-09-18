@@ -54,6 +54,17 @@ export interface ChatCutJobInput {
   clips: ChatCutClipInput[]
   options: ChatCutOptions
   output: { width: number; height: number; fps: number }
+  /**
+   * 启动阶段（`startChatCutRender`）的阶段上报，`ratio` 为 0~1。
+   *
+   * ★ 存在的理由：启动是**分钟级**的多步串行远端调用（建项目 → 逐条探测素材 → 逐镜头 TTS
+   *   → 上传全部字节 → 排轨），而任务进度只有在启动**返回之后**才会被
+   *   `storeChatCutState` 从 5% 改成 30%/60%。不报阶段的话，整个启动期间进度钉死在 5%，
+   *   用户看到的就是「一直卡在合成中 5%」。
+   *
+   * 回调只做可观测性：打日志/写库失败**不能让启动流程失败**（见 driver 里的 safePhase）。
+   */
+  onPhase?: (info: { ratio: number; label: string }) => void
 }
 
 export interface ChatCutJobResult {

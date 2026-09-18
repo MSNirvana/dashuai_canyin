@@ -46,7 +46,7 @@ PAYMENTS_ENABLED=false     # 商户号申请期间：跳过支付七项校验，
 > ⚠ 两种取值都不要忘：`PAYMENTS_ENABLED` **不设置等于开启**（fail-closed，生产忘配支付凭据会拒绝启动）。
 > 商户号下来后，把 `PAYMENTS_ENABLED` 改成 `true`（或删掉该行）并补齐支付七项即可，不需要再动 `NODE_ENV`。
 
-### 0.2 登录方式：必须走「微信一键登录」
+### 0.2 登录方式：两条正式通道（备案前都不通）+ 一条测试期路线（固定测试码）
 
 代码里 `POST /auth/sms/send` 的短信通道**没有接入**——`src/auth/sms.ts:87-93` 在没有 `SMS_PROVIDER` 时只把验证码打到服务器日志；一旦配了 `SMS_PROVIDER` 反而直接抛 `SmsProviderNotConfiguredError`。
 
@@ -60,7 +60,25 @@ PAYMENTS_ENABLED=false     # 商户号申请期间：跳过支付七项校验，
 
 **前提：小程序后台已开通「手机号快速验证」能力**（企业主体，按次付费）。没开通的话测试者根本进不去。部署前先去 `mp.weixin.qq.com → 功能 → 手机号快速验证` 确认状态。
 
-备选（不推荐）：临时开 `DEV_LOGIN=true`，登录页会出现「开发登录」按钮，任意手机号直接建号。体验版只有你加的体验成员能扫码打开，风险可控，但等于没有身份校验——**能不用就不用**。
+**测试期推荐路线：固定测试码**（备案 / 微信认证下来之前，上面那条路走不通）。
+
+`SMS_TEST_CODE` + `SMS_TEST_CODE_PHONES` 让名单内的手机号用**固定验证码**登录：不真发短信、也不经过 `SMS_PROVIDER`。四道闸门在 `server/src/auth/sms.ts::smsTestCodeConfig()`：
+
+| 闸门 | 内容 |
+|---|---|
+| ① 环境 | `NODE_ENV=production` 时**默认整块关闭**；要在线上开，必须再显式写一行 `SMS_TEST_CODE_ALLOW_PROD=true` |
+| ② 值形态 | `SMS_TEST_CODE` 必须是 6 位数字（写 `true` / `12345` 都不生效） |
+| ③ 白名单 | `SMS_TEST_CODE_PHONES` 必须非空（**故意不支持「留空 = 所有号」**，让无差别后门在配置里表达不出来） |
+| ④ 顺序 | 码值在「点获取验证码」那一刻写库 ⇒ **先加白名单、再点获取**，反了报的是「验证码错误或已过期」，看不出真因 |
+
+测试者怎么用：登录页切到「验证码登录」→ 填名单内的手机号 → 点「获取验证码」（不会真收到短信）→ 填 `SMS_TEST_CODE` 的值。
+
+⚠ **事后必须删**：备案 / 认证通过后，把 `SMS_TEST_CODE` / `SMS_TEST_CODE_PHONES` / `SMS_TEST_CODE_ALLOW_PROD` 三个变量**一起**删掉。只删一两个 = 后门还开着。
+`deploy/deploy.sh` 第 2 步会体检并明确告警；分支行为由 `deploy/verify-sms-backdoor-branches.py` 守护（它比对 bash 里的判定与 `smsTestCodeConfig()` 是否一致 —— 这是**两份实现**，最容易静默漂移）。
+
+注意事项：登录是**按手机号建号**的（`auth.service.ts::loginByPhone` → `upsertMerchantByPhone`），所以名单里放谁的号，就等于用小号建一个独立商户。想让多名测试者共用一个账号，就让他们**都填同一个号 + 同一个码**。
+
+备选（不推荐）：临时开 `DEV_LOGIN=true`，登录页会出现「开发登录」按钮，**任意手机号免验证码直接建号**。体验版只有你加的体验成员能扫码打开，风险可控，但等于没有身份校验——**能不用就不用**。另有一条硬伤：`devLogin` 会把该号的 `wechat_openid` **覆盖**成 `dev_openid_<phone>`（`upsertMerchantByPhone` 收到了 openid 参数）；而固定测试码走的 `loginByPhone` **不传** openid，因此**不会碰**已有的微信绑定 —— 这也是它比 `DEV_LOGIN` 更该被选中的原因。
 
 ### 0.3 存储必须切 COS，且 COS 域名也要加白名单
 

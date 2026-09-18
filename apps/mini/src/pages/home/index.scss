@@ -122,7 +122,6 @@
     // 裁的是**图片下方的空白**，卡片高度几乎没变，但文字块在卡片里上下居中了。
     height: 248rpx;
   }
-  &__eyebrow,
   &__create-kicker {
     display: block;
     color: var(--td-brand-color);
@@ -208,24 +207,6 @@
     font-weight: 700;
   }
   &__create-arrow { font-size: 32rpx; line-height: 1; }
-  &__guest-hero { padding: 28rpx 0 46rpx; }
-  &__hero-title {
-    display: block;
-    margin-top: 18rpx;
-    color: var(--td-text-color-primary);
-    font-size: 52rpx;
-    font-weight: 750;
-    line-height: 1.22;
-    letter-spacing: -0.04em;
-  }
-  &__hero-desc {
-    display: block;
-    margin-top: 18rpx;
-    color: var(--td-text-color-secondary);
-    font-size: 26rpx;
-    line-height: 1.6;
-  }
-
   // ─────────── 积分卡 ───────────
   &__bean {
     margin-top: 36rpx;
@@ -400,13 +381,17 @@
   &__works {
     display: flex;
     flex-wrap: wrap;
-    gap: 20rpx;
+    // 一行两个：**不用 calc、也不用 gap** —— 两者在个别机型的 wxss 上表现不一致，
+    // 而「一行两个」是这个区块的硬要求。改成百分比定宽 + space-between，
+    // 把中间剩下的那 3% 变成列间距：换不换行只由宽度百分比决定，不依赖任何可能被丢弃的写法。
+    justify-content: space-between;
     margin-top: 24rpx;
   }
   &__work {
     position: relative;
-    // 一行两个：容器宽 678rpx，列间距 20rpx → 单列 (678-20)/2 = 329rpx
-    width: calc(50% - 10rpx);
+    // 48.5% × 2 = 97%，剩下那 3%（约 20rpx）正好成为两列之间的间距
+    width: 48.5%;
+    margin-bottom: 20rpx; // 换行后由它提供行间距（原来靠 gap，已去掉）
     height: 585rpx; // 竖版 9:16
     border-radius: var(--td-radius-default);
     overflow: hidden;
@@ -518,6 +503,35 @@
     margin-left: 6rpx;
   }
 
+  // 取播放地址期间（要发一次请求）给个按压态，避免「点了没反应」
+  &__work-play--pending {
+    opacity: 0.55;
+  }
+
+  // 播放态：整张卡片里只有 Video 一个元素（原生组件，此时其它内容都不渲染）
+  &__work-video {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+  /**
+   * 「收起」是 cover-view —— 唯一能覆盖在原生组件之上的元素。
+   * 它能用的样式很有限（不吃 CSS 变量、不吃简写属性），所以这里一律写字面值：
+   * 写成 var(--td-radius-pill) 或 background 简写都可能静默不生效，而它又是播放态唯一的出口。
+   */
+  &__work-stop {
+    position: absolute;
+    right: 16rpx;
+    top: 16rpx;
+    padding: 6rpx 18rpx;
+    background-color: rgba(0, 0, 0, 0.55);
+    color: #ffffff;
+    font-size: 22rpx;
+    border-radius: 999rpx;
+  }
+
   &__work-bottom {
     position: absolute;
     left: 20rpx;
@@ -610,6 +624,13 @@
     margin-right: 22rpx;
     flex: none;
   }
+  // 缩略图撑满并裁切；不写死宽高的话 aspectFill 不会等于 cover（同创作列表的 cover-image）
+  &__recent-cover-image {
+    width: 100%;
+    height: 100%;
+    border-radius: 22rpx;
+    display: block;
+  }
   &__recent-main {
     flex: 1;
     min-width: 0;
@@ -662,6 +683,9 @@
     margin: 40rpx 36rpx;
     padding: 48rpx 32rpx;
   }
+  // 未登录那张引导卡挪进了 home__body（本身已有 36rpx 左右 padding），
+  // 沿用 &__guest 的 40rpx 36rpx 会变成双重缩进 —— 只留上下外边距。
+  &__guest--inline { margin: 40rpx 0; }
   &__guest-title {
     font-size: 34rpx;
     font-weight: 700;

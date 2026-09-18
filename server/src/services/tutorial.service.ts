@@ -13,7 +13,6 @@
 //   ③ 扩展名不按**魔数**判定 ⇒ 落到 contentTypeForKey 的 video/mp4 兜底，
 //      webm/mov 的 Content-Type 全错，端上按 mp4 解复用必然不播。
 import { randomUUID } from 'node:crypto'
-import { open } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import {
@@ -22,6 +21,7 @@ import {
   removeLocalFile,
 } from '../lib/local-storage.js'
 import { deleteObject, uploadFile } from '../lib/cos.js'
+import { detectVideoType, readFileHead } from '../lib/media-type.js'
 import { generateVideoCover } from '../lib/thumbnail.js'
 import { TUTORIAL_CATEGORY_CODES, type TutorialCategoryCode } from '../lib/tutorial-categories.js'
 import { getSharedPlayUrlByKey } from './media.service.js'
@@ -113,36 +113,6 @@ function dateSegment(): string {
 }
 
 /**
- * 按**文件头**判断视频容器（魔数嗅探）。
- *
- * ★ 为什么不信文件名后缀、也不信客户端 Content-Type：
- *   落库的扩展名会被 `contentTypeForKey()` 翻译成响应头里的 Content-Type。文件名完全可控，
- *   一个 `.mp4` 结尾的 webm 会让服务端声明 `video/mp4`，端上按 mp4 解复用 ⇒ 静默不播。
- *   从判定结果取扩展名，这条链上的三处（存储键、Content-Type、端上行为）就都可信了。
- */
-export function detectVideoType(buf: Buffer): { ext: string; contentType: string } | null {
-  // mp4 / m4v / mov：尺寸字段之后紧接着牌子 'ftyp'
-  if (buf.length >= 8 && buf.subarray(4, 8).toString('latin1') === 'ftyp') {
-    return buf.subarray(8, 12).toString('latin1') === 'qt  '
-      ? { ext: '.mov', contentType: 'video/quicktime' }
-      : { ext: '.mp4', contentType: 'video/mp4' }
-  }
-  // Matroska / WebM：EBML 头
-  if (buf.length >= 4 && buf[0] === 0x1a && buf[1] === 0x45 && buf[2] === 0xdf && buf[3] === 0xa3) {
-    return { ext: '.webm', contentType: 'video/webm' }
-  }
-  // AVI：RIFF 容器 + 'AVI ' 牌子
-  if (
-    buf.length >= 12 &&
-    buf.subarray(0, 4).toString('latin1') === 'RIFF' &&
-    buf.subarray(8, 12).toString('latin1') === 'AVI '
-  ) {
-    return { ext: '.avi', contentType: 'video/x-msvideo' }
-  }
-  return null
-}
-
-/**
  * 对象键。随机段是**故意**的：微信与 CDN 都按 URL 缓存媒体，
  * 用固定键覆盖上传的话运营换了视频、用户那边还播旧的，且没有任何报错。
  */
@@ -155,26 +125,6 @@ function tmpCoverPath(): string {
   return join(localStorageRoot(), '.incoming', `tutorial_cover_${randomUUID().replaceAll('-', '')}.jpg`)
 }
 
-/**
- * 只读文件头 N 字节判类型。
- *
- * ★ 不要 `readFile()` 整个文件：上传的可能是 100MB 视频，为了判 16 个字节把它全部读进内存
- *   在多文件并发时足以打爆进程。
- */
-async function readHead(path: string, n: number): Promise<Buffer | null> {
-  let fh: Awaited<ReturnType<typeof open>> | null = null
-  try {
-    fh = await open(path, 'r')
-    const buf = Buffer.alloc(n)
-    const { bytesRead } = await fh.read(buf, 0, n, 0)
-    return buf.subarray(0, bytesRead)
-  } catch {
-    return null
-  } finally {
-    await fh?.close().catch(() => undefined)
-  }
-}
-
 // ──────────────────────── 上传 ────────────────────────
 
 /**
@@ -184,7 +134,7 @@ async function readHead(path: string, n: number): Promise<Buffer | null> {
  * （这是本项目头像上传踩过的坑，见 object-key-column-uploads 技能）。
  */
 export async function saveTutorialVideo(tempPath: string): Promise<VideoUploadResult> {
-  const head = await readHead(tempPath, 32)
+  const head = await readFileHead(tempPath, 32)
   const type = head ? detectVideoType(head) : null
   if (!type) {
     await removeLocalFile(tempPath)
@@ -225,7 +175,7 @@ export async function saveTutorialVideo(tempPath: string): Promise<VideoUploadRe
 
 /** 保存后台单独上传的封面图（运营想用一张比首帧更好看的图时） */
 export async function saveTutorialCover(tempPath: string): Promise<{ coverKey: string; sizeBytes: number }> {
-  const head = await readHead(tempPath, 16)
+  const head = await readFileHead(tempPath, 16)
   const type = head ? detectImageType(head) : null
   if (!type) {
     await removeLocalFile(tempPath)

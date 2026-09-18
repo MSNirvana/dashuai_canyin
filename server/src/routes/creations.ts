@@ -34,6 +34,21 @@ const createInput = z.object({
   userIdea: userIdeaField,
   track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
+  // 同款作品的分镜骨架（来自 excellent_work.recipe_json）：有值时在创建的同时**落成初始分镜**，
+  // 前端随即跳过 AI 分镜那一步（省一次真实扣费），用户不满意再点「重新生成」整批换成 AI 版。
+  // 上限 20 与后台「分镜骨架」那个录入框的上限一致；字段长度与 shotPatch 同口径。
+  shotSkeleton: z
+    .array(
+      z.object({
+        shotType: z.string().max(64).optional(),
+        shotSize: z.string().max(16).optional(),
+        durationSuggest: z.number().int().min(0).max(600).optional(),
+        line: z.string().max(2000).optional(),
+        visualReq: z.string().max(2000).optional(),
+      }),
+    )
+    .max(20)
+    .optional(),
 })
 
 const creationPatch = z.object({
@@ -64,7 +79,11 @@ router.get('/', async (req, res) => {
     // 归档分类用 ?archived=1 拉取。不传就是默认列表 —— 服务层会排除已归档的，
     // 所以「归档后不出现在全部/进行中/已就绪」是服务端保证的，不是前端过滤出来的。
     const archived = req.query.archived === '1' || req.query.archived === 'true'
-    const list = await creationSvc.listCreations(prisma, req.merchantId!, storeId, { archived })
+    const list = await creationSvc.listCreations(prisma, req.merchantId!, storeId, {
+      archived,
+      // 列表卡片要显示「第一个已上传视频的缩略图」，封面是签名 URL ⇒ 与详情接口用同一个 base
+      mediaBaseUrl: mediaBaseUrl(req),
+    })
     ok(res, list)
   } catch (e) {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
@@ -83,6 +102,7 @@ router.post('/', async (req, res) => {
       userIdea: input.userIdea,
       track: input.track,
       complexity: input.complexity,
+      shotSkeleton: input.shotSkeleton,
     })
     ok(res, c)
   } catch (e) {

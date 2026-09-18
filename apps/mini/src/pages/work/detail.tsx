@@ -4,12 +4,14 @@ import Taro, { useRouter } from '@tarojs/taro'
 import { getWork, markWorkClone, markWorkView, type WorkDetail } from '../../services/work'
 import { COMPLEXITY_OPTIONS, COPY_TRACK_OPTIONS } from '../../services/creation'
 import { useMerchantStore } from '../../store/merchant'
+import { guideLogin } from '../../utils/login-guide'
 import './detail.scss'
 
 /** 优秀作品详情：看成片 → 看配方 → 一键套用 */
 export default function WorkDetailPage() {
   const router = useRouter()
   const id = router.params.id ?? ''
+  const merchant = useMerchantStore((s) => s.merchant)
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const [work, setWork] = useState<WorkDetail | null>(null)
   const [loading, setLoading] = useState(true)
@@ -32,8 +34,25 @@ export default function WorkDetailPage() {
 
   const goStores = () => Taro.navigateTo({ url: '/pages/store/list' })
 
+  /**
+   * 未登录时点「套用配方 / AI 直接生成」的引导。
+   *
+   * 原来这两种情况都只会走 goStores()：用户被送到门店页，门店页的请求再吃一个 401，
+   * 请求层才把他 switchTab 到「我的」并弹登录框 —— 结果是
+   * 「点了按钮 → 闪两下 → 落在『我的』」，用户根本不知道中间发生了什么，
+   * 甚至以为按钮坏了。这里直接说清楚，一步到位。
+   *
+   * 本页现在**免登录也能看**（服务端 routes/works.ts 故意不鉴权，见该文件头注释），
+   * 所以「未登录点按钮」不是边缘情况，而是首页引流进来的用户的必经一步。
+   */
+  const needLogin = () => guideLogin({ reason: '套用同款配方需要先登录' })
+
   /** 预填：带着配方进创作页，用户自己确认后再生成 */
   const onApply = () => {
+    if (!merchant) {
+      needLogin()
+      return
+    }
     if (!currentStoreId) {
       goStores()
       return
@@ -46,15 +65,26 @@ export default function WorkDetailPage() {
    * 一键生成：下一步就会真的调 AI（消耗积分），先确认再跳。
    * 创作页本身已是「选好款式就直接生成、生成完直达拍摄」，所以这里只做预填 + 前置确认，
    * 不再需要额外的 auto 参数（款式与门店都要让用户在创作页确认一次，避免白扣积分）。
+   *
+   * ★ 文案里要写明「分镜沿用这条作品的，不再另外生成」：这条作品的配方带分镜骨架时，
+   *   创作页会直接把它落成初始分镜并跳过 AI 分镜那一笔。用户对扣费最敏感，
+   *   这里少说一句，他就会以为「跟以前一样扣两次」而不敢点。
    */
   const onAutoGenerate = async () => {
+    if (!merchant) {
+      needLogin()
+      return
+    }
     if (!currentStoreId) {
       goStores()
       return
     }
+    const shotCount = (work?.recipeJson?.shotSkeleton ?? []).length
     const r = await Taro.showModal({
       title: '用 AI 直接生成',
-      content: '将按这条作品的配方预填文案款式与镜头复杂度，点「生成文案与分镜」后消耗积分。继续？',
+      content: shotCount
+        ? `将预填这条作品的文案款式与镜头复杂度，并直接套用它的 ${shotCount} 个分镜（不再另外生成分镜）。点「生成」后只消耗文案的积分。继续？`
+        : '将按这条作品的配方预填文案款式与镜头复杂度，点「生成」后消耗积分。继续？',
       confirmText: '继续生成',
       confirmColor: '#e1251b',
     })

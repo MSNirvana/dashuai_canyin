@@ -11,6 +11,7 @@ import {
 } from '../../services/creation'
 import { listShotLibrary, getShotDemoPlayUrl, type ShotLibraryItem } from '../../services/account'
 import { uploadVideoFile, UploadAbortedError } from '../../services/upload'
+import { readRouteId } from '../../utils/route-id'
 import ProgressLine from '../../components/progress-line'
 import './shots.scss'
 
@@ -23,9 +24,13 @@ function fmtDuration(ms: number): string {
 }
 
 export default function CreationShots() {
-  const params = Taro.getCurrentInstance().router?.params ?? {}
-  const id = params.id
+  // 编号当场校验：非法编号（最典型的是字符串 'undefined'）不能直接拿去发请求，
+  // 否则本页只会永远停在「加载中…」，而点「下一步」跳到合成页后收到的是服务端那句
+  // 指向不了任何操作的「参数不合法」（详见 utils/route-id.ts）。
+  const id = readRouteId(Taro.getCurrentInstance().router?.params as Record<string, unknown> | undefined)
   const [detail, setDetail] = useState<CreationDetail | null>(null)
+  /** 加载失败（含「编号丢失」）时的可读原因：绝不能只留一句「加载中…」吊着用户 */
+  const [loadError, setLoadError] = useState('')
   const [progress, setProgress] = useState<Record<string, number>>({})
   /** 各分镜独立上传状态：允许多个素材并发上传，不再用单个 shotId 锁住整页 */
   const [uploading, setUploading] = useState<Record<string, boolean>>({})
@@ -58,22 +63,30 @@ export default function CreationShots() {
   }, [])
 
   const load = useCallback(async () => {
-    if (!id) return
-    const d = await getCreation(id)
-    setDetail(d)
-    // 历史素材（本次改动前上传）没有封面：触发一次服务端补生成，成功后刷新详情
-    const needCover = d.shots.some((s) => s.assetId && !s.coverUrl)
-    if (needCover && !coverTried.current) {
-      coverTried.current = true
-      setCoverBusy(true)
-      try {
-        const r = await ensureShotCovers(id)
-        if (r.generated > 0) setDetail(await getCreation(id))
-      } catch {
-        // 补封面失败不影响拍摄主流程
-      } finally {
-        setCoverBusy(false)
+    if (!id) { setLoadError('页面编号丢失，请回到「创作」重新进入'); return }
+    setLoadError('')
+    try {
+      const d = await getCreation(id)
+      setDetail(d)
+      // 历史素材（本次改动前上传）没有封面：触发一次服务端补生成，成功后刷新详情
+      const needCover = d.shots.some((s) => s.assetId && !s.coverUrl)
+      if (needCover && !coverTried.current) {
+        coverTried.current = true
+        setCoverBusy(true)
+        try {
+          const r = await ensureShotCovers(id)
+          if (r.generated > 0) setDetail(await getCreation(id))
+        } catch {
+          // 补封面失败不影响拍摄主流程
+        } finally {
+          setCoverBusy(false)
+        }
       }
+    } catch (error) {
+      // ★ 必须在这里接住。本页原来是把 load() 裸调出去的（没有 catch），
+      //   请求一失败就是未处理的 Promise rejection：detail 永远为 null，
+      //   页面永远停在「加载中…」，用户看不出是失败还是慢（已实测踩到）。
+      setLoadError((error as Error).message || '加载失败，请重试')
     }
   }, [id])
 
@@ -221,10 +234,40 @@ export default function CreationShots() {
       Taro.navigateBack({ delta: routes.length - 1 - idx })
       return
     }
+    if (!id) {
+      Taro.showToast({ title: '编号丢失，请回到「创作」重新进入', icon: 'none' })
+      return
+    }
     Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
   }
 
-  if (!detail) return <View className='cshots__tip'>加载中…<Button onClick={() => load().catch(() => undefined)}>重新加载</Button></View>
+  /**
+   * 下一步 → 合成成片。**编号必须落进 URL**，拿不到就不跳。
+   * 拼出 `?id=undefined` 的话，合成页会拿这个字符串去请求，只换来一句
+   * 「参数不合法」—— 用户完全不知道该做什么（已实测复现）。
+   */
+  const navToCompose = () => {
+    if (!id) {
+      Taro.showToast({ title: '编号丢失，请回到「创作」重新进入', icon: 'none' })
+      return
+    }
+    Taro.navigateTo({ url: `/pages/render/compose?id=${id}` })
+  }
+
+  // 编号丢了就给唯一的真出路（回列表重进）；有编号才给「重新加载」。
+  if (!detail) {
+    return (
+      <View className='cshots__tip'>
+        {loadError || '加载中…'}
+        {!!loadError &&
+          (id ? (
+            <Button onClick={() => load()}>重新加载</Button>
+          ) : (
+            <Button onClick={() => Taro.switchTab({ url: '/pages/creation/list' })}>回到创作列表</Button>
+          ))}
+      </View>
+    )
+  }
   const missingShots = detail.shots.filter((shot) => !shot.assetId)
   const total = detail.shots.length
   const done = total - missingShots.length
@@ -384,7 +427,7 @@ export default function CreationShots() {
             className={`ds-btn ds-btn--primary ds-btn--block ${canCompose ? '' : 'ds-btn--disabled'}`}
             hoverClass='ds-hover'
             disabled={!canCompose}
-            onClick={() => Taro.navigateTo({ url: `/pages/render/compose?id=${id}` })}
+            onClick={navToCompose}
           >
             下一步
           </Button>

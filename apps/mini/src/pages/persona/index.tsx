@@ -4,6 +4,8 @@ import Taro, { useDidShow } from '@tarojs/taro'
 import { getPersona, savePersona, type PersonaItem } from '../../services/persona'
 import { useMerchantStore } from '../../store/merchant'
 import StoreSwitcher from '../../components/store-switcher'
+// 时间统一走 utils/time：原来用 toLocaleString('zh-CN')，出来是「2026/9/18 10:59:39」（斜杠 + 秒）
+import { formatMinute } from '../../utils/time'
 import './index.scss'
 
 const VOICE_PRESETS = ['热情实在', '专业懂行', '幽默接地气', '温柔耐心', '爽快直接', '匠人型老板']
@@ -177,7 +179,7 @@ export default function PersonaPage() {
 
       {updatedAt && (
         <View className='persona__meta'>
-          <Text>最近更新：{new Date(updatedAt).toLocaleString('zh-CN')}</Text>
+          <Text>最近更新：{formatMinute(updatedAt)}</Text>
         </View>
       )}
 

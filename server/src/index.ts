@@ -122,9 +122,15 @@ async function bootstrap() {
     // （NODE_ENV 一写错就生效）。只打手机号条数、**绝不回显码值**。
     const testSms = smsTestCodeConfig()
     if (testSms) {
+      // ★ 生产环境（=SMS_TEST_CODE_ALLOW_PROD 被显式打开）要用**不同的句式**报：
+      //   它不是“联调期间忘关”那种小事，而是**线上真的开着一个后门** ——
+      //   看到这一行就应该去删变量，而不是继续做别的事。
+      const prodBackdoor = process.env.NODE_ENV === 'production'
       console.warn(
-        `[server] ⚠ 短信测试码已启用（白名单 ${testSms.phones.length} 个手机号可用固定验证码登录）` +
-          ' —— 这是登录后门，联调结束后请删掉 .env 里的 SMS_TEST_CODE / SMS_TEST_CODE_PHONES',
+        `[server] ${prodBackdoor ? '⚠ 生产环境的登录后门已启用' : '⚠ 短信测试码已启用'}` +
+          `（白名单 ${testSms.phones.length} 个手机号可用固定验证码登录）` +
+          ' —— 请删掉 .env 里的 SMS_TEST_CODE / SMS_TEST_CODE_PHONES' +
+          (prodBackdoor ? ' / SMS_TEST_CODE_ALLOW_PROD / DEV_LOGIN' : ''),
       )
     }
   })

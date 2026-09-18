@@ -42,6 +42,8 @@
     "color-preview:verify": "tsx scripts/verify-color-preview.ts",
     "profile:verify": "tsx scripts/verify-profile.ts",
     "creation-archive:verify": "tsx scripts/verify-creation-archive.ts",
+    "render-multitask:verify": "tsx scripts/verify-render-multitask.ts",
+    "render-errors:fix-paths": "tsx scripts/fix-legacy-error-paths.ts",
     "tutorial:verify": "tsx scripts/verify-tutorial.ts",
     "chatcut:probe": "tsx scripts/chatcut-probe.ts",
     "chatcut:authorize": "tsx scripts/chatcut-authorize.ts",

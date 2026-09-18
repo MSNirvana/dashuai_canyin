@@ -12,6 +12,7 @@ import {
 } from 'tdesign-react'
 import DataTable from '../lib/table'
 import Field, { FieldGroup } from '../components/Field'
+import AssetUploader from '../components/AssetUploader'
 import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
@@ -99,6 +100,18 @@ const COMPLEXITY_OPTIONS = [
   { label: '复杂（4~6 镜）', value: 'COMPLEX' },
   { label: '精细（7~9 镜）', value: 'FINE' },
 ]
+
+/**
+ * 作品视频 / 封面的上传上限。
+ *
+ * ⚠ 这三个数字必须同值，改一个就要改全部：
+ *   · 本文件（选文件时的预校验，给运营一句人话）
+ *   · server/src/services/work.service.ts 的 MAX_WORK_VIDEO_BYTES / MAX_WORK_COVER_BYTES
+ *   · deploy/nginx/dashuai-admin.conf 的 client_max_body_size（110m）
+ * 漏掉 nginx 那处的话本地开发（vite 直连 3000，不过 nginx）永远测不出问题，上线才 413。
+ */
+const MAX_WORK_VIDEO_MB = 100
+const MAX_WORK_COVER_MB = 5
 
 interface ShotDraft {
   shotType: string
@@ -597,11 +610,48 @@ export default function WorksPage() {
           <Field label="标签" help="最多 10 个，逗号 / 顿号 / 空格分隔；首页卡片只展示前 2 个">
             <Input value={form.tagsText} onChange={(v) => set('tagsText', v as string)} placeholder="如 高翻台、出餐快" />
           </Field>
-          <Field label="封面 Key" help="COS 对象键，与合成成片同一存储；填好后点列表「封面」可预览">
+          <Field
+            label="封面 Key"
+            help="COS 对象键，与合成成片同一存储；填好后点列表「封面」可预览。也可以直接在下面选一张图上传（≤5MB），上传后键会填进这一栏。"
+          >
             <Input value={form.coverKey} onChange={(v) => set('coverKey', v as string)} placeholder="选填" />
+            <div style={{ marginTop: 8 }}>
+              <AssetUploader
+                endpoint="/works/upload"
+                kind="cover"
+                accept="image/*"
+                maxMb={MAX_WORK_COVER_MB}
+                uploadLabel="选择封面并上传"
+                value={form.coverKey}
+                onClear={() => set('coverKey', '')}
+                onUploaded={(r) => set('coverKey', r.coverKey ?? form.coverKey)}
+              />
+            </div>
           </Field>
-          <Field label="视频 Key" help="私有桶，播放地址每次访问重新签名（1 小时有效）">
+          <Field
+            label="视频 Key"
+            help="私有桶，播放地址每次访问重新签名（1 小时有效）。也可以直接在下面选本地视频上传（≤100MB，MP4 / MOV / WebM / AVI），上传后会自动抽一帧当封面。"
+          >
             <Input value={form.videoKey} onChange={(v) => set('videoKey', v as string)} placeholder="选填" />
+            <div style={{ marginTop: 8 }}>
+              <AssetUploader
+                endpoint="/works/upload"
+                kind="video"
+                accept="video/*"
+                maxMb={MAX_WORK_VIDEO_MB}
+                uploadLabel="选择视频并上传"
+                value={form.videoKey}
+                onClear={() => set('videoKey', '')}
+                onUploaded={(r) =>
+                  setForm((f) => ({
+                    ...f,
+                    videoKey: r.videoKey ?? f.videoKey,
+                    // 服务端会顺手抽首帧当封面，但**只在运营没有手选封面时**补上，不覆盖人工选择
+                    coverKey: f.coverKey || r.coverKey || '',
+                  }))
+                }
+              />
+            </div>
           </Field>
           <Field label="时长(秒)">
             <InputNumber
@@ -620,7 +670,9 @@ export default function WorksPage() {
 
         <div style={{ margin: '20px 0 8px', fontWeight: 600 }}>同款配方</div>
         <div style={{ color: '#999', fontSize: 12, marginBottom: 12 }}>
-          小程序端「生成同款」会把这些值预填进创作页；「AI 直接生成」则按它们自动跑文案 + 分镜。
+          小程序端「生成同款」会把这些值预填进创作页。填了分镜骨架的话，创作会直接按它预置好分镜
+          （不再走 AI 分镜、也不扣那笔积分），用户可以在拍摄页逐条改，或用「重新生成」换成 AI 版。
+          文案款式 / 复杂度 / 标题建议一律只是预填，用户在创作页仍可改。
         </div>
         <FieldGroup labelWidth={110}>
           <Field label="文案款式">
@@ -655,7 +707,10 @@ export default function WorksPage() {
               placeholder="如 前 3 秒直接上出锅镜头，钩子够快"
             />
           </Field>
-          <Field label="分镜骨架" help="详情页展示的镜头结构，也是一键生成的兜底（最多 20 条）">
+          <Field
+            label="分镜骨架"
+            help="最多 20 条。详情页用它展示镜头结构；小程序「生成同款」会把它直接预置成创作的分镜（省掉一次 AI 分镜扣费），用户可逐条改或重新生成。"
+          >
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               {form.shots.map((s, i) => (
                 <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>

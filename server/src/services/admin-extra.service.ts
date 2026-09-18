@@ -396,13 +396,22 @@ export async function adminOpenMembership(
 
 export async function adminListRenderTasks(
   prisma: PrismaClient,
-  q: { merchantId?: bigint; status?: string; grade?: 'BASIC' | 'AI' | 'PREMIUM'; page?: number; pageSize?: number },
+  q: {
+    merchantId?: bigint
+    status?: string
+    /** 多状态（或关系）。与 `status` 同时传时两个条件都会生效（交集），调用方不要混用 */
+    statuses?: string[]
+    grade?: 'BASIC' | 'AI' | 'PREMIUM'
+    page?: number
+    pageSize?: number
+  },
 ) {
   const page = q.page ?? 1
   const pageSize = Math.min(q.pageSize ?? 20, 100)
   const where: Prisma.RenderTaskWhereInput = {
     ...(q.merchantId ? { merchantId: q.merchantId } : {}),
     ...(q.status ? { status: q.status } : {}),
+    ...(q.statuses?.length ? { status: { in: q.statuses } } : {}),
     ...(q.grade ? { grade: q.grade } : {}),
   }
   const [list, total] = await Promise.all([

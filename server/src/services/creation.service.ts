@@ -81,6 +81,30 @@ export interface CreateCreationInput {
   userIdea?: string
   track?: CopyTrack
   complexity?: Complexity
+  /**
+   * 同款作品的分镜骨架（来自 excellent_work.recipe_json 的 shotSkeleton）。
+   *
+   * 有值时**在创建同一个事务里落成初始分镜** —— 这是「本地导入的作品，基本配置参数一并导入」
+   * 那件事的落点：用户从优秀作品进创作页，拿到的不只是款式/复杂度，而是**已经拆好的镜头结构**，
+   * 可以直接去拍摄页拍，不用先买一次 AI 分镜。
+   *
+   * 为什么放在创建里而不是另开一个「导入分镜」接口：
+   *   两步会有中间态 —— 创建成功、导入失败时页面上是一条**没有任何分镜**的创作，
+   *   而前端已经把「已预置」的提示打出去了。放进同一个事务就不存在这个状态。
+   *
+   * 用户不满意可以点「重新生成」，那条路走 generateShots：它会**整批替换**（deleteMany 后重建），
+   * 预置的分镜不会和数据混在一起。
+   */
+  shotSkeleton?: RecipeShotSkeleton[]
+}
+
+/** 同款配方里的镜头骨架条目（与 work.service 的 WorkRecipe.shotSkeleton 同形） */
+export interface RecipeShotSkeleton {
+  shotType?: string
+  shotSize?: string
+  durationSuggest?: number
+  line?: string
+  visualReq?: string
 }
 
 export interface CopyResult {
@@ -109,7 +133,7 @@ export async function listCreations(
   prisma: PrismaClient,
   merchantId: bigint,
   storeId?: bigint,
-  opts: { archived?: boolean } = {},
+  opts: { archived?: boolean; mediaBaseUrl?: string } = {},
 ) {
   const rows = await prisma.creation.findMany({
     where: {
@@ -137,10 +161,56 @@ export async function listCreations(
       //   · 每个分镜的 assetId —— 算「素材传了几个」（非空即已上传）
       //   · 最新一条渲染任务的 status —— 判断「是否已合成 / 合成中」
       // 只 select 需要的列、不整行拉；一个创作通常几个到几十个分镜，量可控。
-      shots: { select: { assetId: true } },
+      //
+      // seq + 显式 orderBy 是给**列表封面**用的：封面要认「第一个已上传的视频」，
+      // 不能依赖数组的默认顺序（DB 不保证稳定序，排错会让封面在两次刷新之间跳来跳去）。
+      shots: { select: { assetId: true, seq: true }, orderBy: { seq: 'asc' } },
       renderTasks: { select: { status: true }, orderBy: { id: 'desc' }, take: 1 },
     },
   })
+
+  // 列表封面用的素材：**跨所有创作一次性批量查 + 批量签名**，
+  // 不是「每个创作各查一次」（那才是本段注释一直在防的 N+1）。
+  const coverAssetIds = new Set<bigint>()
+  for (const r of rows) {
+    for (const s of r.shots) if (s.assetId !== null) coverAssetIds.add(s.assetId)
+  }
+  const coverAssets = coverAssetIds.size
+    ? await prisma.mediaAsset.findMany({
+        where: { id: { in: [...coverAssetIds] }, merchantId, deletedAt: null },
+        select: { id: true, storeId: true, type: true, coverKey: true },
+      })
+    : []
+  const coverUrlMap = await signAssetCovers(merchantId, coverAssets, opts.mediaBaseUrl)
+  const coverAssetMap = new Map(coverAssets.map((a) => [a.id, a]))
+
+  /**
+   * 卡片缩略图 = **第一个已上传的、带封面的视频**。
+   *
+   * 两条判据都是刻意的：
+   * · 按 seq 顺序找**已上传**的那个，而不是直接取 seq=1 —— 第一个分镜常常还是空的，
+   *   取 seq=1 会让「传了视频却仍显示默认图」。
+   * · 第一个视频若封面还没生成出来（异步抽帧有延迟），继续往后找**有封面的**，
+   *   而不是就此返回 null —— 宁可显示第二段的缩略图，也比退回默认图标好。
+   * 一个都没有（没传素材 / 全是图 / 素材已被删）才返回 null，前端据此保留默认图标。
+   */
+  const pickCover = (creationStoreId: bigint, shots: { assetId: bigint | null }[]): string | null => {
+    for (const shot of shots) {
+      if (shot.assetId === null) continue
+      const asset = coverAssetMap.get(shot.assetId)
+      // 素材必须属于**本创作的门店**：跨店/越权的 assetId 绝不能被签成封面
+      // （与 getCreation 的归属不变量一致；列表这里不抛错，静默跳过）
+      if (!asset || asset.storeId !== creationStoreId) continue
+      // ⚠ 库里 type 存的是**大写** `VIDEO` / `IMAGE`（实测 media_asset 全表只有这两个值）。
+      //   用小写字面量比会把所有视频都漏掉，表现为「明明传了视频却仍显示默认图标」。
+      //   这里做成大小写不敏感，免得日后写入方改约定又要再修一次。
+      if (asset.type.toLowerCase() !== 'video') continue
+      const url = coverUrlMap.get(asset.id)
+      if (url) return url
+    }
+    return null
+  }
+
   // 附带中文标签与**服务端算好的进度字段**；原始 shots / renderTasks 数组不下发
   return rows.map((r) => {
     const { shots, renderTasks, ...rest } = r
@@ -149,6 +219,8 @@ export async function listCreations(
       shotsTotal: shots.length,
       shotsReady: shots.filter((s) => s.assetId !== null).length,
       renderStatus: renderTasks[0]?.status ?? null,
+      // 卡片缩略图：第一个已上传视频的封面（没有则为 null，前端退回默认图标）
+      coverUrl: pickCover(r.storeId, shots),
       trackLabel: isCopyTrack(r.track) ? COPY_TRACKS[r.track].label : null,
       complexityLabel: isComplexity(r.complexity) ? COMPLEXITIES[r.complexity].label : null,
     }
@@ -226,16 +298,39 @@ export async function createCreation(
     })
     if (!dish) throw new CreationDishMismatchError()
   }
-  return prisma.creation.create({
-    data: {
-      merchantId,
-      storeId: input.storeId,
-      dishId: input.dishId,
-      title: input.title,
-      userIdea: input.userIdea,
-      track: input.track ?? DEFAULT_COPY_TRACK,
-      complexity: input.complexity ?? DEFAULT_COMPLEXITY,
-    },
+  const skeleton = input.shotSkeleton ?? []
+  // 事务：创作行与预置分镜必须同生共死。见 CreateCreationInput.shotSkeleton 的说明
+  // —— 只建成一半的状态（有创作、没分镜）在前端看起来就是「预置失败了」，
+  // 而用户手里已经拿到「已预置 N 个分镜」的提示，只会以为是自己点错了。
+  return prisma.$transaction(async (tx) => {
+    const created = await tx.creation.create({
+      data: {
+        merchantId,
+        storeId: input.storeId,
+        dishId: input.dishId,
+        title: input.title,
+        userIdea: input.userIdea,
+        track: input.track ?? DEFAULT_COPY_TRACK,
+        complexity: input.complexity ?? DEFAULT_COMPLEXITY,
+      },
+    })
+    if (skeleton.length) {
+      await tx.shot.createMany({
+        data: skeleton.map((s, i) => ({
+          creationId: created.id,
+          seq: i + 1,
+          // 空串一律落 null：库里「没填」只留一种形态（与 routes 的 optionalText 同口径）
+          shotType: str(s.shotType),
+          shotSize: str(s.shotSize),
+          durationSuggest: s.durationSuggest ?? null,
+          line: str(s.line),
+          visualReq: str(s.visualReq),
+          // 与 AI 生成的分镜同一个起始状态：素材还没绑
+          status: 'PENDING',
+        })),
+      })
+    }
+    return created
   })
 }
 
@@ -605,6 +700,16 @@ export async function generateShots(
           ? (parsedBody as { shots: unknown[] }).shots
           : []
       // 镜头库 code → id，用于把 AI 选中的拍摄手法落库
+      // ★ 解析出空数组 ≠ 生成成功。
+      //
+      // 模型完全可能返回合法 JSON 却没有分镜（`{}`、`{"shots":[]}`，
+      // 或只写了一段解释而没给数组）。旧写法对这种输入照样往下走：先
+      // `deleteMany` 清空库里已有分镜，再循环 0 次，最后**仍然 `parsed = true`**
+      // ⇒ 前端 `!br.parsed || br.shots.length === 0` 判定「分镜没生成」，
+      // 而那条创作**原本好好的分镜已经被清空**：一次白扣积分 + 静默丢数据。
+      // 现在：空数组直接判失败，并且**在删之前**就退出，库里已有分镜原样保留。
+      if (arr.length === 0) throw new Error('分镜数组为空')
+
       const libs = await prisma.shotLibrary.findMany({
         where: { enabled: true },
         select: { id: true, code: true },
@@ -639,6 +744,12 @@ export async function generateShots(
       shots = await prisma.shot.findMany({ where: { creationId }, orderBy: { seq: 'asc' } })
     } catch {
       parsed = false
+      // 失败时把库里**现有**的分镜一并返回（而不是空数组）：
+      // 一是调用方能区分「这次没生成出新分镜」与「这条创作一条分镜都没有」；
+      // 二是前端提示可以据此说清「原有分镜未受影响」，不让用户以为全丢了。
+      shots = await prisma.shot
+        .findMany({ where: { creationId }, orderBy: { seq: 'asc' } })
+        .catch(() => [])
     }
   }
   return {

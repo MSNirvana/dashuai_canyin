@@ -51,24 +51,57 @@ function maskPhone(phone: string): string {
 
 export class SmsProviderNotConfiguredError extends Error {
   readonly code = 'SMS_PROVIDER_NOT_CONFIGURED'
-  constructor() {
-    super('短信服务未配置，请联系管理员')
+  constructor(message = '短信服务未配置，请联系管理员') {
+    super(message)
     this.name = 'SmsProviderNotConfiguredError'
   }
 }
 
 /**
+ * “没有可用的发送通道”时抛的错。
+ *
+ * ★ 为什么要抽成一个函数：这个错误有**两条**抛出路径 ——
+ *   `SMS_PROVIDER` 未选（mode === 'none'）、以及**选了但配置不齐**（线上就是这种：
+ *   `SMS_PROVIDER=tencent` 而密钥还没填）。两条路径的**用户可见行为必须一致**，
+ *   否则会出现“本地测的时候提示很清楚，线上反而只有一句‘未配置’”这种最难查的差异。
+ *   （实测踩过：2026-09-18 只改了 mode==='none' 那条，而线上恰好走的是另一条。）
+ *
+ * 测试期最常见的困惑是“测试者用了一个没进白名单的号”（码本来就发不出去），
+ *   而默认文案会把他引向“等运维修通道”，白等一场。
+ *   所以只在**后门开着**时补一句；后门关着时（正式运营）用户看到的仍是原话。
+ */
+function smsUnavailableError(): SmsProviderNotConfiguredError {
+  return new SmsProviderNotConfiguredError(
+    smsTestCodeConfig()
+      ? '测试期仅名单内的测试号码可登录，请联系管理员加入名单'
+      : undefined,
+  )
+}
+
+/**
  * 短信测试码（联调期用固定验证码登录，不必每次去服务端日志里捞）。
  *
- * ★ 这是一个**登录后门**，所以照 `devLogin()` 的同一套规矩上了三道闸门，缺一不可：
- *   ① `NODE_ENV !== 'production'` —— 生产环境整块失效，就算把变量写进线上 .env 也没用；
+ * ★ 这是一个**登录后门**，所以照 `devLogin()` 的同一套规矩上了**四道**闸门，缺一不可：
+ *   ① `NODE_ENV !== 'production'`（生产整块失效）；
  *   ② `SMS_TEST_CODE` 必须是 **6 位数字**（留空 = 关闭）；
- *   ③ `SMS_TEST_CODE_PHONES` 必须**非空**，且该手机号在名单里。
+ *   ③ `SMS_TEST_CODE_PHONES` 必须**非空**，且该手机号在名单里；
+ *   ④ 若 ① 不成立（确实在 production）：必须**再**显式声明 `SMS_TEST_CODE_ALLOW_PROD=true`。
+ *
+ * ★ 为什么会有闸门 ① 的“破例开关”（2026-09-18 加）：
+ *   体验版要发给店外的测试者，而当时正式登录通道**两条都不通** —— 短信签名还在运营商报备
+ *   （`SMS_PROVIDER` 未配 ⇒ 发码直接 1004），微信一键登录要求小程序已认证。
+ *   于是“能不能登进去”变成了“能不能测试”的前提，只能在线上开一个受控的口子。
+ *
+ *   破例刻意做成**四件事同时成立**才生效：production ＋ 码是 6 位数字 ＋ 白名单非空 ＋
+ *   `SMS_TEST_CODE_ALLOW_PROD === 'true'`。前三条堵住“任意号输固定码就登”（本设计里**表达不出无差别后门**），
+ *   最后一条让“这是生产环境的登录后门”在服务器 `.env` 里**一眼可见**。
+ *
+ *   ⚠ 备案 / 小程序认证通过、真实短信通道打开之后，**必须**从服务器 `.env` 删掉：
+ *   `SMS_TEST_CODE` / `SMS_TEST_CODE_PHONES` / `SMS_TEST_CODE_ALLOW_PROD` / `DEV_LOGIN`。
  *
  * ★ 为什么白名单是"必填"而不是"留空 = 所有号"：
  *   能用一个变量把**任意手机号**变成「输 123456 就能登」，风险太大了 ——
- *   线上只要漏配一处，代价就是全部商家账号。要求两个变量同时给对，
- *   「无差别后门」这件事在本设计里**表达不出来**。
+ *   线上只要漏配一处，代价就是全部商家账号。「无差别后门」这件事在本设计里**表达不出来**。
  *
  * ★ 测试码只替换**码值**，不豁免发送流程：`verifyCode()` 仍要求该手机号有一条
  *   未过期、未使用的记录 ⇒ 必须先点「获取验证码」，每号每日限额与 IP 限频照旧生效。
@@ -80,14 +113,17 @@ export class SmsProviderNotConfiguredError extends Error {
  * 与 `smsProviderMode(env)` 同款签名：env 可注入，便于离线契约测试（`npm run sms:verify` 的 E 段）。
  */
 export function smsTestCodeConfig(env: NodeJS.ProcessEnv = process.env): { code: string; phones: string[] } | null {
-  if (env.NODE_ENV === 'production') return null
+  // ② 码值形态
   const code = (env.SMS_TEST_CODE ?? '').trim()
   if (!/^\d{6}$/.test(code)) return null
+  // ③ 白名单必须非空 —— 故意不支持“留空 = 所有号”
   const phones = (env.SMS_TEST_CODE_PHONES ?? '')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
   if (!phones.length) return null
+  // ① 环境：生产**默认整块失效**；要在线上启用，必须再显式声明一次。
+  if (env.NODE_ENV === 'production' && env.SMS_TEST_CODE_ALLOW_PROD !== 'true') return null
   return { code, phones }
 }
 
@@ -130,14 +166,23 @@ export async function sendCode(prisma: PrismaClient, phone: string, ip?: string)
 
   if (testCode) {
     // 联调分支：不调真实通道。否则「签名没过审 / 管道没开」时整条链路一步都走不动。
-    console.log(`[SMS test] phone=${maskPhone(phone)} 已使用测试码下发（SMS_TEST_CODE 生效，未调用真实通道）`)
+    // ★ 它**排在下面那条 production 检查之前** —— 这正是白名单号码在生产环境也能发码的原因。
+    const prodHint = process.env.NODE_ENV === 'production'
+      ? ' ⚠ 当前是 production 环境，这是登录后门，尽快删除'
+      : ''
+    console.log(
+      `[SMS test] phone=${maskPhone(phone)} 已使用测试码下发（SMS_TEST_CODE 生效，未调用真实通道）${prodHint}`,
+    )
     return { cooldownSec: RESEND_COOLDOWN_SEC }
   }
 
   const mode = smsProviderMode()
   if (process.env.NODE_ENV === 'production' && mode === 'none') {
     await prisma.smsCode.delete({ where: { id: record.id } })
-    throw new SmsProviderNotConfiguredError()
+    // ★ 这里的文案要能自证真因。测试期最常见的情形是“测试者用了一个没进白名单的号”，
+    //   而默认文案“短信服务未配置”会把他引向“等运维修短信通道”，白等一场。
+    //   所以只在**测试码后门开着**时补一句；后门关着时普通用户看到的仍是原话。
+    throw smsUnavailableError()
   }
   if (mode === 'none') {
     // 本地联调时把验证码打到日志，否则没有短信通道就没法登录。
@@ -156,7 +201,7 @@ export async function sendCode(prisma: PrismaClient, phone: string, ip?: string)
     const cfg = readTencentSmsConfig()
     if (!cfg) {
       await prisma.smsCode.delete({ where: { id: record.id } })
-      throw new SmsProviderNotConfiguredError()
+      throw smsUnavailableError()
     }
     try {
       await sendSmsViaTencent(cfg, phone, code)

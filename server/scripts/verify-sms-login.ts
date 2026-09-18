@@ -1,6 +1,6 @@
 // 短信登录链路契约测试。
 //
-// 验证六件事：
+// 验证七件事：
 //   A. `smsProviderMode()` —— 只认 `tencent`，未知取值一律视为「未配置」（不猜、不静默降级）
 //   B. `readTencentSmsConfig()` —— 五项缺任一即为 null；region 默认 ap-guangzhou
 //   C. 安全性质：配置不全时**绝不假装发送成功**（生产必须明确失败，不能 fail-open）
@@ -15,6 +15,10 @@
 //      白名单必须非空且命中 —— 三条缺任一即自动关闭。
 //   F. 测试码的**接线**：`sendCode()` 真的走了固定码分支、错码仍被拒、码用一次即作废、
 //      非白名单号照旧走真实通道。
+//   G. ★ 生产环境的破例开关（`SMS_TEST_CODE_ALLOW_PROD`）：默认仍然关着、
+//      开了也**只认白名单**、名单外的报错能自证真因。
+//      它允许后门在 production 生效，所以是本文件里最该被测死的一段 ——
+//      背景见 src/auth/sms.ts::smsTestCodeConfig 的注释。
 //
 // A~C、E 是纯函数测试（注入 env，不碰网络与数据库）。
 // D、F 需要数据库；D 还依赖外网（用假密钥真实请求腾讯云以取得一个确定的失败）：
@@ -25,7 +29,14 @@
 import '../src/env.js'
 import { prisma } from '../src/db.js'
 import { smsProviderMode, readTencentSmsConfig, missingTencentSmsKeys, tencentSmsConfigured, SmsSendFailedError } from '../src/auth/sms-provider.js'
-import { sendCode, verifyCode, smsTestCodeConfig, smsTestCodeFor, SmsCodeInvalidError } from '../src/auth/sms.js'
+import {
+  sendCode,
+  verifyCode,
+  smsTestCodeConfig,
+  smsTestCodeFor,
+  SmsCodeInvalidError,
+  SmsProviderNotConfiguredError,
+} from '../src/auth/sms.js'
 
 let pass = 0
 let fail = 0
@@ -205,8 +216,42 @@ async function main(): Promise<void> {
     [TEST_PHONE, '13800000001'],
   )
   check(
-    'E8 ★ production 下整块失效（哪怕两个变量都给对）',
+    'E8 ★ production 且**未声明破例** → 整块失效（防「本地 .env 整份复制到服务器」）',
     smsTestCodeConfig({ SMS_TEST_CODE: '123456', SMS_TEST_CODE_PHONES: TEST_PHONE, NODE_ENV: 'production' }),
+    null,
+  )
+  // ★ 破例开关（2026-09-18）：线上测试期要能开，但必须“四件事同时成立”。
+  //   E8a 管“能开”，E8b 管“不能随手开”，E8c 管“开了也不许退化成无差别入口”。
+  check(
+    'E8a ★ production + 显式声明破例 → 生效（线上测试期的唯一口子）',
+    smsTestCodeConfig({
+      SMS_TEST_CODE: '123456',
+      SMS_TEST_CODE_PHONES: TEST_PHONE,
+      NODE_ENV: 'production',
+      SMS_TEST_CODE_ALLOW_PROD: 'true',
+    }),
+    { code: '123456', phones: [TEST_PHONE] },
+  )
+  for (const bad of ['1', 'TRUE', 'True', 'yes', 'on', ' ']) {
+    check(
+      `E8b 破例开关="${bad}" ≠ 字面 'true' → 仍失效`,
+      smsTestCodeConfig({
+        SMS_TEST_CODE: '123456',
+        SMS_TEST_CODE_PHONES: TEST_PHONE,
+        NODE_ENV: 'production',
+        SMS_TEST_CODE_ALLOW_PROD: bad,
+      }),
+      null,
+    )
+  }
+  check(
+    'E8c ★ 破例 + production 但白名单为空 → 仍 null（破例也不许退化成无差别后门）',
+    smsTestCodeConfig({
+      SMS_TEST_CODE: '123456',
+      SMS_TEST_CODE_PHONES: ' , ',
+      NODE_ENV: 'production',
+      SMS_TEST_CODE_ALLOW_PROD: 'true',
+    }),
     null,
   )
   check('E9 命中的号码拿到固定码', smsTestCodeFor(TEST_PHONE, { SMS_TEST_CODE: '123456', SMS_TEST_CODE_PHONES: TEST_PHONE }), '123456')
@@ -306,6 +351,88 @@ async function main(): Promise<void> {
       check('F10 ★ 非白名单号仍走真实通道（假密钥 ⇒ 照旧失败）', outsiderThrown instanceof SmsSendFailedError, true)
     } finally {
       for (const [k, v] of Object.entries(savedF)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+      await prisma.smsCode.deleteMany({ where: { phone: { in: [TEST_PHONE, NON_WHITELIST] } } })
+    }
+  }
+
+
+  // ─────────── G. 生产环境的破例开关 ───────────
+  //
+  // 2026-09-18 加。背景：体验版要发给店外的测试者，而当时正式登录通道**两条都不通**
+  // （短信签名在运营商报备 ⇒ SMS_PROVIDER 未配；微信一键登录要求小程序已认证），
+  // 于是「能不能登进去」成了「能不能测试」的前提，只能在线上开一个受控的口子。
+  //
+  // 这条口子必须被钉死三件事，缺一条它就从功能变成事故：
+  //   ① 默认仍然关着（不声明 ALLOW_PROD ⇒ 生产整块失效）；
+  //   ② 破了例也**只对白名单号**生效（不许退化成无差别入口）；
+  //   ③ 名单外的号拿到的报错要能自证真因（否则测试者会一直干等短信通道）。
+  //
+  // 本段用 `SMS_PROVIDER=''`（而不是 F 段的假密钥）：production + 未配置通道会直接抛
+  // SmsProviderNotConfiguredError，**不发任何真实请求**，所以跑得又快又确定。
+  console.log('\nG. 生产环境的破例开关 —— 默认关着，开了也只认名单')
+  const G_KEYS = ['SMS_PROVIDER', 'NODE_ENV', 'SMS_TEST_CODE', 'SMS_TEST_CODE_PHONES', 'SMS_TEST_CODE_ALLOW_PROD']
+  const PROD_BASE: Record<string, string> = {
+    SMS_PROVIDER: '',
+    NODE_ENV: 'production',
+    SMS_TEST_CODE: '123456',
+    SMS_TEST_CODE_PHONES: TEST_PHONE,
+  }
+  if (!dbReady) {
+    skipped('G 段全部用例', '数据库不可用')
+  } else {
+    const savedG: Record<string, string | undefined> = {}
+    for (const k of G_KEYS) savedG[k] = process.env[k]
+    /** 套用一组生产环境变量；未给出的键一律删除，免得上一个用例的值残留 */
+    const applyG = (extra: Record<string, string> = {}) => {
+      const want: Record<string, string> = { ...PROD_BASE, ...extra }
+      for (const k of G_KEYS) {
+        if (k in want) process.env[k] = want[k]
+        else delete process.env[k]
+      }
+    }
+    try {
+      await prisma.smsCode.deleteMany({ where: { phone: { in: [TEST_PHONE, NON_WHITELIST] } } })
+
+      applyG()
+      let g1: unknown = null
+      try {
+        await sendCode(prisma, TEST_PHONE)
+      } catch (e) {
+        g1 = e
+      }
+      check(
+        'G1 ★ production + 未声明破例 → 后门整块失效（落到「通道未配置」）',
+        g1 instanceof SmsProviderNotConfiguredError,
+        true,
+      )
+
+      applyG({ SMS_TEST_CODE_ALLOW_PROD: 'true' })
+      let g2: unknown = null
+      try {
+        await sendCode(prisma, TEST_PHONE)
+      } catch (e) {
+        g2 = e
+      }
+      // 「不抛错」的证明力同 F1：通道是空的，能成功只可能是固定码分支接管了
+      check('G2 ★ production + 声明破例 → 白名单号可用固定码（不抛错）', g2, null)
+
+      let g3: unknown = null
+      try {
+        await sendCode(prisma, NON_WHITELIST)
+      } catch (e) {
+        g3 = e
+      }
+      check('G3 ★ 破了例也只认名单（非白名单号照旧被拒）', g3 instanceof SmsProviderNotConfiguredError, true)
+      check(
+        'G4 测试期报错点明「仅名单内号码可登录」（不是笼统的「未配置」，测试者才知道该找谁）',
+        (g3 as Error | null)?.message.includes('名单') ?? false,
+        true,
+      )
+    } finally {
+      for (const [k, v] of Object.entries(savedG)) {
         if (v === undefined) delete process.env[k]
         else process.env[k] = v
       }

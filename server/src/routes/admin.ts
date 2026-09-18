@@ -22,6 +22,7 @@ import * as ttsSvc from '../services/tts-provider.service.js'
 import { PackageNotFoundError } from '../services/order.service.js'
 import * as payReconcile from '../services/pay-reconcile.service.js'
 import * as premium from '../render/premium.js'
+import * as premiumDeliverSvc from '../services/premium-delivery.service.js'
 import { invalidate } from '../lib/settings.js'
 import type { Prisma } from '@prisma/client'
 
@@ -309,6 +310,16 @@ router.post('/bean/adjust', async (req, res) => {
 const renderQ = z.object({
   merchantId: z.coerce.bigint().optional(),
   status: z.string().optional(),
+  /**
+   * 多状态筛选（逗号分隔）。
+   *
+   * 为什么另开一个参数而不是让 `status` 接受数组：「精品接单」页默认要的是
+   * **待接单 + 剪辑中**这一个语义集合（「手上还有活吗」），而不是两个独立的筛选值。
+   * 让 `status` 同时接受字符串与数组，会把一个 z.string 悄悄变成联合类型，
+   * 而调用方（旧页面）传的仍是字符串 —— 这种「看着兼容、类型其实变了」的改动
+   * 最容易在下一次编辑时踩空。
+   */
+  statuses: z.string().max(240).optional(),
   grade: z.enum(['BASIC', 'AI', 'PREMIUM']).optional(),
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
@@ -316,7 +327,19 @@ const renderQ = z.object({
 router.get('/render/tasks', async (req, res) => {
   try {
     const q = renderQ.parse(req.query)
-    ok(res, await adminExtra.adminListRenderTasks(prisma, q))
+    // ★ 拆出 statuses 再展开：zod 的 `.optional()` 在展开后仍带 `| undefined`，
+    //   而 service 的入参是 `string[] | undefined` —— 直接 `...q` 会让
+    //   「已解析成数组」这件事在类型上丢掉（运行时没问题，但类型检查会挡下）。
+    const { statuses, ...rest } = q
+    ok(
+      res,
+      await adminExtra.adminListRenderTasks(prisma, {
+        ...rest,
+        ...(statuses
+          ? { statuses: statuses.split(',').map((s) => s.trim()).filter(Boolean) }
+          : {}),
+      }),
+    )
   } catch (e) {
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     fail(res, 500, '查询失败', 500)
@@ -326,10 +349,62 @@ router.get('/render/tasks', async (req, res) => {
 // ──────────────────────── 精品生成 · 剪辑工作台 ────────────────────────
 const deliverInput = z.object({
   resultKey: z.string().min(1).max(512),
-  previewKey: z.string().max(512).optional(),
+  previewKey: z.string().max(512).nullable().optional(),
   resultSize: z.coerce.bigint().optional(),
   durationMs: z.coerce.number().int().min(0).optional(),
 })
+
+/**
+ * 交付素材上传（multipart，字段名固定 `file`，另带 `kind=video|cover`）。
+ *
+ * 存在的理由：交付接口收的是**对象键**，而后台此前没有上传端点 ⇒ 剪辑师只能在别处把
+ * 成片传上去再把键抄进来。抄错一位的表现是「交付成功、用户端永远播不出来」，
+ * 库里完全看不出问题。这里改成「选文件 → 回填键」，并把时长/封面一起带出来。
+ *
+ * ⚠ multer 实例自己一个（limits 必须绑本功能的常量），但**错误翻译复用下面的
+ *   `uploadSingle()` 工厂**（本函数用到的它在文件更下面定义 —— 函数声明会提升，
+ *   此处调用是安全的）。这一块是本项目第三个上传点了，各抄一份的代价已经显现过：
+ *   「文件不能超过 XMB」这类文案漏改一处，表现就是运营看着一个错误的数字去压缩文件。
+ */
+const deliverUpload = multer({
+  dest: join(localStorageRoot(), '.incoming'),
+  limits: { fileSize: premiumDeliverSvc.MAX_DELIVER_VIDEO_BYTES },
+})
+
+/** 错误翻译走共享工厂（定义在本文件更下面 —— 函数声明会提升，此处求值安全） */
+const deliverUploadSingle = uploadSingle(deliverUpload, premiumDeliverSvc.MAX_DELIVER_VIDEO_BYTES)
+
+router.post('/render/tasks/:id/deliver/upload', deliverUploadSingle, async (req, res) => {
+  const file = req.file
+  if (!file) return fail(res, 3001, '缺少上传文件', 400)
+  try {
+    const kind = z
+      .enum(['video', 'cover'])
+      .parse(req.query.kind ?? (req.body as { kind?: string })?.kind)
+    const id = idParam(req.params.id, 'id')
+
+    if (kind === 'cover') {
+      if (file.size > premiumDeliverSvc.MAX_DELIVER_COVER_BYTES) {
+        const maxMb = Math.round(premiumDeliverSvc.MAX_DELIVER_COVER_BYTES / 1024 / 1024)
+        return fail(res, 400, `封面不能超过 ${maxMb}MB`, 400)
+      }
+      return ok(res, await premiumDeliverSvc.saveDeliverCover(prisma, id, file.path))
+    }
+    return ok(res, await premiumDeliverSvc.saveDeliverVideo(prisma, id, file.path))
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误：kind 必须是 video 或 cover', 400)
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof premiumDeliverSvc.DeliverAssetError) return fail(res, e.code, e.message, e.httpStatus)
+    console.error('[admin] 交付素材上传失败:', e)
+    return fail(res, 500, '上传失败', 500)
+  } finally {
+    // ★ 兜底清理。service 内部也会清（正常路径），但「kind 不合法」「编号不合法」
+    //   「封面超限」这三个分支在进 service 之前就 return 了，走不到那里。
+    //   multer 全部落在 storage/.incoming/，漏一个就是一次永久占盘。
+    await removeLocalFile(file.path)
+  }
+})
+
 router.post('/render/tasks/:id/claim', async (req, res) => {
   try {
     ok(res, await premium.claimPremiumTask(prisma, idParam(req.params.id, 'id')))
@@ -785,6 +860,83 @@ router.post('/works/from-render-task', async (req, res) => {
   }
 })
 
+// ──────────────────────── 平台级素材上传（作品 / 教学视频） ────────────────────────
+//
+// 这两条上传通道是一条：平台级内容没有商家上下文（admin 路由只有 req.adminId），
+// 所以都不带 storeId、不锁商户前缀、不过商家的存储配额；也都要求
+// **服务端先收流、再按文件头判类型**（客户端声明的 Content-Type 与文件名都不可信）。
+// 差别只有键前缀（works/ 与 tutorials/）和大小上限，所以公共件只留一份 ——
+// 这层原本写在「教学中心」那一段里，第二个调用方（作品）出现时就该提出来，
+// 否则「上传失败」的错误文案与 multer 的错误映射会被抄成两份、然后各改各的。
+//
+// 为什么不收 raw body（像轮播图那样）而收 multipart：这两类是**视频**，100MB 级。
+// raw 会把整段字节读进内存再交给业务层；multer 直接落盘中转，之后的
+// ffmpeg 抽帧与流式上传都能按文件路径处理，内存占用与文件大小无关。
+// 轮播图 ≤5MB，raw 反而更简单（少一层表单解析）—— 两条路按体积分。
+
+/**
+ * 包一层，把 multer 的错误转成可读的业务码。
+ * 不拦的话 multer 走 `next(err)` 一路落到全局 errorHandler，变成「服务器内部错误 500」
+ * —— 运营看到 500 完全不知道是自己的文件太大。
+ * ⚠ 注意 client_max_body_size：nginx 先于本层拒绝时返回的是 413 页面，
+ *   与本函数无关（deploy/nginx/dashuai-admin.conf 已同步放开到 110m）。
+ */
+function uploadSingle(upload: multer.Multer, maxBytes: number) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    upload.single('file')(req, res, (err: unknown) => {
+      if (!err) return next()
+      const tooLarge = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE'
+      const maxMb = Math.round(maxBytes / 1024 / 1024)
+      fail(res, 400, tooLarge ? `文件不能超过 ${maxMb}MB` : '文件上传失败，请重试', 400)
+    })
+  }
+}
+
+const workUpload = multer({
+  dest: join(localStorageRoot(), '.incoming'),
+  // 单文件上限，与 MAX_WORK_VIDEO_BYTES 同一个数字（超限的文件根本不落盘）
+  limits: { fileSize: workSvc.MAX_WORK_VIDEO_BYTES },
+})
+
+/**
+ * 作品视频 / 封面上传（multipart，字段名固定 `file`，另有 `kind=video|cover`）。
+ * 返回**对象键**而不是可播放地址：键写进 excellent_work 那两列，地址每次读时现签
+ * （私有桶，固定键覆盖上传还会让微信/CDN 继续显示旧图，见 work.service 的建键说明）。
+ *
+ * 视频上传成功时会顺手抽一帧当封面（抽帧失败**不阻断**，回 coverKey: null，
+ * 运营仍可在列表上点「重抽封面」补 —— 不该因为封面把整个上传退掉）。
+ */
+router.post('/works/upload', uploadSingle(workUpload, workSvc.MAX_WORK_VIDEO_BYTES), async (req, res) => {
+  const file = req.file
+  if (!file) return fail(res, 3001, '缺少上传文件', 400)
+
+  // kind 从 query 或表单字段取（两种调用方式都支持）
+  let kind: 'video' | 'cover'
+  try {
+    kind = z.enum(['video', 'cover']).parse(req.query.kind ?? (req.body as { kind?: string })?.kind)
+  } catch {
+    await removeLocalFile(file.path)
+    return fail(res, 400, '参数错误：kind 必须是 video 或 cover', 400)
+  }
+
+  try {
+    if (kind === 'cover') {
+      // 封面上限比 multer 的 100MB 严得多，所以在拿到文件之后再单独判一次
+      if (file.size > workSvc.MAX_WORK_COVER_BYTES) {
+        await removeLocalFile(file.path)
+        const maxMb = Math.round(workSvc.MAX_WORK_COVER_BYTES / 1024 / 1024)
+        return fail(res, 400, `封面不能超过 ${maxMb}MB`, 400)
+      }
+      return ok(res, await workSvc.saveWorkCover(file.path))
+    }
+    ok(res, await workSvc.saveWorkVideo(file.path))
+  } catch (e) {
+    if (e instanceof workSvc.WorkUploadError) return fail(res, 400, e.message, 400)
+    console.error('[admin] 作品素材上传失败:', e)
+    fail(res, 500, '上传失败', 500)
+  }
+})
+
 // ──────────────────────── 素材预览 ────────────────────────
 /**
  * 把 COS 对象键签成临时地址，供运营在上架前核对封面 / 视频（与成片同一存储）。
@@ -981,22 +1133,6 @@ const tutorialUpload = multer({
   limits: { fileSize: tutorialSvc.MAX_TUTORIAL_VIDEO_BYTES },
 })
 
-/**
- * 包一层，把 multer 的错误转成可读的业务码。
- * 不拦的话 multer 走 `next(err)` 一路落到全局 errorHandler，变成「服务器内部错误 500」
- * —— 运营看到 500 完全不知道是自己的文件太大。
- * ⚠ 注意 client_max_body_size：nginx 先于本层拒绝时返回的是 413 页面，
- *   与本函数无关（deploy/nginx/dashuai-admin.conf 已同步放开到 110m）。
- */
-function adminUploadSingle(req: Request, res: Response, next: NextFunction): void {
-  tutorialUpload.single('file')(req, res, (err: unknown) => {
-    if (!err) return next()
-    const tooLarge = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE'
-    const maxMb = Math.round(tutorialSvc.MAX_TUTORIAL_VIDEO_BYTES / 1024 / 1024)
-    fail(res, 400, tooLarge ? `文件不能超过 ${maxMb}MB` : '文件上传失败，请重试', 400)
-  })
-}
-
 router.get('/tutorials', async (req, res) => {
   try {
     const q = z
@@ -1068,7 +1204,7 @@ router.delete('/tutorials/:id', async (req, res) => {
  * 教学视频 / 封面上传（multipart，字段名固定为 `file`，另有 `kind=video|cover`）。
  * 返回对象键而不是可播放地址：键要存进 tutorial_video，地址每次读时现签。
  */
-router.post('/tutorials/upload', adminUploadSingle, async (req, res) => {
+router.post('/tutorials/upload', uploadSingle(tutorialUpload, tutorialSvc.MAX_TUTORIAL_VIDEO_BYTES), async (req, res) => {
   const file = req.file
   if (!file) return fail(res, 3001, '缺少上传文件', 400)
 

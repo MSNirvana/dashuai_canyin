@@ -15,6 +15,7 @@ import { getNumber, getDecimal } from '../lib/settings.js'
 import { decFromNumber, decFromString, decMulCeil } from '../lib/decimal.js'
 import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } from '../domain/request.js'
 import { ChatCutOptionsSchema, DEFAULT_CHATCUT_OPTIONS, chatCutConfigured, type ChatCutOptions } from '../render/chatcut.js'
+import { userFacingRenderError } from '../render/user-errors.js'
 
 // 计费点数（后台可配置化见 docs/05，此处为默认值）
 export const RENDER_BEAN_FULL = 30n
@@ -42,15 +43,38 @@ export const GRADE_RATIO_DEFAULT: Record<RenderGrade, number> = {
   PREMIUM: 3,
 }
 
+/**
+ * 档位的用户可见名称。**服务端唯一源** —— 报错文案里必须说清是「哪一档」被占住了，
+ * 否则三档并行之后「已有任务进行中」这句会让用户以为整页都不能提交。
+ * 客户端卡片上的名字是另一套展示文案，两边不必强求字面一致（那边是营销语，这边是提示语）。
+ */
+export const GRADE_LABEL: Record<RenderGrade, string> = {
+  BASIC: '基础生成',
+  AI: 'AI 生成',
+  PREMIUM: '精品生成',
+}
+
 export class RenderNoAssetError extends Error {
   constructor() {
     super('请先为至少一个分镜上传素材')
     this.name = 'RenderNoAssetError'
   }
 }
+/**
+ * 同一创作、**同一档位**已有一个未收敛的任务。
+ *
+ * ★ 为什么必须带档位：三档互不干扰是产品约定 —— AI 档在跑不该挡住基础档提交。
+ *   `where` 里漏掉 grade 就会退化成「整条创作只能有一个任务」，而这条错误文案会把人
+ *   引到「等一等」上，用户永远想不到真正的原因是「另一个档位占着」。
+ *   所以 message 里既说清是哪一档、也明说其他档位不受影响。
+ */
 export class RenderAlreadyRunningError extends Error {
-  constructor() {
-    super('已有合成任务进行中')
+  constructor(grade?: RenderGrade) {
+    super(
+      grade
+        ? `${GRADE_LABEL[grade]}已有任务在进行中，请等它完成后再提交这一档（其他档位不受影响）`
+        : '已有合成任务进行中',
+    )
     this.name = 'RenderAlreadyRunningError'
   }
 }
@@ -130,7 +154,15 @@ export interface RenderTaskView {
   resultSize: string | null
   durationMs: number | null
   errorCode: string | null
-  errorMsg: string | null
+  /**
+   * **用户可见**的失败文案（已脱敏）。
+   *
+   * ★ 这里刻意不叫 errorMsg、也不回传原文：`render_task.error_msg` 是**运维字段**，
+   *   里面会有第三方产品名、服务端本机绝对路径、HTTP 报文；而本接口是**小程序**读的，
+   *   那条文案会被 `pages/render/compose.tsx` 原样渲染给商户。
+   *   分流规则见 `src/render/user-errors.ts`（后台走 admin-extra 的裸查询，不受影响）。
+   */
+  errorText: string | null
   createdAt: string
   finishAt: string | null
   assignedAt: string | null
@@ -184,7 +216,7 @@ function toView(row: {
     resultSize: row.resultSize?.toString() ?? null,
     durationMs: row.durationMs,
     errorCode: row.errorCode,
-    errorMsg: row.errorMsg,
+    errorText: userFacingRenderError(row.errorMsg),
     createdAt: row.createdAt.toISOString(),
     finishAt: row.finishAt?.toISOString() ?? null,
     assignedAt: row.assignedAt?.toISOString() ?? null,
@@ -310,10 +342,12 @@ export async function submitRender(
   // ★ 提交前档位可用性校验（在 freeze 之前）：
   //   AI 档的 worker 分支是「p.aiMode && !chatCutConfigured() → 直接抛错」，
   //   即通道没配好时 AI 档 100% 失败。旧行为会先冻结 1.5 倍费用再退款，用户白等一轮。
+  // ★ 文案只说「档位暂时不可用」，不写通道/集成细节：这句话会原样弹给商户，
+  //   「外部剪辑通道未配置完整」对用户既不可操作、又暴露了实现细节。
   if (grade === 'AI' && !chatCutConfigured()) {
     throw new RenderGradeUnavailableError(
       grade,
-      'AI 智能档暂不可用（外部剪辑通道未配置完整），请先使用基础档',
+      `${GRADE_LABEL.AI}暂不可用，正在升级维护中，请先选择${GRADE_LABEL.BASIC}`,
     )
   }
 
@@ -367,11 +401,21 @@ export async function submitRender(
     }
     // 锁创作行，序列化同一创作的并发提交（MySQL InnoDB 行锁）
     await tx.$queryRaw`SELECT id FROM creation WHERE id = ${creationId} FOR UPDATE`
-    // PREMIUM 任务在人工队列里不算「机器合成进行中」，但同样不允许重复提交
+    // ★ 只在**同一档位**内去重（三档互不干扰）：
+    //   基础/智能/精品是三条独立管线（本地 ffmpeg 粗剪 / 云端智能剪辑 / 人工队列），
+    //   互相之间不共用中间产物、也不共用队列容量，所以 AI 档在跑没有理由挡住基础档提交。
+    //   PREMIUM 任务在人工队列里同样只占住 PREMIUM 这一个位置。
+    //   ⚠ 这里漏写 grade 就会退回旧行为：整条创作只能有一个活跃任务 —— 表现为
+    //   「AI 生成中的时候基础生成点不动」（服务端 409 4001），而错误文案又会把用户引向「等一等」。
+    //   行锁仍保留：它保证「同一档位并发提交两个请求」不会同时通过这道检查（双重扣积分）。
     const running = await tx.renderTask.findFirst({
-      where: { creationId, status: { in: ['QUEUED', 'RUNNING', 'MANUAL_PENDING', 'MANUAL_DOING'] } },
+      where: {
+        creationId,
+        grade,
+        status: { in: ['QUEUED', 'RUNNING', 'MANUAL_PENDING', 'MANUAL_DOING'] },
+      },
     })
-    if (running) throw new RenderAlreadyRunningError()
+    if (running) throw new RenderAlreadyRunningError(grade)
     const task = await tx.renderTask.create({
       data: {
         merchantId,

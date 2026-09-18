@@ -13,7 +13,7 @@ export type StorageMode = 'local' | 'cos'
  * 它与前两个的区别有两点，加新前缀前请一起确认：
  *   1) **公开可读**：COS 模式下上传时对每个对象单独设 `ACL: public-read`（桶仍是私有桶）；
  *   2) **不在 GC 扫描范围内**：gc-orphan-objects.ts 的「默认扫描前缀」与「删除前的硬编码
- *      前缀白名单」两处都只含 `uploads/,renders/,tutorials/`，**都没有 `static/`** ⇒
+ *      前缀白名单」两处都只含 `uploads/,renders/,tutorials/,works/`，**都没有 `static/`** ⇒
  *      这个前缀下的对象永远不会被当成孤儿回收。★ 这一条对它尤其关键：它**从不落库**
  *      （只存在 system_setting 的 JSON 里），所以「登记进 GC 的已引用键集合」这条常规
  *      保命路径对它完全无效，真正保命的就是「不在扫描前缀里」。挪进 uploads/ 会立刻踩雷。
@@ -24,8 +24,16 @@ export type StorageMode = 'local' | 'cos'
  * —— 那条前缀被 upload.service.ts 的越权校验与门店归属校验锁死。
  * 与 static/ 相反，它**必须**在 GC 扫描范围内：这些对象体积大（视频），
  * 而删除教学视频是硬删，靠 GC 兜底回收残留对象。
+ *
+ * `works/` 是「优秀作品」视频与封面的前缀，由 services/work.service.ts 写入。
+ * 与 tutorials/ 同构（平台级、私有桶、播放地址现签），所以两条规矩也一样：
+ * 必须在 GC 扫描范围内（作品是软删，删除后那两个大对象就没了引用，只能靠 GC 回收）。
+ * ★ 为什么不复用早已在用的 `renders/`（存量作品现在是 `renders/1/…`）：
+ *   `renders/` 的语义是**渲染产物**，键里第一段是商户号；把它当平台内容的落点，
+ *   会让「这段视频是谁的」在键上失去区分度，而 work.service 的签名守卫是按前缀放行的。
+ *   存量行继续可读（守卫两个前缀都放行），新上传一律落 works/。
  */
-const ALLOWED_PREFIXES = ['uploads/', 'renders/', 'static/', 'tutorials/']
+const ALLOWED_PREFIXES = ['uploads/', 'renders/', 'static/', 'tutorials/', 'works/']
 const DEFAULT_ROOT = join(process.cwd(), 'storage')
 
 /**
@@ -74,8 +82,31 @@ export async function ensureLocalStorage(): Promise<void> {
   await mkdir(localStorageRoot(), { recursive: true })
 }
 
+/**
+ * 本地对象缺失（对象键对应的文件不在磁盘上）。
+ *
+ * ★ 存在的唯一理由：`copyFile` 抛出的 ENOENT 原文里带着**两侧的绝对路径** ——
+ *   源是本机存储根（`/Users/<开发者>/…/server/storage/uploads/1/x.mp4`），
+ *   目标还是系统临时目录。而这条 message 会一路写进 `render_task.error_msg`，
+ *   该列同时被小程序**直接渲染给商户**（实测存量里就躺着 5 条这样的行）。
+ *   所以这里把它换成「只带对象键」的说法：对外不泄漏机器路径，对内信息量反而更准
+ *   （到底是哪个对象键丢了，比一长串前缀更好查）。
+ */
+export class LocalObjectMissingError extends Error {
+  constructor(public readonly key: string) {
+    super(`源文件不存在或已被清理：${key}`)
+    this.name = 'LocalObjectMissingError'
+  }
+}
+
 export async function copyLocalObjectToFile(key: string, targetPath: string): Promise<void> {
-  await copyFile(localPathForKey(key), targetPath)
+  const source = localPathForKey(key)
+  try {
+    await copyFile(source, targetPath)
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException)?.code === 'ENOENT') throw new LocalObjectMissingError(key)
+    throw e
+  }
 }
 
 export async function copyFileToLocalObject(sourcePath: string, key: string): Promise<number> {
