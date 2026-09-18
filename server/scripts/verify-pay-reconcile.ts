@@ -49,7 +49,25 @@ function fakeQuery(byOrder: Record<string, WxQueryResult>) {
   }
   return { query, calls }
 }
-const REAL = { payMode: () => 'real' as const }
+/** 记录「到底关了哪几笔」的假关单桩 */
+function fakeClose(result: { ok: boolean; note: string }) {
+  const calls: string[] = []
+  const close = async (outTradeNo: string) => {
+    calls.push(outTradeNo)
+    return result
+  }
+  return { close, calls }
+}
+
+/**
+ * 真支付模式 + **默认关单成功**。
+ * ★ 关单桩必须内建在这里：过期单会先关微信侧再置本地状态，
+ *   任何裸 `...REAL` 的调用点若没带 close，就会用真 closeOrder 去打微信。
+ */
+const REAL = {
+  payMode: () => 'real' as const,
+  close: (async () => ({ ok: true, note: 'SUCCESS' })) as (outTradeNo: string) => Promise<{ ok: boolean; note: string }>,
+}
 
 async function cleanup(merchantId: bigint) {
   // 顺序受外键约束：membership 依赖 package/merchant
@@ -179,14 +197,20 @@ async function main() {
       prefix: 'B', refId: beanRef, orderType: 'BEAN', expireAt: new Date(Date.now() - 60_000),
     })
     const { query } = fakeQuery({ [noFresh]: notpay, [noExpired]: notpay })
+    const fc = fakeClose({ ok: true, note: 'SUCCESS' })
 
-    const rFresh = await queryAndSettle(prisma, noFresh, { query, ...REAL })
+    const rFresh = await queryAndSettle(prisma, noFresh, { query, ...REAL, close: fc.close })
     check(rFresh.outcome === 'NOT_PAID', '未过期 → NOT_PAID', rFresh.outcome)
     check((await statusOf(noFresh)).status === 'PENDING', '未过期订单保持 PENDING（用户还可能去付）')
 
-    const rExpired = await queryAndSettle(prisma, noExpired, { query, ...REAL })
+    const rExpired = await queryAndSettle(prisma, noExpired, { query, ...REAL, close: fc.close })
     check(rExpired.outcome === 'CLOSED', '已过期 → CLOSED', rExpired.outcome)
     check((await statusOf(noExpired)).status === 'EXPIRED', '已过期订单置为 EXPIRED', rExpired.status)
+    check(
+      fc.calls.length === 1 && fc.calls[0] === noExpired,
+      '★ 只为「已过期且未支付」那一笔调了微信关单',
+      `calls=[${fc.calls.join(',')}]`,
+    )
   }
 
   // ── ⑤ 关闭 / 撤销类状态 ────────────────────────────────────────
@@ -239,6 +263,32 @@ async function main() {
     const r = await queryAndSettle(prisma, no, { query, ...REAL, merchantId: mid + 999999n })
     check(r.status === 'NOT_FOUND', '非本商户 → NOT_FOUND（用户端接口必须带 merchantId）', r.status)
     check((await statusOf(no)).status === 'PENDING', '订单未被结算', (await statusOf(no)).status)
+  }
+
+  // ── ⑩ 关单失败 ⇒ 绝不置 EXPIRED ────────────────────────────────
+  console.log('\n════ ⑩ 关单失败 ⇒ 绝不置为 EXPIRED（否则留下「本地已关、微信可付」的不可恢复状态）════')
+  {
+    const no = await mkOrder(mid, {
+      prefix: 'B', refId: beanRef, orderType: 'BEAN', expireAt: new Date(Date.now() - 60_000),
+    })
+    const { query } = fakeQuery({ [no]: notpay })
+    const failClose = fakeClose({ ok: false, note: 'WX_PAY_PRIVATE_KEY not set' })
+
+    const r = await queryAndSettle(prisma, no, { query, ...REAL, close: failClose.close })
+    check(r.outcome === 'NOT_PAID', '关单失败 → NOT_PAID（不是 CLOSED）', r.outcome)
+    check(
+      (await statusOf(no)).status === 'PENDING',
+      '★ 订单保持 PENDING，未被置为 EXPIRED',
+      (await statusOf(no)).status,
+    )
+    check(failClose.calls.length === 1, '确实尝试过微信关单', `calls=${failClose.calls.length}`)
+
+    // 下一轮：关单恢复正常 ⇒ 这时才允许置过期（证明「保持 PENDING 等重试」是有效的）
+    const okClose = fakeClose({ ok: true, note: 'SUCCESS' })
+    const r2 = await queryAndSettle(prisma, no, { query, ...REAL, close: okClose.close })
+    check(r2.outcome === 'CLOSED', '下一轮关单成功 → CLOSED', r2.outcome)
+    check((await statusOf(no)).status === 'EXPIRED', '此时才置为 EXPIRED', r2.status)
+    check(okClose.calls.length === 1, '下一轮确实重试了关单', `calls=${okClose.calls.length}`)
   }
 
   // ── ⑨ sweeper：窗口内才查、且不重复补 ──────────────────────────

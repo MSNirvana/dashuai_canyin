@@ -57,6 +57,12 @@ declare module 'cos-nodejs-sdk-v5' {
   }
   interface HeadObjectResult {
     headers?: Record<string, string>
+    // COS 的 HeadObject 在响应体里也直接给出这两个字段（SDK 会解析成驼峰）。
+    // 上传完成确认要按它们核对「对象真实存在、真实大小」——只读 headers 在部分
+    // 代理/版本下拿不到小写的 content-length，两个来源都留着更稳。
+    ContentLength?: string | number
+    ContentType?: string
+    ETag?: string
   }
 
   // 列举桶内对象（存储孤儿对象 GC 用）。IsTruncated 在 COS 响应里是字符串 'true'/'false'，

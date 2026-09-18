@@ -1,13 +1,31 @@
 // AI 场景编排：把「AI 网关调用」和「积分账务」串起来
 // 计费时序：预冻结（标价 × buffer）→ 调用 → 成功按实际成本结算 / 失败全额解冻
 // 铁律：AI 失败或超时一律不扣积分，返回兜底模板
+//
+// ★ 两条与「重放 / 崩溃」相关的硬约束（两条都是靠加列修出来的静默故障）：
+//   1. 结算与释放的金额一律取**首次冻结时的预留快照**（bean_reservation.reserved），
+//      绝不在重放时重新读 `ai_scene.bean_price` —— 价格是运营随时可改的，
+//      拿新价去结旧预留会出现「超扣」「少退」以及只报 `unfreeze exceeds business reservation`
+//      的持续失败（预留永久冻结）。
+//   2. 业务请求带租约（lease_version + lease_expire_at）。进程在「freeze 已提交、
+//      结算尚未执行」之间退出时，该 requestId 的 PENDING 预留既不会被重放推进、
+//      也不属于渲染 sweeper 的管辖范围 ⇒ 积分静默永久冻结。
+//      租约让「无主的 PENDING」可被 ai-recovery 扫到并释放。
 
+import { randomUUID } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import { AiGateway } from './gateway.js'
 import * as bean from '../bean/bean.service.js'
 import { BeanNotEnoughError, type BeanBucket } from '../bean/bean.service.js'
 import { getDecimal } from '../lib/settings.js'
-import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } from '../domain/request.js'
+import {
+  acquireRequestLease,
+  claimBusinessRequest,
+  completeBusinessRequest,
+  failBusinessRequest,
+  renewRequestLease,
+  releaseRequestLease,
+} from '../domain/request.js'
 import { decFromNumber, decMulCeil, type Dec } from '../lib/decimal.js'
 
 export interface BilledSceneResult {
@@ -18,6 +36,16 @@ export interface BilledSceneResult {
   isFallbackTemplate: boolean
   balance: { balance: bigint; grantBalance: bigint; available: bigint }
   duplicated: boolean
+  /**
+   * 本次 AI 请求的**认领时刻**（= business_request.created_at）。
+   *
+   * ★ 调用方用它做「结果新旧」的单调排序键（见 creation.service.ts::generateShots）。
+   *   为什么不用 `new Date()`：重放一次旧 requestId 时，若用「当前时间」当排序键，
+   *   旧结果会被误判成最新的，从而覆盖掉更新的分镜。认领时刻在同一 requestId 上
+   *   恒定不变、在不同 requestId 之间严格递增，正好可以区分
+   *   「这是同一结果的重放」与「这是一次更新的生成」。
+   */
+  requestClaimedAt: Date
 }
 
 export interface BilledSceneParams {
@@ -48,6 +76,119 @@ function beansFromCost(costFen: number, beansPerYuan: Dec, multiplier: Dec): big
   return decMulCeil([costDec, beansPerYuan, multiplier], 100n)
 }
 
+// ────────────────────────────── 租约与结算（供本模块与 ai-recovery 共用） ──────────────────────────────
+
+/** 本进程的租约标识。同一个进程内所有 AI 请求共用，但每个请求各有独立的 leaseVersion。 */
+const LEASE_OWNER = `${process.pid}-${randomUUID().slice(0, 8)}`
+
+/**
+ * 租约时长。必须 ≥「单场景最坏一次调用耗时」，否则一次正常的慢调用会被恢复扫描误判成无主请求
+ * 并提前退款（然后调用方回来结算时才发现预留已经没了）。
+ * 实测单次 45~90s、`timeout_ms=90000`，多候选还要串行重试，故默认 15 分钟。
+ */
+export function aiLeaseTtlMs(env: NodeJS.ProcessEnv = process.env): number {
+  return Math.max(60_000, Number(env.AI_LEASE_TTL_MS ?? 15 * 60 * 1000))
+}
+
+export interface AiChargeParams {
+  merchantId: bigint
+  sceneCode: string
+  operation: string
+  requestId: string
+  bizType: string
+  bizId: string | null
+  /** 场景中文名，只用于流水备注 */
+  sceneName: string
+  costFen: number
+  usedFallback: boolean
+  /**
+   * ★ 冻结快照 = 本次预留的未结余量（`bean_reservation.reserved - consumed - released`）。
+   * 所有加减都以它为界；**不要**在这里重新读 `ai_scene.bean_price`。
+   */
+  cap: bigint
+}
+
+export interface AiChargeResult {
+  charged: bigint
+  bucket: BeanBucket | null
+  absorbed: bigint
+}
+
+/** 仅在金额 > 0 时释放：unfreeze 对 amount<=0 会抛错，而 cap 为 0 是合法场景（零成本调用）。 */
+async function unfreezeIfPositive(
+  tx: Parameters<typeof bean.unfreeze>[0],
+  args: { merchantId: bigint; requestId: string; amount: bigint; bizType: string; bizId?: string; remark: string },
+): Promise<void> {
+  if (args.amount <= 0n) return
+  await bean.unfreeze(tx, args)
+}
+
+/**
+ * 按成本结算一次 AI 调用，并与业务请求完成状态同事务提交。
+ *
+ * 导出给 ai-recovery 复用：崩溃恢复时「上游其实已经成功、日志已落库、只差结算」的情况下，
+ * 必须走**同一条**结算路径，不能另写一套 —— 否则会出现两套口径的扣费。
+ */
+export async function settleAiCharge(
+  prisma: PrismaClient,
+  p: AiChargeParams,
+): Promise<AiChargeResult> {
+  const [beansPerYuan, multiplier] = await Promise.all([
+    getDecimal(prisma, 'bean', 'points_per_yuan', 100),
+    getDecimal(prisma, 'bean', 'cost_multiplier', 4),
+  ])
+  const wantCharge = beansFromCost(p.costFen, beansPerYuan, multiplier)
+  const charged = wantCharge > p.cap ? p.cap : wantCharge
+  // 被单次上限截断的部分由平台承担。必须落库 + 告警，否则「上限是安全网还是
+  // 常态折扣」在账上完全看不出来（实测 copy 系场景 10/10 次调用都被截掉 3 积分）。
+  const absorbed = wantCharge > p.cap ? wantCharge - p.cap : 0n
+  if (absorbed > 0n) {
+    console.warn(
+      `[ai-billing] 场景 ${p.sceneCode} 成本 ${p.costFen} 分应付 ${wantCharge} 积分，` +
+        `被单次上限 ${p.cap} 积分截断，平台承担 ${absorbed} 积分（requestId=${p.requestId}）`,
+    )
+  }
+
+  return prisma.$transaction(async (tx) => {
+    let cr: { charged: bigint; bucket: BeanBucket | null }
+    if (charged > 0n) {
+      const consumed = await bean.consume(tx, {
+        merchantId: p.merchantId,
+        requestId: p.requestId,
+        amount: charged,
+        bizType: p.bizType,
+        bizId: p.bizId ?? undefined,
+        remark: p.usedFallback ? `${p.sceneName}（备用通道）` : p.sceneName,
+      })
+      cr = { charged: consumed.charged, bucket: consumed.bucket }
+      await unfreezeIfPositive(tx, {
+        merchantId: p.merchantId,
+        requestId: p.requestId,
+        amount: p.cap - charged,
+        bizType: p.bizType,
+        bizId: p.bizId ?? undefined,
+        remark: '结算后差额释放',
+      })
+    } else {
+      await unfreezeIfPositive(tx, {
+        merchantId: p.merchantId,
+        requestId: p.requestId,
+        amount: p.cap,
+        bizType: p.bizType,
+        bizId: p.bizId ?? undefined,
+        remark: '零成本调用，全额释放',
+      })
+      cr = { charged: 0n, bucket: null }
+    }
+    await tx.aiCallLog.updateMany({
+      where: { merchantId: p.merchantId, sceneCode: p.sceneCode, requestId: p.requestId },
+      data: { beanCharged: cr.charged, absorbedBeans: absorbed, beanBucket: cr.bucket },
+    })
+    await completeBusinessRequest(tx, p.merchantId, p.operation, p.requestId, p.requestId)
+    return { charged: cr.charged, bucket: cr.bucket, absorbed }
+  })
+}
+
 export async function runBilledScene(
   prisma: PrismaClient,
   gateway: AiGateway,
@@ -56,15 +197,8 @@ export async function runBilledScene(
   const scene = await prisma.aiScene.findUnique({ where: { code: params.sceneCode } })
   if (!scene || !scene.enabled) throw new Error(`scene ${params.sceneCode} not available`)
 
-  // 计费系数一律用精确十进制读取（getDecimal 直接解析库里的原始字符串，不经 Number()）
-  const [beansPerYuan, multiplier] = await Promise.all([
-    getDecimal(prisma, 'bean', 'points_per_yuan', 100),
-    getDecimal(prisma, 'bean', 'cost_multiplier', 4),
-  ])
-
   // 冻结额 = 场景「单次上限」（财务安全网）。实际按成本×系数结算，恒不超过该上限
   const price = scene.beanPrice
-  const frozenAmount = price
   const bizType = `AI_${params.sceneCode}`
   const operation = params.sceneCode === 'copy_generate'
     ? 'AI_COPY'
@@ -72,62 +206,37 @@ export async function runBilledScene(
       ? 'AI_STORYBOARD'
       : `AI_${params.sceneCode.toUpperCase()}`
   const bizId = params.bizId ?? null
+  const ttlMs = aiLeaseTtlMs()
 
   const balanceAfter = async () => bean.getBalance(prisma, params.merchantId)
 
-  const settle = async (costFen: number, usedFallback: boolean) => {
-    const wantCharge = beansFromCost(costFen, beansPerYuan, multiplier)
-    const charged = wantCharge > frozenAmount ? frozenAmount : wantCharge
-    // 被场景单次上限截断的部分由平台承担。必须落库 + 告警，否则「上限是安全网还是
-    // 常态折扣」在账上完全看不出来（实测 copy 系场景 10/10 次调用都被截掉 3 积分）。
-    const absorbed = wantCharge > frozenAmount ? wantCharge - frozenAmount : 0n
-    if (absorbed > 0n) {
-      console.warn(
-        `[ai-billing] 场景 ${params.sceneCode} 成本 ${costFen} 分应付 ${wantCharge} 积分，` +
-          `被单次上限 ${frozenAmount} 积分截断，平台承担 ${absorbed} 积分（requestId=${params.requestId}）`,
-      )
-    }
-    return prisma.$transaction(async (tx) => {
-      let cr: { charged: bigint; bucket: BeanBucket | null }
-      if (charged > 0n) {
-        const consumed = await bean.consume(tx, {
-          merchantId: params.merchantId,
-          requestId: params.requestId,
-          amount: charged,
-          bizType,
-          bizId: bizId ?? undefined,
-          remark: usedFallback ? `${scene.name}（备用通道）` : scene.name,
-        })
-        cr = { charged: consumed.charged, bucket: consumed.bucket }
-        if (frozenAmount > charged) {
-          await bean.unfreeze(tx, {
-            merchantId: params.merchantId,
-            requestId: params.requestId,
-            amount: frozenAmount - charged,
-            bizType,
-            bizId: bizId ?? undefined,
-            remark: '结算后差额释放',
-          })
-        }
-      } else {
-        await bean.unfreeze(tx, {
-          merchantId: params.merchantId,
-          requestId: params.requestId,
-          amount: frozenAmount,
-          bizType,
-          bizId: bizId ?? undefined,
-          remark: '零成本调用，全额释放',
-        })
-        cr = { charged: 0n, bucket: null }
-      }
-      await tx.aiCallLog.updateMany({
-        where: { merchantId: params.merchantId, sceneCode: params.sceneCode, requestId: params.requestId },
-        data: { beanCharged: cr.charged, absorbedBeans: absorbed, beanBucket: cr.bucket },
-      })
-      await completeBusinessRequest(tx, params.merchantId, operation, params.requestId, params.requestId)
-      return cr
+  /**
+   * ★ 计价快照：结算/释放的金额上限永远取自**预留行本身**，而不是当前场景标价。
+   *   首次调用时预留刚刚按 `price` 冻结，所以两者相等；重放时若运营改过价，
+   *   只有这里读出来的旧值才与预留对得上（否则 unfreeze 直接抛错 → 预留永久冻结）。
+   */
+  const reservedCap = async (): Promise<bigint> => {
+    const remaining = await bean.reservationRemaining(prisma, {
+      merchantId: params.merchantId,
+      requestId: params.requestId,
+      bizType,
+      bizId: bizId ?? undefined,
     })
+    return remaining ?? price
   }
+
+  const chargeArgs = (
+    o: { costFen: number; usedFallback: boolean; cap: bigint },
+  ): AiChargeParams => ({
+    merchantId: params.merchantId,
+    sceneCode: params.sceneCode,
+    operation,
+    requestId: params.requestId,
+    bizType,
+    bizId,
+    sceneName: scene.name,
+    ...o,
+  })
 
   // 请求占用与积分预留必须原子完成，进程退出时不会留下无预留的 PENDING 请求。
   // ★ isolationLevel 必须显式设为 READ COMMITTED：REPEATABLE READ 下并发同 requestId 时，
@@ -145,7 +254,7 @@ export async function runBilledScene(
       await bean.freeze(tx, {
         merchantId: params.merchantId,
         requestId: params.requestId,
-        amount: frozenAmount,
+        amount: price,
         bizType,
         bizId: bizId ?? undefined,
         remark: `${scene.name} 预留`,
@@ -154,8 +263,12 @@ export async function runBilledScene(
     return result
   }, { isolationLevel: 'ReadCommitted' })
 
+  // 本次请求的「认领时刻」——所有返回路径都带上它，供调用方做结果新旧判定
+  const claimedAt = claim.row.createdAt
+
   // 已有相同业务请求时先返回结果或报告进行中，不能再次创建冻结。
   if (!claim.created) {
+    const cap = await reservedCap()
     const log = await prisma.aiCallLog.findFirst({ where: { merchantId: params.merchantId, sceneCode: params.sceneCode, requestId: params.requestId } })
     if (log) {
       const settled = claim.row.status === 'COMPLETED'
@@ -163,7 +276,7 @@ export async function runBilledScene(
             charged: log.beanCharged ?? 0n,
             bucket: log.beanBucket === 'GRANT' ? 'GRANT' as const : log.beanBucket === 'RECHARGE' ? 'RECHARGE' as const : null,
           }
-        : await settle(log.costFen, log.isFallback)
+        : await settleAiCharge(prisma, chargeArgs({ costFen: log.costFen, usedFallback: log.isFallback, cap }))
       const b = await balanceAfter()
       return {
         text: log.responseSnapshot ?? '',
@@ -173,6 +286,7 @@ export async function runBilledScene(
         isFallbackTemplate: false,
         balance: { balance: b.balance, grantBalance: b.grantBalance, available: b.available },
         duplicated: true,
+        requestClaimedAt: claimedAt,
       }
     }
     if (claim.row.status === 'FAILED') {
@@ -185,12 +299,36 @@ export async function runBilledScene(
         isFallbackTemplate: true,
         balance: { balance: b.balance, grantBalance: b.grantBalance, available: b.available },
         duplicated: true,
+        requestClaimedAt: claimedAt,
       }
     }
+    // PENDING 且没有调用日志：上一轮执行者要么还在跑，要么已经崩了。
+    // 崩掉的那种由 ai-recovery 按租约过期回收（这里只负责如实报告「进行中」）。
     throw new ScenePendingError()
   }
 
+  // ★ 租约：刚创建的行无条件认领（此时不存在竞争者）。
+  //   这一步故意放在 claim 事务**之外**：万一在 claim 与这里之间进程退出，
+  //   business_request 的 lease_expire_at 会是 NULL —— 恢复扫描把 NULL 视为「无主」，
+  //   于是它仍然能被回收，不会漏。
+  const lease = await acquireRequestLease(prisma, {
+    merchantId: params.merchantId,
+    operation,
+    requestId: params.requestId,
+    owner: LEASE_OWNER,
+    ttlMs,
+  })
+
   // 2) 调用 AI 网关（含故障转移与熔断）
+  //    调用前把租约时钟重新起算：占用时长应当从「真正开始调用」算，而不是从认领算。
+  await renewRequestLease(prisma, {
+    merchantId: params.merchantId,
+    operation,
+    requestId: params.requestId,
+    owner: LEASE_OWNER,
+    version: lease.version ?? 0,
+    ttlMs,
+  })
   const r = await gateway.runScene({
     sceneCode: params.sceneCode,
     variables: params.variables,
@@ -198,18 +336,58 @@ export async function runBilledScene(
     requestId: params.requestId,
   })
 
+  const cap = await reservedCap()
+
+  /**
+   * 落地前的失权校验：如果这次调用耗时超过了租约（极端慢 + 恢复扫描已介入），
+   * 预留可能已被恢复任务释放。此时**不能**再结算 —— 否则就是「已退款又扣费」。
+   * 续租失败（行已不是 PENDING / 已不归我们）即视为失权。
+   */
+  const fenceOk = lease.version !== null && await renewRequestLease(prisma, {
+    merchantId: params.merchantId,
+    operation,
+    requestId: params.requestId,
+    owner: LEASE_OWNER,
+    version: lease.version,
+    ttlMs,
+  })
+  if (!fenceOk) {
+    console.warn(
+      `[ai-billing] requestId=${params.requestId} 结算前已失去租约（调用耗时超过 ${ttlMs}ms？），` +
+        `预留已由恢复任务处理，本次不再结算`,
+    )
+    const b = await balanceAfter()
+    return {
+      text: renderFallback(scene.fallbackTemplate, params.variables),
+      beanCharged: 0n,
+      bucket: null,
+      usedFallbackChannel: false,
+      isFallbackTemplate: true,
+      balance: { balance: b.balance, grantBalance: b.grantBalance, available: b.available },
+      duplicated: true,
+      requestClaimedAt: claimedAt,
+    }
+  }
+
   // 3) 失败 / 超时：全额解冻，返回兜底模板，不扣积分
   if (!r.ok) {
     await prisma.$transaction(async (tx) => {
-      await bean.unfreeze(tx, {
+      await unfreezeIfPositive(tx, {
         merchantId: params.merchantId,
         requestId: params.requestId,
-        amount: frozenAmount,
+        amount: cap,
         bizType,
         bizId: bizId ?? undefined,
         remark: 'AI 调用失败，全额释放',
       })
       await failBusinessRequest(tx, params.merchantId, operation, params.requestId, 'AI_FAILED', r.message)
+    })
+    await releaseRequestLease(prisma, {
+      merchantId: params.merchantId,
+      operation,
+      requestId: params.requestId,
+      owner: LEASE_OWNER,
+      version: lease.version ?? 0,
     })
     const b = await balanceAfter()
     return {
@@ -220,11 +398,19 @@ export async function runBilledScene(
       isFallbackTemplate: true,
       balance: { balance: b.balance, grantBalance: b.grantBalance, available: b.available },
       duplicated: false,
+      requestClaimedAt: claimedAt,
     }
   }
 
   // 4) 成功：按实际成本结算，并与业务请求完成状态同事务提交。
-  const res = await settle(r.costFen, r.usedFallback)
+  const res = await settleAiCharge(prisma, chargeArgs({ costFen: r.costFen, usedFallback: r.usedFallback, cap }))
+  await releaseRequestLease(prisma, {
+    merchantId: params.merchantId,
+    operation,
+    requestId: params.requestId,
+    owner: LEASE_OWNER,
+    version: lease.version ?? 0,
+  })
 
   const b = await balanceAfter()
   return {
@@ -235,6 +421,7 @@ export async function runBilledScene(
     isFallbackTemplate: false,
     balance: { balance: b.balance, grantBalance: b.grantBalance, available: b.available },
     duplicated: false,
+    requestClaimedAt: claimedAt,
   }
 }
 

@@ -32,6 +32,22 @@ export const RENDER_OUTPUT = { width: 1080, height: 1920, fps: 30 } as const
 /** 产品档位：BASIC 粗剪 / AI 全自动 / PREMIUM 人工精剪 */
 export type RenderGrade = 'BASIC' | 'AI' | 'PREMIUM'
 
+/**
+ * worker 执行权凭证（fencing token）。
+ *
+ * ★ 为什么收尾必须带它：一个任务可能先后被多个执行者持有（旧进程死掉 → 孤儿回收 → 新进程认领，
+ *   或两个 worker 同时滚动轮询）。如果收尾只按 `id` 写入，迟到的旧执行者会把
+ *   **已经被别人推进/已成功/已退款**的任务覆盖回旧状态 —— 实测能把 `SUCCESS` 改回 `RUNNING`，
+ *   也会让已退款的任务继续下载上传。
+ *
+ * 语义：`leaseVersion` 在每次认领与每次回收时自增。旧执行者手里的 version 一旦落后，
+ *   其所有写入的 `WHERE` 条件都不再匹配（0 行）⇒ 天然失权，不需要额外的锁表。
+ */
+export interface RenderFence {
+  owner: string
+  version: number
+}
+
 export function parseGrade(v: unknown): RenderGrade {
   return v === 'BASIC' || v === 'PREMIUM' ? v : 'AI'
 }
@@ -285,7 +301,10 @@ export async function buildRenderClips(
   storeId: bigint,
 ): Promise<RenderClip[]> {
   const shots = await prisma.shot.findMany({
-    where: { creationId, assetId: { not: null } },
+    // `skipped: false` 在正常的库状态下是冗余条件（跳过时 assetId 已被清空，本来就被下面滤掉），
+    // 但它把**不变量**写进了查询：库里一旦出现「既标了跳过、又留着 assetId」的脏数据
+    // （例如将来有人绕过 updateShotAsset 直接写库），用户以为跳过的那一段不会偷偷出现在成片里。
+    where: { creationId, assetId: { not: null }, skipped: false },
     orderBy: { seq: 'asc' },
   })
   if (shots.length === 0) throw new RenderNoAssetError()
@@ -483,6 +502,45 @@ export async function submitRender(
   return { task: view, duplicated: txResult.duplicated }
 }
 
+/** 任务的「仍可被推进」状态集（成功/失败终态不在其中） */
+const RENDER_ACTIVE_STATES: string[] = [
+  'PENDING_RESERVATION',
+  'QUEUED',
+  'RUNNING',
+  'MANUAL_PENDING',
+  'MANUAL_DOING',
+  'SETTLEMENT_PENDING',
+]
+/**
+ * 可被结算的状态集：与改动前的行为保持一致（RUNNING / 人工档两态 / QUEUED），
+ * 额外加上 SETTLEMENT_PENDING —— 那只表示上一次释放预留失败，任务本身仍应允许成功结算。
+ */
+const RENDER_SETTLEABLE_STATES: string[] = ['QUEUED', 'RUNNING', 'MANUAL_DOING', 'MANUAL_PENDING', 'SETTLEMENT_PENDING']
+
+/**
+ * 执行权已丢失。抛出后事务回滚 —— 这是关键：失权的执行者**绝不能**留下副作用，
+ * 包括已经发生的 consume（否则就是「扣了积分、任务却没被更新」的悬空账）。
+ */
+export class FenceLostError extends Error {
+  constructor(taskId: bigint) {
+    super(`render task ${taskId.toString()} 的执行权已转移（租约版本落后），本次收尾已放弃`)
+    this.name = 'FenceLostError'
+  }
+}
+
+/** 当前行是否仍由该 fence 持有 */
+function holdsFence(
+  task: { leaseOwner: string | null; leaseVersion: number },
+  fence: RenderFence,
+): boolean {
+  return task.leaseOwner === fence.owner && task.leaseVersion === fence.version
+}
+
+/** 把 fence 转成 where 条件（不传则不限制，供 API 侧/演示模式复用） */
+function fenceWhere(fence?: RenderFence): { leaseOwner?: string; leaseVersion?: number } {
+  return fence ? { leaseOwner: fence.owner, leaseVersion: fence.version } : {}
+}
+
 /** 真实环境 worker 收尾调用：结算扣积分 + 写产物（freeze 已在 submit 阶段完成） */
 export async function completeRender(
   tx: Db,
@@ -496,12 +554,16 @@ export async function completeRender(
     /** 是否命中中间产物缓存（重调色复用归一化产物，对应 10 积分计费） */
     cacheHit?: boolean
   },
+  fence?: RenderFence,
 ): Promise<void> {
   await tx.$queryRaw`SELECT id FROM render_task WHERE id = ${taskId} FOR UPDATE`
   const task = await tx.renderTask.findUnique({ where: { id: taskId } })
   if (!task) return
   if (task.status === 'SUCCESS') return
-  if (!['RUNNING', 'MANUAL_DOING', 'MANUAL_PENDING', 'QUEUED'].includes(task.status)) return
+  if (!RENDER_SETTLEABLE_STATES.includes(task.status as (typeof RENDER_SETTLEABLE_STATES)[number])) return
+  // ★ 失权判定必须在 consume **之前**：放到之后就只能靠抛错回滚兜底，
+  //   而回滚路径一旦被吞（比如 catch 里再写库），就变成扣了积分没人更新任务的悬空账。
+  if (fence && !holdsFence(task, fence)) throw new FenceLostError(taskId)
   const amount = task.beanCharged > 0n ? task.beanCharged : RENDER_BEAN_FULL
   await consume(tx, {
     merchantId,
@@ -511,7 +573,7 @@ export async function completeRender(
     bizId: taskId.toString(),
   })
   const updated = await tx.renderTask.updateMany({
-    where: { id: taskId, status: { in: ['RUNNING', 'MANUAL_DOING', 'MANUAL_PENDING', 'QUEUED'] } },
+    where: { id: taskId, status: { in: [...RENDER_SETTLEABLE_STATES] }, ...fenceWhere(fence) },
     data: {
       status: 'SUCCESS',
       progress: 100,
@@ -522,29 +584,46 @@ export async function completeRender(
       resultSize: result.resultSize,
       durationMs: result.durationMs,
       finishAt: new Date(),
+      // 收尾即交还租约，避免行上残留一个指向早已结束的执行者的 owner
+      leaseOwner: null,
+      leaseExpireAt: null,
     },
   })
-  if (updated.count > 0 && task.requestId) {
+  if (updated.count === 0) {
+    // 走到这里说明状态或租约在锁内被改掉了：回滚整个事务（含 consume），别留下半成品
+    throw new FenceLostError(taskId)
+  }
+  if (task.requestId) {
     await completeBusinessRequest(tx, merchantId, 'RENDER', task.requestId, taskId.toString())
   }
 }
 
-/** 失败终态：先释放本任务预留；释放失败则显式进入待结算，避免假称已退款。 */
+/**
+ * 失败终态：先释放本任务预留；释放失败则显式进入待结算，避免假称已退款。
+ *
+ * ★ 两个必须守住的点（都踩过）：
+ *   ① **预留释放不能因「任务已是 FAILED」而跳过**。历史缺陷是调用方先把 status 写成 FAILED
+ *      再进来收尾，这里一句早退就让 `unfreeze` 从未执行 —— 任务显示失败、积分却永久冻结，
+ *      而且 errorCode/finishAt 也没写，运维看不出发生过什么。`unfreeze` 自身按流水幂等，
+ *      重复调用是空操作，所以这里可以无条件尝试释放。
+ *   ② 带 `fence` 时先验执行权：失权者不写任何东西，把终态留给真正持有任务的那个执行者。
+ */
 export async function failRender(
   prisma: PrismaClient,
   taskId: bigint,
   errorCode: string,
   errorMsg: string,
-): Promise<'FAILED' | 'SUCCESS' | 'SETTLEMENT_PENDING'> {
+  fence?: RenderFence,
+): Promise<'FAILED' | 'SUCCESS' | 'SETTLEMENT_PENDING' | 'SUPERSEDED'> {
   try {
     return await prisma.$transaction(async (tx: Db) => {
       await tx.$queryRaw`SELECT id FROM render_task WHERE id = ${taskId} FOR UPDATE`
       const task = await tx.renderTask.findUnique({ where: { id: taskId } })
       if (!task) return 'FAILED'
       if (task.status === 'SUCCESS') return 'SUCCESS'
-      if (task.status === 'FAILED') return 'FAILED'
-      const active = ['PENDING_RESERVATION', 'QUEUED', 'RUNNING', 'MANUAL_PENDING', 'MANUAL_DOING', 'SETTLEMENT_PENDING']
-      if (!active.includes(task.status)) return 'FAILED'
+      if (fence && !holdsFence(task, fence)) return 'SUPERSEDED'
+      const alreadyFailed = task.status === 'FAILED'
+      if (!alreadyFailed && !RENDER_ACTIVE_STATES.includes(task.status)) return 'FAILED'
       if (task.beanCharged > 0n) {
         await unfreeze(tx, {
           merchantId: task.merchantId,
@@ -555,15 +634,20 @@ export async function failRender(
           remark: '合成失败，释放本任务预留积分',
         })
       }
-      await tx.renderTask.updateMany({
-        where: { id: task.id, status: { in: active } },
+      // 已是失败终态：上面的补释放就是全部目的，不覆盖既有错误原因与完成时间
+      if (alreadyFailed) return 'FAILED'
+      const updated = await tx.renderTask.updateMany({
+        where: { id: task.id, status: { in: RENDER_ACTIVE_STATES }, ...fenceWhere(fence) },
         data: {
           status: 'FAILED',
           errorCode,
           errorMsg: errorMsg.slice(0, 500),
           finishAt: new Date(),
+          leaseOwner: null,
+          leaseExpireAt: null,
         },
       })
+      if (updated.count === 0) return 'SUPERSEDED'
       if (task.requestId) {
         await failBusinessRequest(tx, task.merchantId, 'RENDER', task.requestId, errorCode, errorMsg)
       }

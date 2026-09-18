@@ -1,5 +1,6 @@
 // AI 供应商协议适配器
 // 新增供应商只需在 AiProvider.protocol 里选协议，无需改代码
+import { safeFetch, UnsafeOutboundUrlError } from '../lib/outbound-url.js'
 
 export interface AiUsage {
   promptTokens: number
@@ -47,9 +48,16 @@ async function postJson(url: string, init: RequestInit & { timeoutMs: number }):
   const { timeoutMs, ...rest } = init
   let res: Response
   try {
-    res = await fetch(url, { ...rest, signal: AbortSignal.timeout(timeoutMs) })
+    // ★ 必须走 safeFetch 而不是裸 fetch：baseUrl 是**运营在后台手填**的，
+    //   服务端还会把已保存的 API key 放进 Authorization 一起发出去。
+    //   safeFetch 负责「协议白名单 + 拒本机/私网/保留地址 + 不跟随重定向」，
+    //   见 lib/outbound-url.ts 的说明。
+    res = await safeFetch(url, rest, { timeoutMs })
   } catch (e) {
     const err = e as Error
+    if (err instanceof UnsafeOutboundUrlError) {
+      throw new AiCallError(err.message, undefined, 'UNSAFE_URL')
+    }
     if (err.name === 'TimeoutError' || err.name === 'AbortError') {
       throw new AiCallError(`request timeout after ${timeoutMs}ms`, undefined, 'TIMEOUT')
     }

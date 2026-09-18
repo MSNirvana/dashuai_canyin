@@ -138,21 +138,57 @@ npx prisma generate
 npx tsc -p tsconfig.json
 [ -f dist/index.js ] || die "编译产物 dist/index.js 不存在"
 
-# ───────── 5. 数据库结构 ─────────
-log "[5/7] 同步数据库结构"
-if npx prisma migrate deploy 2>/dev/null; then
-  echo "    migrate deploy 成功"
+# 管理后台必须一起构建：Nginx 从 apps/admin/dist 提供后台页面（见 deploy/nginx/dashuai-admin.conf），
+# 而 dist/ 在 .gitignore 里、同步代码并不会带上它。只部署后端就成了「新 API + 旧后台」，
+# 新增字段/接口在页面上直接失效，而健康检查只看 /healthz，完全发现不了。
+ADMIN_DIR="$APP_DIR/apps/admin"
+if [ -f "$ADMIN_DIR/package.json" ]; then
+  log "[4/7] 构建管理后台"
+  (
+    cd "$ADMIN_DIR"
+    [ -d node_modules ] || npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+    npm run build
+  ) || die "管理后台构建失败（apps/admin 的 npm run build）"
+  [ -f "$ADMIN_DIR/dist/index.html" ] || die "未生成 $ADMIN_DIR/dist/index.html"
+  echo "    admin dist: $(du -sh "$ADMIN_DIR/dist" | cut -f1)"
 else
-  warn "migrate deploy 失败（迁移历史与 schema 可能不一致，本地开发用的是 db push）"
-  warn "回退到 prisma db push（会直接对齐 schema，不做迁移记录）"
-  npx prisma db push --skip-generate
+  warn "找不到 $ADMIN_DIR/package.json，跳过管理后台构建（Nginx 会继续提供旧产物）"
 fi
 
-# ───────── 6. 种子数据 ─────────
-log "[6/7] 写入种子数据"
-echo "    包含：AI 通道与场景、充值档位、会员套餐、后台管理员、演示商家"
-echo "    若已 seed 过会走 upsert，不会重复插入"
-npm run db:seed
+cd "$SERVER_DIR"   # 下面的 prisma 命令走相对路径，必须回到 server/
+
+# ───────── 5. 数据库结构（迁移失败即中止，绝不自动 db push） ─────────
+log "[5/7] 同步数据库结构"
+# ★ 先备份。迁移是不可逆的结构变更，出问题时唯一能回去的路就是这份 dump；
+#   备份失败就中止，不允许「无备份直接改生产结构」。
+bash "$APP_DIR/deploy/backup-db.sh" || die "数据库备份失败，已中止部署（不允许无备份迁移）"
+
+if npx prisma migrate deploy; then
+  echo "    migrate deploy 成功"
+else
+  # ★★ 这里【绝不】回退到 `prisma db push`。
+  #   历史写法是「migrate deploy 失败就 db push --skip-generate」，后果很重：
+  #     · 绕过迁移历史直接改生产表结构，且没有任何迁移记录
+  #     · 失败原因（历史不一致 / 校验和冲突）被 `2>/dev/null` 吞掉，运维看不到
+  #     · 之后每次部署都会走这条路，迁移状态与真实库永久脱节
+  die "migrate deploy 失败 —— 已中止部署。
+
+★★ 不会自动回退 db push（那会绕过迁移历史、直接改生产结构，并让状态永久脱节）。
+排查顺序：
+  1) cd $SERVER_DIR && npx prisma migrate status
+     看哪个迁移未应用、或是否存在校验和冲突。
+  2) 若这是【首次接入迁移历史】的库（历史上一直用 db push 建的）：
+       bash $APP_DIR/deploy/db-baseline.sh          # 先预演，人工确认差异后再加 --yes
+     然后重新执行本脚本。
+  3) 需要改结构时请新增迁移文件（prisma migrate dev --create-only），不要手改库。"
+fi
+
+# ───────── 6. 种子数据（已从部署流程移除） ─────────
+log "[6/7] 种子数据：不再随部署执行"
+warn "已移除 npm run db:seed —— 它的 upsert 会覆盖后台运营配置："
+warn "  AI 场景的启停/价格/提示词、会员套餐与价格、系统设置、演示商户余额（会被重置为 98000）。"
+warn "  每次部署都跑它 = 运营在后台改的东西被静默洗回默认值，演示账户余额还会与流水对不上。"
+warn "  只有【初始化空库】时才手工执行一次：cd $SERVER_DIR && npm run db:seed"
 
 # ───────── 7. 起进程 ─────────
 log "[7/7] 启动 PM2 进程"
@@ -176,6 +212,13 @@ if curl -fsS http://127.0.0.1:3000/healthz >/dev/null; then
 else
   die "健康检查失败，看日志：pm2 logs dashuai-api --lines 80"
 fi
+
+# ── 存储孤儿对象回收的定时任务 ──
+# 上传取消、返工重传、分片中断都会留下无主对象，COS 里持续计费。
+# GC 脚本早就写好了（含保留期 / 前缀白名单 / 单轮上限），但没有调度就永远不会跑。
+log "安装存储 GC 定时任务（幂等；已存在则更新）"
+bash "$APP_DIR/deploy/install-cron.sh" \
+  || warn "GC 定时任务未安装成功 —— 请手工执行 bash deploy/install-cron.sh，否则孤儿对象会持续计费"
 
 cat <<'EOF'
 

@@ -4,6 +4,7 @@ import Taro, { useRouter } from '@tarojs/taro'
 import { createDish, updateDish, getDish, getDishMediaUrl, type DishInput, type DishItem, type DishMedia } from '../../services/dish'
 import { uploadMediaFile } from '../../services/upload'
 import { useMerchantStore } from '../../store/merchant'
+import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './edit.scss'
 
 interface LocalMedia { type: 'IMAGE' | 'VIDEO'; cosKey: string; coverKey?: string; sort: number; url: string; coverUrl?: string }
@@ -18,7 +19,13 @@ async function toLocalMedia(m: DishMedia): Promise<LocalMedia> {
 }
 
 export default function DishEditPage() {
-  const router = useRouter(); const { currentStoreId } = useMerchantStore(); const storeId = router.params.storeId ?? currentStoreId; const id = router.params.id
+  const router = useRouter(); const { currentStoreId } = useMerchantStore(); const storeId = readRouteId(router.params, 'storeId') ?? currentStoreId; const id = readRouteId(router.params) ?? undefined
+  /**
+   * 路由里带了编号但不合法（最典型的是字符串 'undefined'）。
+   * ★ 不能退化成「新建」：用户以为在改这道菜，保存后却新建出另一道 —— 原来那道原样没动。
+   *   所以坏链接必须拦住（详见 utils/route-id.ts）。
+   */
+  const idBroken = isBrokenRouteId(router.params) || isBrokenRouteId(router.params, 'storeId')
   const [form, setForm] = useState<FormState>(EMPTY); const [loaded, setLoaded] = useState(false); const [saving, setSaving] = useState(false); const [uploading, setUploading] = useState(false)
   useEffect(() => {
     if (!id) { setLoaded(true); return }
@@ -60,6 +67,8 @@ export default function DishEditPage() {
     try { if (id) await updateDish(storeId, id, payload); else await createDish(storeId, payload); Taro.showToast({ title: '已保存', icon: 'success' }); Taro.navigateBack() } catch { /* request layer */ } finally { setSaving(false) }
   }
   if (!loaded) return <View className='dish-edit dish-edit--loading'>加载中…</View>
+  // 坏编号：既不能请求，也不能退化成「新建」（那会凭空多出一道菜）。唯一的真出路是回列表重进。
+  if (idBroken) return <View className='dish-edit dish-edit--loading'>链接里的菜品编号有误，继续保存会新建出一道新菜品。请回到菜品列表重新进入。</View>
   return <View className='dish-edit'><View className='dish-edit__form'>
     <View className='field'><Text className='field__label'>菜品图片（最多 3 张）</Text><View className='media-grid'>{form.images.map((m, index) => <View className='media-card' key={m.cosKey}>{m.url ? <Image className='media-card__image' src={m.url} mode='aspectFill' onClick={() => previewImages(index)} /> : <View className='media-card__placeholder'>图片</View>}{index === 0 && <Text className='media-card__cover'>封面</Text>}<Text className='media-card__remove' onClick={() => removeImage(index)}>删除</Text></View>)}{form.images.length < 3 && <View className='media__button media__button--add' onClick={pickImage}>{uploading ? '上传中…' : '+ 上传图片'}</View>}</View><Text className='field__hint'>第一张图片自动作为菜品封面</Text></View>
     <View className='field'><Text className='field__label'>菜品视频（最多 3 个）</Text><View className='media-grid'>{form.videos.map((m, index) => <View className='media-card media-card--video' key={m.cosKey}>{m.url ? <Video className='media-card__video' src={m.url} controls={false} showCenterPlayBtn={false} /> : <View className='media-card__placeholder'>视频</View>}<Text className='media-card__play'>视频 {index + 1}</Text><Text className='media-card__remove' onClick={() => removeVideo(index)}>删除</Text></View>)}{form.videos.length < 3 && <View className='media__button media__button--add' onClick={pickVideo}>{uploading ? '上传中…' : '+ 上传视频'}</View>}</View></View>

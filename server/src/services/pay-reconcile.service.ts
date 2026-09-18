@@ -18,7 +18,7 @@
 // 安全：查单响应必须验签通过（见 lib/wxpay.ts::queryOrderByOutTradeNo，fail-closed），
 // 且**金额必须与本地订单一致**才结算（否则等于「用 1 分钱买 980 元会员」）。
 import type { PrismaClient } from '@prisma/client'
-import { queryOrderByOutTradeNo, type WxQueryResult, type WxTradeState } from '../lib/wxpay.js'
+import { queryOrderByOutTradeNo, closeOrder, type WxQueryResult, type WxTradeState } from '../lib/wxpay.js'
 import { markOrderPaid, resolvePayMode } from './order.service.js'
 
 /** 只有线上单（B=充值 / M=会员）在微信侧有对应订单；A=后台线下单，查不到也不该查 */
@@ -46,6 +46,11 @@ export interface ReconcileResult {
 /** 可注入的依赖 —— 让测试能在不联网、不碰真凭据的前提下覆盖各分支 */
 export interface ReconcileDeps {
   query?: (outTradeNo: string) => Promise<WxQueryResult>
+  /**
+   * 关闭微信侧订单。过期判定前会先调它（见 queryAndSettle 里的说明），
+   * 因此必须可注入 —— 否则测试会真的向微信发请求。
+   */
+  close?: (outTradeNo: string) => Promise<{ ok: boolean; note: string }>
   payMode?: () => 'real' | 'demo' | 'disabled'
 }
 
@@ -73,6 +78,7 @@ export async function queryAndSettle(
   options: QueryAndSettleOptions = {},
 ): Promise<ReconcileResult> {
   const query = options.query ?? queryOrderByOutTradeNo
+  const close = options.close ?? closeOrder
   const payMode = (options.payMode ?? resolvePayMode)()
   const now = options.now ?? new Date()
 
@@ -172,13 +178,34 @@ export async function queryAndSettle(
   if (q.tradeState === 'NOTPAY' || q.tradeState === 'USERPAYING') {
     const expired = order.expireAt.getTime() <= now.getTime()
     if (expired) {
+      // ★★ 顺序至关重要：**先关微信侧订单，成功了才允许把本地置为 EXPIRED**。
+      //
+      //   旧实现只改本地状态，于是留下一个窗口：本地已判过期，微信侧却仍可支付
+      //   （新增 time_expire 之后窗口变窄，但网络超时/关单失败仍会留下它）。
+      //   用户在这个窗口里付款成功 → 回调进来时本地已不是 PENDING → CAS 更新 0 行
+      //   → 钱收了、权益不发，而且旧代码在这条路径上没有任何日志。
+      //
+      //   关单失败时不置过期：订单留在 PENDING，下一轮对账会重试。
+      //   宁可让订单多挂一会儿（用户可能还能支付成功并拿到权益），
+      //   也不要造出「本地已关、微信可付」的不可恢复状态。
+      const closed = await close(orderNo)
+      if (!closed.ok) {
+        console.warn(`[pay-reconcile] 订单 ${orderNo} 已过期但微信关单失败（${closed.note}），暂不置为过期，下轮重试`)
+        return {
+          orderNo,
+          outcome: 'NOT_PAID',
+          tradeState: q.tradeState,
+          status: order.status,
+          message: `微信关单失败（${closed.note}），订单保持待支付以便下一轮重试`,
+        }
+      }
       await closeLocal(prisma, orderNo, 'EXPIRED')
       return {
         orderNo,
         outcome: 'CLOSED',
         tradeState: q.tradeState,
         status: 'EXPIRED',
-        message: '订单已过支付有效期且微信侧未支付，已置为已过期',
+        message: `订单已过支付有效期且微信侧未支付，已关单并置为已过期（微信返回 ${closed.note}）`,
       }
     }
     return {

@@ -253,8 +253,21 @@ export default function RenderCompose() {
     // 没有色值全 0 的成片可选（例如第一条成片就带着调色出生），就把画面这条给他。
     saveTargetTask = selectedResult
   }
-  const missingShots = detail?.shots.filter((shot) => !shot.assetId) ?? []
-  const materialsReady = !!detail?.shots.length && missingShots.length === 0
+  /**
+   * 素材是否齐全。
+   * ★ 两个条件缺一不可：
+   *   · `!shot.assetId && !shot.skipped` —— 用户明确跳过（拍摄页「暂不上传」）的分镜不算缺。
+   *     漏掉 skipped 的话，跳过等于没跳过：拍摄页允许跳过、这里却把人挡回去，
+   *     而拍摄页那个分镜已经显示「已跳过」，用户找不到任何可做的事（死循环）。
+   *     跳过状态是**服务端**字段，刷新/换设备都还在（见 services/creation.ts 的 ShotItem.skipped）。
+   *   · 至少要有 1 个真素材 —— 全部跳过的极端情况下 missing 为空，
+   *     但服务端 buildRenderClips 是「一个 clip 都没有 ⇒ 4003」，放行只会白跑一趟。
+   */
+  const missingShots = detail?.shots.filter((shot) => !shot.assetId && !shot.skipped) ?? []
+  const readyShots = detail?.shots.filter((shot) => !!shot.assetId) ?? []
+  /** 被用户明确跳过的分镜：它们不进成片、不计费，但必须显示出来，否则用户会以为素材丢了 */
+  const skippedCount = detail?.shots.filter((shot) => shot.skipped).length ?? 0
+  const materialsReady = readyShots.length > 0 && missingShots.length === 0
 
   /**
    * 丢掉当前的调色预览态（并取消待发的防抖请求）。三个场景必须调用它：
@@ -630,7 +643,17 @@ export default function RenderCompose() {
       setLoadError(`${gradeTitle(grade)}已有任务在进行中，请等它完成后再提交这一档（其他档位不受影响）`)
       return
     }
-    if (!materialsReady) { setLoadError('请先补齐全部分镜素材'); return }
+    if (!materialsReady) {
+      // 两种「不齐」的出路完全不同，别用一句话糊过去：
+      // · 还有分镜没素材 ⇒ 要么去补拍，要么在拍摄页把它跳过（跳过就不进成片）
+      // · 一个素材都没有（被跳光了）⇒ 只能回去至少拍一个，跳过再多也凑不出成片
+      setLoadError(
+        readyShots.length === 0
+          ? '至少要有 1 个分镜的素材才能出片，请先回拍摄页拍一条'
+          : `还有 ${missingShots.length} 个分镜没上传素材，请先补齐（不需要的可以在拍摄页跳过它）`,
+      )
+      return
+    }
     // P0-5 纵深防御：UI 已把不可用档位标灰，但状态可能过期（例如页面停留期间服务端改了配置），
     // 这里再拦一道，并顺手刷新一次能力表，避免用户反复点到同一个拒绝。
     if (gradeIssues[grade]) {
@@ -804,7 +827,9 @@ export default function RenderCompose() {
           <Text className='rcompose__store'>{detail.store?.name}</Text>
         </View>
         <Text className={`rcompose__materials ${missingShots.length === 0 ? 'rcompose__materials--ok' : ''}`}>
-          素材 {detail.shots.length - missingShots.length}/{detail.shots.length} {missingShots.length === 0 ? '✓' : ''}
+          素材 {readyShots.length}/{detail.shots.length}
+          {skippedCount > 0 ? ` · 跳过 ${skippedCount}` : ''}
+          {missingShots.length === 0 ? ' ✓' : ''}
         </Text>
       </View>
 
@@ -814,7 +839,7 @@ export default function RenderCompose() {
           （页头自己已经有 padding-bottom: 24rpx）。 */}
       <View className='rcompose__card rcompose__card--lead'>
         <View className='rcompose__history-heading'>
-          <Text className='rcompose__sectitle'>分镜素材 · 已上传 {detail.shots.length - missingShots.length}/{detail.shots.length}</Text>
+          <Text className='rcompose__sectitle'>分镜素材 · 已上传 {readyShots.length}/{detail.shots.length}</Text>
           {/* 「缺哪几个分镜」不再用文字说一遍 —— 缺素材的格子自己就写着「缺素材」，重复只是噪音。
               但「去上传」这个**入口**必须留着：素材不齐就点不了「生成成片」，
               没了入口用户只能退回上一页找路。 */}
@@ -834,7 +859,9 @@ export default function RenderCompose() {
                   <Image className='rcompose__clipthumb' mode='aspectFill' src={shot.coverUrl} />
                 ) : (
                   <View className='rcompose__clipthumbph'>
-                    <Text className='rcompose__clipthumbtip'>{shot.assetId ? '缩略图生成中' : '缺素材'}</Text>
+                    {/* 跳过与「还没传」必须分开说：两种格子长得一样时，
+                        用户会把「我跳过的那几个」当成「素材丢了」，然后一处处去查 */}
+                    <Text className='rcompose__clipthumbtip'>{shot.skipped ? '已跳过' : shot.assetId ? '缩略图生成中' : '缺素材'}</Text>
                   </View>
                 )}
                 {shot.assetId && <View className='rcompose__clipplay' />}

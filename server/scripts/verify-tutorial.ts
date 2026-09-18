@@ -144,10 +144,25 @@ async function main() {
   const localSrc = readSrc('../src/lib/local-storage.ts')
   check(/ALLOWED_PREFIXES = \[[^\]]*'tutorials\/'/.test(localSrc), 'local-storage：tutorials/ 已加入 ALLOWED_PREFIXES')
   const gcSrc = readSrc('../scripts/gc-orphan-objects.ts')
-  check(/'uploads\/,renders\/,tutorials\/'/.test(gcSrc), 'GC：默认扫描前缀含 tutorials/')
+  // ★ 这两条守护原本断言的是**实现写法**（`'uploads/,renders/,tutorials/'` 紧邻引号、
+  //   以及一种已经被重构掉的 `!o.key.startsWith('tutorials/')` 黑名单写法），
+  //   于是实现一升级它们就失败 —— 而且指的是「实现变了」而不是「行为坏了」。
+  //   现在改成从源码里**抽出真正决定行为的两个常量**再断言其内容：
+  //   常量名一旦被改名，正则抽不到 ⇒ 断言照样失败（不会变成静默通过的空守护）。
+  const defaultPrefixLit = /argValue\('prefix'\)\s*\?\?\s*'([^']*)'/.exec(gcSrc)?.[1]
   check(
-    /!o\.key\.startsWith\('tutorials\/'\)/.test(gcSrc),
-    'GC：删除前的硬编码前缀检查已放行 tutorials/',
+    defaultPrefixLit !== undefined,
+    'GC：能定位到默认扫描前缀常量（改名后本守护必须一起改，否则它会失败而不是静默通过）',
+  )
+  check(
+    (defaultPrefixLit ?? '').split(',').includes('tutorials/'),
+    `GC：默认扫描前缀含 tutorials/（实际：${defaultPrefixLit ?? '未取到'}）`,
+  )
+  const deletableLit = /DELETABLE_PREFIXES\s*=\s*\[([^\]]*)\]/.exec(gcSrc)?.[1]
+  check(deletableLit !== undefined, 'GC：能定位到删除白名单常量 DELETABLE_PREFIXES')
+  check(
+    (deletableLit ?? '').includes("'tutorials/'"),
+    `GC：删除白名单放行 tutorials/（否则扫得到却永远删不掉。实际：${deletableLit ?? '未取到'}）`,
   )
   check(/prisma\.tutorialVideo\.findMany/.test(gcSrc), 'GC：collectReferencedKeys 已查询 tutorialVideo')
   check(

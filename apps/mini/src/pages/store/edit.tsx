@@ -6,6 +6,7 @@ import { createStore, updateStore, getStore, getStoreMediaUrl, type StoreInput, 
 import { uploadMediaFile } from '../../services/upload'
 import { cityOptions, districtOptions, provinceOptions, resolveAreaNames } from '../../services/area'
 import { useMerchantStore } from '../../store/merchant'
+import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './edit.scss'
 
 interface FormState {
@@ -38,7 +39,19 @@ const EMPTY: FormState = {
 
 export default function StoreEditPage() {
   const router = useRouter()
-  const id = router.params.id
+  /**
+   * 要编辑的门店编号；`undefined` = 新建。
+   * ★ 入口编号要校验：`?id=undefined` 会让 URL 看着正常，但 `getStore('undefined')`
+   *   服务端回一句「参数不合法」，页面只弹「门店不存在」—— 用户看不出是链接坏了
+   *   （详见 utils/route-id.ts）。
+   */
+  const id = readRouteId(router.params) ?? undefined
+  /**
+   * 带了编号但不合法。
+   * ★ 不能当成「新建」：用户以为在改 A 店，保存后却**新建出 B 店**，而 A 店原样没动。
+   *   所以这种链接必须拦住，而不是静默退化成另一种合法语义。
+   */
+  const idBroken = isBrokenRouteId(router.params)
   const loadStores = useMerchantStore((s) => s.loadStores)
   const [form, setForm] = useState<FormState>(EMPTY)
   const [loaded, setLoaded] = useState(false)
@@ -229,6 +242,16 @@ export default function StoreEditPage() {
   }
 
   if (!loaded) return <View className='store-edit store-edit--loading'>加载中…</View>
+
+  // 坏编号：既不能请求，也不能退化成「新建」（那会凭空多出一家门店）。
+  // 唯一的真出路是回门店列表重新进入。
+  if (idBroken) {
+    return (
+      <View className='store-edit store-edit--loading'>
+        链接里的门店编号有误，继续保存会新建出一家新门店。请回到门店列表重新进入。
+      </View>
+    )
+  }
 
   return (
     <View className='store-edit'>

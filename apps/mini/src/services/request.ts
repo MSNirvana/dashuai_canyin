@@ -2,6 +2,7 @@
 
 import Taro from '@tarojs/taro'
 import { BASE_URL, PLATFORM, STORAGE_KEYS } from '../config'
+import { currentSessionGeneration } from '../utils/session'
 
 export interface ApiError {
   code: number
@@ -36,27 +37,42 @@ export const ERROR_TEXT: Record<number, string> = {
   5001: 'AI 服务繁忙，请稍后再试',
 }
 
-let refreshing: Promise<string | null> | null = null
+/** refresh 的结果。`sessionChanged` 表示「这次续期属于上一个会话」，调用方不得拿它的 token 重放请求。 */
+interface RefreshOutcome {
+  token: string | null
+  sessionChanged: boolean
+}
 
-async function doRefresh(): Promise<string | null> {
+let refreshing: Promise<RefreshOutcome> | null = null
+
+async function doRefresh(): Promise<RefreshOutcome> {
+  // ★ 记下发起时的会话代次：回包落地前必须复核（见 services/auth.ts 的说明）。
+  const genAtStart = currentSessionGeneration()
   const refreshToken = Taro.getStorageSync<string>(STORAGE_KEYS.refreshToken)
-  if (!refreshToken) return null
+  if (!refreshToken) return { token: null, sessionChanged: false }
+
+  /** 会话已经换了（退出 / 换账号）⇒ 丢弃本次回包，并告诉调用方别拿旧结论做任何事 */
+  const stale = (): RefreshOutcome => ({ token: null, sessionChanged: true })
+
   try {
     const res = await Taro.request({
       url: `${BASE_URL}/auth/refresh`,
       method: 'POST',
       data: { refreshToken },
     })
+    if (currentSessionGeneration() !== genAtStart) return stale()
     const body = res.data as { code: number; data?: { token: string; refreshToken: string } }
     if (body?.code === 0 && body.data?.token) {
       Taro.setStorageSync(STORAGE_KEYS.token, body.data.token)
       Taro.setStorageSync(STORAGE_KEYS.refreshToken, body.data.refreshToken)
-      return body.data.token
+      return { token: body.data.token, sessionChanged: false }
     }
   } catch {
     /* ignore */
   }
-  return null
+  // 失败路径同样要复核：否则会拿「旧会话续期失败」的结论去清掉别人刚登进来的登录态
+  if (currentSessionGeneration() !== genAtStart) return stale()
+  return { token: null, sessionChanged: false }
 }
 
 function clearLoginState() {
@@ -178,9 +194,16 @@ export async function request<T>(options: RequestOptions<T>): Promise<T> {
 
   if (body?.code === 1001 && autoRefresh) {
     if (!refreshing) refreshing = doRefresh().finally(() => (refreshing = null))
-    const newToken = await refreshing
-    if (newToken) {
-      res = await send(newToken)
+    const outcome = await refreshing
+    if (outcome.sessionChanged) {
+      // ★ 会话已经换了（用户在请求飞行途中退出或换账号）。
+      //   绝不能拿新账号的 token 去重放这次请求 —— 那会把「账号 A 页面上的请求」
+      //   用账号 B 的身份发出去；也不能清登录态，那会把刚登录成功的 B 踢下线。
+      //   如实报错，由用户重试（这一次的语义已经无法还原了）。
+      throw { code: -1, message: '登录状态已变更，请重试' } satisfies ApiError
+    }
+    if (outcome.token) {
+      res = await send(outcome.token)
       body = res.data as typeof body
     } else {
       clearLoginState()

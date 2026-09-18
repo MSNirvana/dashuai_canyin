@@ -34,13 +34,50 @@ const PORT = Number(process.env.PORT ?? 3000)
 // ── 进程级兜底（最后一道网）──
 // 路由层已通过 createRouter() 把 async 异常交给 errorHandler（见 lib/async-router.ts），
 // 这里是防止其它来源的异常打死进程：定时器里未 await 的 Promise、sweeper 的异步错误等。
-// 取舍：uncaughtException 不退出进程——体验版期优先保可用性，卡死任务由 stuck-sweeper 兜底回收。
-// 代价是异常后进程状态可能不可信，所以必须打醒目日志，后续接入告警。
+//
+// ★ 取舍已改变（2026-09-18）：原来是「记录日志后继续运行」，理由是体验版期优先保可用性。
+//   但那相当于**用不可信状态继续对外服务** —— 本进程同时承担 API、支付对账、积分到期、
+//   渲染收尾与 worker 心跳，未捕获异常之后内存里的余额缓存、任务状态、连接池都可能处于
+//   半完成态，继续处理支付/积分/交付请求会产生错误写入，而 PM2 的 autorestart 还被绕过
+//   （进程不退出，PM2 就永远不接管）。
+//   ⇒ 现在改为：记录 → 停止接收新请求 → 断开连接 → 非零退出，由 PM2 立刻拉起。
+//   代价是一次秒级重启，换来的是「绝不用可疑状态动用户的钱和作品」。
+let httpServer: import('node:http').Server | null = null
+let shuttingDown = false
+
+async function shutdownAndExit(code: number): Promise<void> {
+  try {
+    await prisma.$disconnect()
+  } catch {
+    /* 退出路径上不再抛错 */
+  }
+  try {
+    redis.disconnect()
+  } catch {
+    /* 同上 */
+  }
+  process.exit(code)
+}
+
+function fatalShutdown(label: string, detail: unknown): void {
+  console.error(`[fatal] ${label} —— 进程状态已不可信，停止服务并由 PM2 重启:`, detail)
+  if (shuttingDown) return
+  shuttingDown = true
+  if (!httpServer) {
+    void shutdownAndExit(1)
+    return
+  }
+  httpServer.close(() => void shutdownAndExit(1))
+  // 兜底：长连接（SSE / 未结束的请求）可能让 close 回调迟迟不来。
+  // 超时也要退 —— 否则会停在「不服务也不退出」的最差状态。
+  setTimeout(() => void shutdownAndExit(1), 10_000).unref()
+}
+
 process.on('unhandledRejection', (reason) => {
-  console.error('[fatal] unhandledRejection（进程继续运行，需排查）:', reason)
+  fatalShutdown('unhandledRejection', reason)
 })
 process.on('uncaughtException', (err) => {
-  console.error('[fatal] uncaughtException（进程继续运行，需排查）:', err)
+  fatalShutdown('uncaughtException', err)
 })
 
 // 每个请求分配 traceId，便于排查
@@ -111,7 +148,7 @@ async function bootstrap() {
     console.error('[redis] connect failed, continue without cache:', (e as Error).message)
   }
   await prisma.$connect()
-  app.listen(PORT, () => {
+  httpServer = app.listen(PORT, () => {
     console.log(`[server] listening on :${PORT} (env=${process.env.NODE_ENV ?? 'development'})`)
     if (process.env.FFMPEG_WORKER !== 'true') {
       console.log('[server] 渲染为演示模式（FFMPEG_WORKER≠true，提交即模拟成功）；真实合成见 npm run worker')
@@ -185,6 +222,17 @@ async function bootstrap() {
       process.once('SIGTERM', m.stopStuckSweeper)
     })
     .catch((e) => console.error('[stuck-sweeper] 启动失败:', (e as Error).message))
+
+  // AI 请求租约恢复：进程在「预留已提交、结算尚未执行」之间退出时，
+  // 该 requestId 的 PENDING 预留既不会被重放推进（重放抛 ScenePendingError），
+  // 也不归渲染侧 sweeper 管 ⇒ 积分静默永久冻结。租约过期即视为无主，补结算或全额释放。
+  void import('./ai/ai-recovery.service.js')
+    .then((m) => {
+      m.startAiRecoverySweeper(prisma)
+      process.once('SIGINT', m.stopAiRecoverySweeper)
+      process.once('SIGTERM', m.stopAiRecoverySweeper)
+    })
+    .catch((e) => console.error('[ai-recovery] 启动失败:', (e as Error).message))
 
   // 支付对账：主动查微信，把「回调丢了 = 钱付了没权益」的单补回来。
   // 微信回调不是可靠通道（notify_url 域名被备案拦、网络抖动、重试耗尽都会静默丢），

@@ -65,6 +65,8 @@ const shotPatch = z.object({
   assetId: z.string().optional(),
   trimStartMs: z.number().int().min(0).optional(),
   trimEndMs: z.number().int().min(0).optional(),
+  // 「暂不上传该分镜」：落库的跳过标记（与 assetId 互斥，见 creationSvc.updateShotAsset）
+  skipped: z.boolean().optional(),
   // 分镜脚本编辑（不涉及素材）
   shotType: z.string().max(64).nullable().optional(),
   shotSize: z.string().max(16).nullable().optional(),
@@ -244,7 +246,11 @@ router.put('/:id/shots/:shotId', async (req, res) => {
       input.line !== undefined ||
       input.visualReq !== undefined
     // 素材绑定字段（assetId/trim）走素材更新；两者可同时提交
-    const hasAsset = input.assetId !== undefined || input.trimStartMs !== undefined || input.trimEndMs !== undefined
+    const hasAsset =
+      input.assetId !== undefined ||
+      input.trimStartMs !== undefined ||
+      input.trimEndMs !== undefined ||
+      input.skipped !== undefined
 
     let s: Awaited<ReturnType<typeof creationSvc.readShotOwned>> | null = null
     if (hasContent) {
@@ -262,6 +268,7 @@ router.put('/:id/shots/:shotId', async (req, res) => {
         assetId: input.assetId ? idParam(input.assetId, 'assetId') : undefined,
         trimStartMs: input.trimStartMs,
         trimEndMs: input.trimEndMs,
+        skipped: input.skipped,
       })
     }
     if (!s) {

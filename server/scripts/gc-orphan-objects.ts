@@ -216,6 +216,20 @@ const referencedPresent = new Set<string>()
 
 for (const o of all) {
   if (CACHE_PREFIX && o.key.startsWith(CACHE_PREFIX)) {
+    // ★ 缓存对象的分流必须与 INCLUDE_CACHE 联动。
+    //   旧代码是无条件 `cache.push(o); continue`，于是即使显式传了 `--include-cache`，
+    //   也不会有任何缓存进入 orphanEligible —— 而删除候选**只**来自 orphanEligible，
+    //   所以这个开关实际是死的（CACHE_RETENTION_MS 声明了却从未被读过）。
+    //   后果：归一化视频与调色预览持续占存储并计费，且运维以为自己已经开了回收。
+    //   现在：只在开关打开**且**超过缓存保留期时转入可回收集合（仍受同一个 --limit 约束）。
+    if (INCLUDE_CACHE) {
+      const cacheAge = o.lastModifiedMs ? now - o.lastModifiedMs : 0
+      // lastModifiedMs 未知时按「太新」处理，宁可漏删不误删（与普通对象同一口径）
+      if (o.lastModifiedMs && cacheAge >= CACHE_RETENTION_MS) {
+        orphanEligible.push(o)
+        continue
+      }
+    }
     cache.push(o)
     continue
   }

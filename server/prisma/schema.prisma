@@ -180,6 +180,14 @@ model Creation {
   // 归档：非空即"已归档"，默认列表排除、只在「归档」分类里出现。
   // 与 status 正交 —— status 目前恒为 DRAFT、从不写入，不能拿它当筛选依据。
   archivedAt DateTime? @map("archived_at") @db.DateTime(3)
+  // ★「AI 分镜结果的首次应用」标记（见 creation.service.ts::generateShots 的说明）。
+  //   storyboard_applied_request_id = 最后一次真正用于重建分镜的 requestId；
+  //   storyboard_applied_at         = 那次 AI 请求的**认领时刻**（business_request.created_at），
+  //                                   用作单调排序键：只有比它更新的结果才允许覆盖分镜。
+  //   没有这两列时：AI 账务层能正确返回缓存结果，但**调用方照样 deleteMany + 重建**，
+  //   于是「用户改过分镜 / 绑过素材之后再重放同 requestId」会把用户的编辑全部清掉。
+  storyboardAppliedRequestId String?   @map("storyboard_applied_request_id") @db.VarChar(64)
+  storyboardAppliedAt        DateTime? @map("storyboard_applied_at") @db.DateTime(3)
 
   merchant    Merchant     @relation(fields: [merchantId], references: [id])
   store       Store        @relation(fields: [storeId], references: [id])
@@ -206,6 +214,11 @@ model Shot {
   assetId         BigInt?  @map("asset_id") @db.UnsignedBigInt()
   trimStartMs     Int      @default(0) @map("trim_start_ms") @db.UnsignedInt()
   trimEndMs       Int?     @map("trim_end_ms") @db.UnsignedInt()
+  // 「这个分镜我不拍了」——用户主动跳过素材上传。
+  // ★ 必须落库：跳过只写在客户端 state 里的话，一刷新（或换设备）就没了，
+  //   而合成页按「有没有 assetId」判断素材是否齐全 ⇒ 跳过等于没跳过，用户被永久挡在合成页外。
+  // 不变量：skipped=true 时 assetId 必须为 null（两者互斥，由 updateShotAsset 维持）。
+  skipped         Boolean  @default(false) @map("skipped")
   status          String   @default("PENDING") @db.VarChar(16)
   createdAt       DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -323,6 +336,15 @@ model RenderTask {
   startAt       DateTime? @map("start_at") @db.DateTime(3)
   finishAt      DateTime? @map("finish_at") @db.DateTime(3)
   costMs        Int?      @map("cost_ms") @db.UnsignedInt()
+  /// worker 租约（fencing token）。认领时写入 owner 并递增 version，心跳只刷新 leaseExpireAt。
+  /// ★ 为什么必须落成列而不是塞进 paramsJson：
+  ///   ① 回收判据要能走索引、且不能与 `storeChatCutState` 的全量替换 paramsJson 抢读改写；
+  ///   ② 收尾（成功/失败/进度）必须能带 `WHERE lease_owner=? AND lease_version=?` 条件，
+  ///      否则迟到的旧 owner 会把已被回收重跑的任务覆盖成旧状态（实测能把 SUCCESS 改回 RUNNING）。
+  ///   version 在每次认领/回收时自增 ⇒ 旧 owner 手里的旧 version 写入必然 0 行，天然失权。
+  leaseOwner    String?   @map("lease_owner") @db.VarChar(64)
+  leaseVersion  Int       @default(0) @map("lease_version") @db.UnsignedInt()
+  leaseExpireAt DateTime? @map("lease_expire_at") @db.DateTime(3)
   // 精品档：剪辑师接单时间
   assignedAt    DateTime? @map("assigned_at") @db.DateTime(3)
   // 精品档：SLA 截止时间，超时自动退款
@@ -335,6 +357,8 @@ model RenderTask {
 
   @@index([creationId, createdAt])
   @@index([status, queueAt])
+  // 孤儿回收按「RUNNING + 租约已过期」扫描，缺这个索引会全表扫 RUNNING 行
+  @@index([status, leaseExpireAt])
   @@index([grade, status])
   // 后台「合成任务」列表按 merchantId 过滤 + createdAt 倒序分页，缺这个索引会全表扫描。
   // 其余同形态的表（bean_ledger / ai_call_log / `order` / business_request / creation）都已有
@@ -374,6 +398,15 @@ model BeanReservation {
   reserved   BigInt   @default(0)
   consumed   BigInt   @default(0)
   released   BigInt   @default(0)
+  /// ★ 冻结那一刻，本次 reserved 中「从会员赠积分桶预留」的绝对数量。
+  /// 不记这一列，到期清零就无从判断「grant_balance 里有多少是已承诺给在途任务的」，
+  /// 于是一次会员到期清零能把在途任务的额度一并抹掉 → 可用余额为负 / 结算报「积分不足」。
+  grantReserved BigInt @default(0) @map("grant_reserved")
+  /// 上一列中来自「注册赠积分」桶的部分（会员桶预留 = grantReserved - grantRegisterReserved）
+  grantRegisterReserved BigInt @default(0) @map("grant_register_reserved")
+  /// 预留发生时所处的会员周期（membership.id）。仅审计/排查用：
+  /// 回答「会员到期后为什么 grant_balance 还剩 5000」= 它属于某个在途预留。
+  membershipId  BigInt?  @map("membership_id") @db.UnsignedBigInt()
   status     String   @default("ACTIVE") @db.VarChar(16)
   createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -399,6 +432,14 @@ model BusinessRequest {
   resultRef    String?  @map("result_ref") @db.VarChar(255)
   errorCode    String?  @map("error_code") @db.VarChar(64)
   errorMsg     String?  @map("error_msg") @db.VarChar(500)
+  /// ★ AI 场景的租约（与 render_task 同一套语义）。
+  /// 没有它时：进程在「freeze 已提交、结算尚未执行」之间退出，该 requestId 的 PENDING
+  /// 预留既不会被重放推进（重放走 ScenePendingError），也没有任何 sweeper 认领 →
+  /// 积分永久冻结，且库里看起来完全正常。
+  leaseOwner   String?  @map("lease_owner") @db.VarChar(64)
+  /// fencing token：每次认领自增，失权执行者的后续写入必须被这条拦住
+  leaseVersion Int      @default(0) @map("lease_version") @db.UnsignedInt()
+  leaseExpireAt DateTime? @map("lease_expire_at") @db.DateTime(3)
   createdAt    DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt    DateTime @updatedAt @map("updated_at") @db.DateTime(3)
 
@@ -407,6 +448,7 @@ model BusinessRequest {
   @@unique([merchantId, operation, requestId])
   @@index([merchantId, operation, createdAt])
   @@index([status, updatedAt])
+  @@index([status, leaseExpireAt])
   @@map("business_request")
 }
 

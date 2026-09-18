@@ -36,6 +36,8 @@ export default function CreationShots() {
   const [uploading, setUploading] = useState<Record<string, boolean>>({})
   /** 防止同一分镜在 React 状态刷新前被重复触发 */
   const uploadTasks = useRef(new Set<string>())
+  /** 正在提交「跳过 / 撤销跳过」的分镜：挡住重复点击，也让按钮能有反馈 */
+  const [skipping, setSkipping] = useState<Record<string, boolean>>({})
   const [lib, setLib] = useState<ShotLibraryItem[]>([])
   /** 刚选完视频、还没拿到服务端封面时的本地缩略图（chooseMedia 的 thumbTempFilePath），用于即时预览 */
   const [localThumb, setLocalThumb] = useState<Record<string, string>>({})
@@ -193,6 +195,60 @@ export default function CreationShots() {
     }
   }
 
+  /**
+   * 「暂不上传」——把跳过**落库**，而不是只改本地 state。
+   *
+   * ★ 为什么必须发请求：合成页是按「分镜有没有 assetId」判断素材是否齐全的。
+   *   跳过只写在页面 state 里的话，一刷新就没了（换设备更不用说），
+   *   用户点了「确定跳过」、走到合成页，却仍然被「请先补齐全部分镜素材」挡住 ——
+   *   而那个分镜他本来就打算不拍。这是个**死循环**：回去再点一次跳过，还是被挡。
+   *
+   * ★ 文案必须与真实行为一致：跳过 = 这个分镜**不会出现在成片里**（合成管线按分镜取素材，
+   *   没有素材的分镜不进片），**也不计费**（计价按各分镜素材时长累加）。
+   *   原来写的是「将使用系统默认占位素材」—— 服务端根本没有占位素材这回事，
+   *   从 ChatCut 到本地 ffmpeg 都要真实字节，等于对用户许了一个做不到的承诺。
+   */
+  const onSkip = async (shot: ShotItem) => {
+    if (!id || skipping[shot.id]) return
+    const r = await Taro.showModal({
+      title: '跳过这个分镜',
+      content: `分镜 ${shot.seq} 不会出现在成片里，也不会计费。之后想补拍，随时可以回来撤销。`,
+      confirmText: '确定跳过',
+      confirmColor: '#8e939a',
+    })
+    if (!r.confirm) return
+    await patchSkip(shot, true)
+  }
+
+  /** 撤销跳过：把它恢复成「待上传」。素材本来就没有，所以只是把标记清掉 */
+  const onUnskip = async (shot: ShotItem) => {
+    if (!id || skipping[shot.id]) return
+    await patchSkip(shot, false)
+  }
+
+  const patchSkip = async (shot: ShotItem, skipped: boolean) => {
+    if (!id) return
+    setSkipping((m) => ({ ...m, [shot.id]: true }))
+    try {
+      const updated = await updateShotAsset(id, shot.id, { skipped })
+      // 只回填这一个分镜：其他分镜可能有并发上传正在写自己的结果，
+      // 整体替换 detail 会把它们的中间态覆盖掉
+      setDetail((d) =>
+        d ? { ...d, shots: d.shots.map((s) => (s.id === shot.id ? { ...s, ...updated } : s)) } : d,
+      )
+      Taro.showToast({ title: skipped ? '已跳过该分镜' : '已恢复，记得补拍', icon: 'none' })
+    } catch (error) {
+      // 失败必须说出来：静默失败的话，用户以为跳过了，到合成页还是被挡，又回到那个死循环
+      Taro.showToast({ title: (error as Error).message || '操作失败，请重试', icon: 'none' })
+    } finally {
+      setSkipping((m) => {
+        const next = { ...m }
+        delete next[shot.id]
+        return next
+      })
+    }
+  }
+
   /** 点击缩略图播放原视频 */
   const previewAsset = async (shot: ShotItem) => {
     if (!shot.assetId) return
@@ -268,12 +324,29 @@ export default function CreationShots() {
       </View>
     )
   }
-  const missingShots = detail.shots.filter((shot) => !shot.assetId)
+  /**
+   * 「缺素材」= 既没有 assetId、**也没有被明确跳过**的分镜。
+   * ★ 漏掉 `!shot.skipped` 的话，跳过就完全没效果：进度条永远显示缺一个，
+   *   「建议补拍」的提示也永远挂着，用户以为自己的操作没生效。
+   */
+  const missingShots = detail.shots.filter((shot) => !shot.assetId && !shot.skipped)
+  const skippedCount = detail.shots.filter((shot) => shot.skipped).length
   const total = detail.shots.length
+  /** 真正传了素材的分镜数（跳过的不算）—— 它就是计价与成片内容的来源 */
+  const uploadedCount = detail.shots.filter((shot) => !!shot.assetId).length
   const done = total - missingShots.length
   const uploadingCount = Object.keys(uploading).length
-  /** 有任意素材即可合成；全部补齐时显示主按钮，缺素材时显示「暂不上传」入口 */
-  const canCompose = total > 0 && uploadingCount === 0
+  /**
+   * 有任意素材即可合成；全部补齐时显示主按钮，缺素材时显示「暂不上传」入口。
+   * ★ `uploadedCount > 0` 是硬底线：一个素材都没有时服务端必然回 4003
+   *   （buildRenderClips「clips.length === 0 ⇒ RenderNoAssetError」），
+   *   而成片本来就是由各分镜素材拼出来的 —— 放行只会让用户白点一次、拿一句报错回来。
+   *   最容易踩到这个的是「把每个分镜都点了跳过」：那一刻页面上没有任何「缺素材」提示，
+   *   于是按钮看起来是通的。
+   */
+  const canCompose = total > 0 && uploadingCount === 0 && uploadedCount > 0
+  /** 分镜的四种状态在卡片上的文案（跳过的卡片不该再显示「还没拍」的红色提醒） */
+  const cardState = (s: ShotItem) => (s.assetId ? 'ready' : s.skipped ? 'skipped' : 'todo')
 
   return (
     <View className='cshots'>
@@ -299,9 +372,15 @@ export default function CreationShots() {
               ? `${uploadingCount} 个素材正在同步上传，可继续选择其他分镜`
               : coverBusy
                 ? '正在生成缩略图…'
-                : missingShots.length > 0
-                  ? `已上传 ${done} / ${total} 个分镜，缺 ${missingShots.length} 个素材也可先合成`
-                  : '全部素材已上传，可以去合成成片'
+                : uploadedCount === 0
+                  ? skippedCount > 0
+                    ? `全部分镜都被跳过了，至少要拍 1 个才能合成`
+                    : '还没有上传任何素材'
+                  : missingShots.length > 0
+                    ? `已上传 ${uploadedCount} / ${total} 个分镜，缺 ${missingShots.length} 个素材也可先合成`
+                    : skippedCount > 0
+                      ? `已上传 ${uploadedCount} / ${total} 个分镜，另有 ${skippedCount} 个已跳过`
+                      : '全部素材已上传，可以去合成成片'
           }
         />
       </View>
@@ -310,9 +389,11 @@ export default function CreationShots() {
         const tips = tipsFor(s)
         const thumbSrc = localThumb[s.id] || s.coverUrl || ''
         const isUploading = !!uploading[s.id]
+        const state = cardState(s)
         return (
           <View
-            className={`cshots__card ${s.assetId ? '' : 'cshots__card--todo'}`}
+            // 跳过的卡片不再走「待办」的强调边框 —— 它已经不是待办了
+            className={`cshots__card ${state === 'todo' ? 'cshots__card--todo' : ''} ${state === 'skipped' ? 'cshots__card--skipped' : ''}`}
             key={s.id}
           >
             <View className='cshots__head'>
@@ -324,7 +405,8 @@ export default function CreationShots() {
                   {!!s.durationSuggest && <Text className='cshots__chip'>建议 {s.durationSuggest}s</Text>}
                 </View>
               </View>
-              {!!s.assetId && <Text className='ds-pill ds-pill--green cshots__badge'>✓ 已上传</Text>}
+              {state === 'ready' && <Text className='ds-pill ds-pill--green cshots__badge'>✓ 已上传</Text>}
+              {state === 'skipped' && <Text className='ds-pill ds-pill--gray cshots__badge'>已跳过</Text>}
             </View>
 
             {!!s.line && <Text className='cshots__line'>{s.line}</Text>}
@@ -372,39 +454,18 @@ export default function CreationShots() {
                   <>
                     <View className='cshots__drop' hoverClass='ds-hover' onClick={() => onUpload(s)}>
                       <t-icon name='camera' size='48rpx' />
-                      <Text className='cshots__drop-title'>拍摄 / 选择视频</Text>
+                      <Text className='cshots__drop-title'>{s.skipped ? '补拍这个分镜' : '拍摄 / 选择视频'}</Text>
                       <Text className='cshots__drop-sub'>
-                        时长建议 {s.durationSuggest ? `${s.durationSuggest} 秒` : '1 分钟以内'}
+                        {s.skipped
+                          ? '已跳过，不会被合成进成片'
+                          : `时长建议 ${s.durationSuggest ? `${s.durationSuggest} 秒` : '1 分钟以内'}`}
                       </Text>
                     </View>
                     <Text
                       className='cshots__skip'
-                      onClick={() =>
-                        Taro.showModal({
-                          title: '暂不上传该分镜',
-                          content: '该分镜将使用系统默认占位素材，合成效果可能不理想。确定跳过？',
-                          confirmText: '确定跳过',
-                          confirmColor: '#8e939a',
-                        }).then((r) => {
-                          if (r.confirm) {
-                            // 标记为跳过：本地状态置空 assetId，不实际上传
-                            setDetail((d) =>
-                              d
-                                ? {
-                                    ...d,
-                                    shots: d.shots.map((shot) =>
-                                      shot.id === s.id
-                                        ? { ...shot, assetId: null, _skipped: true }
-                                        : shot,
-                                    ),
-                                  }
-                                : d,
-                            )
-                          }
-                        })
-                      }
+                      onClick={() => void (s.skipped ? onUnskip(s) : onSkip(s))}
                     >
-                      暂不上传 ›
+                      {skipping[s.id] ? '处理中…' : s.skipped ? '撤销跳过 ›' : '暂不上传 ›'}
                     </Text>
                   </>
                 )}
@@ -437,9 +498,15 @@ export default function CreationShots() {
             ? `${uploadingCount} 个素材正在上传，完成后即可合成`
             : total === 0
               ? '还没有分镜，回上一步生成文案与分镜'
-              : missingShots.length > 0
-                ? `已上传 ${done}/${total}，仍缺 ${missingShots.length} 个也可先合成`
-                : '素材已齐，可以合成成片了'}
+              : uploadedCount === 0
+                ? '至少上传 1 个分镜的素材才能合成'
+                : missingShots.length > 0
+                  ? `已上传 ${uploadedCount}/${total}，仍缺 ${missingShots.length} 个也可先合成${
+                      skippedCount > 0 ? `（另有 ${skippedCount} 个已跳过，不进成片）` : ''
+                    }`
+                  : skippedCount > 0
+                    ? `素材已齐，其中 ${skippedCount} 个已跳过，不会进成片`
+                    : '素材已齐，可以合成成片了'}
         </View>
       </View>
     </View>

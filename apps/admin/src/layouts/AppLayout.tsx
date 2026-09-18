@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { Layout, Menu, Button } from 'tdesign-react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
@@ -15,6 +16,7 @@ import {
   AssignmentUserIcon,
 } from 'tdesign-icons-react'
 import { useAuth } from '../context/AuthContext'
+import RouteFallback from '../components/RouteFallback'
 
 const MENU = [
   { label: '仪表盘', icon: <DashboardIcon />, path: '/dashboard' },
@@ -85,7 +87,15 @@ export default function AppLayout() {
           </div>
         </div>
         <div className="app-layout__content">
-          <Outlet />
+          {/*
+            Suspense 包在 Outlet 这一层（而不是整个 App）：页面已按路由懒加载，
+            切换菜单时页面 chunk 需要先下载。包在这里，菜单与顶栏在下载期间保持可见且可点，
+            只有内容区显示占位 —— 包在整个 App 外层会让侧栏一起闪白，看起来像整站重载。
+            chunk 下载失败（如发版后旧 hash 失效）由外层 ErrorBoundary 兜住，不会一直转圈。
+          */}
+          <Suspense fallback={<RouteFallback />}>
+            <Outlet />
+          </Suspense>
         </div>
       </Layout.Content>
     </Layout>

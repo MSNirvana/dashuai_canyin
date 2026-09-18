@@ -11,10 +11,12 @@
 //   2. 清零前必须确认该商户**没有**仍然有效的会员（endAt > now）。
 //      因为 activateMembership 续期时会把新 endAt 写到同一行、并把旧行留在 ACTIVE 且 endAt 已过；
 //      若不检查，续期用户的赠积分会在旧行到期日被误清空；
-//   3. expireGrant 自身对 grant_balance <= 0 直接返回 0，天然幂等；
-//   4. 状态置 EXPIRED 作为「已处理」标记（docs/01 定义的枚举就是 ACTIVE/EXPIRED）。
+//   3. ★ 上述检查**必须在事务内、在拿到商户级锁之后**重新做一遍（见下面循环里的说明）：
+//      在事务外判断等于「先看后做」，续费只要插在中间，就会把刚到账的赠积分清掉；
+//   4. expireGrant 自身对 grant_balance <= 0 直接返回 0，天然幂等；且只清未被在途预留占用的部分；
+//   5. 状态置 EXPIRED 作为「已处理」标记（docs/01 定义的枚举就是 ACTIVE/EXPIRED）。
 import type { PrismaClient } from '@prisma/client'
-import { expireGrant, type Db } from '../bean/bean.service.js'
+import { expireGrant, lockMerchantAccount, type Db } from '../bean/bean.service.js'
 
 export interface GrantExpiryResult {
   /** 扫描到的候选会员记录数 */
@@ -65,28 +67,33 @@ export async function scanGrantExpiry(prisma: PrismaClient, now = new Date()): P
     if (handled.has(key)) continue // 同一商户只处理一次
     handled.add(key)
 
-    // 续期保护：该商户若还有未到期的有效会员，说明已续期，赠积分顺延，不能清零
-    const stillActive = await prisma.membership.findFirst({
-      where: { merchantId: m.merchantId, status: 'ACTIVE', endAt: { gt: now } },
-      select: { id: true },
-    })
-    if (stillActive) {
-      result.skippedStillActive += 1
-      continue
-    }
-    // 二次保护：万一 grantExpireAt 被单独延长到未来（与 endAt 不一致），也不能清零
-    const grantExtended = await prisma.membership.findFirst({
-      where: { merchantId: m.merchantId, status: 'ACTIVE', grantExpireAt: { gt: now } },
-      select: { id: true },
-    })
-    if (grantExtended) {
-      result.skippedStillActive += 1
-      continue
-    }
-
     const expiryLabel = (m.grantExpireAt ?? m.endAt).toISOString()
     try {
-      const cleared = await prisma.$transaction(async (tx: Db) => {
+      // ★★ 所有判断都必须在**拿到商户级锁之后、在事务内**重新做一遍。
+      //
+      //   反面教材（原实现）：候选扫出来 → 在事务外问「这个商户还有有效会员吗」→
+      //   回答「没有了」→ 进事务清零。而「问答」与「进事务」之间是一段真空期，
+      //   用户恰好在这段时间完成续费并拿到新一期赠积分 ⇒ 清零事务照旧执行，
+      //   把**刚到账的 98000 积分**抹掉。用户付了钱、页面显示续费成功、积分却没了。
+      //
+      //   锁与 activateMembership 是同一把（bean_account 行锁），因此续费与清零
+      //   只能有一个先跑完；后到的那个看到的是对方已提交的结果，判断自然正确。
+      const outcome = await prisma.$transaction(async (tx: Db) => {
+        await lockMerchantAccount(tx, m.merchantId)
+
+        // 续期保护：锁内重新确认该商户没有有效会员，赠积分才轮得到清零
+        const stillActive = await tx.membership.findFirst({
+          where: { merchantId: m.merchantId, status: 'ACTIVE', endAt: { gt: now } },
+          select: { id: true },
+        })
+        if (stillActive) return 'SKIPPED' as const
+        // 二次保护：万一 grantExpireAt 被单独延长到未来（与 endAt 不一致），也不能清零
+        const grantExtended = await tx.membership.findFirst({
+          where: { merchantId: m.merchantId, status: 'ACTIVE', grantExpireAt: { gt: now } },
+          select: { id: true },
+        })
+        if (grantExtended) return 'SKIPPED' as const
+
         const r = await expireGrant(tx, {
           merchantId: m.merchantId,
           remark: `会员到期，赠积分清零（到期时间 ${expiryLabel}）`,
@@ -97,11 +104,19 @@ export async function scanGrantExpiry(prisma: PrismaClient, now = new Date()): P
           data: { status: 'EXPIRED' },
         })
         return r.expired
-      })
+      }, { isolationLevel: 'ReadCommitted' })
+      // ↑ READ COMMITTED：锁内那两次「还有有效会员吗」的复查必须是**当前**数据。
+      //   REPEATABLE READ 下若事务里先出现别的非锁定 SELECT，读视图会被提前定死，
+      //   锁内复查就会拿到续费之前的旧快照 —— 等于没有复查。
+
+      if (outcome === 'SKIPPED') {
+        result.skippedStillActive += 1
+        continue
+      }
       result.merchantsExpired += 1
-      result.beansCleared += cleared
-      if (cleared > 0n) {
-        console.log(`[grant-expiry] 商户 ${m.merchantId} 会员到期，清零赠积分 ${cleared}`)
+      result.beansCleared += outcome
+      if (outcome > 0n) {
+        console.log(`[grant-expiry] 商户 ${m.merchantId} 会员到期，清零赠积分 ${outcome}`)
       }
     } catch (e) {
       // 单个商户失败不影响其余：事务已回滚，下次扫描会重试

@@ -52,6 +52,23 @@ export default function HomePage() {
   const loadStores = useMerchantStore((s) => s.loadStores)
   const refreshMe = useMerchantStore((s) => s.refreshMe)
   const [error, setError] = useState('')
+  /**
+   * 顶部提示条这条消息**是谁写的**。
+   * ★ 首页顶部只有一个提示条，但它背后是三条互相独立的数据线（门店/账户、最近创作、优秀作品），
+   *   而 retryHome 又是三路并发。只用 setError('') 清空的话，后到的那条成功会把另一条
+   *   已经报出来的失败顺手擦掉 —— 表现为「门店明明没加载出来，提示却自己消失了」。
+   *   所以清空必须限定来源：只有写这条消息的那一块成功了，才允许清。
+   */
+  const errorFromRef = useRef<'' | 'home' | 'recent' | 'works'>('')
+  const showError = (from: 'home' | 'recent' | 'works', msg: string) => {
+    errorFromRef.current = from
+    setError(msg)
+  }
+  const clearError = (from: 'home' | 'recent' | 'works') => {
+    if (errorFromRef.current !== from) return
+    errorFromRef.current = ''
+    setError('')
+  }
   const [recent, setRecent] = useState<CreationItem[]>([])
   // 首页轮播（运营在后台配）：初值直接给兜底单张，首屏立刻有内容，不等接口回来才画
   const [banners, setBanners] = useState<HomeCarouselSlide[]>([FALLBACK_SLIDE])
@@ -79,13 +96,24 @@ export default function HomePage() {
   const playUrlRef = useRef<Record<string, { url: string; at: number }>>({})
   const storeName = stores.find((s) => s.id === currentStoreId)?.name ?? ''
 
+  /**
+   * 作品列表的请求代次。
+   * ★ 切分类与「触底加载下一页」会并发在飞，而它们没有顺序保证：
+   *   旧分类的慢响应后到，会把新分类的 items 追加到列表里（或反过来把新分类的首页结果覆盖掉），
+   *   表现为「切了分类，列表里混进了别类的作品」「翻页翻出重复内容」。
+   *   只接受最后一次请求的响应。
+   */
+  const workReqRef = useRef(0)
+
   /** 拉作品列表：reset=true 拉第一页并替换，否则追加下一页 */
   const loadWorks = async (opts: { reset?: boolean; category?: string } = {}) => {
     const category = opts.category ?? workCategory
     const page = opts.reset ? 1 : workPageRef.current + 1
+    const my = ++workReqRef.current
     setWorkLoading(true)
     try {
       const r = await listWorks({ category: category || undefined, page, pageSize: WORK_PAGE_SIZE })
+      if (my !== workReqRef.current) return // 已被更新的一次请求取代，丢弃本次回包
       workPageRef.current = r.page
       setWorkTotal(r.total)
       setWorkHasMore(r.hasMore)
@@ -95,11 +123,15 @@ export default function HomePage() {
       //   「作品区一直空白到杀进程重开」：useDidShow 每次回首页都会跑，但那个 ref 已经是 true。
       //   失败时留着 false，下次回首页自动重试。
       workLoadedRef.current = true
+      clearError('works')
     } catch {
+      if (my !== workReqRef.current) return
       // 作品区失败不遮挡积分与门店，仅提示
-      setError('优秀作品加载失败，点此重试')
+      showError('works', '优秀作品加载失败，点此重试')
     } finally {
-      setWorkLoading(false)
+      // 只有「最后一次请求」才有资格关掉 loading：否则先到的那次会把还在加载的
+      // 新请求的 loading 提前关掉，界面看起来像已经加载完了
+      if (my === workReqRef.current) setWorkLoading(false)
     }
   }
 
@@ -130,11 +162,13 @@ export default function HomePage() {
 
   const refresh = async () => {
     if (!merchant) return
-    setError('')
+    // 重试前先把「上一次失败留下的」提示收掉（只收自己这两块；作品区的提示由 loadWorks 负责清理）
+    clearError('home')
+    clearError('recent')
     try {
       await Promise.all([loadStores(true), refreshMe()])
     } catch {
-      setError('门店或账户刷新失败，请重试')
+      showError('home', '门店或账户刷新失败，请重试')
       return
     }
     // 最近创作：跟随当前门店（门店是最高层）。失败只影响这一块，不遮住积分与门店。
@@ -143,7 +177,7 @@ export default function HomePage() {
       setRecent(sid ? (await listCreations(sid)).slice(0, 2) : [])
     } catch {
       setRecent([])
-      setError('最近创作加载失败，请重试')
+      showError('recent', '最近创作加载失败，请重试')
     }
   }
   /**

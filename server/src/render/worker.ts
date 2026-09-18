@@ -13,10 +13,12 @@ import {
   completeRender,
   failRender,
   sweepSettlementPending,
+  FenceLostError,
   DEFAULT_COLOR,
   RENDER_BEAN_FULL,
   type ColorGrade,
   type RenderClip,
+  type RenderFence,
 } from '../services/render.service.js'
 import { downloadToFile, uploadFile, objectExists, cosReady } from '../lib/cos.js'
 import {
@@ -57,10 +59,23 @@ const TASK_TIMEOUT_MS = Math.max(30_000, Number(process.env.FFMPEG_TASK_TIMEOUT_
 //   否则会和 `storeChatCutState` 的全量替换 paramsJson 撞成读改写竞态、把 chatcutJob 洗掉。
 const WORKER_ID = `${process.pid}@${Date.now()}`
 const HEARTBEAT_MS = Math.max(5_000, Number(process.env.RENDER_HEARTBEAT_MS ?? 30_000))
-/** 心跳超过这个时长没刷新 ⇒ 认定持有它的进程已死 */
-const HEARTBEAT_STALE_MS = Math.max(30_000, Number(process.env.RENDER_HEARTBEAT_STALE_MS ?? 120_000))
-/** 刚认领（心跳还没落库）的任务不参与回收，避免误杀正在启动的任务 */
+/**
+ * 租约有效期：认领时写入 `lease_expire_at = now + TTL`，心跳只把它往后推。
+ * ★ 判据用「过期时间」而不是「上次心跳时间」，好处是：
+ *   ① 刚认领的任务自带一个未来时间 ⇒ 天然不会被误杀，不再需要额外的「最小年龄」窗口；
+ *   ② 心跳写入失败（DB 抖动）只是让租约停在旧值，后果与「进程真的死了」完全一致，语义单一。
+ * 必须 ≥ 单轮最坏处理耗时（远端下载 + 上传可能几十秒），否则任务还在推进就被判成孤儿重跑。
+ */
+const LEASE_TTL_MS = Math.max(60_000, Number(process.env.RENDER_LEASE_TTL_MS ?? 180_000))
+/** 存量兜底窗口：只在「租约为空」时用于识别本补丁之前遗留的 RUNNING 行 */
 const ORPHAN_MIN_AGE_MS = Math.max(30_000, Number(process.env.RENDER_ORPHAN_MIN_AGE_MS ?? 120_000))
+/**
+ * 远端任务轮询的独立节流。
+ * ★ 它必须与「当前有没有新任务」解耦：原实现把轮询放在 `if (!task)` 分支里，
+ *   于是只要队列持续有新 QUEUED 任务，已提交给远端的 AI 任务就永远轮不到 ——
+ *   远端早就出片了，本地却一直不下载结算，最后被超时 sweeper 退款。
+ */
+const CHATCUT_POLL_INTERVAL_MS = Math.max(3_000, Number(process.env.CHATCUT_POLL_INTERVAL_MS ?? 8_000))
 /** 孤儿扫描间隔（每轮 tick 都查太频） */
 const ORPHAN_SWEEP_MS = Math.max(10_000, Number(process.env.RENDER_ORPHAN_SWEEP_MS ?? 60_000))
 /** 同一任务最多被重跑几次，超了直接退款 —— 防「一启动就崩」的任务无限重试烧远端额度 */
@@ -71,6 +86,8 @@ const PHASE_MIN_INTERVAL_MS = Math.max(200, Number(process.env.RENDER_PHASE_MIN_
 let running = false
 let timer: ReturnType<typeof setTimeout> | null = null
 let lastOrphanSweepAt = 0
+/** 远端轮询上次执行时间（独立于 task 队列的节流锚点） */
+let lastChatCutPollAt = 0
 
 export function startRenderWorker(): void {
   if (running) return
@@ -107,21 +124,63 @@ async function loop(): Promise<void> {
   if (running) timer = setTimeout(() => void loop(), POLL_MS)
 }
 
-/** 刷新租约：只原子地改 paramsJson 里的一个 key */
-async function touchLease(taskId: bigint): Promise<void> {
+/**
+ * 刷新租约。**必须带 owner + version 条件**。
+ * ★ 旧实现只按 `WHERE id AND status='RUNNING'` 更新心跳，于是任何进程 —— 包括已经被回收的
+ *   旧执行者 —— 都能刷新同一个任务的租约，`reclaimOrphanedRuns` 因此永远看不到「过期」，
+ *   失权隔离形同虚设（实测：任务已被重置回 QUEUED 并重跑，旧进程仍在刷新心跳并继续上传结算）。
+ * 返回 false = 本进程已不再持有该任务（被回收或已被别人接管），调用方必须停止后续副作用。
+ */
+async function touchLease(taskId: bigint, fence: RenderFence): Promise<boolean> {
   try {
-    await prisma.$executeRaw`
+    const n = await prisma.$executeRaw`
       UPDATE render_task
-      SET params_json = JSON_SET(
-        COALESCE(params_json, JSON_OBJECT()),
-        '$.worker.heartbeatAtMs',
-        ${Date.now()}
-      )
-      WHERE id = ${taskId} AND status = 'RUNNING'
+      SET lease_expire_at = ${new Date(Date.now() + LEASE_TTL_MS)}
+      WHERE id = ${taskId}
+        AND status = 'RUNNING'
+        AND lease_owner = ${fence.owner}
+        AND lease_version = ${fence.version}
     `
+    return n > 0
   } catch (e) {
     console.warn(`[render-worker] task ${taskId} 心跳写入失败:`, (e as Error).message)
+    // DB 抖动不等于失权：返回 true 让任务继续，租约若真的过期会被回收流程正常接管。
+    return true
   }
+}
+
+/** 认领一个任务：原子地写 owner / 递增 version / 设定租约过期时间，返回本次执行权凭证 */
+export async function claimTask(taskId: bigint, opts?: { onlyQueued?: boolean }): Promise<RenderFence | null> {
+  const onlyQueued = opts?.onlyQueued ?? true
+  const now = new Date()
+  const expireAt = new Date(Date.now() + LEASE_TTL_MS)
+  const claimed = onlyQueued
+    ? await prisma.$executeRaw`
+        UPDATE render_task
+        SET status = 'RUNNING',
+            start_at = ${now},
+            progress = 5,
+            lease_owner = ${WORKER_ID},
+            lease_version = lease_version + 1,
+            lease_expire_at = ${expireAt}
+        WHERE id = ${taskId} AND status = 'QUEUED'
+      `
+    : await prisma.$executeRaw`
+        UPDATE render_task
+        SET lease_owner = ${WORKER_ID},
+            lease_version = lease_version + 1,
+            lease_expire_at = ${expireAt}
+        WHERE id = ${taskId}
+          AND status IN ('QUEUED', 'RUNNING')
+          AND (lease_expire_at IS NULL OR lease_expire_at < ${now})
+      `
+  if (claimed === 0) return null
+  const row = await prisma.renderTask.findUnique({
+    where: { id: taskId },
+    select: { leaseVersion: true },
+  })
+  if (!row) return null
+  return { owner: WORKER_ID, version: row.leaseVersion }
 }
 
 /**
@@ -129,49 +188,79 @@ async function touchLease(taskId: bigint): Promise<void> {
  *
  * 判据（须全部满足）：
  *   ① status=RUNNING，且不是 PREMIUM（人工档由剪辑工作台接管，与机器心跳无关）
- *   ② start_at 早于 ORPHAN_MIN_AGE_MS —— 给刚认领、心跳还没落库的任务留窗口
- *   ③ 心跳缺失或已过期 —— 缺失 = 本补丁之前遗留的卡死任务；过期 = 持有它的进程没了
- *   ④ 无 `chatcutJob.projectId` —— 已有项目 id 的任务远端存在状态，归 `pollChatCutTasks()` 推进
+ *   ② 租约已过期；存量行（lease_expire_at 为空）退回用 start_at + ORPHAN_MIN_AGE_MS 判定
+ *   ③ 无 `chatcutJob.projectId` —— 已有项目 id 的任务远端存在状态，归 `pollChatCutTasks()` 推进
  *
- * 处置：**重置回 QUEUED 重跑**（正常路径）；重跑次数超 MAX_RESUME 则退款收尾。
+ * 处置：**原子 CAS 重置回 QUEUED 重跑**（正常路径）；重跑次数超 MAX_RESUME 则退款收尾。
+ * ⚠ 重置必须带「租约仍已过期或为空」的条件，并在同一条 UPDATE 里 `lease_version + 1`：
+ *   否则两个扫描者会先后重置同一个任务，把**已经被别人认领并正在跑**的任务又踢回 QUEUED
+ *   （实测：已刷新租约的任务仍被旧扫描结果回收）。version 自增后，旧持有者的所有写入都会
+ *   变成 0 行，天然失权 —— 不需要额外的分布式锁。
  * ⚠ 重置不碰积分：提交时已 freeze，重跑不会重复冻结，只有最终成功才 consume。
  */
 async function reclaimOrphanedRuns(): Promise<void> {
   if (Date.now() - lastOrphanSweepAt < ORPHAN_SWEEP_MS) return
   lastOrphanSweepAt = Date.now()
-  const staleMs = Date.now() - HEARTBEAT_STALE_MS
   const ageBefore = new Date(Date.now() - ORPHAN_MIN_AGE_MS)
+  const now = new Date()
   const orphans = await prisma.$queryRaw<Array<{ id: bigint; retryCount: number }>>`
     SELECT id, retry_count AS retryCount
     FROM render_task
     WHERE status = 'RUNNING'
       AND grade <> 'PREMIUM'
-      AND start_at IS NOT NULL
-      AND start_at < ${ageBefore}
-      AND JSON_EXTRACT(params_json, '$.chatcutJob.projectId') IS NULL
       AND (
-        JSON_EXTRACT(params_json, '$.worker.heartbeatAtMs') IS NULL
-        OR CAST(JSON_EXTRACT(params_json, '$.worker.heartbeatAtMs') AS SIGNED) < ${staleMs}
+        (lease_expire_at IS NOT NULL AND lease_expire_at < ${now})
+        OR (lease_expire_at IS NULL AND start_at IS NOT NULL AND start_at < ${ageBefore})
       )
+      AND JSON_EXTRACT(params_json, '$.chatcutJob.projectId') IS NULL
     LIMIT 20
   `
   for (const orphan of orphans) {
     try {
       if (orphan.retryCount >= MAX_RESUME) {
-        const state = await failRender(
-          prisma,
-          orphan.id,
-          'WORKER_TIMEOUT',
-          '合成进程多次中断，已自动退款，可重新提交',
-        )
-        console.warn(`[render-worker] task ${orphan.id} 中断已达 ${orphan.retryCount} 次，回收为 ${state}`)
+        // 先原子抢占成失败终态（仍是过期/无租约才抢得到），再让 failRender 走「已是 FAILED ⇒
+        // 补释放预留」的分支。分两步是为了避免直接 failRender 误杀刚被别人认领重跑的任务。
+        const killed = await prisma.$executeRaw`
+          UPDATE render_task
+          SET status = 'FAILED',
+              error_code = 'WORKER_TIMEOUT',
+              error_msg = '合成进程多次中断，已自动退款，可重新提交',
+              finish_at = ${now},
+              lease_owner = NULL,
+              lease_expire_at = NULL
+          WHERE id = ${orphan.id}
+            AND status = 'RUNNING'
+            AND (lease_expire_at IS NULL OR lease_expire_at < ${now})
+        `
+        if (killed > 0) {
+          const state = await failRender(
+            prisma,
+            orphan.id,
+            'WORKER_TIMEOUT',
+            '合成进程多次中断，已自动退款，可重新提交',
+          )
+          console.warn(
+            `[render-worker] task ${orphan.id} 中断已达 ${orphan.retryCount} 次，回收为 ${state}（预留已释放）`,
+          )
+        }
         continue
       }
-      const reset = await prisma.renderTask.updateMany({
-        where: { id: orphan.id, status: 'RUNNING' },
-        data: { status: 'QUEUED', progress: 0, startAt: null, retryCount: orphan.retryCount + 1, errorCode: null, errorMsg: null },
-      })
-      if (reset.count > 0) {
+      const reset = await prisma.$executeRaw`
+        UPDATE render_task
+        SET status = 'QUEUED',
+            progress = 0,
+            start_at = NULL,
+            retry_count = retry_count + 1,
+            error_code = NULL,
+            error_msg = NULL,
+            lease_owner = NULL,
+            lease_expire_at = NULL,
+            lease_version = lease_version + 1
+        WHERE id = ${orphan.id}
+          AND status = 'RUNNING'
+          AND (lease_expire_at IS NULL OR lease_expire_at < ${now})
+      `
+      if (reset > 0) {
         console.warn(
           `[render-worker] task ${orphan.id} 租约过期（持有它的进程已中断），已重置回 QUEUED 重跑` +
             `（第 ${orphan.retryCount + 1}/${MAX_RESUME} 次）`,
@@ -188,7 +277,7 @@ async function reclaimOrphanedRuns(): Promise<void> {
  * 30% 之后由 `storeChatCutState`（按 `chatcutJob.phase` 决定 30/60）接管。
  * ★ 必须节流：启动阶段有十几个阶段节点，逐条 UPDATE 纯属白打库。
  */
-function makePhaseReporter(taskId: bigint): (info: { ratio: number; label: string }) => void {
+function makePhaseReporter(taskId: bigint, fence?: RenderFence): (info: { ratio: number; label: string }) => void {
   let last = 5
   let lastAt = 0
   return (info) => {
@@ -198,64 +287,94 @@ function makePhaseReporter(taskId: bigint): (info: { ratio: number; label: strin
     last = pct
     lastAt = now
     console.log(`[render-worker] task ${taskId} 启动阶段 ${pct}%：${info.label}`)
-    void prisma.renderTask
-      .updateMany({ where: { id: taskId, status: 'RUNNING' }, data: { progress: pct } })
-      .catch((e) => console.warn(`[render-worker] task ${taskId} 阶段进度写入失败:`, (e as Error).message))
+    void reportProgress(taskId, pct, fence)
   }
 }
 
 /** 取一个 QUEUED 任务并抢占标记 RUNNING（多 worker 并发时用条件更新抢锁） */
 async function tick(): Promise<void> {
   await reclaimOrphanedRuns() // 先捡回上个进程留下的孤儿，再取新任务
+  // ★ 远端轮询必须与「有没有新任务」解耦，且放在取任务之前。
+  //   原实现把它放在 `if (!task)` 分支里：只要队列持续有新 QUEUED 任务，
+  //   已提交给远端的 AI 任务就永远轮不到 —— 远端早就出片，本地一直不下载结算。
+  await pollChatCutTasks()
 
   // PREMIUM（人工精剪）任务不进机器队列，由管理后台剪辑工作台处理
   const task = await prisma.renderTask.findFirst({
     where: { status: 'QUEUED', grade: { not: 'PREMIUM' } },
     orderBy: { createdAt: 'asc' },
   })
-  if (!task) {
-    await pollChatCutTasks()
-    return
-  }
+  if (!task) return
 
-  // 认领 + 落租约一次写完。走原生 JSON_SET 只加 `$.worker` 一个 key，
-  // 不把整个 paramsJson 读出来重写（那会和并发写 chatcutJob 的路径打架）。
-  const claimed = await prisma.$executeRaw`
-    UPDATE render_task
-    SET status = 'RUNNING',
-        start_at = ${new Date()},
-        progress = 5,
-        params_json = JSON_SET(
-          COALESCE(params_json, JSON_OBJECT()),
-          '$.worker',
-          JSON_OBJECT('id', ${WORKER_ID}, 'heartbeatAtMs', ${Date.now()})
+  // 认领即落租约（owner + version + 过期时间），三者一次原子写完
+  const fence = await claimTask(task.id, { onlyQueued: true })
+  if (!fence) return // 被其他 worker 抢走
+
+  const lease = setInterval(() => {
+    void touchLease(task.id, fence).then((held) => {
+      if (!held) {
+        console.warn(
+          `[render-worker] task ${task.id} 执行权已被回收（租约版本落后），本进程将不再写入该任务`,
         )
-    WHERE id = ${task.id} AND status = 'QUEUED'
-  `
-  if (claimed === 0) return // 被其他 worker 抢走
-
-  const lease = setInterval(() => void touchLease(task.id), HEARTBEAT_MS)
+      }
+    })
+  }, HEARTBEAT_MS)
   const startedAt = Date.now()
   try {
-    await processTask(task)
+    await processTask(task, fence)
     console.log(`[render-worker] task ${task.id} done in ${Date.now() - startedAt}ms`)
   } catch (e) {
-    console.error(`[render-worker] task ${task.id} failed:`, (e as Error).message)
-    // ★ 错误码按档位归因：AI 档走 ChatCut，根本没跑 ffmpeg。旧代码一律报 FFMPEG_FAILED，
-    //   后台按错误码排查会被带偏（实测 990022 的素材探测 403 也记成了 FFMPEG_FAILED）。
-    const isAi = Boolean((task.paramsJson as { aiMode?: boolean } | null)?.aiMode)
-    await failRender(prisma, task.id, isAi ? 'CHATCUT_FAILED' : 'FFMPEG_FAILED', (e as Error).message)
+    if (e instanceof FenceLostError) {
+      // 失权不是失败：任务已归别人推进，这里绝不能把它写成 FAILED
+      console.warn(`[render-worker] task ${task.id} 收尾时执行权已转移，已放弃写入：${e.message}`)
+    } else {
+      console.error(`[render-worker] task ${task.id} failed:`, (e as Error).message)
+      // ★ 错误码按档位归因：AI 档走 ChatCut，根本没跑 ffmpeg。旧代码一律报 FFMPEG_FAILED，
+      //   后台按错误码排查会被带偏（实测 990022 的素材探测 403 也记成了 FFMPEG_FAILED）。
+      const isAi = Boolean((task.paramsJson as { aiMode?: boolean } | null)?.aiMode)
+      const state = await failRender(
+        prisma,
+        task.id,
+        isAi ? 'CHATCUT_FAILED' : 'FFMPEG_FAILED',
+        (e as Error).message,
+        fence,
+      )
+      if (state === 'SUPERSEDED') {
+        console.warn(`[render-worker] task ${task.id} 失败收尾时执行权已转移，未写入终态`)
+      }
+    }
   } finally {
     clearInterval(lease)
   }
 }
 
-async function processTask(task: {
-  id: bigint
-  merchantId: bigint
-  creationId: bigint
-  paramsJson: unknown
-}): Promise<void> {
+/**
+ * 进度上报。带 fence 时失权者的写入会变成 0 行，不会覆盖新执行者的进度。
+ * ★ 进度看似无害，但它会掩盖真相：旧执行者把 75% 写回去，用户看到的就是「进度倒退」，
+ *   而真正在跑的那个人推进到 90% 又被改回 75%，日志和 UI 对不上。
+ */
+async function reportProgress(taskId: bigint, progress: number, fence?: RenderFence): Promise<void> {
+  await prisma.renderTask
+    .updateMany({
+      where: {
+        id: taskId,
+        status: 'RUNNING',
+        ...(fence ? { leaseOwner: fence.owner, leaseVersion: fence.version } : {}),
+      },
+      data: { progress },
+    })
+    .catch((e) => console.warn(`[render-worker] task ${taskId} 进度写入失败:`, (e as Error).message))
+}
+
+async function processTask(
+  task: {
+    id: bigint
+    merchantId: bigint
+    creationId: bigint
+    paramsJson: unknown
+  },
+  fence?: RenderFence,
+): Promise<void> {
   const p = (task.paramsJson ?? {}) as {
     clips?: RenderClip[]
     color?: ColorGrade
@@ -266,7 +385,7 @@ async function processTask(task: {
     output?: { width: number; height: number; fps: number }
   }
   if (p.aiMode && chatCutConfigured()) {
-    await processChatCutTask(task, p)
+    await processChatCutTask(task, p, fence)
     return
   }
   if (p.aiMode && !chatCutConfigured()) {
@@ -286,10 +405,7 @@ async function processTask(task: {
     for (let i = 0; i < clips.length; i++) {
       const clip = clips[i]
       if (!clip) continue
-      await prisma.renderTask.update({
-        where: { id: task.id },
-        data: { progress: 10 + Math.round((i / clips.length) * 60) },
-      })
+      await reportProgress(task.id, 10 + Math.round((i / clips.length) * 60), fence)
 
       const startMs = clip.trimStartMs ?? 0
       const endMs = clip.trimEndMs ?? 0
@@ -323,7 +439,7 @@ async function processTask(task: {
     const allCacheHit = tmpClips.length > 0 && hitCount === clips.length
 
     // 2) 硬切拼接（copy，不重编码）
-    await prisma.renderTask.update({ where: { id: task.id }, data: { progress: 75 } })
+    await reportProgress(task.id, 75, fence)
     const concatPath = join(dir, 'concat.mp4')
     await ffmpegConcat(tmpClips, concatPath, TASK_TIMEOUT_MS)
 
@@ -338,7 +454,7 @@ async function processTask(task: {
 
     // 3.5) AI 合成（aiMode=true，默认）：AI 配音 + 字幕 + 智能节奏，叠加到成片
     if (aiMode) {
-      await prisma.renderTask.update({ where: { id: task.id }, data: { progress: 82 } })
+      await reportProgress(task.id, 82, fence)
       // 逐分镜探测实际时长（归一化产物），并携带口播文案，供配音/字幕按时间轴布时
       const shots: SynthesisShot[] = []
       for (let i = 0; i < tmpClips.length; i++) {
@@ -363,19 +479,25 @@ async function processTask(task: {
     }
 
     // 4) 回传 COS
-    await prisma.renderTask.update({ where: { id: task.id }, data: { progress: 90 } })
+    await reportProgress(task.id, 90, fence)
     const key = `renders/${task.merchantId.toString()}/${task.id.toString()}.mp4`
     const size = await uploadFile(finalPath, key, 'video/mp4')
     const durationMs = await probeDurationMs(finalPath)
 
     // 4) 结算扣积分 + 落产物（幂等：requestId rc:<taskId>）
     await prisma.$transaction((tx) =>
-      completeRender(tx, task.merchantId, task.id, {
-        resultKey: key,
-        resultSize: BigInt(size),
-        durationMs,
-        cacheHit: allCacheHit,
-      }),
+      completeRender(
+        tx,
+        task.merchantId,
+        task.id,
+        {
+          resultKey: key,
+          resultSize: BigInt(size),
+          durationMs,
+          cacheHit: allCacheHit,
+        },
+        fence,
+      ),
     )
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -399,6 +521,7 @@ async function processChatCutTask(
     title?: string
     output?: { width: number; height: number; fps: number }
   },
+  fence?: RenderFence,
 ): Promise<void> {
   const clips = params.clips ?? []
   const sourceClips = await Promise.all(clips.map(async (clip) => ({
@@ -420,9 +543,9 @@ async function processChatCutTask(
     output: params.output ?? { width: 1080, height: 1920, fps: 30 },
     // ★ 启动阶段本身就是分钟级（建项目 → 探素材 → 逐镜头 TTS → 上传全部字节 → 排轨），
     //   不报阶段的话这整段时间进度都停在 tick() 写的 5%，就是用户看到的「一直卡在 5%」
-    onPhase: makePhaseReporter(task.id),
+    onPhase: makePhaseReporter(task.id, fence),
   })
-  await storeChatCutState(task.id, result.state, result.status)
+  await storeChatCutState(task.id, result.state, result.status, fence)
   for (const notice of result.state.notices ?? []) {
     console.warn(`[render-worker] ChatCut 任务 ${task.id} 提示：${notice}`)
   }
@@ -444,23 +567,46 @@ function chatCutProgress(job: ChatCutJobState): number {
   return base + Math.round(Math.max(0, Math.min(1, ratio)) * span)
 }
 
-async function storeChatCutState(
+/**
+ * 写入 ChatCut 阶段快照（进度 + chatcutJob）。
+ *
+ * ★★ 这里**绝不能**写 FAILED 终态。历史缺陷正是它：本函数先把 `status` 写成 `'FAILED'`，
+ *    紧随其后的 `failRender()` 看到 `task.status === 'FAILED'` 就直接早退 ——
+ *    `unfreeze` 从未执行 ⇒ 任务显示失败、积分却永久冻结，连 errorCode / finishAt 都没人写，
+ *    运维在库里看不到任何线索。**失败终态只由 `failRender` 一家负责**（它同时释放预留）。
+ *
+ * ★ 状态条件 `IN ('QUEUED','RUNNING')` 与可选的 fence 条件共同防止「迟到轮询复活终态」：
+ *    上游早已成功或已退款的任务，一个晚到的轮询结果不能把它改回 RUNNING（实测能改回去，
+ *    之后还会继续下载上传，甚至对已退款任务再走一次结算）。
+ */
+export async function storeChatCutState(
   taskId: bigint,
   chatcutJob: ChatCutJobState,
   status: 'RUNNING' | 'SUCCESS' | 'FAILED',
+  fence?: RenderFence,
 ): Promise<void> {
-  const task = await prisma.renderTask.findUnique({ where: { id: taskId } })
+  if (status === 'FAILED') return
+  const task = await prisma.renderTask.findUnique({ where: { id: taskId }, select: { paramsJson: true } })
   if (!task) return
   const params = (task.paramsJson ?? {}) as Record<string, unknown>
-  await prisma.renderTask.update({
-    where: { id: taskId },
+  const updated = await prisma.renderTask.updateMany({
+    where: {
+      id: taskId,
+      status: { in: ['QUEUED', 'RUNNING'] },
+      ...(fence ? { leaseOwner: fence.owner, leaseVersion: fence.version } : {}),
+    },
     data: {
       // 外部任务已受理后，本地固定为 RUNNING，避免下一轮 Worker 重复提交。
-      status: status === 'FAILED' ? 'FAILED' : 'RUNNING',
+      status: 'RUNNING',
       progress: chatCutProgress(chatcutJob),
       paramsJson: { ...params, chatcutJob } as never,
     },
   })
+  if (updated.count === 0) {
+    console.warn(
+      `[render-worker] task ${taskId} 阶段快照未写入（任务已进入终态或执行权已转移），本次结果被忽略`,
+    )
+  }
 }
 
 /** 轮询连续失败上限：到这个次数仍未恢复就明确失败，而不是永远安静重试 */
@@ -476,11 +622,16 @@ const MAX_POLL_ERRORS = Math.max(3, Number(process.env.CHATCUT_MAX_POLL_ERRORS ?
  *   ⇒ 任务在 PREPARE/30% 卡了 6 分钟、**库里零线索**。
  *   ⇒ 计数到上限就按真实原因失败退款 —— 让这类问题**可见**，而不是让它装成「网慢」。
  */
-async function escalatePollFailure(taskId: bigint, state: ChatCutJobState, error: Error): Promise<void> {
+async function escalatePollFailure(
+  taskId: bigint,
+  state: ChatCutJobState,
+  error: Error,
+  fence?: RenderFence,
+): Promise<void> {
   const errors = (state.pollErrors ?? 0) + 1
   console.warn(`[render-worker] ChatCut 任务 ${taskId} 查询失败（第 ${errors}/${MAX_POLL_ERRORS} 次）:`, error.message)
   if (errors < MAX_POLL_ERRORS) {
-    await storeChatCutState(taskId, { ...state, pollErrors: errors }, 'RUNNING')
+    await storeChatCutState(taskId, { ...state, pollErrors: errors }, 'RUNNING', fence)
     return
   }
   const finalState = await failRender(
@@ -488,39 +639,61 @@ async function escalatePollFailure(taskId: bigint, state: ChatCutJobState, error
     taskId,
     'CHATCUT_POLL_FAILED',
     `连续 ${errors} 次查询云端任务状态失败：${error.message}`,
+    fence,
   )
   console.warn(`[render-worker] ChatCut 任务 ${taskId} 轮询持续失败，已终止（结果 ${finalState}）`)
 }
 
 async function pollChatCutTasks(): Promise<void> {
   if (!chatCutConfigured()) return
+  const now = Date.now()
+  // 独立节流：与「当前有没有新任务」解耦（原因见 tick() 里的说明）
+  if (now - lastChatCutPollAt < CHATCUT_POLL_INTERVAL_MS) return
+  lastChatCutPollAt = now
+
+  // ★ 排序改为「租约到期时间升序」而不是固定取最老 5 条：
+  //   原来的 take:5 + createdAt 排序下，前 5 条只要长期不结束，后面的任务永远轮不到，
+  //   远端早就出片也没人下载结算，最后只能被超时 sweeper 退款。
+  //   租约为 NULL（从未被推进/刚被重置）在 ASC 下排最前，正好优先处理。
   const tasks = await prisma.renderTask.findMany({
     where: { status: { in: ['QUEUED', 'RUNNING'] }, grade: 'AI' },
-    orderBy: { createdAt: 'asc' },
-    take: 5,
+    orderBy: [{ leaseExpireAt: 'asc' }, { createdAt: 'asc' }],
+    take: 20,
   })
   for (const task of tasks) {
     const params = (task.paramsJson ?? {}) as { chatcutJob?: ChatCutJobState }
     const state = params.chatcutJob
     // 没有状态 = 还没启动过（或旧格式的历史任务），交给 processTask 去启动
     if (!state?.projectId) continue
+    // ★ 认领：同一时刻只允许一个执行者推进同一个远端任务。
+    //   原实现是裸读-改：两个 worker 会同时对同一任务提交导出、互相覆盖阶段与 renderId，
+    //   甚至把一个已经结算成功的任务改回 RUNNING。
+    const fence = await claimTask(task.id, { onlyQueued: false })
+    if (!fence) continue // 别人正持有（租约未过期），本轮跳过不是错误
     try {
       const result = await pollChatCutRender(state)
       // 查询成功即清零失败计数（只有「连续」失败才有意义）
-      await storeChatCutState(task.id, { ...result.state, pollErrors: 0 }, result.status)
+      await storeChatCutState(task.id, { ...result.state, pollErrors: 0 }, result.status, fence)
       for (const notice of result.state.notices ?? []) {
         if (!state.notices?.includes(notice)) console.warn(`[render-worker] ChatCut 任务 ${task.id} 提示：${notice}`)
       }
       if (result.status === 'FAILED') {
-        await failRender(prisma, task.id, 'CHATCUT_FAILED', result.errorMessage || 'ChatCut 处理失败')
+        await failRender(prisma, task.id, 'CHATCUT_FAILED', result.errorMessage || 'ChatCut 处理失败', fence)
       } else if (result.status === 'SUCCESS') {
         try {
-          await finishChatCutTask(task, result.resultUrl)
+          await finishChatCutTask(task, result.resultUrl, fence)
         } catch (e) {
+          if (e instanceof FenceLostError) throw e
           if (e instanceof ExternalResultInvalidError) {
             // 上游报成功但产物不可用：立即退款 + 终态，不让用户为坏片付费，
             // 也不把任务留在 RUNNING 等 30 分钟 sweeper 兜底
-            const state2 = await failRender(prisma, task.id, 'EXTERNAL_RESULT_INVALID', `成片校验未通过：${e.detail}`)
+            const state2 = await failRender(
+              prisma,
+              task.id,
+              'EXTERNAL_RESULT_INVALID',
+              `成片校验未通过：${e.detail}`,
+              fence,
+            )
             console.warn(`[render-worker] ChatCut 任务 ${task.id} 成片无效，已退款（结果 ${state2}）：${e.detail}`)
           } else {
             throw e
@@ -528,10 +701,15 @@ async function pollChatCutTasks(): Promise<void> {
         }
       }
     } catch (error) {
-      // 网络抖动 / 查询失败：保持 RUNNING，下一轮重试；**连续**失败超上限则明确终止（见 escalatePollFailure）
-      await escalatePollFailure(task.id, state, error as Error).catch((e) =>
-        console.warn(`[render-worker] ChatCut 任务 ${task.id} 失败计数写入异常:`, (e as Error).message),
-      )
+      if (error instanceof FenceLostError) {
+        // 失权不是失败：任务已归别人推进，这里绝不能把它写成 FAILED 或计入失败次数
+        console.warn(`[render-worker] ChatCut 任务 ${task.id} 执行权已转移，本轮结果被忽略：${error.message}`)
+      } else {
+        // 网络抖动 / 查询失败：保持 RUNNING，下一轮重试；**连续**失败超上限则明确终止（见 escalatePollFailure）
+        await escalatePollFailure(task.id, state, error as Error, fence).catch((e) =>
+          console.warn(`[render-worker] ChatCut 任务 ${task.id} 失败计数写入异常:`, (e as Error).message),
+        )
+      }
     }
   }
 }
@@ -547,6 +725,7 @@ export class ExternalResultInvalidError extends Error {
 async function finishChatCutTask(
   task: { id: bigint; merchantId: bigint },
   resultUrl: string | undefined,
+  fence?: RenderFence,
 ): Promise<void> {
   // ChatCut 只给成片地址（它不会把产物推到我们的 COS），所以只有一条分支。
   // ★ 扣费前必须校验：HTTP 200 只代表「下载成功」，不代表「内容是视频」。
@@ -571,7 +750,7 @@ async function finishChatCutTask(
       resultSize,
       durationMs: probe.durationMs,
       cacheHit: false,
-    }))
+    }, fence))
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

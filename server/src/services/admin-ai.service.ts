@@ -7,6 +7,7 @@
 import type { PrismaClient, Prisma, AiModel, AiScene } from '@prisma/client'
 import { encryptSecret, decryptSecret, maskSecret } from '../lib/secret.js'
 import { getAdapter } from '../ai/adapters.js'
+import { assertSafeOutboundUrl } from '../lib/outbound-url.js'
 import { LIVE_SCENE_CODES } from '../ai/scene-codes.js'
 import { validateTemplate, SCENE_VARIABLES } from '../ai/prompt-vars.js'
 
@@ -145,12 +146,18 @@ export async function upsertAiProvider(
     monthlyBudgetFen?: number | null
   },
 ) {
+  // ★ 地址必须在**落库前**就过安全闸门（协议 / 本机 / 私网 / 保留地址 / 重定向）。
+  //   为什么不能只靠调用时校验：这条 baseUrl 决定了服务端往哪里发**已保存的 API key**，
+  //   让一个内网地址先存进库、再等下一次调用时才发现，等于把「配置成功」的假象留给了运营。
+  //   调用时仍会再校验一次（adapters.ts::postJson → safeFetch），那是纵深防御，不是重复。
+  const safeBaseUrl = await assertSafeOutboundUrl(input.baseUrl)
+
   const data: Prisma.AiProviderUncheckedCreateInput | Prisma.AiProviderUncheckedUpdateInput = {
     code: input.code,
     name: input.name,
     providerType: input.providerType,
     protocol: input.protocol ?? 'OPENAI_COMPATIBLE',
-    baseUrl: input.baseUrl,
+    baseUrl: safeBaseUrl.toString().replace(/\/+$/, ''),
     enabled: input.enabled ?? true,
     priority: input.priority ?? 100,
     monthlyBudgetFen: input.monthlyBudgetFen ?? null,

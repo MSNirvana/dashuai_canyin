@@ -79,6 +79,14 @@ export interface ShotItem {
   trimEndMs: number | null
   /** 素材实际时长（ms）：未设置 trim 时合成按此计价 */
   assetDurationMs?: number | null
+  /**
+   * 用户主动跳过该分镜（「暂不上传」）。
+   * ★ 这是**服务端**字段：跳过会被落库，刷新 / 换设备都在。
+   *   本地的乐观标记（曾经的 `_skipped`）一刷新就没了，而合成页按「有没有 assetId」
+   *   判断素材是否齐全 ⇒ 跳过等于没跳过，用户被永久挡在合成页外。
+   * 不变量：skipped 为 true 时 assetId 必为 null。
+   */
+  skipped: boolean
   status: string
 }
 
@@ -223,7 +231,7 @@ export function updateShotContent(
 export function updateShotAsset(
   id: string,
   shotId: string,
-  input: { assetId?: string; trimStartMs?: number; trimEndMs?: number },
+  input: { assetId?: string; trimStartMs?: number; trimEndMs?: number; skipped?: boolean },
 ) {
   return http.put<ShotItem>(`/creations/${id}/shots/${shotId}`, input)
 }

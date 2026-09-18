@@ -7,6 +7,7 @@
 
 import { Prisma } from '@prisma/client'
 import type { PrismaClient } from '@prisma/client'
+import { randomUUID } from 'node:crypto'
 
 export type Db = PrismaClient | Prisma.TransactionClient
 
@@ -51,15 +52,58 @@ export function availableOf(a: {
   return a.balance + a.grantBalance + (a.grantRegisterBalance ?? 0n) - a.frozen
 }
 
-/** 取账户并加行锁；不存在则创建 */
+/**
+ * 取账户并加**排他**行锁；不存在则创建。
+ *
+ * ★ 这里必须用 `INSERT ... ON DUPLICATE KEY UPDATE`，不能用 `INSERT IGNORE`。
+ *
+ *   `INSERT IGNORE` 在「行已存在」时只取**共享锁（S）**，随后那句 `SELECT ... FOR UPDATE`
+ *   需要把 S 升级成 X。两个并发事务各自握着 S 等对方放锁 ⇒ **经典死锁**。
+ *   实测（同一商户两笔会员订单并发结算）：`accounting:verify` 三次里必有一次报
+ *   `1213 Deadlock found when trying to get lock`，生产里就是「同一商户并发支付回调随机 500」。
+ *   MySQL 文档明确：`ON DUPLICATE KEY UPDATE` 命中重复键时对目标行加的是**排他锁**，
+ *   于是这里一步到位拿到 X，不存在升级，也就构不成环。
+ *   （行不存在时它退化成普通 INSERT，两条并发插入只会一方等待、不会成环。）
+ *
+ * ★ 不要改成「先 SELECT 看有没有、再决定插不插」：那需要一次额外的非锁定读，
+ *   既多一次往返，又让「锁在哪个时刻生效」变得依赖竞态 —— 锁本身必须是一次原子操作。
+ *
+ * ★ `updated_at` 必须显式给值：它是 `NOT NULL` 且**没有库级默认值**
+ *   （schema 里的 `@updatedAt` 是 Prisma 客户端行为，不生成 DEFAULT 子句）。
+ *   旧的 `INSERT IGNORE` 之所以"没报错"，是因为 IGNORE 把 1364 降级成了警告 ——
+ *   换成严格 INSERT 后必须补上这一列，否则直接 1364。
+ *   补上反而更正确：旧写法在「行本来不存在」时会带着隐式默认值落一行脏时间戳，
+ *   而 ODKU 的重复分支只赋值 `merchant_id`，不会把 `updated_at` 改掉。
+ *
+ * 注意：`merchantId` 是唯一键（@@unique），ODKU 靠它命中去重分支。
+ */
 async function lockAccount(tx: Db, merchantId: bigint): Promise<AccountRow> {
-  await tx.$executeRaw`INSERT IGNORE INTO bean_account (merchant_id) VALUES (${merchantId})`
+  await tx.$executeRaw`
+    INSERT INTO bean_account (merchant_id, updated_at) VALUES (${merchantId}, ${new Date()})
+    ON DUPLICATE KEY UPDATE merchant_id = merchant_id`
   const rows = await tx.$queryRaw<AccountRow[]>`
     SELECT id, merchant_id, balance, grant_balance, grant_register_balance, frozen
     FROM bean_account WHERE merchant_id = ${merchantId} FOR UPDATE`
   const row = rows[0]
   if (!row) throw new Error(`bean_account lock failed for merchant ${merchantId}`)
   return row
+}
+
+/**
+ * 商户级账务互斥锁 —— **导出给不在本模块内、但必须与账务串行化的操作使用**。
+ *
+ * 为什么复用 bean_account 行锁当互斥量：这一行是每个商户账务的唯一串行点
+ * （freeze / consume / unfreeze / grant / recharge 全部先锁它），且 `INSERT IGNORE` 保证行必然存在，
+ * 所以它是一个**可靠存在**的行锁目标。相比之下拿 membership 表做 `FOR UPDATE`
+ * 在「一行都还没有」时只能依赖间隙锁，隔离级别一变就失效。
+ *
+ * 当前使用方：
+ *   - services/order.service.ts       :: activateMembership（会员续期读-改-写）
+ *   - services/grant-expiry.service.ts :: 到期清零（必须在锁内重判有效会员）
+ * ★ 新增使用方时请保持**同一把锁**，否则就是「各锁各的」，等于没锁。
+ */
+export async function lockMerchantAccount(tx: Db, merchantId: bigint): Promise<void> {
+  await lockAccount(tx, merchantId)
 }
 
 async function writeLedger(
@@ -152,6 +196,46 @@ async function findReservation(
   return null
 }
 
+/**
+ * 本次预留的**未结余量**（首次冻结时的金额快照，扣除已消耗/已释放）。
+ *
+ * ★ 用途：重放一条已有 requestId 的请求时，结算/释放的金额必须取自这里，
+ *   **不能**重新读当前价格（`ai_scene.bean_price`）。价格是运营随时可改的，
+ *   改价后重放会拿「新价」去 unlock「按旧价冻结」的预留：
+ *   - 新价 > 旧价 → unfreeze 超出业务预留 → 抛错 → 预留永久冻结；
+ *   - 新价 < 旧价 → 只释放一部分 → 差额永久冻结。
+ *   返回 null 表示没有预留（此时调用方应视为「无需退款」，而不是按 0 处理后再去 settle）。
+ */
+export async function reservationRemaining(
+  tx: Db,
+  args: { merchantId: bigint; requestId?: string; bizType?: string; bizId?: string },
+): Promise<bigint | null> {
+  const r = await findReservation(tx, args)
+  if (!r) return null
+  const remaining = r.reserved - r.consumed - r.released
+  return remaining > 0n ? remaining : 0n
+}
+
+/**
+ * 汇总「所有在途预留中，属于会员赠积分桶的部分」= 到期清零**必须保留**的额度。
+ *
+ * 按每条预留的剩余比例折算并**向上取整**：宁可多留（下一轮扫描还会再清），
+ * 也绝不少留 —— 少留就等于把在途任务的额度抹掉，结算时必然报「积分不足」。
+ */
+async function outstandingGrantReserved(tx: Db, merchantId: bigint): Promise<bigint> {
+  const rows = await tx.beanReservation.findMany({
+    where: { merchantId, status: 'ACTIVE', grantReserved: { gt: 0n } },
+    select: { reserved: true, consumed: true, released: true, grantReserved: true },
+  })
+  let total = 0n
+  for (const r of rows) {
+    const remaining = r.reserved - r.consumed - r.released
+    if (remaining <= 0n || r.reserved <= 0n) continue
+    total += (remaining * r.grantReserved + r.reserved - 1n) / r.reserved
+  }
+  return total
+}
+
 // ────────────────────────────── 预留 / 结算 / 释放 ──────────────────────────────
 
 export interface FreezeResult {
@@ -194,6 +278,22 @@ export async function freeze(
   }
 
   const frozenAfter = acc.frozen + args.amount
+
+  // ★ 预留必须记下「这笔额度是从哪个桶预留的」。
+  //   桶的归属只能在这一刻确定：等到 consume/到期清零时，grant_balance 可能已经被
+  //   会员到期清零抹掉，届时无法反推「还有多少额度是承诺给在途任务的」——
+  //   于是清零点会保留一个负数可用余额，或让在途任务结算时报「积分不足」。
+  //   拆分口径与 consume 的消耗顺序一致（会作废的先预留：会员桶 → 注册桶 → 充值桶）。
+  const min = (a: bigint, b: bigint) => (a < b ? a : b)
+  const grantReserved = min(acc.grant_balance, args.amount)
+  const grantRegisterReserved = min(acc.grant_register_balance, args.amount - grantReserved)
+  // 会员周期（审计用）：回答「会员到期后为什么 grant_balance 还有余额」= 属于某个在途预留
+  const cycle = await tx.membership.findFirst({
+    where: { merchantId: args.merchantId, status: 'ACTIVE', endAt: { gt: new Date() } },
+    orderBy: { endAt: 'desc' },
+    select: { id: true },
+  })
+
   const reservation = await tx.beanReservation.create({
     data: {
       merchantId: args.merchantId,
@@ -201,6 +301,9 @@ export async function freeze(
       bizId: args.bizId ?? `${args.requestId ?? 'anonymous'}:${Date.now()}`,
       requestId: args.requestId ?? `anonymous:${Date.now()}`,
       reserved: args.amount,
+      grantReserved,
+      grantRegisterReserved,
+      membershipId: cycle?.id ?? null,
     },
   })
   await tx.beanAccount.update({
@@ -212,8 +315,13 @@ export async function freeze(
       merchantId: args.merchantId,
       type: 'FREEZE',
       amount: args.amount,
+      // 冻结本身不动余额（只动 frozen），但桶归属要留痕：
+      // 这样「到期清零保留了哪一部分」可以从 FREEZE 流水直接读出来，不必再猜。
+      bucket: grantReserved + grantRegisterReserved > 0n ? 'GRANT' : 'RECHARGE',
+      grantAmount: grantReserved + grantRegisterReserved,
+      grantRegisterAmount: grantRegisterReserved,
       balanceAfter: acc.balance,
-      grantAfter: acc.grant_balance,
+      grantAfter: acc.grant_balance + acc.grant_register_balance,
       frozenAfter,
       bizType,
       bizId: args.bizId,
@@ -498,38 +606,91 @@ export async function grant(
  *   拉新时承诺「送 30 积分试用」，不该在 30 天后随会员一起作废。
  *   原实现清空整个赠积分池，会把注册赠积分一起清掉（靠分桶才可能修对：消耗是池化的，
  *   没有批次概念，所以「账上还剩多少注册赠积分」无法从历史流水反推）。
+ *
+ * ★ 再一条：只清**未被在途预留占用**的部分（见 outstandingGrantReserved）。
+ *   清零是把 grant_balance 直接归零，而 frozen 是账户级计数器、不受影响；
+ *   若不保留已承诺给在途任务的那部分，可用余额会变成负数、
+ *   在途任务结算时报「积分不足」。保留的部分会在预留结清后的下一轮扫描被清掉。
  */
 export async function expireGrant(tx: Db, args: { merchantId: bigint; remark?: string }) {
   const acc = await lockAccount(tx, args.merchantId)
-  if (acc.grant_balance <= 0n) return { expired: 0n, preserved: acc.grant_register_balance }
-  const expired = acc.grant_balance
+  if (acc.grant_balance <= 0n) return { expired: 0n, preserved: acc.grant_register_balance, retained: 0n }
+  // ★ 只清「没有被在途预留占用」的那部分会员赠积分。
+  //   反例（改动前）：清零直接把 grant_balance 置 0、却保留 frozen，
+  //   于是 available = balance + 0 + register − frozen 可能为负，
+  //   在途任务结算时被判定「积分不足」而失败 —— 用户没做错任何事。
+  const committed = await outstandingGrantReserved(tx, args.merchantId)
+  const clearable = acc.grant_balance > committed ? acc.grant_balance - committed : 0n
+  if (clearable <= 0n) {
+    if (committed > 0n) {
+      console.warn(
+        `[bean] 商户 ${args.merchantId} 会员到期，但会员赠积分 ${acc.grant_balance} 全部被在途预留占用，本轮不清零`,
+      )
+    }
+    return { expired: 0n, preserved: acc.grant_register_balance, retained: acc.grant_balance }
+  }
+  const membershipAfter = acc.grant_balance - clearable
   await tx.beanAccount.update({
     where: { merchantId: args.merchantId },
-    data: { grantBalance: 0n, version: { increment: 1 } },
+    data: { grantBalance: membershipAfter, version: { increment: 1 } },
   })
   await writeLedger(tx, {
     merchantId: args.merchantId,
     type: 'EXPIRE',
-    amount: -expired,
+    amount: -clearable,
     bucket: 'GRANT',
-    grantAmount: expired,
+    grantAmount: clearable,
     grantRegisterAmount: 0n, // 清的是会员赠积分，不含注册赠积分
     balanceAfter: acc.balance,
-    grantAfter: acc.grant_register_balance, // 剩余赠积分 = 注册桶（未被清）
+    grantAfter: membershipAfter + acc.grant_register_balance, // 剩余赠积分 = 保留的会员桶 + 注册桶
     frozenAfter: acc.frozen,
     bizType: 'MEMBER_EXPIRE',
-    remark: args.remark ?? `会员赠积分到期清零 ${expired}`,
+    remark: args.remark ?? `会员赠积分到期清零 ${clearable}`,
   })
-  return { expired, preserved: acc.grant_register_balance }
+  if (membershipAfter > 0n) {
+    console.warn(
+      `[bean] 商户 ${args.merchantId} 到期清零后仍保留 ${membershipAfter} 会员赠积分（被在途预留占用），释放后会由下一轮清零`,
+    )
+  }
+  return { expired: clearable, preserved: acc.grant_register_balance, retained: membershipAfter }
 }
 
-/** 后台手动调账（必填 remark 与 operatorId，全留痕） */
+/**
+ * 后台手动调账（必填 remark 与 operatorId，全留痕）。
+ *
+ * ★ `requestId` 是幂等键，调用方**必须**给一个稳定的值。
+ *   原来是 `adjust:{merchantId}:{Date.now()}:{random}` —— 每次调用都是一个全新的
+ *   requestId，于是唯一索引 `(merchantId,bizType,requestId,type)` **永远撞不上**：
+ *   按钮双击一次、客户端超时重试一次，就真的调了两次账、写了两条 ADJUST 流水。
+ *   改钱的动作必须能被要求「只执行一次」，而能做到这件事的唯一手段就是一个稳定的幂等键。
+ *   （不传时仍会兜底生成一个，但那条路只保证「不回滚」、不保证「不重复」——
+ *     所以路由层把 requestId 设成了必填，见 routes/admin.ts。）
+ *
+ * 返回 `duplicated=true` 表示这是重放，账户**没有**被再次改动，余额是上一次的快照。
+ */
 export async function adjust(
   tx: Db,
-  args: { merchantId: bigint; amount: bigint; bucket?: BeanBucket; operatorId: bigint; remark: string },
+  args: {
+    merchantId: bigint
+    amount: bigint
+    bucket?: BeanBucket
+    operatorId: bigint
+    remark: string
+    requestId?: string
+  },
 ) {
   if (!args.remark) throw new Error('adjust requires remark')
+  const bizType = 'ADMIN'
+  const requestId = args.requestId ?? `adjust:${args.merchantId}:${Date.now()}:${randomUUID().slice(0, 8)}`
+
+  // 先锁账户，再查幂等。顺序很关键：抢到行锁之后，并发的第二个请求才能看到
+  // 第一个请求**已经提交**的那条 ADJUST 流水（行锁是当前读，不受快照影响）。
   const acc = await lockAccount(tx, args.merchantId)
+  const dup = await findLedger(tx, args.merchantId, bizType, requestId, 'ADJUST')
+  if (dup) {
+    return { balanceAfter: dup.balanceAfter, grantAfter: dup.grantAfter, duplicated: true as const }
+  }
+
   const bucket = args.bucket ?? 'RECHARGE'
   // 后台调账的「赠积分」一律进**会员桶**（会随会员到期清零）；注册桶只由注册路径写入。
   // 这样运营手动补的赠积分不会变成永久余额，口径与「赠送」按钮的语义一致。
@@ -551,12 +712,12 @@ export async function adjust(
     balanceAfter,
     grantAfter,
     frozenAfter: acc.frozen,
-    bizType: 'ADMIN',
+    bizType,
     operatorId: args.operatorId,
-    requestId: `adjust:${args.merchantId}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`,
+    requestId,
     remark: args.remark,
   })
-  return { balanceAfter, grantAfter }
+  return { balanceAfter, grantAfter, duplicated: false as const }
 }
 
 /** 查询余额（含可用额度） */

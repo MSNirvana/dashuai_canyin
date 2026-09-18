@@ -35,6 +35,10 @@
     "sms:status": "tsx scripts/sms-status.ts",
     "wxpay:probe": "tsx scripts/probe-wxpay-live.ts",
     "pay-reconcile:verify": "tsx scripts/verify-pay-reconcile.ts",
+    "accounting:verify": "tsx scripts/verify-accounting-integrity.ts",
+    "upload-boundary:verify": "tsx scripts/verify-upload-and-ssrf.ts",
+    "storage:dup-assets": "tsx scripts/report-duplicate-assets.ts",
+    "storyboard-replay:verify": "tsx scripts/verify-storyboard-replay.ts",
     "wxpay:appid": "tsx scripts/probe-wxpay-appid.ts",
     "ai-prompts:sync": "tsx scripts/ai-prompts-sync.ts",
     "ai-prompts:verify": "tsx scripts/verify-prompt-vars.ts",
@@ -43,12 +47,15 @@
     "profile:verify": "tsx scripts/verify-profile.ts",
     "creation-archive:verify": "tsx scripts/verify-creation-archive.ts",
     "render-multitask:verify": "tsx scripts/verify-render-multitask.ts",
+    "render-lease:verify": "tsx scripts/verify-render-lease-fencing.ts",
     "render-errors:fix-paths": "tsx scripts/fix-legacy-error-paths.ts",
+    "render-leak:fix": "tsx scripts/fix-failed-reservation-leak.ts",
     "tutorial:verify": "tsx scripts/verify-tutorial.ts",
     "chatcut:probe": "tsx scripts/chatcut-probe.ts",
     "chatcut:authorize": "tsx scripts/chatcut-authorize.ts",
     "chatcut:call": "tsx scripts/chatcut-call.ts",
-    "chatcut:smoke": "tsx scripts/chatcut-smoke.ts"
+    "chatcut:smoke": "tsx scripts/chatcut-smoke.ts",
+    "shot-skip:verify": "tsx scripts/verify-shot-skip.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

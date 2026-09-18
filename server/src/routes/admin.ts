@@ -6,9 +6,18 @@ import multer from 'multer'
 import { join } from 'node:path'
 import { InvalidIdParamError, idParam, optionalIdParam } from '../lib/params.js'
 import { z } from 'zod'
-import { prisma } from '../db.js'
+import { prisma, redis } from '../db.js'
 import { ok, fail } from '../lib/result.js'
 import { adminAuth } from '../middleware/admin-auth.js'
+import {
+  ADMIN_LOGIN_GLOBAL_POLICY,
+  ADMIN_LOGIN_POLICY,
+  adminGlobalKey,
+  adminUserKey,
+  checkLoginAllowed,
+  clearLoginFailures,
+  recordLoginFailure,
+} from '../lib/login-throttle.js'
 import { localStorageRoot, removeLocalFile } from '../lib/local-storage.js'
 import { tutorialCategoryEnum } from '../lib/tutorial-categories.js'
 import * as adminSvc from '../services/admin.service.js'
@@ -24,6 +33,7 @@ import * as payReconcile from '../services/pay-reconcile.service.js'
 import * as premium from '../render/premium.js'
 import * as premiumDeliverSvc from '../services/premium-delivery.service.js'
 import { invalidate } from '../lib/settings.js'
+import { UnsafeOutboundUrlError } from '../lib/outbound-url.js'
 import type { Prisma } from '@prisma/client'
 
 const router = createRouter()
@@ -35,10 +45,37 @@ const loginInput = z.object({ username: z.string().min(1), password: z.string().
 router.post('/auth/login', async (req, res) => {
   try {
     const { username, password } = loginInput.parse(req.body)
-    const r = await adminSvc.adminLogin(prisma, username, password)
-    ok(res, r)
+    /**
+     * ★ 先查锁，再比密码 —— 顺序不能反。
+     *   反过来的话，被锁的请求仍然会去查库、跑一次 bcrypt 比对（那是登录路径上最贵的一步），
+     *   限速就从「挡住爆破」退化成「只少发一次 token」：攻击者照样能用 CPU 把你拖住。
+     */
+    const checks = [
+      { key: adminUserKey(username), policy: ADMIN_LOGIN_POLICY },
+      { key: adminGlobalKey(), policy: ADMIN_LOGIN_GLOBAL_POLICY },
+    ]
+    const verdict = await checkLoginAllowed(redis, checks)
+    if (!verdict.allowed) {
+      // 429：语义就是「稍后重试」；文案给出还要等多久，否则用户只会不停再点
+      return fail(res, 4029, `登录失败次数过多，请 ${Math.ceil(verdict.retryAfterSec / 60)} 分钟后再试`, 429)
+    }
+    try {
+      const r = await adminSvc.adminLogin(prisma, username, password)
+      await clearLoginFailures(redis, username)
+      return ok(res, r)
+    } catch (e) {
+      if (!(e instanceof adminSvc.AdminLoginFailedError)) throw e
+      const locked = await recordLoginFailure(redis, checks)
+      return fail(
+        res,
+        4001,
+        locked
+          ? `登录失败次数过多，请 ${Math.ceil(ADMIN_LOGIN_POLICY.windowSec / 60)} 分钟后再试`
+          : e.message,
+        locked ? 429 : 401,
+      )
+    }
   } catch (e) {
-    if (e instanceof adminSvc.AdminLoginFailedError) return fail(res, 4001, e.message, 401)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     return fail(res, 500, '登录失败', 500)
   }
@@ -286,6 +323,20 @@ const adjustInput = z.object({
   amount: z.union([z.string(), z.number()]),
   bucket: z.enum(['RECHARGE', 'GRANT']),
   remark: z.string().min(1).max(255),
+  /**
+   * 幂等键，**必填**。
+   *
+   * ★ 为什么定成必填而不是选填：调账是「改钱」的动作，而它唯一的重复防线就是这个键。
+   *   选填的话，忘了传的调用方会退回「每次生成新键」的老路 —— 而那正是这个 bug 的成因，
+   *   表现为双击一次按钮、或请求超时重试一次，余额就被改了两遍，且两条 ADJUST 流水
+   *   看起来都完全正常（不同 requestId ⇒ 唯一索引不拦）。
+   *   宁可让忘了传的调用方当场吃一个 400 并看清要传什么，也不要让它悄悄地把钱改错。
+   *
+   * 语义：同一个 requestId 重复提交只落一次账，第二次返回**首次**的余额快照
+   * （响应里的 `duplicated=true`）。所以「重试」是安全的：
+   * 客户端只要在**同一次调账意图**里复用同一个 id，就不会重复扣加。
+   */
+  requestId: z.string().min(8).max(64),
 })
 router.post('/bean/adjust', async (req, res) => {
   try {
@@ -295,13 +346,16 @@ router.post('/bean/adjust', async (req, res) => {
       amount: BigInt(input.amount as string | number),
       bucket: input.bucket,
       remark: input.remark,
+      requestId: input.requestId,
     })
     ok(res, {
       balanceAfter: r.balanceAfter.toString(),
       grantAfter: r.grantAfter.toString(),
+      // 如实告知这是重放：后台据此提示「本次没有重复扣加」，而不是让运营以为又调了一次
+      duplicated: r.duplicated,
     })
   } catch (e) {
-    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误（requestId 为必填幂等键，长度 8~64）', 400)
     return fail(res, 400, (e as Error).message, 400)
   }
 })
@@ -471,6 +525,8 @@ router.post('/ai/providers', async (req, res) => {
     ok(res, await adminAi.upsertAiProvider(prisma, undefined, input))
   } catch (e) {
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof UnsafeOutboundUrlError) return fail(res, 400, e.message, 400)
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     fail(res, 500, '创建失败', 500)
   }
 })
@@ -481,6 +537,7 @@ router.put('/ai/providers/:id', async (req, res) => {
   } catch (e) {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof UnsafeOutboundUrlError) return fail(res, 400, e.message, 400)
     fail(res, 500, '更新失败', 500)
   }
 })
@@ -705,6 +762,7 @@ router.post('/shot-library', async (req, res) => {
     ok(res, await adminExtra.adminUpsertShotLibrary(prisma, undefined, shotLibInput.parse(req.body)))
   } catch (e) {
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof adminExtra.ShotLibraryKeyError) return fail(res, 400, e.message, 400)
     fail(res, 500, '创建失败', 500)
   }
 })
@@ -714,6 +772,7 @@ router.put('/shot-library/:id', async (req, res) => {
   } catch (e) {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    if (e instanceof adminExtra.ShotLibraryKeyError) return fail(res, 400, e.message, 400)
     fail(res, 500, '更新失败', 500)
   }
 })

@@ -43,6 +43,9 @@ export default function Recharge() {
   const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => () => {
+    // 离开页面：作废代次，让**已经在飞**的那次 queryOrder 回包也不再 setState
+    // （只 clearTimeout 只能拦住「还没发出的下一次」，拦不住当前这次请求的回包）
+    confirmGen.current += 1
     if (pollTimer.current) clearTimeout(pollTimer.current)
   }, [])
 
@@ -53,8 +56,32 @@ export default function Recharge() {
   //   主动查单会让服务端去微信确认并当场补发权益，正常情况下第 1 次就能到账。
   //   后端返回 5xx（微信超时/验签不通过）时走 catch 继续重试，绝不把「查不到」当成「没付」。
   const MAX_CONFIRM_ATTEMPTS = 6
-  const confirmOrder = (orderNo: string, attempt = 0): void => {
+  /**
+   * 确认轮询的代次。
+   *
+   * ★ 为什么必须有序号：一轮轮询最长要 6×2s ≈ 12s，而 busyLock 在支付回调一返回就放开了，
+   *   用户完全可能在「第一笔还在确认中」时又买第二笔。两条链同时在飞有两个很坏的后果：
+   *   · 第一条链查到 PAID 就 `setPendingOrderNo(null)` + 弹「到账成功」—— 那是用户**上一笔**的钱，
+   *     而当前这笔还在路上。用户会以为第二笔也到账了，其实只是页面不再提它；
+   *     反过来，第一条链走到失败分支会把第二条链的「确认中」关掉、弹「暂未查到支付结果」。
+   *   · `pollTimer` 只有一个 ref 槽位，被后一条链覆盖后前一条就再也取消不掉 ——
+   *     页面卸载时 clearTimeout 只清得掉最后一条。
+   *   ⇒ 发起新的一轮时作废旧的（清定时器 + 代次自增），过期代次的回包一律丢弃。
+   */
+  const confirmGen = useRef(0)
+  const confirmOrder = (orderNo: string): void => {
+    confirmGen.current += 1
+    if (pollTimer.current) {
+      clearTimeout(pollTimer.current)
+      pollTimer.current = null
+    }
+    pollOrder(orderNo, 0, confirmGen.current)
+  }
+  const pollOrder = (orderNo: string, attempt: number, gen: number): void => {
+    if (gen !== confirmGen.current) return
     queryOrder(orderNo).then((order) => {
+      // 已被新的一轮取代：这一笔的状态既不该显示、也不该据此改「确认中」
+      if (gen !== confirmGen.current) return
       if (order.status === 'PAID') {
         setConfirming(false)
         setPendingOrderNo(null)
@@ -69,15 +96,16 @@ export default function Recharge() {
         return
       }
       if (attempt < MAX_CONFIRM_ATTEMPTS) {
-        pollTimer.current = setTimeout(() => confirmOrder(orderNo, attempt + 1), 2000)
+        pollTimer.current = setTimeout(() => pollOrder(orderNo, attempt + 1, gen), 2000)
       } else {
         // 已经反复向微信查过单仍未支付成功：交给后台对账兜底，别让用户一直盯着「确认中」
         setConfirming(false)
         Taro.showToast({ title: '暂未查到支付结果，到账后会自动开通', icon: 'none' })
       }
     }).catch(() => {
+      if (gen !== confirmGen.current) return
       if (attempt < MAX_CONFIRM_ATTEMPTS) {
-        pollTimer.current = setTimeout(() => confirmOrder(orderNo, attempt + 1), 2500)
+        pollTimer.current = setTimeout(() => pollOrder(orderNo, attempt + 1, gen), 2500)
       }
     })
   }

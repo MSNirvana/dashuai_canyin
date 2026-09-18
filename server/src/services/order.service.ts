@@ -7,7 +7,7 @@
 // 对外统一称「积分」，底层仍复用 bean_* 账务表。
 import type { PrismaClient, Prisma } from '@prisma/client'
 import { randomUUID } from 'crypto'
-import { recharge, grant, getBalance, type Db } from '../bean/bean.service.js'
+import { recharge, grant, getBalance, lockMerchantAccount, type Db } from '../bean/bean.service.js'
 import { wxpayEnabled, createJsapiOrder, buildPayParams, decryptResource, type PayParams } from '../lib/wxpay.js'
 import { getNumber } from '../lib/settings.js'
 import { paymentsEnabled } from '../lib/config.js'
@@ -18,6 +18,27 @@ export class OrderAlreadyPaidError extends Error {
     super('订单已支付')
     this.name = 'OrderAlreadyPaidError'
   }
+}
+
+/**
+ * 订单有效期。本地 `order.expireAt` 与微信侧 `time_expire` **必须用同一个值**。
+ *
+ * ★ 不一致的后果（改动前就是不一致的：本地 15 分钟、微信默认 7 天）：
+ *   本地先判过期 → 置 EXPIRED（旧代码还没关微信单）→ 用户在这段时间里付了钱 →
+ *   回调进来时本地状态已不是 PENDING → CAS 更新 0 行 → 钱收了、权益静默不发。
+ */
+const ORDER_TTL_MS = 15 * 60 * 1000
+
+/** 转成微信要求的 RFC3339（含时区偏移）。用本机偏移而不是硬编码 +08:00，避免服务器时区不同导致误解。 */
+function toRfc3339(d: Date): string {
+  const pad = (n: number) => String(Math.floor(Math.abs(n))).padStart(2, '0')
+  const offsetMin = -d.getTimezoneOffset()
+  const sign = offsetMin >= 0 ? '+' : '-'
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` +
+    `${sign}${pad(offsetMin / 60)}:${pad(offsetMin % 60)}`
+  )
 }
 export class PackageNotFoundError extends Error {
   constructor() {
@@ -159,7 +180,7 @@ export async function createBeanOrder(
       memberDiscountApplied: false, // v5 废除折扣
       beans,
       status: 'PENDING',
-      expireAt: new Date(Date.now() + 15 * 60 * 1000),
+      expireAt: new Date(Date.now() + ORDER_TTL_MS),
     },
   })
 
@@ -175,6 +196,8 @@ export async function createBeanOrder(
     outTradeNo: orderNo,
     amountFen,
     openid: m.wechatOpenid,
+    // 与本地 expireAt 严格一致（见 ORDER_TTL_MS 的说明）
+    timeExpire: toRfc3339(order.expireAt),
   })
   await prisma.order.update({ where: { id: order.id }, data: { wxPrepayId: prepayId } })
   return {
@@ -228,6 +251,8 @@ export async function createMemberOrder(
     outTradeNo: orderNo,
     amountFen: pkg.priceFen,
     openid: m.wechatOpenid,
+    // 与本地 expireAt 严格一致（见 ORDER_TTL_MS 的说明）
+    timeExpire: toRfc3339(order.expireAt),
   })
   await prisma.order.update({ where: { id: order.id }, data: { wxPrepayId: prepayId } })
   return { dev: false, orderNo, amountFen: pkg.priceFen, beans: '0', memberDiscountApplied: false, payParams: buildPayParams(prepayId) }
@@ -256,15 +281,35 @@ export async function markOrderPaid(
     Math.round(await getNumber(prisma, 'subscription', 'grant_points', 98000)),
   )
 
+  // ★ isolationLevel 必须显式设为 READ COMMITTED，否则 activateMembership 里那把商户锁**形同虚设**：
+  //   MySQL 默认 REPEATABLE READ 下，「一致读」的读视图由事务内第一条**非锁定** SELECT 建立。
+  //   本事务在拿锁之前就先读了 member_package，读视图在那一刻就被定死了 ——
+  //   即便随后 lockMerchantAccount 会阻塞到对手提交，锁内的 membership 查询仍然用旧快照，
+  //   于是「锁内重新读当前会员」读到的还是「没有有效会员」→ 两笔订单各建一行、各算同一个到期时间。
+  //   实测：不加这一行，两笔并发会员订单只续一期且留下两行重叠的 ACTIVE 会员。
+  //   （同族的坑见 domain/request.ts::claimBusinessRequest 的注释。）
   await prisma.$transaction(async (tx: Db) => {
-    // 终态 CAS：条件更新仅允许 PENDING → PAID。
-    // 微信回调会重试，两个并发回调可能同时通过外层「已 PAID」快照检查；
-    // 只有抢到状态流转的那一个会发放权益，另一个 count=0 直接返回，杜绝双重发积分/双开会员。
+    // 微信回调会重试、并发回调也可能同时通过外层「已 PAID」的快照检查；
+    // 只有抢到状态流转的那一个会发放权益，另一个 count=0 直接返回，
+    // 靠这一步杜绝双重发积分 / 双开会员。
+    //
+    // ★ 允许的来源状态除 PENDING 外，还包括 EXPIRED / CANCELLED。
+    //   这两种状态意味着「本地已经判定它不会再付了」；但用户完全可能在关闭之前就付了钱
+    //   （关单与支付之间的竞态），或者关单失败。回调此时依然会到达 ——
+    //   若只认 PENDING，这次更新就是 0 行，权益被**静默吞掉**：钱收了、货没发，
+    //   而且库里连一行线索都不留（旧实现的这条路径上没有任何日志）。
+    //   真实收款必须兑现，所以这里把它收敛为「补发权益」，并留下告警供对账核查。
     const claimed = await tx.order.updateMany({
-      where: { orderNo, status: 'PENDING' },
+      where: { orderNo, status: { in: ['PENDING', 'EXPIRED', 'CANCELLED'] } },
       data: { status: 'PAID', paidAt: new Date(), wxTransactionId },
     })
     if (claimed.count === 0) return
+    if (order.status !== 'PENDING') {
+      console.warn(
+        `[pay] 订单 ${orderNo} 在本地状态为 ${order.status} 时收到支付成功，已按补发处理` +
+          `（关单/过期与支付之间的竞态）。本地过期时间 ${order.expireAt.toISOString()}，请核对微信侧交易号 ${wxTransactionId ?? '-'}`,
+      )
+    }
     if (order.orderType === 'BEAN') {
       await recharge(tx, { merchantId: order.merchantId, amount: order.beans, bizId: order.orderNo })
     } else if (order.orderType === 'MEMBER') {
@@ -274,7 +319,7 @@ export async function markOrderPaid(
         grantRemark,
       })
     }
-  })
+  }, { isolationLevel: 'ReadCommitted' })
 }
 
 /** 激活 / 续期订阅，并发放赠送积分 */
@@ -293,6 +338,14 @@ async function activateMembership(
   const grantPoints = override?.grantPoints ?? pkg.grantBeans
   const durationMs = durationDays * 24 * 60 * 60 * 1000
 
+  // ★★ 必须在读 existing 之前先拿商户级锁，否则「续期少一期」：
+  //   两笔会员订单各自完成订单 CAS 后，都读到同一个 existing.endAt（例如 T），
+  //   各自算出同一个新结束时间 T+30d 并覆盖写入 ——
+  //   两笔都 PAID、两次都发了赠积分，但会员期只增加了一次。
+  //   首次开通同理：两笔都查不到有效会员 → 各建一行 → 出现两行重叠的 ACTIVE。
+  //   锁与帐务用的是同一把（bean_account 行锁），所以与结算/清零天然互斥。
+  await lockMerchantAccount(tx, merchantId)
+
   const existing = await tx.membership.findFirst({
     where: { merchantId, status: 'ACTIVE', endAt: { gt: now } },
     orderBy: { endAt: 'desc' },
@@ -306,6 +359,12 @@ async function activateMembership(
       data: { endAt: newEnd, grantBeans: { increment: grantPoints }, grantExpireAt: newEnd },
     })
   } else {
+    // 锁内重判后仍无有效会员，才允许新建。同时把历史遗留的 ACTIVE 但已过期的行收口，
+    // 避免「一行已过期仍 ACTIVE + 一行新 ACTIVE」在到期扫描里被反复当成候选。
+    await tx.membership.updateMany({
+      where: { merchantId, status: 'ACTIVE', endAt: { lte: now } },
+      data: { status: 'EXPIRED' },
+    })
     const endAt = new Date(now.getTime() + durationMs)
     await tx.membership.create({
       data: {

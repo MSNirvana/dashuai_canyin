@@ -50,6 +50,11 @@
   &__card--todo {
     border: 2rpx solid var(--td-brand-color-light);
   }
+  /* 已跳过：不是待办、也不是已完成。弱化成灰色虚线，别再用主色边框催用户去拍 */
+  &__card--skipped {
+    border: 2rpx dashed var(--td-border-level-1-color);
+    background: var(--td-bg-color-secondarycontainer);
+  }
 
   &__head {
     display: flex;

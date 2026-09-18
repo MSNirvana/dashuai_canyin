@@ -5,6 +5,7 @@ import type { PrismaClient } from '@prisma/client'
 import { assertUploadAllowed } from './subscription.service.js'
 import { storageMode, type StorageMode } from '../lib/local-storage.js'
 import { assertSafeObjectKey } from '../lib/object-key.js'
+import { headObjectMeta } from '../lib/cos.js'
 
 export interface StsCredential {
   tmpSecretId: string
@@ -28,6 +29,46 @@ export class UploadStoreMismatchError extends Error {
   constructor() {
     super('门店不属于当前商家')
     this.name = 'UploadStoreMismatchError'
+  }
+}
+
+/** 单文件上限，与 multer 的 limits.fileSize 保持一致（2GB，靠客户端分片续传扛） */
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+
+/** 对象不存在 / 大小异常 / 类型不符 —— 一律 400，不是 5xx */
+export class UploadObjectMismatchError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'UploadObjectMismatchError'
+  }
+}
+
+/**
+ * 允许的扩展名 → 声明的素材类型。
+ *
+ * ★ 为什么要按扩展名卡一道：`type` 是客户端说了算的（IMAGE/VIDEO），
+ *   而它决定了后续管线怎么处理这个对象（抽帧/封面/合成）。一个 `.mp4` 被声明成 IMAGE，
+ *   或反过来把一个 2GB 视频声明成 IMAGE 蒙过体积相关的逻辑，都会在下游以
+ *   「静默不播 / 合成失败」的形式出现，而上传这一步看起来完全成功。
+ *   这里只做「扩展名 ↔ 声明类型」的一致性 + 后缀白名单，避免出现可执行/脚本类后缀。
+ */
+const ALLOWED_EXT_BY_TYPE: Record<'VIDEO' | 'IMAGE', string[]> = {
+  VIDEO: ['.mp4', '.m4v', '.mov', '.webm', '.avi'],
+  IMAGE: ['.jpg', '.jpeg', '.png', '.webp', '.gif'],
+}
+
+function extOf(key: string): string {
+  const i = key.lastIndexOf('.')
+  return i < 0 ? '' : key.slice(i).toLowerCase()
+}
+
+function assertExtensionMatches(key: string, type: 'VIDEO' | 'IMAGE'): void {
+  const ext = extOf(key)
+  const allowed = ALLOWED_EXT_BY_TYPE[type]
+  if (!ext || !allowed.includes(ext)) {
+    throw new UploadObjectMismatchError(
+      `对象键后缀 ${ext || '(无)'} 与素材类型 ${type} 不符（允许：${allowed.join('/')}）`,
+    )
   }
 }
 
@@ -172,8 +213,44 @@ export async function confirmUpload(prisma: PrismaClient, merchantId: bigint, in
   })
   if (!store) throw new UploadStoreMismatchError()
 
+  // ── 幂等：同一个对象键只登记一行 ──────────────────────────────────
+  // 客户端 `confirmUploadWithRetry` 对 /complete 最多重试 3 次（弱网下很常见）。
+  // 若第一次其实已经落库、只是响应丢了，重试就会再建一行**完全相同的素材**：
+  // 配额被重复计算、素材列表出现重复项、GC 也不知道该按哪一行判引用。
+  // 实测库里已经有一组（商户 1 的同 key 两行、且两行分别被 1 个和 6 个分镜引用）。
+  // 所以这里先查后建：同 key 的未删除素材直接原样返回，不新建、不重复计配额。
+  const existing = await prisma.mediaAsset.findFirst({
+    where: { merchantId, cosKey: input.cosKey, deletedAt: null },
+  })
+  if (existing) {
+    console.warn(`[upload] 重复确认同一对象键（幂等返回已有素材）key=${input.cosKey} asset=${existing.id}`)
+    return existing
+  }
+
+  // ── 服务端核验对象真实存在与真实大小 ─────────────────────────────
+  // 客户端上报的 sizeBytes 只是线索，不是证据：上报 0 就能让配额校验形同虚设，
+  // 上报一个不存在的键也能把素材标成 READY。所以配额与落库一律用存储侧的真实值。
+  const meta = await headObjectMeta(input.cosKey)
+  if (!meta.exists) {
+    throw new UploadObjectMismatchError('对象不存在或上传尚未完成，请重试上传后再次确认')
+  }
+  if (meta.sizeBytes <= 0) {
+    throw new UploadObjectMismatchError('对象为空文件，已拒绝登记')
+  }
+  if (meta.sizeBytes > MAX_UPLOAD_BYTES) {
+    throw new UploadObjectMismatchError(`对象大小 ${meta.sizeBytes} 超过单文件上限 ${MAX_UPLOAD_BYTES}`)
+  }
+  assertExtensionMatches(input.cosKey, input.type)
+  // 客户端值只用于**发现异常**（日志/排查），不参与任何计算。
+  // 偏差大往往说明客户端口径错了（实测同一对象被上报过 22495870 与 5242880 两个值）。
+  if (input.sizeBytes !== meta.sizeBytes) {
+    console.warn(
+      `[upload] 客户端上报大小 ${input.sizeBytes} 与存储实测 ${meta.sizeBytes} 不一致 key=${input.cosKey}，以存储为准`,
+    )
+  }
+
   // v5：上传永远免费，但受空间配额限制（未订阅 1GB / 订阅 5GB），超限直接拒绝
-  await assertUploadAllowed(prisma, merchantId, BigInt(input.sizeBytes))
+  await assertUploadAllowed(prisma, merchantId, BigInt(meta.sizeBytes))
 
   return prisma.mediaAsset.create({
     data: {
@@ -185,7 +262,7 @@ export async function confirmUpload(prisma: PrismaClient, merchantId: bigint, in
       cosKey: input.cosKey,
       bucket: process.env.COS_BUCKET ?? '',
       region: process.env.COS_REGION ?? '',
-      sizeBytes: input.sizeBytes,
+      sizeBytes: meta.sizeBytes,
       durationMs: input.durationMs,
       width: input.width,
       height: input.height,

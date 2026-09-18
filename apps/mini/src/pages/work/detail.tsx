@@ -1,16 +1,21 @@
 import { useEffect, useState } from 'react'
-import { View, Text, Image, Video } from '@tarojs/components'
+import { View, Text, Image, Video, Button } from '@tarojs/components'
 import Taro, { useRouter } from '@tarojs/taro'
 import { getWork, markWorkClone, markWorkView, type WorkDetail } from '../../services/work'
 import { COMPLEXITY_OPTIONS, COPY_TRACK_OPTIONS } from '../../services/creation'
 import { useMerchantStore } from '../../store/merchant'
 import { guideLogin } from '../../utils/login-guide'
+import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './detail.scss'
 
 /** 优秀作品详情：看成片 → 看配方 → 一键套用 */
 export default function WorkDetailPage() {
   const router = useRouter()
-  const id = router.params.id ?? ''
+  // ★ 编号当场校验：`?id=undefined` 拼出来的 URL 看着正常，但服务端 idParam 会回 4000。
+  //   本页是**免登录可读**的引流页（首页/分享都会进来），拿这种编号去请求只会得到
+  //   一句「参数不合法」，用户不知道该点哪里（详见 utils/route-id.ts）。
+  const id = readRouteId(router.params)
+  const idBroken = isBrokenRouteId(router.params)
   const merchant = useMerchantStore((s) => s.merchant)
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const [work, setWork] = useState<WorkDetail | null>(null)
@@ -49,6 +54,9 @@ export default function WorkDetailPage() {
 
   /** 预填：带着配方进创作页，用户自己确认后再生成 */
   const onApply = () => {
+    // 编号为空时两个按钮本来就不该出现在页面上（`!work` 会先渲染成「作品不存在」），
+    // 这里再挡一道，避免把 `workId=null` 拼进下一个 URL 重演同一个坑
+    if (!id) return
     if (!merchant) {
       needLogin()
       return
@@ -71,6 +79,7 @@ export default function WorkDetailPage() {
    *   这里少说一句，他就会以为「跟以前一样扣两次」而不敢点。
    */
   const onAutoGenerate = async () => {
+    if (!id) return
     if (!merchant) {
       needLogin()
       return
@@ -94,7 +103,14 @@ export default function WorkDetailPage() {
   }
 
   if (loading) return <View className='work-detail work-detail--state'>加载中…</View>
-  if (!work) return <View className='work-detail work-detail--state'>作品不存在或已下架</View>
+  if (!work) {
+    return (
+      <View className='work-detail work-detail--state'>
+        {idBroken ? '链接里的作品编号有误，请从优秀作品列表重新进入' : '作品不存在或已下架'}
+        <Button size='mini' onClick={() => Taro.switchTab({ url: '/pages/home/index' })}>回首页看优秀作品</Button>
+      </View>
+    )
+  }
 
   const recipe = work.recipeJson ?? {}
   const trackLabel = COPY_TRACK_OPTIONS.find((o) => o.value === recipe.track)?.label

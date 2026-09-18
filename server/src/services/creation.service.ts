@@ -164,7 +164,7 @@ export async function listCreations(
       //
       // seq + 显式 orderBy 是给**列表封面**用的：封面要认「第一个已上传的视频」，
       // 不能依赖数组的默认顺序（DB 不保证稳定序，排错会让封面在两次刷新之间跳来跳去）。
-      shots: { select: { assetId: true, seq: true }, orderBy: { seq: 'asc' } },
+      shots: { select: { assetId: true, seq: true, skipped: true }, orderBy: { seq: 'asc' } },
       renderTasks: { select: { status: true }, orderBy: { id: 'desc' }, take: 1 },
     },
   })
@@ -217,7 +217,9 @@ export async function listCreations(
     return {
       ...rest,
       shotsTotal: shots.length,
-      shotsReady: shots.filter((s) => s.assetId !== null).length,
+      // ★ 「已就绪」= 传了素材 **或** 用户明确跳过。跳过的分镜不该继续算作「缺素材」：
+      //   列表卡片上的分段进度会一直停在「3/5」，用户以为还有活没干完 —— 而那个分镜他本来就不打算拍。
+      shotsReady: shots.filter((s) => s.assetId !== null || s.skipped).length,
       renderStatus: renderTasks[0]?.status ?? null,
       // 卡片缩略图：第一个已上传视频的封面（没有则为 null，前端退回默认图标）
       coverUrl: pickCover(r.storeId, shots),
@@ -715,31 +717,80 @@ export async function generateShots(
         select: { id: true, code: true },
       })
       const libMap = new Map(libs.map((l) => [l.code, l.id]))
-      await prisma.$transaction(async (tx) => {
-        await tx.shot.deleteMany({ where: { creationId } })
-        let seq = 0
-        for (const item of arr) {
-          seq++
-          const it = item as Record<string, unknown>
-          const libCode = typeof it.libraryCode === 'string' ? it.libraryCode.trim() : ''
-          const libId =
-            libMap.get(libCode) ??
-            (it.libraryShotId !== undefined && it.libraryShotId !== null ? BigInt(String(it.libraryShotId)) : null)
-          await tx.shot.create({
-            data: {
-              creationId,
-              seq: typeof it.seq === 'number' && it.seq > 0 ? it.seq : seq,
-              shotType: str(it.shotType),
-              shotSize: str(it.shotSize),
-              durationSuggest: num(it.durationSuggest),
-              line: str(it.line),
-              visualReq: str(it.visualReq),
-              libraryShotId: libId,
-              status: 'PENDING',
-            },
-          })
+      // ★★ 「AI 结果的首次应用」必须是**一次且仅一次**的，并且与分镜删建同事务。
+      //
+      //   反面教材（原实现）：只要走到这里就无条件 `deleteMany` + 重建。
+      //   AI 账务层对同一 requestId 会正确返回**缓存结果**（不重复扣费），
+      //   但调用方照样重建 —— 于是「首次成功后用户改了分镜、绑了素材，
+      //   再由于网络重试等原因重放同一个 requestId」会把用户的所有编辑**静默清空**。
+      //   更糟的是它看起来完全成功：返回了 shots、扣费也是幂等的。
+      //
+      //   判据 = creation 上的两列标记，用「AI 请求的认领时刻」做单调排序键：
+      //     · applied_at 为空              → 从没应用过（含崩溃恢复）  ⇒ 应用
+      //     · applied_at < 本次认领时刻     → 本次结果更新            ⇒ 应用（重新生成）
+      //     · applied_at >= 本次认领时刻    → 就是同一次结果的重放     ⇒ 跳过，原样返回现有分镜
+      //   同一 requestId 的认领时刻恒定不变，所以重放永远命中第三条；
+      //   而「迟到的旧 requestId 重放」因为认领时刻早于最新一次应用，同样会跳过 ——
+      //   顺带把「旧结果覆盖新分镜」这条竞态也一并堵上。
+      const applyShots = (force: boolean) =>
+        prisma.$transaction(async (tx) => {
+          if (!force) {
+            const claim = await tx.creation.updateMany({
+              where: {
+                id: creationId,
+                OR: [{ storyboardAppliedAt: null }, { storyboardAppliedAt: { lt: r.requestClaimedAt } }],
+              },
+              data: { storyboardAppliedRequestId: requestId, storyboardAppliedAt: r.requestClaimedAt },
+            })
+            if (claim.count === 0) return false
+          } else {
+            await tx.creation.update({
+              where: { id: creationId },
+              data: { storyboardAppliedRequestId: requestId, storyboardAppliedAt: r.requestClaimedAt },
+            })
+          }
+
+          await tx.shot.deleteMany({ where: { creationId } })
+          let seq = 0
+          for (const item of arr) {
+            seq++
+            const it = item as Record<string, unknown>
+            const libCode = typeof it.libraryCode === 'string' ? it.libraryCode.trim() : ''
+            const libId =
+              libMap.get(libCode) ??
+              (it.libraryShotId !== undefined && it.libraryShotId !== null ? BigInt(String(it.libraryShotId)) : null)
+            await tx.shot.create({
+              data: {
+                creationId,
+                seq: typeof it.seq === 'number' && it.seq > 0 ? it.seq : seq,
+                shotType: str(it.shotType),
+                shotSize: str(it.shotSize),
+                durationSuggest: num(it.durationSuggest),
+                line: str(it.line),
+                visualReq: str(it.visualReq),
+                libraryShotId: libId,
+                status: 'PENDING',
+              },
+            })
+          }
+          return true
+        })
+      const applied = await applyShots(false)
+      if (!applied) {
+        console.log(
+          `[storyboard] requestId=${requestId} 的结果此前已应用过（或已有更新的一次生成），` +
+            `保留现有分镜不做重建 creation=${creationId}`,
+        )
+        // 例外：标记说「已应用」，但库里一条分镜都没有（历史脏数据 / 被清过）。
+        // 此时没有任何用户编辑需要保护，而返回 0 条分镜会让前端认定「分镜没生成」、
+        // 用户卡在这一步走不动。所以补建一次。
+        const existing = await prisma.shot.count({ where: { creationId } })
+        if (existing === 0) {
+          console.warn(`[storyboard] creation=${creationId} 已标记应用但分镜为空，补建一次`)
+          await applyShots(true)
         }
-      })
+      }
+      // 无论是否重建，都返回**当前**的分镜：跳过重建时这正是用户的编辑结果
       parsed = true
       shots = await prisma.shot.findMany({ where: { creationId }, orderBy: { seq: 'asc' } })
     } catch {
@@ -814,7 +865,7 @@ export async function updateShotAsset(
   merchantId: bigint,
   creationId: bigint,
   shotId: bigint,
-  input: { assetId?: bigint; trimStartMs?: number; trimEndMs?: number },
+  input: { assetId?: bigint; trimStartMs?: number; trimEndMs?: number; skipped?: boolean },
 ) {
   const creation = await getCreation(prisma, merchantId, creationId)
   // 越权防护：shot 必须属于当前 creation（否则可改到他人创作的分镜）
@@ -822,13 +873,46 @@ export async function updateShotAsset(
     const asset = await prisma.mediaAsset.findFirst({ where: { id: input.assetId, merchantId, storeId: creation.storeId, deletedAt: null } })
     if (!asset) throw new CreationAssetMismatchError()
   }
+  /**
+   * `assetId` 与 `skipped` 是**互斥**的两态：一个分镜要么有素材，要么被明确跳过，不该同时成立。
+   * 两个方向都要在这里收口，否则会出现「传完素材却发现它还挂着跳过标记」——
+   * 那时合成页会把这个分镜当成已跳过而**静默丢掉**，用户传了素材却看不到它出现在成片里。
+   */
+  const data: {
+    assetId?: bigint | null
+    trimStartMs?: number
+    trimEndMs?: number | null
+    skipped?: boolean
+  } = {}
+  if (input.skipped === true) {
+    // 跳过 = 放弃该分镜的素材：清空素材与裁剪区间，并把互斥位立起来
+    data.assetId = null
+    data.trimStartMs = 0
+    data.trimEndMs = null
+    data.skipped = true
+  } else {
+    if (input.skipped === false) data.skipped = false
+    if (input.assetId !== undefined) {
+      data.assetId = input.assetId
+      data.trimStartMs = input.trimStartMs ?? 0
+      data.trimEndMs = input.trimEndMs ?? null
+      // 传了新素材 ⇒ 这个分镜不再算跳过（用户改主意了）
+      data.skipped = false
+    } else if (input.trimStartMs !== undefined || input.trimEndMs !== undefined) {
+      // 只调裁剪区间时不动 assetId（原实现无条件写 assetId，会把素材抹掉）
+      if (input.trimStartMs !== undefined) data.trimStartMs = input.trimStartMs
+      if (input.trimEndMs !== undefined) data.trimEndMs = input.trimEndMs
+    }
+  }
+  if (Object.keys(data).length === 0) {
+    // 空 patch：只做归属校验后回读，语义与原实现一致（不写库）
+    const cur = await prisma.shot.findFirst({ where: { id: shotId, creationId } })
+    if (!cur) throw new ShotNotFoundError()
+    return cur
+  }
   const upd = await prisma.shot.updateMany({
     where: { id: shotId, creationId },
-    data: {
-      assetId: input.assetId,
-      trimStartMs: input.trimStartMs ?? 0,
-      trimEndMs: input.trimEndMs,
-    },
+    data,
   })
   if (upd.count === 0) throw new ShotNotFoundError()
   const shot = await prisma.shot.findUnique({ where: { id: shotId } })

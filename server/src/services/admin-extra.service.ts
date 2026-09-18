@@ -2,6 +2,7 @@
 // 业务错误统一抛出 { code, httpStatus }，路由层捕获并映射
 import type { PrismaClient, Prisma } from '@prisma/client'
 import { adjust } from '../bean/bean.service.js'
+import { describeSharedPrefixes, isSharedAssetKey } from '../lib/shared-asset-key.js'
 import { adminActivateMembership } from './order.service.js'
 
 export class AdminNotFoundError extends Error {
@@ -352,18 +353,31 @@ export async function adminAdjustBeans(
     amount: bigint
     bucket: 'RECHARGE' | 'GRANT'
     remark: string
+    /** 幂等键：同一个键重复提交只落一次账（双击 / 超时重试都会命中它） */
+    requestId: string
   },
 ) {
   if (input.amount === 0n) throw new Error('amount 不能为 0')
   if (!input.remark.trim()) throw new Error('请填写调账原因')
-  const result = await prisma.$transaction((tx) =>
-    adjust(tx, {
-      operatorId,
-      merchantId: input.merchantId,
-      amount: input.amount,
-      bucket: input.bucket,
-      remark: input.remark,
-    }),
+  const result = await prisma.$transaction(
+    (tx) =>
+      adjust(tx, {
+        operatorId,
+        merchantId: input.merchantId,
+        amount: input.amount,
+        bucket: input.bucket,
+        remark: input.remark,
+        requestId: input.requestId,
+      }),
+    /**
+     * ★ 必须显式 READ COMMITTED。
+     *   `adjust` 的幂等判据是「锁内重读账本流水」：先 `SELECT ... FOR UPDATE` 抢账户行锁
+     *   （当前读，看得到对手刚提交的行），再去 `findLedger` 找同 requestId 的流水。
+     *   而 MySQL 默认的 REPEATABLE READ 会在事务内**第一条一致性读**时把快照定死 ——
+     *   一旦这个快照早于对手的提交，锁内那次 findLedger 读的仍是旧视图，看不到对手刚写的流水，
+     *   于是第二个请求照样会把钱改第二遍：幂等形同虚设。
+     */
+    { isolationLevel: 'ReadCommitted' },
   )
   return result
 }
@@ -435,6 +449,22 @@ export async function adminListShotLibrary(prisma: PrismaClient) {
   })
 }
 
+/**
+ * 镜头库素材键不合法（不在平台共享前缀内）。
+ *
+ * ★ 为什么在**写入**时就要拦，而不是只在读接口拦：
+ *   读接口那道守卫是安全底线，但它的表现是「示范视频不存在」—— 运营看到的是
+ *   「我明明填了键，为什么播不出来」，而且日志里只有一行 warn。
+ *   在写入时直接拒掉并说清「该填什么」，才是把事故挡在发生之前；
+ *   读接口那道仍然保留，用来兜住「绕过本函数直接改库」的历史/脏数据。
+ */
+export class ShotLibraryKeyError extends Error {
+  constructor(field: string, key: string) {
+    super(`${field} 必须是平台共享对象（前缀 ${describeSharedPrefixes()}），当前值不在其中：${key}`)
+    this.name = 'ShotLibraryKeyError'
+  }
+}
+
 export async function adminUpsertShotLibrary(
   prisma: PrismaClient,
   id: bigint | undefined,
@@ -450,6 +480,13 @@ export async function adminUpsertShotLibrary(
     enabled?: boolean
   },
 ) {
+  // 空串与 null 等价（未填）：只有真的给了非空键才校验
+  if (input.demoVideoKey && !isSharedAssetKey(input.demoVideoKey)) {
+    throw new ShotLibraryKeyError('示范视频键', input.demoVideoKey)
+  }
+  if (input.demoCoverKey && !isSharedAssetKey(input.demoCoverKey)) {
+    throw new ShotLibraryKeyError('示范封面色键', input.demoCoverKey)
+  }
   if (id) {
     return prisma.shotLibrary.update({
       where: { id },

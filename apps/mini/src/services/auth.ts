@@ -3,6 +3,7 @@
 import Taro from '@tarojs/taro'
 import { http } from './request'
 import { STORAGE_KEYS } from '../config'
+import { bumpSessionGeneration } from '../utils/session'
 
 export interface LoginResult {
   token: string
@@ -50,10 +51,16 @@ export function getBeanAccount() {
   })
 }
 
+/**
+ * 会话代次（session generation）在 utils/session.ts —— 故意做成零依赖的叶子模块，
+ * 避免 request ⇄ auth 的循环依赖（细节见那个文件顶部的说明）。
+ */
 export function saveSession(res: LoginResult) {
   Taro.setStorageSync(STORAGE_KEYS.token, res.token)
   Taro.setStorageSync(STORAGE_KEYS.refreshToken, res.refreshToken)
   Taro.setStorageSync(STORAGE_KEYS.merchant, res.merchant)
+  // 新会话开始：之前那次 refresh 的回包从此不再有资格写 storage
+  bumpSessionGeneration()
 }
 
 export function clearSession() {
@@ -61,4 +68,5 @@ export function clearSession() {
   Taro.removeStorageSync(STORAGE_KEYS.refreshToken)
   Taro.removeStorageSync(STORAGE_KEYS.merchant)
   Taro.removeStorageSync(STORAGE_KEYS.currentStoreId)
+  bumpSessionGeneration()
 }

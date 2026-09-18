@@ -4,12 +4,14 @@ import { createWriteStream, createReadStream, stat } from 'node:fs'
 import { promisify } from 'node:util'
 import COS from 'cos-nodejs-sdk-v5'
 import {
+  contentTypeForKey,
   copyFileToLocalObject,
   copyLocalObjectToFile,
   deleteLocalObject,
   isLocalStorage,
   listLocalObjects,
   localObjectExists,
+  localPathForKey,
   writeLocalObject,
   type StorageObject,
 } from './local-storage.js'
@@ -44,6 +46,62 @@ export async function objectExists(key: string): Promise<boolean> {
     return true
   } catch {
     return false
+  }
+}
+
+/** 对象元信息（上传完成确认用） */
+export interface ObjectMeta {
+  exists: boolean
+  /** 存储侧报出的真实字节数；不存在时为 0 */
+  sizeBytes: number
+  /** 存储侧声明的 Content-Type；拿不到时为 null */
+  contentType: string | null
+}
+
+/**
+ * 读取对象的元信息（存在性 + 真实大小 + 声明的 Content-Type），本地/COS 统一入口。
+ *
+ * ── 为什么必须有它（P1-11）─────────────────────────────────────────────
+ * `/upload/complete` 原先**完全信任客户端上报的 `sizeBytes`**：客户端可以在自己的
+ * 前缀下传一个 2GB 对象，然后上报 `sizeBytes: 0` —— 配额校验按 0 通过，
+ * 库里的行也被写成 `sizeBytes: 0`。于是空间配额形同虚设，而且因为不检查对象是否存在，
+ * 连「登记一个根本没上传成功的键」都能把素材标成 READY（之后合成时才炸）。
+ *
+ * 这是「服务端只能从存储反查事实」的典型场景：**客户端给的一切数字都只是线索，不是证据**。
+ *
+ * 失败一律返回 `exists: false` 而不是抛错：调用方需要能区分「对象不存在」与「存储不可用」，
+ * 前者是 400，后者是 5xx。这里把「存储不可用」也收敛成不存在会让排查变得很痛苦，
+ * 所以调用方要额外看日志（本函数在异常时打 error）。
+ */
+export async function headObjectMeta(key: string): Promise<ObjectMeta> {
+  assertSafeObjectKey(key, 'head key')
+  if (isLocalStorage()) {
+    try {
+      const p = localPathForKey(key)
+      const st = await statP(p)
+      if (!st.isFile()) return { exists: false, sizeBytes: 0, contentType: null }
+      return { exists: true, sizeBytes: st.size, contentType: contentTypeForKey(key) }
+    } catch {
+      return { exists: false, sizeBytes: 0, contentType: null }
+    }
+  }
+  const c = getClient()
+  if (!c) throw new Error('COS 未配置（需 COS_SECRET_ID/KEY/BUCKET/REGION）')
+  try {
+    const data = await c.headObject({ Bucket: process.env.COS_BUCKET!, Region: process.env.COS_REGION!, Key: key })
+    const h = data.headers ?? {}
+    const lenRaw = data.ContentLength ?? h['content-length'] ?? h['Content-Length']
+    const sizeBytes = Number(lenRaw ?? 0)
+    return {
+      exists: true,
+      sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : 0,
+      contentType: data.ContentType ?? h['content-type'] ?? h['Content-Type'] ?? null,
+    }
+  } catch (e) {
+    const status = (e as { statusCode?: number; status?: number }).statusCode ?? (e as { status?: number }).status
+    if (status === 404) return { exists: false, sizeBytes: 0, contentType: null }
+    console.error(`[cos] headObject 失败 key=${key}:`, (e as Error).message)
+    return { exists: false, sizeBytes: 0, contentType: null }
   }
 }
 

@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
+import { describeSharedPrefixes, isSharedAssetKey } from '../lib/shared-asset-key.js'
 import * as mediaSvc from '../services/media.service.js'
 
 const router = createRouter()
@@ -43,6 +44,24 @@ router.get('/:id/demo-play-url', async (req, res) => {
       select: { demoVideoKey: true, enabled: true },
     })
     if (!lib || !lib.enabled || !lib.demoVideoKey) return fail(res, 4048, '示范视频不存在', 404)
+    /**
+     * ★ 「不走商家前缀校验」≠「什么键都能签」。
+     *
+     * `demoVideoKey` 在后台是**自由文本框**（见 admin.ts 的 shotLibInput），
+     * 而这条路由是**登录商户**就能调的读接口。少了下面这一行，谁把那列填成
+     * `uploads/2/xxx.mp4`，任何登录商户都会拿到商户 2 私有文件的签名地址 ——
+     * 越权读，且日志里看不出异常（签出去的是合法签名、状态码 200）。
+     *
+     * 白名单只放行平台共享前缀（tutorials / works / static），
+     * 商户级的 uploads / renders 一律拒绝；路径安全校验也在里面（防 `../` 穿越）。
+     * 存量数据不受影响：改这一行之前库里 `demo_video_key` 全为空。
+     */
+    if (!isSharedAssetKey(lib.demoVideoKey)) {
+      console.warn(
+        `[shot-library] 拒绝签名：demoVideoKey 不在平台共享前缀内（允许 ${describeSharedPrefixes()}）id=${req.params.id}`,
+      )
+      return fail(res, 4048, '示范视频不存在', 404)
+    }
     const r = await mediaSvc.getSharedPlayUrlByKey(
       lib.demoVideoKey,
       `${req.protocol}://${req.get('host')}/api/v1/media`,

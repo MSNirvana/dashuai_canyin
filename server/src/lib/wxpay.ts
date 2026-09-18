@@ -135,6 +135,15 @@ export interface JsapiOrderInput {
   outTradeNo: string
   amountFen: number
   openid: string
+  /**
+   * 微信侧订单过期时间（RFC3339，例如 `2026-09-18T16:00:00+08:00`）。
+   *
+   * ★ 必须与本地 `order.expireAt` 对齐。不传时微信默认 7 天有效，
+   *   而本地过期时间要短得多 —— 于是会出现「本地已判定过期、微信侧仍可支付」的窗口：
+   *   用户在这个窗口里付款成功，回调进来时本地状态已不是 PENDING，CAS 更新 0 行，
+   *   权益被静默忽略（钱收了、货没发）。传上 time_expire 让两边的有效期一致。
+   */
+  timeExpire?: string
 }
 
 /** 创建 JSAPI 支付订单，返回 prepay_id */
@@ -148,6 +157,7 @@ export async function createJsapiOrder(input: JsapiOrderInput): Promise<{ prepay
     notify_url: notifyUrl,
     amount: { total: input.amountFen },
     payer: { openid: input.openid },
+    ...(input.timeExpire ? { time_expire: input.timeExpire } : {}),
   })
 
   const resp = await fetch(`${BASE}${url}`, {
@@ -156,6 +166,9 @@ export async function createJsapiOrder(input: JsapiOrderInput): Promise<{ prepay
       Authorization: signRequestHeader('POST', url, body),
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      // ★ 不加 Accept-Language 时微信会返回**误导性的 406**（看着像权限/签名问题，
+      //   实际只是缺这个头）。见 skill `wechat-pay-v3-onboarding`。
+      'Accept-Language': 'zh-CN',
     },
     body,
   })
@@ -164,6 +177,40 @@ export async function createJsapiOrder(input: JsapiOrderInput): Promise<{ prepay
     throw new Error(`WeChat Pay JSAPI failed: ${data.code ?? resp.status} ${data.message ?? ''}`)
   }
   return { prepayId: data.prepay_id }
+}
+
+/**
+ * 关闭微信侧订单。
+ *
+ * ★ 为什么必须有它：本地把订单判为「已过期」之前，必须先把微信侧关掉。
+ *   只改本地状态会留下一个窗口 —— 微信侧仍能支付成功，而回调因为本地已不是 PENDING
+ *   被 CAS 挡掉（更新 0 行），用户付了钱却拿不到权益，而且两边都没有告警。
+ *
+ * 幂等与容错：订单不存在 / 已关闭 / 已支付 都属于「无需关单」，按成功处理；
+ *   只有真正的失败（网络、签名、未知业务码）才返回 ok=false，由调用方决定不置过期、下轮重试。
+ */
+export async function closeOrder(outTradeNo: string): Promise<{ ok: boolean; note: string }> {
+  const url = `/v3/pay/transactions/out-trade-no/${encodeURIComponent(outTradeNo)}/close`
+  const body = JSON.stringify({ mchid: mchId })
+  try {
+    const resp = await fetch(`${BASE}${url}`, {
+      method: 'POST',
+      headers: {
+        Authorization: signRequestHeader('POST', url, body),
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'Accept-Language': 'zh-CN',
+      },
+      body,
+    })
+    if (resp.ok || resp.status === 204) return { ok: true, note: 'CLOSED' }
+    const data = (await resp.json().catch(() => ({}))) as { code?: string; message?: string }
+    const benign = ['ORDER_NOT_EXIST', 'ORDER_CLOSED', 'ORDERPAID']
+    if (data.code && benign.includes(data.code)) return { ok: true, note: data.code }
+    return { ok: false, note: `${data.code ?? resp.status} ${data.message ?? ''}`.trim() }
+  } catch (e) {
+    return { ok: false, note: (e as Error).message }
+  }
 }
 
 /** 微信查单结果里会出现的 trade_state */

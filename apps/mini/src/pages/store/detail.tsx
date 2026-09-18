@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { View, Text, Image, Video } from '@tarojs/components'
+import { View, Text, Image, Video, Button } from '@tarojs/components'
 import Taro, { useDidShow, useRouter } from '@tarojs/taro'
 import { getStore, getStoreMediaUrl, deleteStore, type StoreItem } from '../../services/store'
 import { useMerchantStore } from '../../store/merchant'
+import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './detail.scss'
 
 interface InfoRow {
@@ -13,7 +14,12 @@ interface InfoRow {
 /** 门店详情页：门店资料（主图 / 视频 / 介绍 / 地址电话）的统一展示入口 */
 export default function StoreDetailPage() {
   const router = useRouter()
-  const id = router.params.id ?? ''
+  // ★ 编号必须当场校验，不能拿「路由里的原值」直接去请求：
+  //   `?id=undefined` 会让 URL 看着完全正常，但服务端 idParam 对非纯数字串一律回 4000
+  //   「参数不合法」—— 用户看到的是一句指向不了任何操作的报错（详见 utils/route-id.ts）。
+  const id = readRouteId(router.params)
+  /** 带了编号但不合法（例如 `?id=undefined`）：这是坏跳转，得说「链接有问题」，而不是「门店不存在」 */
+  const idBroken = isBrokenRouteId(router.params)
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const setStore = useMerchantStore((s) => s.setStore)
   const loadStores = useMerchantStore((s) => s.loadStores)
@@ -90,7 +96,14 @@ export default function StoreDetailPage() {
   }
 
   if (loading) return <View className='store-detail store-detail--state'>加载中…</View>
-  if (!detail) return <View className='store-detail store-detail--state'>门店不存在</View>
+  if (!detail) {
+    return (
+      <View className='store-detail store-detail--state'>
+        {idBroken ? '链接里的门店编号有误，请从门店列表重新进入' : '门店不存在'}
+        <Button size='mini' onClick={() => Taro.navigateTo({ url: '/pages/store/list' })}>去门店列表</Button>
+      </View>
+    )
+  }
 
   const location = Array.from(new Set([detail.province, detail.city, detail.district].filter(Boolean))).join(' · ')
   const isCurrent = detail.id === currentStoreId

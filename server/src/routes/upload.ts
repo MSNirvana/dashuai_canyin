@@ -102,6 +102,7 @@ router.post('/local', localUpload.single('file'), async (req, res) => {
     if (e instanceof z.ZodError) return fail(res, 400, '上传参数错误', 400)
     if (e instanceof uploadSvc.UploadPrefixError || e instanceof uploadSvc.UploadStoreMismatchError)
       return fail(res, 2008, (e as Error).message, 400)
+    if (e instanceof uploadSvc.UploadObjectMismatchError) return fail(res, 3001, e.message, 400)
     console.error('[upload] 本地上传失败:', e)
     return fail(res, 400, '上传失败', 400)
   }
@@ -118,7 +119,13 @@ router.post('/complete', async (req, res) => {
   } catch (e) {
     if (e instanceof uploadSvc.UploadPrefixError || e instanceof uploadSvc.UploadStoreMismatchError)
       fail(res, 2008, (e as Error).message, 400)
-    else fail(res, 400, '上传确认失败', 400)
+    // 对象不存在 / 大小为 0 / 超上限 / 类型不符：都是客户端可修正的问题，不能报 5xx
+    else if (e instanceof uploadSvc.UploadObjectMismatchError) fail(res, 3001, e.message, 400)
+    else if (e instanceof z.ZodError) fail(res, 400, '上传参数错误', 400)
+    else {
+      console.error('[upload] 上传确认失败:', e)
+      fail(res, 400, '上传确认失败', 400)
+    }
   }
 })
 

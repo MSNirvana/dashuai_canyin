@@ -23,7 +23,7 @@ import StoreSwitcher from '../../components/store-switcher'
 import Segmented from '../../components/segmented'
 import Steps from '../../components/steps'
 import { splitCopyParagraphs, copyTextParagraphs } from '../../utils/copy-text'
-import { isNumericId } from '../../utils/route-id'
+import { isNumericId, readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './edit.scss'
 
 function newRequestId() {
@@ -106,16 +106,54 @@ function OptionList({
 }
 
 export default function CreationEdit() {
-  const params = Taro.getCurrentInstance().router?.params ?? {}
-  // 从「优秀作品」带过来的同款配方：workId 预填款式/复杂度，用户仍可改
-  const workId = params.workId ?? ''
+  const params = Taro.getCurrentInstance().router?.params as Record<string, unknown> | undefined
+  /**
+   * 从「优秀作品」带过来的同款配方：workId 预填款式/复杂度，用户仍可改。
+   * ★ 同样要过 `readRouteId`：`?workId=undefined` 会让 getWork('undefined') 吃一个 4000，
+   *   而这个错误被 catch 吞掉后表现为「同款配方区一直不出现」—— 用户看不出是链接坏了。
+   */
+  const workId = readRouteId(params, 'workId') ?? ''
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const setStore = useMerchantStore((s) => s.setStore)
   const loadStores = useMerchantStore((s) => s.loadStores)
-  const [localId, setLocalId] = useState<string | undefined>(params.id)
+  /**
+   * 本页的创作编号。
+   * ★ **入口**也要校验，不能只校验出口：这个 id 会被原样拿去 `getCreation(id)` /
+   *   `updateCreation(id, …)` / `generateCopy(id, …)`，而 `?id=undefined` 拼出来的 URL
+   *   看起来完全正常 —— 页面照常渲染，用户一路填表、点「生成」，最后拿到的只是一句
+   *   「参数不合法」，既不知道该点哪里，也不知道是哪一步错的。
+   */
+  const [localId, setLocalId] = useState<string | undefined>(readRouteId(params) ?? undefined)
+  /**
+   * 路由里带了编号、但这个编号不合法。
+   * ★ 不能把它当成「新建」放过去（也就是不能只写 `readRouteId(...) ?? undefined`）：
+   *   那样用户以为在编辑一条已有创作，实际提交时 `createCreation` 会**新建出第二条**，
+   *   而原来那条还在，白扣一次积分。所以坏编号必须当场拦下来，而不是退化成另一种合法语义。
+   */
+  const idBroken = isBrokenRouteId(params)
   const [detail, setDetail] = useState<CreationDetail | null>(null)
   const [stores, setStores] = useState<StoreItem[]>([])
   const [dishes, setDishes] = useState<DishItem[]>([])
+  /**
+   * 当前 `dishes` 属于哪家门店。
+   *
+   * ★ 为什么不只看 `dishes.length`：门店切换 / 全局门店同步 / 首次加载三条路径
+   *   都会异步 `listDishes(...).then(setDishes)`，而它们**没有顺序保证**。
+   *   A 店的慢响应落在 B 店的快响应之后，界面就会显示 B 店的店名配 A 店的菜品；
+   *   用户选中后提交，`{{dishname}}` 填的是 A 店的菜 —— AI 写出一条跟当前门店无关的文案，
+   *   用户要到拍摄页才发现白扣了积分。
+   *   两件事一起做才有效：① 只接受最新一次请求的响应（dishReqRef）；
+   *   ② 创建前校验「菜品列表确实是当前门店的」（dishesStoreId）。
+   *   只做 ① 挡不住「请求发出后门店又变了」，只做 ② 挡不住「响应乱序后列表整片替换」。
+   */
+  const [dishesStoreId, setDishesStoreId] = useState('')
+  /**
+   * 菜品列表是否**加载失败**（网络/接口错误），与「这家店真的没有菜品」是两回事。
+   * ★ 旧实现把失败直接吞成空数组，页面于是显示「该门店还没有菜品」，并把提交按钮的
+   *   校验话术也说成「请先添加」——用户会去建菜，而实际上他早就建过了。
+   *   失败必须能被区分出来，并给一个原地重试的出口。
+   */
+  const [dishesFailed, setDishesFailed] = useState(false)
   const [storeIdx, setStoreIdx] = useState(0)
   /**
    * 菜品是**必选项**，默认落在第一个（下标 0，不再有「不指定」）。
@@ -143,6 +181,12 @@ export default function CreationEdit() {
   const copyLockRef = useRef(false)
   const boardLockRef = useRef(false)
   const createLockRef = useRef(false)
+  /**
+   * 菜品请求代次。每次发起 `listDishes` 自增，回包只认「自己是最后一次」的那次。
+   * 与 `dishesStoreId` 配合使用（见它的说明）。
+   */
+  const dishReqRef = useRef(0)
+
   const [creating, setCreating] = useState(false)
   /**
    * 页脚「?」的说明气泡是否展开。
@@ -261,7 +305,37 @@ export default function CreationEdit() {
     return () => { cancelled = true }
   }, [workId])
 
-  // 新建创作：门店默认取左上角当前门店（门店是最高层，创作跟随门店）
+  /**
+   * 拉取某门店的菜品，并且**只接受最新一次请求的响应**。
+   *
+   * 切换门店 / 左上角换店 / 首次进入三条路径都走这里：老实现各自
+   * `listDishes(sid).then(setDishes)`，谁先回来谁生效 —— 慢的那次（旧门店）
+   * 后到就会把新门店的菜品整片覆盖掉。见 `dishesStoreId` 的说明。
+   */
+  const loadDishesFor = (sid: string) => {
+    const my = ++dishReqRef.current
+    // 立刻清空并把「当前菜品归属」置空：在响应回来之前，界面上不能还留着上一家店的菜，
+    // 否则用户在这几百毫秒里点提交，提交的就是别家店的菜品
+    setDishes([])
+    setDishIdx(0)
+    setDishesStoreId('')
+    setDishesFailed(false)
+    listDishes(sid)
+      .then((list) => {
+        if (my !== dishReqRef.current) return
+        setDishes(list)
+        setDishesStoreId(sid)
+      })
+      .catch(() => {
+        if (my !== dishReqRef.current) return
+        // 失败保持空列表 + 空的归属标记：宁可让用户看到「还没有菜品」也不显示错店的菜
+        setDishes([])
+        setDishesStoreId('')
+        setDishesFailed(true)
+      })
+  }
+
+  // ── 店铺/菜品加载 ────────────────────────────────────────────────
   useEffect(() => {
     if (localId) {
       loadDetail(localId)
@@ -275,7 +349,7 @@ export default function CreationEdit() {
       const idx = Math.max(0, list.findIndex((s) => s.id === currentStoreId))
       setStoreIdx(idx)
       const sid = list[idx]?.id
-      if (sid) listDishes(sid).then(setDishes).catch(() => undefined)
+      if (sid) loadDishesFor(sid)
     })()
     return () => { cancelled = true }
   }, [localId, loadDetail])
@@ -289,7 +363,7 @@ export default function CreationEdit() {
     if (sid) {
       // 同步为全局当前门店，保证首页/菜品/人设上下文一致
       setStore(sid)
-      listDishes(sid).then(setDishes).catch(() => undefined)
+      loadDishesFor(sid)
     }
   }
 
@@ -300,7 +374,7 @@ export default function CreationEdit() {
     if (idx < 0 || idx === storeIdx) return
     setStoreIdx(idx)
     setDishIdx(0)
-    listDishes(currentStoreId).then(setDishes).catch(() => undefined)
+    if (currentStoreId) loadDishesFor(currentStoreId)
   }, [currentStoreId, stores])
 
   /**
@@ -395,6 +469,21 @@ export default function CreationEdit() {
     const sid = stores[storeIdx]?.id
     if (!sid) {
       Taro.showToast({ title: '请选择门店', icon: 'none' })
+      return
+    }
+    /**
+     * ★ 菜品必须**确认属于当前门店**才允许提交。
+     *
+     * `dishes` 是异步来的，可能还是上一家店的（切换门店的响应还没回来 / 乱序回包）。
+     * 只看 `dishes[dishIdx]` 有没有值是不够的：它可能是别家店的菜，而
+     * `{{dishname}}` 会被填成那道菜，AI 于是写出一条与当前门店无关的文案 ——
+     * 用户要到拍摄页才发现白扣了积分。所以这里比对归属标记。
+     */
+    if (dishesStoreId !== sid) {
+      Taro.showToast({
+        title: dishesFailed ? '菜品列表加载失败，请点「菜品」重试' : '菜品还在加载，请稍候再试',
+        icon: 'none',
+      })
       return
     }
     /**
@@ -624,6 +713,52 @@ export default function CreationEdit() {
   const trackLabel = COPY_TRACK_OPTIONS.find((o) => o.value === track)?.label ?? ''
   const complexityLabel = COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.label ?? ''
 
+  /**
+   * 菜品选择器上显示什么。
+   * ★ 这四种状态必须在界面上长得**不一样**：「加载中」「加载失败」「这家店真没菜」
+   *   在旧实现里全都渲染成空白，用户只能得到「点不动、也不知道为什么」。
+   */
+  const dishPickerText = (() => {
+    const cur = stores[storeIdx]
+    if (!cur) return '请先选择门店'
+    if (dishesFailed) return '菜品加载失败，点此重试'
+    if (dishesStoreId !== cur.id) return '菜品加载中…'
+    if (!dishes.length) return '该门店还没有菜品，请先添加'
+    return dishes[dishIdx]?.name || '请选择菜品'
+  })()
+
+  /**
+   * 链接里的创作编号不合法（最典型的是 `?id=undefined`）。
+   * 这里既不能去请求（服务端 idParam 回 4000「参数不合法」，指向不了任何操作），
+   * 也不能退化成「新建」（用户以为在改一条，提交却新建出第二条）。
+   * 唯一的真出路是回创作列表重新进入 —— 所以就把这句话和这个按钮给他。
+   */
+  if (idBroken) {
+    return (
+      <View className='cedit'>
+        <View className='cedit__bar'>
+          <StoreSwitcher />
+        </View>
+        <View className='cedit__new-head'>
+          <Text className='cedit__new-kicker'>LINK BROKEN</Text>
+          <Text className='cedit__new-title'>链接里的创作编号有误</Text>
+        </View>
+        <View className='cedit__card'>
+          <Text className='cedit__label'>
+            这条链接里的编号不是一个有效的创作号，继续操作只会新建出另一条创作。请回到「创作」列表重新进入。
+          </Text>
+          <Button
+            className='ds-btn ds-btn--primary cedit__submit'
+            hoverClass='ds-hover'
+            onClick={() => Taro.switchTab({ url: '/pages/creation/list' })}
+          >
+            回到创作列表
+          </Button>
+        </View>
+      </View>
+    )
+  }
+
   // ───────────── 新建创作（未落库前） ─────────────
   // 只要还在「创建即生成」里（生成中，或生成失败等着重试），就**留在这个分支**：
   // 悬浮窗要盖在**用户刚刚填的这张表单**上，而不是把整页替换成编辑视图。
@@ -664,9 +799,13 @@ export default function CreationEdit() {
               mode='selector'
               range={dishes.map((d) => d.name)}
               onChange={(e: { detail: { value: string | number } }) => setDishIdx(Number(e.detail.value))}
-              disabled={!stores[storeIdx] || !dishes.length}
+              // 菜品必须确认属于**当前门店**才可点：dishesStoreId 与所选门店不一致时
+              // 说明列表还是上一家店的（或还没回来），此时不该让用户选（见 dishesStoreId 的说明）
+              disabled={!stores[storeIdx] || !dishes.length || dishesStoreId !== stores[storeIdx]?.id}
             >
-              <View className='cedit__picker'>{dishes[dishIdx]?.name || '请选择菜品'}</View>
+              <View className='cedit__picker' onClick={() => dishesFailed && stores[storeIdx] && loadDishesFor(stores[storeIdx]!.id)}>
+                {dishPickerText}
+              </View>
             </Picker>
           </View>
           <View className='cedit__field cedit__field--last'>
