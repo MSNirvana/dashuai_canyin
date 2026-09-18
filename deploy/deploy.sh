@@ -178,7 +178,11 @@ else
   1) cd $SERVER_DIR && npx prisma migrate status
      看哪个迁移未应用、或是否存在校验和冲突。
   2) 若这是【首次接入迁移历史】的库（历史上一直用 db push 建的）：
-       bash $APP_DIR/deploy/db-baseline.sh          # 先预演，人工确认差异后再加 --yes
+       bash $APP_DIR/deploy/db-baseline.sh --until <最后一个「库里已存在」的迁移>     # 先预演
+       bash $APP_DIR/deploy/db-baseline.sh --until <同上> --yes                      # 再写入
+       # ★ 必须给 --until：该脚本会把指定迁移直接写成 applied（不校验 DDL 是否存在），
+       #   若不划截止点就把【新迁移】一起标掉，它们将永远不执行、库结构静默脱节。
+       #   划完之后跑本脚本应用新迁移，最后用 db-baseline.sh --verify 断言结构一致。
      然后重新执行本脚本。
   3) 需要改结构时请新增迁移文件（prisma migrate dev --create-only），不要手改库。"
 fi
