@@ -22,7 +22,44 @@ const COPY_VARS = [
   // 所以模板那一段必须写清「空 = 单道菜」，否则模型看到空的套餐标题会自己编一份出来。
   'comboInfo',
   'persona',
+  /**
+   * 今天日期 / 季节 / 未来三周内的节日与节气（见 src/lib/festival.ts）。
+   *
+   * ★ 加它的原因：模型**不知道今天是几号**。要它「跟上节假日和当下热点」却没有日期，
+   *   它只会瞎编 —— 三月份给你写「中秋快乐」。这是模型唯一的时间来源。
+   * ★ 它**保证非空**（任何一天至少有「今天是 …」一行），所以模板里那一行不会渲染成空白
+   *   —— 这正是 userIdea 那个坑的反面：取不到值只会静默变空串，而这里不存在取不到的情况。
+   * ⚠ 日期按 **Asia/Shanghai** 显式计算。本仓没有统一 TZ 处理、线上 Ubuntu 默认 UTC，
+   *   用本地时区取日期会在北京时间 00:00~08:00 那八小时里整体差一天。
+   */
+  'dateInfo',
 ] as const
+
+/**
+ * 流量款（话题模式）**专用**变量。
+ *
+ * ★ 为什么不让它复用 COPY_VARS：流量款已经从「四款文案」拆成独立功能（`creation.mode='TOPIC'`），
+ *   输入里**没有门店、也没有菜品**。如果沿用 COPY_VARS，模板里那几行的占位符会被渲染成空串，
+ *   模型看到的是一排「【门店】｜品类：｜城市：」—— 它会以为「门店信息漏了」，
+  *   于是自己编一个店名补上（这正是契约测试里反复出现的那类静默失效）。
+ *   窄白名单在这里是**保护**：模板一旦被人改回引用店名/菜名，保存场景时就会当场被拒。
+ *
+ * ★ `topicInfo` 与 `dateInfo` 的关系：topicInfo 的第一段就是 formatDateInfo 的输出
+ *   （今天几号 / 季节 / 临近节点），后面才接「可用的起头方向」。所以流量款只引用 topicInfo
+ *   一项就够 —— 两个都引用会让同一天的信息在提示词里出现两遍。
+ */
+const TOPIC_VARS = ['topicInfo'] as const
+
+// ★ 这里**故意没有** `trackLabel`（款式中文名）。
+//   2026-09-20 做「文案口语化」那一版时想过加它 —— 让通用兜底场景或分镜知道这次是哪一款，
+//   好调整口吻与镜头配比。但契约测试里有一条既有不变量：
+//       「款式不是变量，款式靠选模板生效」（verify-prompt-vars.ts 里逐模板断言
+//         模板中不许出现 {{track}} / {{trackLabel}}）
+//   它的道理是：四款各有自己的场景与模板，款式**已经体现在「选了哪个模板」里**；
+//   再传一个变量进去，等于同一件事有两个来源，两者一旦不一致（改了款式没换模板、
+//   或反过来）模型就会收到自相矛盾的指令，而且**不会报错**。
+//   所以通用兜底场景保持「通用」，分镜保持「款式无关」——
+//   分镜要贴合文案，靠的是它拿到了 {{copyText}} 正文，而不是靠一个款式标签。
 
 /** 分镜场景：在文案变量之上，多了文案正文与镜头数/镜头库 */
 const STORYBOARD_VARS = [
@@ -39,7 +76,8 @@ const SYNTH_VARS = [...COPY_VARS, 'copyText', 'shotCountRule'] as const
  */
 export const SCENE_VARIABLES: Record<string, readonly string[]> = {
   copy_generate: COPY_VARS,
-  copy_traffic: COPY_VARS,
+  // ★ 流量款走话题白名单，与四款菜品文案**刻意不同**（理由见 TOPIC_VARS 的声明处）
+  copy_traffic: TOPIC_VARS,
   copy_intro: COPY_VARS,
   copy_quality: COPY_VARS,
   copy_recommend: COPY_VARS,

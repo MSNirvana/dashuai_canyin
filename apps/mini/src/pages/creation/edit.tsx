@@ -9,7 +9,9 @@ import {
   updateCreation,
   updateShotContent,
   COPY_TRACK_OPTIONS,
+  DISH_TRACK_OPTIONS,
   COMPLEXITY_OPTIONS,
+  toDishTrack,
   type CreationDetail,
   type CopyTrack,
   type Complexity,
@@ -239,8 +241,11 @@ export default function CreationEdit() {
     [],
   )
 
-  // 文案四款 + 分镜复杂度（新建时先本地选，创建后落库）
-  const [track, setTrack] = useState<CopyTrack>('TRAFFIC')
+  // 菜品稿三款 + 分镜复杂度（新建时先本地选，创建后落库）。
+  // ★ 默认从「流量款」改成「介绍款」：流量款已拆成独立功能（pages/creation/traffic），
+  //   不在这个选择器里了；这里的默认值同时要和**服务端**的 DEFAULT_COPY_TRACK 一致，
+  //   否则「没选款式」时前端显示一款、实际生成的是另一款。
+  const [track, setTrack] = useState<CopyTrack>('INTRO')
   const [complexity, setComplexity] = useState<Complexity>('COMPLEX')
   // 文案编辑态
   const [editingCopy, setEditingCopy] = useState(false)
@@ -266,7 +271,10 @@ export default function CreationEdit() {
   const loadDetail = useCallback(async (id: string) => {
     const d = await getCreation(id)
     setDetail(d)
-    if (d.track === 'TRAFFIC' || d.track === 'INTRO' || d.track === 'QUALITY' || d.track === 'RECOMMEND') setTrack(d.track)
+    // toDishTrack：存量创作里可能有 track='TRAFFIC'（25 条）或 'NORMAL'（20 条），
+    // 这两个值都不在选择器里 —— 直接 setTrack 会让选择器一项都不选中。收敛成三款，不是就保持默认。
+    const t = toDishTrack(d.track)
+    if (t) setTrack(t)
     if (d.complexity === 'SIMPLE' || d.complexity === 'COMPLEX' || d.complexity === 'FINE') setComplexity(d.complexity)
   }, [])
 
@@ -281,7 +289,10 @@ export default function CreationEdit() {
         const r = w.recipeJson ?? {}
         setWorkTitle(w.title)
         setWorkRecipe(r)
-        if (r.track === 'TRAFFIC' || r.track === 'INTRO' || r.track === 'QUALITY' || r.track === 'RECOMMEND') setTrack(r.track)
+        // 同 toDishTrack：优秀作品的配方里可能带「流量款」（那是独立功能了），
+        // 带进来会让选择器空着 —— 收敛成菜品稿三款。
+        const rt = toDishTrack(r.track)
+        if (rt) setTrack(rt)
         if (r.complexity === 'SIMPLE' || r.complexity === 'COMPLEX' || r.complexity === 'FINE') setComplexity(r.complexity)
         if (r.titleHint) setTitle(r.titleHint)
       } catch {
@@ -860,7 +871,7 @@ export default function CreationEdit() {
             {/* 原来的「决定 AI 写文案的侧重点」去掉了「AI」：同一页里只说一次「谁在写」就够了 */}
             <Text className='cedit__spec-note'>决定文案的侧重点</Text>
           </View>
-          <OptionList options={COPY_TRACK_OPTIONS} value={track} onChange={onPickTrack} />
+          <OptionList options={DISH_TRACK_OPTIONS} value={track} onChange={onPickTrack} />
 
           {/* 细分隔线：两组选项直接贴在一起会糊成一整块，看不出这是两组独立选项 */}
           <View className='cedit__split' />
@@ -1034,11 +1045,11 @@ export default function CreationEdit() {
                 竖排 4 行会把这一屏撑高；初次选择才需要把每条讲清楚。 */}
             <Segmented
               className='cedit__seg'
-              options={COPY_TRACK_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+              options={DISH_TRACK_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
               value={track}
               onChange={onPickTrack}
             />
-            <Text className='cedit__desc'>{COPY_TRACK_OPTIONS.find((o) => o.value === track)?.desc}</Text>
+            <Text className='cedit__desc'>{DISH_TRACK_OPTIONS.find((o) => o.value === track)?.desc}</Text>
           </>
         )}
 

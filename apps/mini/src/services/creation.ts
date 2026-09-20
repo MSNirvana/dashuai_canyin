@@ -1,17 +1,50 @@
 // 创作 API：对接 /api/v1/creations
 import { http } from './request'
 
-/** 文案四款：流量款 / 介绍款 / 质量款 / 种草型 */
+/**
+ * 文案款式。
+ * ★ 保留 `TRAFFIC`：**存量数据里有它**（含 20 条更早的 `track='NORMAL'`）。
+ *   `trackLabel` 之类的展示仍要认得出这些老值，否则老创作在界面上会显示成空标签。
+ */
 export type CopyTrack = 'TRAFFIC' | 'INTRO' | 'QUALITY' | 'RECOMMEND'
 /** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜 */
 export type Complexity = 'SIMPLE' | 'COMPLEX' | 'FINE'
+/**
+ * 内容模式：`DISH` = 菜品稿（选门店+菜品）；`TOPIC` = 话题稿（流量款独立功能，不选门店菜品）。
+ * 服务端有同名枚举，这里是它的下达形态。
+ */
+export type ContentMode = 'DISH' | 'TOPIC'
 
+/** 四款的中文名（含流量款）—— **只作展示与兜底**，不要拿它做款式选择器 */
 export const COPY_TRACK_OPTIONS: { value: CopyTrack; label: string; desc: string }[] = [
-  { value: 'TRAFFIC', label: '流量款', desc: '同城引流 / 话题热度' },
+  { value: 'TRAFFIC', label: '流量款', desc: '跟热点 / 话题共鸣' },
   { value: 'INTRO', label: '介绍款', desc: '菜品讲解 / 套餐推广' },
   { value: 'QUALITY', label: '质量款', desc: '食材品质 / 匠心人设' },
   { value: 'RECOMMEND', label: '种草型', desc: '真实体验 / 消费决策' },
 ]
+
+/**
+ * ★ 创作页「文案款式」选择器用这一份：**不含流量款**。
+ *
+ * 流量款已从「四款文案」拆成独立功能（`mode='TOPIC'`，见 pages/creation/traffic）：
+ * 它不选门店、不选菜品，只用节气/节日/时令出稿。还把它挂在创作页的款式里，
+ * 用户会选到一条「明明有门店菜品、却生成出一条不提门店的稿子」——而且**不报错**。
+ * （服务端也同步把 `track='TRAFFIC'` 排除在菜品稿的枚举外，旧客户端传了会拿到 400。）
+ */
+export const DISH_TRACK_OPTIONS = COPY_TRACK_OPTIONS.filter((o) => o.value !== 'TRAFFIC')
+
+/**
+ * 把「服务端 / 同款配方给来的 track」收敛成**菜品稿可用的三款**；不是这三款就返回 null。
+ *
+ * 用途：创作页的款式选择器已经不含流量款，但下面两个来源仍可能给出 `'TRAFFIC'`（甚至是更早的 `'NORMAL'`）：
+ *   · 存量创作的 `track`（库里 25 条 TRAFFIC + 20 条 NORMAL）
+ *   · `excellent_work.recipe_json.track`（优秀作品的款式会被原样带到创作页）
+ * 直接 `setTrack(r.track)` 会让选择器**一项都不选中**（用户以为没选款式）；
+ * 返回 null 则保持「介绍款」默认态 —— 这也正是服务端对菜品稿的收敛结果，两端一致。
+ */
+export function toDishTrack(v: unknown): CopyTrack | null {
+  return v === 'INTRO' || v === 'QUALITY' || v === 'RECOMMEND' ? v : null
+}
 
 export const COMPLEXITY_OPTIONS: { value: Complexity; label: string; desc: string }[] = [
   { value: 'SIMPLE', label: '简单版', desc: '2~3 个分镜' },
@@ -25,8 +58,12 @@ export interface CreationItem {
   storeId: string
   dishId: string | null
   track: string
+  /** 内容模式（`DISH` / `TOPIC`）。服务端保证非空；列表据此决定点进去开哪个页面 */
+  mode: string
   complexity: string
   trackLabel?: string | null
+  /** 「菜品稿」/「话题稿」中文名 */
+  modeLabel?: string | null
   complexityLabel?: string | null
   copyText: string | null
   status: string
@@ -89,6 +126,8 @@ export interface CreationDetail extends CreationItem {
   shots: ShotItem[]
   dish: { id: string; name: string } | null
   store: { id: string; name: string } | null
+  /** 话题稿的同城落点（用户当次填的快照）；菜品稿恒为 null */
+  topicCity?: string | null
 }
 
 export interface Balance {
@@ -129,8 +168,16 @@ export function getCreation(id: string) {
 }
 
 export function createCreation(input: {
-  storeId: string
+  /**
+   * 菜品稿必填；**话题稿必须不传**（`mode: 'TOPIC'` 时另传该字段会 400/2002）。
+   * 话题稿的门店由服务端自己挑一家做「宿主」（只为媒体归属，不进提示词）。
+   */
+  storeId?: string
   dishId?: string
+  /** 内容模式；不传 = 菜品稿 */
+  mode?: ContentMode
+  /** 话题稿的同城落点（可选自由文本，如「廊坊」）。填了才可能写出「咱廊坊的」 */
+  topicCity?: string
   title?: string
   track?: CopyTrack
   complexity?: Complexity
@@ -152,7 +199,7 @@ export function createCreation(input: {
 /** 保存编辑：标题 / 文案正文 / 款式 / 复杂度（不扣积分） */
 export function updateCreation(
   id: string,
-  input: { title?: string; copyText?: string; track?: CopyTrack; complexity?: Complexity },
+  input: { title?: string; copyText?: string; track?: CopyTrack; complexity?: Complexity; topicCity?: string },
 ) {
   return http.patch<CreationDetail>(`/creations/${id}`, input)
 }

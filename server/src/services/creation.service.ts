@@ -9,6 +9,10 @@ import * as mediaSvc from './media.service.js'
 import { generateVideoCover, coverKeyForVideoKey } from '../lib/thumbnail.js'
 import { isLocalStorage, localPathForKey } from '../lib/local-storage.js'
 import { SCENE } from '../ai/scene-codes.js'
+// 「今天几号、临近什么节」—— 提示词里唯一的时间来源（见 lib/festival.ts 的文件头）
+import { formatDateInfo } from '../lib/festival.js'
+// 话题稿专属：把「今天」翻译成几条能直接开口的起头方向（节气/节日/时令/生活共识）
+import { formatTopicInfo } from '../lib/topic.js'
 // 套餐判断复用同一个常量：`kind === 'COMBO'` 这种字面量散在两处，哪天改了值只会有一处跟着变
 import { DISH_KIND_COMBO } from './dish.service.js'
 
@@ -23,7 +27,42 @@ export const COPY_TRACKS = {
   RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '真实体验 / 消费决策' },
 } as const
 export type CopyTrack = keyof typeof COPY_TRACKS
-export const DEFAULT_COPY_TRACK: CopyTrack = 'TRAFFIC'
+
+/**
+ * ★ 2026-09-20 从 `TRAFFIC` 改成 `INTRO`。
+ *
+ * 原因：流量款已拆成**独立功能**（`mode='TOPIC'`），它的提示词也改成了纯话题版
+ * —— 不再引用门店/菜品，而且明确要求「不要报店名、不要请人到店」。
+ * 如果默认值还留在 TRAFFIC，那么任何「没传 track」的创建（含库里 20 条历史
+ * `track='NORMAL'` 的存量数据 —— 那个值不在 COPY_TRACKS 里，`isCopyTrack` 判否后会落到默认值）
+ * 都会去走话题模板，生成的稿子里既没有门店也没有菜品。那对一条菜品稿是纯损失。
+ */
+export const DEFAULT_COPY_TRACK: CopyTrack = 'INTRO'
+
+/**
+ * 内容模式：这条创作是**菜品驱动**还是**话题驱动**。
+ *
+ * · `DISH`  —— 选门店（+可选菜品），走四款里除流量款外的三款。
+ * · `TOPIC` —— 「流量款」独立功能：不选门店、不选菜品，只靠节气/节日/时令与生活共识出稿。
+ *
+ * ★ 为什么不靠「track='TRAFFIC' 且 dishId 为空」推断：那个组合在**存量数据里已经存在**
+ *   （老用户建过没选菜品的流量款创作），推断会把它们误判成话题稿；
+ *   而两者的提示词完全不同（话题稿不喂门店/菜品）—— 误判的后果是文案里凭空没有门店信息，
+ *   且**不会报错**。
+ */
+export const CONTENT_MODES = {
+  DISH: { label: '菜品稿' },
+  TOPIC: { label: '话题稿' },
+} as const
+export type ContentMode = keyof typeof CONTENT_MODES
+export const DEFAULT_CONTENT_MODE: ContentMode = 'DISH'
+
+export function isContentMode(v: unknown): v is ContentMode {
+  return typeof v === 'string' && Object.prototype.hasOwnProperty.call(CONTENT_MODES, v)
+}
+
+/** 话题稿只允许这一款（它就是要走流量款那份纯话题模板） */
+export const TOPIC_TRACK: CopyTrack = 'TRAFFIC'
 
 /** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜 */
 export const COMPLEXITIES = {
@@ -75,12 +114,64 @@ export class CreationAssetMismatchError extends Error {
   }
 }
 
+/**
+ * 话题稿不允许由调用方指定门店/菜品（界面上没有这两个选择器）。
+ * 抛错而不是静默忽略：静默忽略会让「前端以为按门店生成了、实际没有」长期藏着，
+ * 而它表现为「文案里没有店名」，没人会往参数被吞上想。
+ */
+export class TopicCreationStoreForbiddenError extends Error {
+  constructor() {
+    super('话题稿不需要门店与菜品')
+    this.name = 'TopicCreationStoreForbiddenError'
+  }
+}
+
+/** 商户一家门店都没有，话题稿没有宿主可挂 —— 提示去建店，而不是报一个看不懂的 500 */
+export class TopicHostStoreMissingError extends Error {
+  constructor() {
+    super('请先添加门店，再使用流量款')
+    this.name = 'TopicHostStoreMissingError'
+  }
+}
+
+/**
+ * 话题稿的「宿主门店」：只用于让媒体归属/拍摄/合成这些下游照旧成立，**不进任何提示词**。
+ *
+ * 取值规则必须是**确定**的：优先 `isDefault=true`，其次 id 最小（= 最早创建的那家）。
+ * ★ 不用「前端当前选中的门店」：那样同一份话题稿的结果会随用户切门店而变，
+ *   重新生成时也复现不了；服务端自己定规则，前端不需要知道是哪家。
+ * ★ 也不能改用 `storeId` 可空：creation.storeId 是媒体归属校验的锚
+ *   （素材绑定按 `mediaAsset.storeId === creation.storeId` 过滤），放开可空会牵动整条渲染链路。
+ */
+async function resolveTopicHostStore(prisma: PrismaClient, merchantId: bigint): Promise<bigint> {
+  const store = await prisma.store.findFirst({
+    where: { merchantId, deletedAt: null },
+    orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
+    select: { id: true },
+  })
+  if (!store) throw new TopicHostStoreMissingError()
+  return store.id
+}
+
 export interface CreateCreationInput {
-  storeId: bigint
+  /**
+   * ★ 话题稿（`mode='TOPIC'`）**不需要**传它 —— 流量款独立功能刻意不选门店，
+   *   由服务端解析一家「宿主门店」只为让媒体归属/拍摄/合成这些下游照旧成立（见 resolveTopicHostStore）。
+   *   菜品稿（`DISH`）则必填。
+   */
+  storeId?: bigint
   dishId?: bigint
   title?: string
   track?: CopyTrack
   complexity?: Complexity
+  /** 内容模式。不传 = `DISH`（保持所有既有调用方的语义不变） */
+  mode?: ContentMode
+  /**
+   * 话题稿用的城市快照（`mode='TOPIC'` 时才看）。空 = 不带城市。
+   * ★ 存快照而不是「指向门店再实时取城市」：话题稿刻意不绑门店，
+   *   靠门店档案取等于把它偷偷接回来；而且门店城市随时可改，会让同一条稿重新生成结果不可复现。
+   */
+  topicCity?: string
   /**
    * 同款作品的分镜骨架（来自 excellent_work.recipe_json 的 shotSkeleton）。
    *
@@ -175,6 +266,8 @@ export async function listCreations(
       storeId: true,
       dishId: true,
       track: true,
+      // 列表要据此决定「点进去是创作页还是流量款页」，并在卡片上打「话题」标记
+      mode: true,
       complexity: true,
       copyText: true,
       status: true,
@@ -248,6 +341,7 @@ export async function listCreations(
       // 卡片缩略图：第一个已上传视频的封面（没有则为 null，前端退回默认图标）
       coverUrl: pickCover(r.storeId, shots),
       trackLabel: isCopyTrack(r.track) ? COPY_TRACKS[r.track].label : null,
+      modeLabel: isContentMode(r.mode) ? CONTENT_MODES[r.mode].label : null,
       complexityLabel: isComplexity(r.complexity) ? COMPLEXITIES[r.complexity].label : null,
     }
   })
@@ -313,13 +407,23 @@ export async function createCreation(
   merchantId: bigint,
   input: CreateCreationInput,
 ) {
+  const mode: ContentMode = input.mode ?? DEFAULT_CONTENT_MODE
+  // ★ 话题稿：门店与菜品都不该由调用方给（界面上根本没有这两个选择器）。
+  //   传了就报错而不是静默忽略 —— 静默忽略会让「前端以为按门店生成了、实际没有」这种
+  //   不一致一直藏着，而它表现为「文案里没有店名」，没人会想到是参数被吞了。
+  if (mode === 'TOPIC' && (input.storeId !== undefined || input.dishId !== undefined)) {
+    throw new TopicCreationStoreForbiddenError()
+  }
+  const storeId = mode === 'TOPIC' ? await resolveTopicHostStore(prisma, merchantId) : input.storeId
+  if (storeId === undefined) throw new CreationStoreMismatchError()
+
   const store = await prisma.store.findFirst({
-    where: { id: input.storeId, merchantId, deletedAt: null },
+    where: { id: storeId, merchantId, deletedAt: null },
   })
   if (!store) throw new CreationStoreMismatchError()
-  if (input.dishId !== undefined) {
+  if (mode === 'DISH' && input.dishId !== undefined) {
     const dish = await prisma.dish.findFirst({
-      where: { id: input.dishId, storeId: input.storeId, store: { merchantId, deletedAt: null }, deletedAt: null },
+      where: { id: input.dishId, storeId, store: { merchantId, deletedAt: null }, deletedAt: null },
       select: { id: true },
     })
     if (!dish) throw new CreationDishMismatchError()
@@ -332,10 +436,16 @@ export async function createCreation(
     const created = await tx.creation.create({
       data: {
         merchantId,
-        storeId: input.storeId,
-        dishId: input.dishId,
+        storeId,
+        // 话题稿永远没有菜品（上面已经拒绝传入），显式写 undefined 而不是 input.dishId
+        dishId: mode === 'TOPIC' ? undefined : input.dishId,
         title: input.title,
-        track: input.track ?? DEFAULT_COPY_TRACK,
+        // ★ 话题稿**强制**用流量款：它是唯一一份不喂门店/菜品的文案模板。
+        //   允许调用方传别的款式，会让「话题稿却走介绍款模板」这种组合悄悄生效 ——
+        //   介绍款要求讲清菜名与卖点，而话题稿手里一个字都没有，模型只能编。
+        track: mode === 'TOPIC' ? TOPIC_TRACK : (input.track ?? DEFAULT_COPY_TRACK),
+        mode,
+        topicCity: mode === 'TOPIC' ? (input.topicCity?.trim() || null) : null,
         complexity: input.complexity ?? DEFAULT_COMPLEXITY,
       },
     })
@@ -427,6 +537,7 @@ export async function getCreation(
   return {
     ...withoutUserIdea(c),
     trackLabel: isCopyTrack(c.track) ? COPY_TRACKS[c.track].label : null,
+    modeLabel: isContentMode(c.mode) ? CONTENT_MODES[c.mode].label : null,
     complexityLabel: isComplexity(c.complexity) ? COMPLEXITIES[c.complexity].label : null,
     shots: c.shots.map((s) => ({
       ...s,
@@ -623,19 +734,40 @@ export async function buildVariables(
   if (!c) throw new CreationNotFoundError()
   const track = opts.track ?? (isCopyTrack(c.track) ? c.track : DEFAULT_COPY_TRACK)
   const complexity = opts.complexity ?? (isComplexity(c.complexity) ? c.complexity : DEFAULT_COMPLEXITY)
+  const mode: ContentMode = isContentMode(c.mode) ? c.mode : DEFAULT_CONTENT_MODE
+
+  /**
+   * ★ 话题稿：门店与菜品相关变量**一律给空串**。
+   *
+   * 为什么不是「反正模板不引用、给了也无所谓」：那样一旦有人把 {{storeName}} 加回流量款模板，
+   * 就会当场渲染出真店名 —— 而这条稿子的产品定义就是「不涉及门店」。
+   * 何况 c.store 只是**宿主门店**（服务端为了媒体归属挑的），把它喂进提示词等于
+   * 拿一个用户根本没选过的门店去做内容，用户会莫名其妙。
+   *
+   * ⚠ 城市走 c.topicCity（用户当次填的快照），**不读宿主门店的 city** —— 理由同上。
+   */
+  const topic = mode === 'TOPIC'
   return {
-    storeName: c.store.name,
-    storeIntro: c.store.intro ?? '',
-    category: c.store.category ?? '',
-    city: c.store.city ?? '',
-    dishName: c.dish?.name ?? '',
-    dishIntro: c.dish?.intro ?? '',
-    sellingPoints: c.dish?.sellingPoints ?? '',
-    comboInfo: formatComboInfo(c.dish),
-    persona: formatPersona(c.store.persona),
+    storeName: topic ? '' : c.store.name,
+    storeIntro: topic ? '' : (c.store.intro ?? ''),
+    category: topic ? '' : (c.store.category ?? ''),
+    city: topic ? '' : (c.store.city ?? ''),
+    dishName: topic ? '' : (c.dish?.name ?? ''),
+    dishIntro: topic ? '' : (c.dish?.intro ?? ''),
+    sellingPoints: topic ? '' : (c.dish?.sellingPoints ?? ''),
+    comboInfo: topic ? '' : formatComboInfo(c.dish),
+    persona: topic ? '' : formatPersona(c.store.persona),
+    // ★ 每次生成都现算：创作可能存了一周才生成，缓存住「今天」会让节日提示过期。
+    //   代价只是一次 Intl 格式化 + 几十条候选过滤，可忽略。
+    //   ⚠ 话题稿也要算它：分镜模板引用 {{dateInfo}}（话题稿同样要分镜）。
+    dateInfo: formatDateInfo(),
+    // 话题稿专属：今天是什么日子 + 几条可直接开口的起头方向（见 lib/topic.ts）。
+    // 菜品稿拿到的是空串 —— 它由门店/菜品驱动，不需要话题方向，也（在白名单层面）引用不到。
+    topicInfo: topic ? formatTopicInfo(new Date(), c.topicCity ?? '') : '',
     copyText: c.copyText ?? '',
     track,
     trackLabel: COPY_TRACKS[track].label,
+    mode,
     complexity,
     complexityLabel: COMPLEXITIES[complexity].label,
     shotCountRule: COMPLEXITIES[complexity].rule,
@@ -673,12 +805,39 @@ export async function generateCopy(
   await requireSubscription(prisma, merchantId, '文案生成')
   await getCreation(prisma, merchantId, creationId) // 校验归属
 
-  // 未指定款式时沿用创作上已保存的款式（默认流量款）
-  const current = await prisma.creation.findUnique({ where: { id: creationId }, select: { track: true } })
-  const finalTrack: CopyTrack = track ?? (isCopyTrack(current?.track) ? current!.track : DEFAULT_COPY_TRACK)
-  const sceneCode = await resolveCopyScene(prisma, finalTrack)
-  if (current?.track !== finalTrack) {
-    await prisma.creation.update({ where: { id: creationId }, data: { track: finalTrack } })
+  // 未指定款式时沿用创作上已保存的款式（默认介绍款）
+  const current = await prisma.creation.findUnique({
+    where: { id: creationId },
+    select: { track: true, mode: true },
+  })
+  /**
+   * ★ 话题稿的款式**不可协商**：它只有一份不喂门店/菜品的模板（copy_traffic）。
+   *   允许调用方传 track，就会出现「话题稿却按介绍款模板生成」——介绍款要求讲清菜名与卖点，
+   *   而话题稿手里一个字都没有，模型只能编；而且这个组合不报错，只是文案悄悄变了味。
+   *   所以这里直接覆盖掉入参，而不是"以入参为准再兜底"。
+   */
+  const mode: ContentMode = isContentMode(current?.mode) ? current.mode : DEFAULT_CONTENT_MODE
+  const finalTrack: CopyTrack =
+    mode === 'TOPIC'
+      ? TOPIC_TRACK
+      : (() => {
+          const want = track ?? (isCopyTrack(current?.track) ? current!.track : DEFAULT_COPY_TRACK)
+          /**
+           * ★★ 菜品稿**永远不许**走流量款。
+           *
+           * 流量款的模板已经改成纯话题版：不喂门店、不喂菜品，而且明确要求「不要报店名」。
+           * 但菜品稿走流量款这件事在**存量数据里是真实存在的**：
+           *   · 25 条 `track='TRAFFIC'` 的创作（都是 mode='DISH'）
+           *   · 前端「同款配方」会把优秀作品的款式原样带过来，其中就可能带 TRAFFIC
+           * 不兜这一下，用户点「重新生成」会拿到一条**既不提门店也不提菜品**的稿子，
+           * 而且全程不报错 —— 看起来就像 AI 突然变笨了。
+           * 所以这里把它改回默认款式，而不是「尊重传入的款式」。
+           */
+          return want === TOPIC_TRACK ? DEFAULT_COPY_TRACK : want
+        })()
+  const sceneCode = mode === 'TOPIC' ? SCENE.copy_traffic : await resolveCopyScene(prisma, finalTrack)
+  if (current?.track !== finalTrack || (current && !isContentMode(current.mode))) {
+    await prisma.creation.update({ where: { id: creationId }, data: { track: finalTrack, mode } })
   }
 
   const vars = await buildVariables(prisma, creationId, { track: finalTrack })
@@ -708,14 +867,34 @@ export async function updateCreation(
   prisma: PrismaClient,
   merchantId: bigint,
   creationId: bigint,
-  input: { copyText?: string; title?: string; track?: CopyTrack; complexity?: Complexity },
+  input: { copyText?: string; title?: string; track?: CopyTrack; complexity?: Complexity; topicCity?: string },
 ) {
   await getCreation(prisma, merchantId, creationId)
-  const data: { copyText?: string; title?: string; track?: string; complexity?: string } = {}
+  /**
+   * ★ 话题稿不允许被改成别的款式（也不允许别人把它改成话题稿）。
+   *   `mode` 是创建时定下的**内容形态**，不是可切换的显示选项：
+   *   话题稿必须走流量款模板，而流量款模板不喂门店/菜品 —— 一旦款式被改成介绍款，
+   *   下一次生成就会用「要讲清菜名卖点」的模板去写一条没有菜的稿子，模型只能编，
+   *   而且**不报错**。所以这里直接丢弃 track，而不是写库。
+   *   ⚠ 这是「静默忽略」而不是抛错，是刻意的：前端换款式是本地即时生效的高频操作，
+   *     为一个不该出现的入参把整次编辑请求打失败，得不偿失；丢弃后返回的是库里的真实值。
+   */
+  const row = await prisma.creation.findUnique({ where: { id: creationId }, select: { mode: true } })
+  const isTopicRow = isContentMode(row?.mode) && row.mode === 'TOPIC'
+
+  const data: {
+    copyText?: string
+    title?: string
+    track?: string
+    complexity?: string
+    topicCity?: string | null
+  } = {}
   if (input.copyText !== undefined) data.copyText = input.copyText
   if (input.title !== undefined) data.title = input.title
-  if (input.track !== undefined) data.track = input.track
+  if (input.track !== undefined && !isTopicRow) data.track = input.track
   if (input.complexity !== undefined) data.complexity = input.complexity
+  // 城市只属于话题稿（菜品稿引用不到这个变量，写进去只会变成一个永远不生效的字段）
+  if (input.topicCity !== undefined && isTopicRow) data.topicCity = input.topicCity.trim() || null
   if (Object.keys(data).length === 0) return getCreation(prisma, merchantId, creationId)
   await prisma.creation.update({ where: { id: creationId }, data })
   return getCreation(prisma, merchantId, creationId)

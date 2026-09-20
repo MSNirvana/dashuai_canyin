@@ -22,11 +22,29 @@ function mediaBaseUrl(req: import('express').Request): string {
   return `${req.protocol}://${req.get('host')}/api/v1/media`
 }
 
+/**
+ * 菜品稿可选的文案款式。
+ * ★ 流量款**不在其中** —— 它已从「四款文案」拆成独立功能（话题稿 `mode='TOPIC'`），
+ *   只走 `copy_traffic` 那份不喂门店/菜品的模板。放进这个枚举，后台手填或旧客户端传
+ *   `track='TRAFFIC'` 就会创建出一条「菜品稿却挂着流量款」的创作，而它生成时会用话题模板
+ *   —— 文案里既没门店也没菜品，且不报错。旧客户端若传 TRAFFIC 会拿到 400 而不是静默变味。
+ */
+const DISH_TRACKS = ['INTRO', 'QUALITY', 'RECOMMEND'] as const
+
 const createInput = z.object({
-  storeId: z.string().min(1),
+  /**
+   * 菜品稿必填、话题稿**必须不传**（传了 service 会抛 TopicCreationStoreForbiddenError）。
+   * 这里放宽成 optional 是因为两态的必填性不同，交给 service 一处判定，
+   * 免得同一条规则在 schema 与 service 里各写一半、日后只改一处。
+   */
+  storeId: z.string().min(1).optional(),
   dishId: z.string().optional(),
+  /** 内容模式；不传 = 菜品稿（保持既有客户端行为不变） */
+  mode: z.enum(['DISH', 'TOPIC']).optional(),
+  /** 话题稿的同城落点（可选，自由文本）。菜品稿传了会被忽略 */
+  topicCity: optionalText(64).optional(),
   title: requiredText(255).optional(),
-  track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
+  track: z.enum(DISH_TRACKS).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
   // 同款作品的分镜骨架（来自 excellent_work.recipe_json）：有值时在创建的同时**落成初始分镜**，
   // 前端随即跳过 AI 分镜那一步（省一次真实扣费），用户不满意再点「重新生成」整批换成 AI 版。
@@ -49,8 +67,11 @@ const creationPatch = z.object({
   title: requiredText(255).optional(),
   // 口播文案会作为 {{copyText}} 喂给分镜提示词，纯空白值同样要 trim
   copyText: optionalText(20000),
-  track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
+  // 同 createInput：菜品稿三款；流量款属话题稿，不在枚举里（传了会 400）
+  track: z.enum(DISH_TRACKS).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
+  /** 话题稿的同城落点；改它会改变下一次生成的措辞（城市进了提示词） */
+  topicCity: optionalText(64).optional(),
 })
 
 const shotPatch = z.object({
@@ -90,8 +111,10 @@ router.post('/', async (req, res) => {
   try {
     const input = createInput.parse(req.body)
     const c = await creationSvc.createCreation(prisma, req.merchantId!, {
-      storeId: idParam(input.storeId, 'storeId'),
+      storeId: input.storeId === undefined ? undefined : idParam(input.storeId, 'storeId'),
       dishId: optionalIdParam(input.dishId, 'dishId'),
+      mode: input.mode,
+      topicCity: input.topicCity,
       title: input.title,
       track: input.track,
       complexity: input.complexity,
@@ -101,6 +124,10 @@ router.post('/', async (req, res) => {
   } catch (e) {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof creationSvc.CreationStoreMismatchError || e instanceof creationSvc.CreationDishMismatchError) return fail(res, 2004, e.message, 400)
+    // 话题稿的两种前置条件单列错误码：前端要区分「参数传错了」（开发期问题）
+    // 与「还没建门店」（用户能自己解决，要引导到门店页）
+    if (e instanceof creationSvc.TopicCreationStoreForbiddenError) return fail(res, 2002, e.message, 400)
+    if (e instanceof creationSvc.TopicHostStoreMissingError) return fail(res, 2011, e.message, 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     console.error('[creations] 创建异常:', e)
     return fail(res, 500, '创建失败', 500)

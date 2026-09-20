@@ -210,6 +210,19 @@ model Creation {
   //    模型看得见、用户却填不了，而且不改代码查不出来（对照 ai/prompt-vars.ts 的警告）。
   userIdea   String?   @map("user_idea") @db.VarChar(200)
   track      String    @db.VarChar(24)
+  // ★ 内容模式：`DISH` = 菜品驱动（选门店+菜品，四款里除流量款外可选）；
+  //   `TOPIC` = 话题驱动（「流量款」独立功能：不选门店、不选菜品，靠节气/节日/时令话题出稿）。
+  //   为什么用一列而不是靠「track=TRAFFIC 且 dishId 为空」推断：那个组合**存量数据里已经存在**
+  //   （老用户建过没选菜品的流量款创作），推断会把它们误判成话题稿；
+  //   而且「不选菜品」本来也允许出现在菜品驱动里（单靠门店也能出稿）。
+  //   ★ 与 track 的约束：TOPIC 只允许配 track='TRAFFIC'（见 routes/creations.ts 的校验）。
+  mode       String    @default("DISH") @db.VarChar(16)
+  // 话题稿用的城市（`mode='TOPIC'` 时可填；空 = 不带城市，纯节点/时令/生活话题）。
+  // ★ 存的是**当次生成时的快照**，而不是「指向某个门店再由门店取城市」：
+  //   ① 话题稿刻意不绑门店，再让它去读门店档案等于把门店又偷偷接回来；
+  //   ② 门店档案里的城市随时可改，改成读实时值会让「同一条稿重新生成」结果不可复现；
+  //   ③ 它是一个自由文本（用户可能想写「廊坊」也可能写「燕郊」），不该被门店档案的取值限定。
+  topicCity  String?   @map("topic_city") @db.VarChar(64)
   complexity String    @db.VarChar(16)
   copyText   String?   @map("copy_text") @db.Text
   status     String    @default("DRAFT") @db.VarChar(24)

@@ -11,6 +11,8 @@ export default defineAppConfig({
     'pages/persona/index',
     'pages/creation/list',
     'pages/creation/edit',
+    // 流量款 · 跟热点（话题稿）：不选门店菜品，靠节气/节日/时令出稿的独立链路
+    'pages/creation/traffic',
     'pages/creation/shots',
     'pages/render/compose',
     'pages/work/detail',

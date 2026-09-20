@@ -224,7 +224,18 @@ export default function CreationList() {
   const onCreate = () => currentStoreId
     ? Taro.navigateTo({ url: '/pages/creation/edit' })
     : Taro.switchTab({ url: '/pages/home/index' })
-  const onOpen = (id: string) => Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
+
+  /**
+   * 点开一条创作。
+   * ★ 必须按 `mode` 分流：话题稿（流量款独立功能）没有门店与菜品，
+   *   进创作页会看到一个空的菜品选择器和一套用不上的款式 —— 那一页整块都在讲「选门店菜品」。
+   *   两种稿子本质是两条链路，各自的页面才是完整闭环。
+   */
+  const onOpen = (id: string, mode?: string) =>
+    Taro.navigateTo({ url: mode === 'TOPIC' ? `/pages/creation/traffic?id=${id}` : `/pages/creation/edit?id=${id}` })
+
+  /** 流量款独立入口：不选门店、不选菜品，靠节气/节日/时令出稿。话题稿与菜品稿是两条链路 */
+  const onOpenTraffic = () => Taro.navigateTo({ url: '/pages/creation/traffic' })
 
   /** 动作统一收口：成功提示 + 重载。列表是唯一数据源，不在本地增删（避免与服务端不一致） */
   const runAction = async (fn: () => Promise<unknown>, okText: string) => {
@@ -270,6 +281,24 @@ export default function CreationList() {
 
       {/* 这句话紧跟门店筛选，作为当前门店内容区的说明 */}
       <Text className='clist__intro'>每一条视频，都是一次客流机会</Text>
+
+      {/* ── 流量款独立入口 ──
+          放在列表最上方是因为它和下面那串卡片**不是同一类东西**：下面每条都挂在某个门店的
+          某个菜品上，而它是「今天该蹭什么话题」——不选门店、不选菜品。
+          放进「新建创作」里面做成一款，用户会以为还得先选菜（而那正是要拆掉的东西）。 */}
+      <View className='clist__topic' hoverClass='ds-hover--press' onClick={onOpenTraffic}>
+        <View className='clist__topic-icon'>
+          <t-icon name='cloud' size='38rpx' />
+        </View>
+        <View className='clist__topic-main'>
+          <View className='clist__topic-head'>
+            <Text className='clist__topic-title'>流量款 · 跟热点</Text>
+            <Text className='clist__topic-new'>新</Text>
+          </View>
+          <Text className='clist__topic-desc'>不用选门店和菜品，跟着节气、节日和当下话题出文案与分镜</Text>
+        </View>
+        <t-icon name='chevron-right' size='36rpx' />
+      </View>
 
       {currentStoreId && (
         <Segmented
@@ -333,7 +362,7 @@ export default function CreationList() {
             actions={actions}
             open={openId === c.id}
             onOpenChange={(o) => setOpenId(o ? c.id : '')}
-            onClick={() => onOpen(c.id)}
+            onClick={() => onOpen(c.id, c.mode)}
           >
             <View className='clist__card' hoverClass='ds-hover--press'>
               <View className='clist__row'>
@@ -350,7 +379,13 @@ export default function CreationList() {
                 <View className='clist__main'>
                   <Text className='clist__name'>{c.title || '未命名创作'}</Text>
                   <View className='clist__tags'>
-                    {!!c.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{c.trackLabel}</Text>}
+                    {/* 话题稿不显示款式：它恒为流量款，而「款式」在话题稿里不是可选项
+                        （服务端也会把话题稿的 track 覆盖成流量款）。显示「话题稿」才有信息量。 */}
+                    {c.mode === 'TOPIC' ? (
+                      <Text className='ds-pill ds-pill--red-soft'>话题稿</Text>
+                    ) : (
+                      !!c.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{c.trackLabel}</Text>
+                    )}
                     {!!c.complexityLabel && <Text className='ds-pill ds-pill--gray'>{c.complexityLabel}</Text>}
                     <Text className='clist__shots'>分镜 {c.shotsTotal}</Text>
                     <Text className='clist__time'>{fmtRelTime(c.createdAt)}</Text>
