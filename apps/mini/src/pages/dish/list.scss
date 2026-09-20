@@ -51,6 +51,11 @@
     color: var(--td-text-color-placeholder);
   }
 
+  /* 类型筛选（全部 / 单菜 / 套餐）。只在有菜时渲染，空列表时它只是一排点了没反应的按钮 */
+  &__filter {
+    margin-bottom: 22rpx;
+  }
+
   &__loading,
   &__empty {
     text-align: center;
@@ -128,6 +133,25 @@
   &__main { flex: 1; min-width: 0; max-height: 220rpx; overflow: hidden; }
   &__title-row { display: flex; align-items: center; gap: 12rpx; min-width: 0; }
   &__badge { flex: 0 0 auto; padding: 4rpx 12rpx; border-radius: 999rpx; background: var(--td-brand-color-light); color: var(--td-brand-color); font-size: 18rpx; font-weight: 600; }
+
+  /* 套餐标签用主题里的琥珀色，而不是复用红色：
+     同一张卡上「套餐」与「招牌卖点」语义完全不同，靠颜色分开比靠文字更省一眼 */
+  &__badge--combo { background: var(--ds-warning-soft); color: var(--ds-warning); }
+
+  /* 套餐卡的价格行：现价 + 划线原价 + 含几样 */
+  &__combo { display: flex; align-items: baseline; gap: 12rpx; margin-top: 10rpx; }
+  &__price { font-size: 30rpx; font-weight: 700; color: var(--td-brand-color); }
+  &__price-was { font-size: 22rpx; color: var(--td-text-color-placeholder); text-decoration: line-through; }
+  &__combo-count { font-size: 22rpx; color: var(--td-text-color-placeholder); }
+
+  /* ★ 套餐卡比普通卡多一行价格，`__main` 原来的 220rpx 硬顶（与封面等高）会把简介裁掉。
+     这里给套餐卡放宽到 300rpx，同时把卖点/简介各收到 1 行 —— 套餐卡的重点是
+     「多少钱、含几样」，正文细节交给详情页，不在这里跟价格抢高度。 */
+  &--combo {
+    .dish-card__main { max-height: 300rpx; }
+    .dish-card__sp,
+    .dish-card__intro { -webkit-line-clamp: 1; }
+  }
 
   &__name {
     flex: 0 1 auto;

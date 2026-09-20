@@ -164,14 +164,6 @@ export default function CreationEdit() {
    */
   const [dishIdx, setDishIdx] = useState(0)
   const [title, setTitle] = useState('')
-  /**
-   * 「你想拍什么风格？」——选填，最多 200 字。会作为**最高优先级**的要求同时喂给文案与分镜两个提示词。
-   *
-   * 提交时**空串不发送**（见 onCreate 的 `userIdea.trim() || undefined`）：
-   * 库列是 nullable 的，若这里把 '' 也发出去，「没填」就会同时存在 null 和 '' 两种形态，
-   * 后面凡是判断「用户有没有写过」的地方都得写两遍。
-   */
-  const [userIdea, setUserIdea] = useState('')
   const [copyLoading, setCopyLoading] = useState(false)
   const [boardLoading, setBoardLoading] = useState(false)
   // P0-7 再入锁：state 更新是异步的，而且 tdesign 组件的 loading 要经 native setData 下发，
@@ -508,9 +500,6 @@ export default function CreationEdit() {
         storeId: sid,
         dishId: did,
         title: title || undefined,
-        // 空串不发：库里「没填」只留 null 一种形态（见 userIdea state 的说明）。
-        // 纯空格也算没填 —— 服务端 optionalText 同样会 trim，这里先收敛掉少发一个字段。
-        userIdea: userIdea.trim() || undefined,
         track,
         complexity,
         // 同款的分镜骨架：服务端在创建的事务里一并落成分镜。
@@ -714,6 +703,16 @@ export default function CreationEdit() {
   const complexityLabel = COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.label ?? ''
 
   /**
+   * 菜品 / 套餐在列表里的显示文案。
+   * ★ 必须带上类型前缀：套餐与单菜**共用同一个 Picker**（服务端也是同一张表、同一个接口），
+   *   而套餐名往往就叫「双人套餐」「四人餐」—— 不标类型时用户看到一行「双人套餐」，
+   *   既不知道它是一条独立记录还是某道菜，也无从判断 AI 会拿它做什么。
+   *   选中之后 `{{dishName}}` 拿到的其实完全一样（都是这条记录的 name），
+   *   但「我知道我选了什么」这件事本身是必须给的。
+   */
+  const dishLabel = (d: DishItem) => (d.kind === 'COMBO' ? `【套餐】${d.name}` : d.name)
+
+  /**
    * 菜品选择器上显示什么。
    * ★ 这四种状态必须在界面上长得**不一样**：「加载中」「加载失败」「这家店真没菜」
    *   在旧实现里全都渲染成空白，用户只能得到「点不动、也不知道为什么」。
@@ -724,7 +723,7 @@ export default function CreationEdit() {
     if (dishesFailed) return '菜品加载失败，点此重试'
     if (dishesStoreId !== cur.id) return '菜品加载中…'
     if (!dishes.length) return '该门店还没有菜品，请先添加'
-    return dishes[dishIdx]?.name || '请选择菜品'
+    return dishes[dishIdx] ? dishLabel(dishes[dishIdx]) : '请选择菜品'
   })()
 
   /**
@@ -797,7 +796,7 @@ export default function CreationEdit() {
                 这里也就不再需要 `- 1` 换算（旧写法是「下标 -1 = 不指定」的约定）。 */}
             <Picker
               mode='selector'
-              range={dishes.map((d) => d.name)}
+              range={dishes.map(dishLabel)}
               onChange={(e: { detail: { value: string | number } }) => setDishIdx(Number(e.detail.value))}
               // 菜品必须确认属于**当前门店**才可点：dishesStoreId 与所选门店不一致时
               // 说明列表还是上一家店的（或还没回来），此时不该让用户选（见 dishesStoreId 的说明）
@@ -818,31 +817,6 @@ export default function CreationEdit() {
               placeholderClass='cedit__ph'
             />
           </View>
-        </View>
-
-        {/* ── 你想拍什么风格？──
-            这是用户唯一能自由表达的地方，也是提示词里权重最高的一段：
-            服务端把它渲染进「用户对怎么拍的要求 · 本次最高优先级」那一行，
-            并在写作要求里明确「与其它任何一条冲突时以用户为准」（文案与分镜两个场景都是）。
-            所以这个框不是「补充信息」，它排在前面的门店/菜品之后、规格选项之前 ——
-            先说你想要什么风格，再用下面的选项微调。
-            ★ 原来标题下还有一行「写一句你的想法，会优先按它来写」——删掉了：
-              标题已经把「这里填什么」说清，那行只是把同一件事又说一遍，白占一行高。 */}
-        <View className='cedit__card'>
-          <View className='cedit__sechead'>
-            <Text className='cedit__sectitle'>你想拍什么风格？</Text>
-            <Text className='cedit__optional'>选填</Text>
-          </View>
-          {/* ★ maxlength 必须显式写：小程序 textarea 默认只让输 140 字，与服务端的 200 上限对不上 */}
-          <Textarea
-            className='cedit__idea'
-            value={userIdea}
-            maxlength={200}
-            placeholder='例如：接地气的老板口播风、烟火气十足；或深夜食堂的治愈感、慢镜头特写'
-            placeholderClass='cedit__ph'
-            onInput={(e: { detail: { value: string } }) => setUserIdea(e.detail.value)}
-          />
-          <Text className='cedit__count'>{userIdea.length}/200</Text>
         </View>
 
         {/* 来自「优秀作品」的同款配方：只预填，不替用户做决定 */}

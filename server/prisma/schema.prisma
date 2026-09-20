@@ -86,18 +86,57 @@ model Dish {
   sellingPoints String?   @map("selling_points") @db.VarChar(1000)
   coverKey      String?   @map("cover_key") @db.VarChar(512)
   videoKey      String?   @map("video_key") @db.VarChar(512)
+  /// 菜单资产的类型：SINGLE = 单道菜（默认，存量数据全部是它），COMBO = 由多道单菜组成的套餐。
+  /// ★ 套餐**复用本表**而不是另建一张表：Creation.dishId 已经指向 dish，
+  ///   于是「创作时选一个套餐」= 选一条 dish，AI 变量 dishName 自动就是套餐名，
+  ///   媒体校验 / DishMedia / 小程序三页也整套复用（见 comboItems 的注释）。
+  /// 取值由服务端收窄（routes/dishes.ts 的 z.enum），库里不做 CHECK 约束。
+  kind          String    @default("SINGLE") @db.VarChar(16)
+  /// 套餐价，单位**分**（与 member_package.price_fen / order.amount_fen 同一口径，不用浮点）。
+  /// 单菜暂不标价，所以这里 NULL = 未填写 / 不是套餐。
+  priceFen      Int?      @map("price_fen") @db.UnsignedInt()
+  /// 划线原价，单位分。仅在套餐上使用，且必须 > priceFen（等于或更低就不是「优惠」了）。
+  originalPriceFen Int?   @map("original_price_fen") @db.UnsignedInt()
   sort          Int       @default(0)
   status        String    @default("ACTIVE") @db.VarChar(16)
   createdAt     DateTime  @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
   deletedAt     DateTime? @map("deleted_at") @db.DateTime(3)
 
-  store     Store       @relation(fields: [storeId], references: [id])
-  creations Creation[]
-  media     DishMedia[]
+  store      Store           @relation(fields: [storeId], references: [id])
+  creations  Creation[]
+  media      DishMedia[]
+  /// 当本行是套餐时：它包含哪些单菜
+  comboItems DishComboItem[] @relation("DishComboItems")
+  /// 当本行是单菜时：它被哪些套餐引用（用于展示与「被引用就别硬删」的判断）
+  inCombos   DishComboItem[] @relation("DishComboMember")
 
   @@index([storeId, deletedAt, sort])
   @@map("dish")
+}
+
+/// 套餐明细：一条 dish(kind=COMBO) 由若干条 dish(kind=SINGLE) 组成。
+///
+/// 为什么是独立表而不是给 dish 塞一个 JSON 列：明细要参与「这道菜被哪几个套餐用到了」
+/// 的反查，也要能撑住 `ON DELETE CASCADE`（硬删菜品时套餐结构跟着收敛，不留悬空引用）。
+/// ★ 明细**不存菜名快照**：菜名改了，套餐里应该跟着改（改名 = 同一个东西换了说法）；
+///   要靠快照去固定历史文案那是 Creation 的职责，不是菜单库的。
+model DishComboItem {
+  id       BigInt @id @default(autoincrement()) @db.UnsignedBigInt()
+  comboId  BigInt @map("combo_id") @db.UnsignedBigInt()
+  dishId   BigInt @map("dish_id") @db.UnsignedBigInt()
+  /// 份数。1 表示「一份」，2 表示「两份」；上限由服务端收窄到 99。
+  quantity Int    @default(1)
+  sort     Int    @default(0)
+
+  combo Dish @relation("DishComboItems", fields: [comboId], references: [id], onDelete: Cascade)
+  dish  Dish @relation("DishComboMember", fields: [dishId], references: [id], onDelete: Cascade)
+
+  /// 同一道菜在同一套餐里只能出现一行（要两份就写 quantity=2，不是两行）——
+  /// 拆成两行会让「套餐里有几样东西」和「一共几份」两个数对不上。
+  @@unique([comboId, dishId])
+  @@index([dishId])
+  @@map("dish_combo_item")
 }
 
 model Persona {
@@ -163,10 +202,12 @@ model Creation {
   storeId    BigInt    @map("store_id") @db.UnsignedBigInt()
   dishId     BigInt?   @map("dish_id") @db.UnsignedBigInt()
   title      String?   @db.VarChar(255)
-  // 「你想怎么拍？」—— 用户自己写的一句话（选填，≤200 字）。
-  // 会作为 {{userIdea}} 进提示词，且在文案与分镜两个场景里都是**最高优先级**的内容要求。
-  // 存成列而不是只当请求参数：重试 / 换一款 / 重新生成分镜时都要复用同一句话，
-  // 让用户重填一遍是没道理的（文案与分镜是两次独立调用，参数里各带一份很容易漂）。
+  // ★ 2026-09-20：「你想拍什么风格？」那个自由输入框已从**整条链路**删除
+  // （前端 UI / 提交字段 / 路由 schema / service / 提示词变量与白名单全没了）。
+  // 本列**保留但不再读、也不再写** —— 沿用 store.contact 的先例：留着存量数据，
+  // 删列要动数据库、不可逆，为一段没人看的文本不值得。
+  // ⚠ 不要再把它接回提示词：没有对应的用户输入之后，模板里那一行只会永远渲染成兜底文案，
+  //    模型看得见、用户却填不了，而且不改代码查不出来（对照 ai/prompt-vars.ts 的警告）。
   userIdea   String?   @map("user_idea") @db.VarChar(200)
   track      String    @db.VarChar(24)
   complexity String    @db.VarChar(16)

@@ -24,7 +24,9 @@ import { fileURLToPath } from 'node:url'
 import {
   CreationNotFoundError,
   archiveCreation,
+  createCreation,
   deleteCreation,
+  getCreation,
   listCreations,
   unarchiveCreation,
 } from '../src/services/creation.service.js'
@@ -184,7 +186,46 @@ async function main(): Promise<void> {
     '没有分镜时两个数都是 0（前端才不会 0/0 算出 NaN 把进度条打回 0）',
   )
   const plain = pRow as unknown as Record<string, unknown>
+
+  // ★ 反向断言：`userIdea`（创作页「你想拍什么风格？」）已于 2026-09-20 从整条链路删除，
+  //   数据库列 user_idea **保留但不读不写** —— 而「不读不写」必须包含「不往响应里带」：
+  //   留着它 ① 前端看到字段还在会以为那个输入框有用；② 形态不一致（新记录恒 null、老记录带旧文本）。
+  //   ⚠ 覆盖面要说清：列表查询走**显式 select**、列清单里本就没有 user_idea，所以下面第一条是
+  //     防御性的（钉住别有人把它 select 回来）；**真正会泄漏的是详情**，它 `...展开整行` 记录。
+  check(!('userIdea' in plain), '列表行不下发 userIdea')
+  // ⚠ 用 `blank` 而不是上面那条 `c`：`getCreation` 会校验分镜引用的素材**归属本商家门店**，
+  //   而 `c` 的 assetId 是裸数字（本脚本刻意没造 media_asset）⇒ 会抛 CreationAssetMismatchError。
+  //   `blank` 没有分镜，走同一条详情代码路径却不会撞校验。
+  //
+  // ★ 这里**故意**往存量记录里塞一段旧文本：只断言「键不存在」太弱 —— 一条 userIdea=null 的记录
+  //   就能过。塞上真值才钉得住「存量数据带着旧文本也不许出现在响应里」，这正是
+  //   「列保留但**不读**」的含义。（写这一下本身就证明读路径没读它。）
+  const LEGACY_IDEA = '深夜食堂的治愈感'
+  await prisma.creation.update({ where: { id: blank.id }, data: { userIdea: LEGACY_IDEA } })
+  const detailRaw = await getCreation(prisma, merchant.id, blank.id)
+  const detail = (detailRaw ?? {}) as unknown as Record<string, unknown>
+  check(detailRaw !== null, '详情能取到（否则下面的断言是空转）')
+  check(!('userIdea' in detail), '详情不下发 userIdea 这个键（整行展开，真正的泄漏点）')
+  check(
+    // replacer 兜 bigint：整行里 id/merchantId 都是 bigint，裸 JSON.stringify 会直接抛
+    !JSON.stringify(detail, (_k, v) => (typeof v === 'bigint' ? String(v) : v)).includes(LEGACY_IDEA),
+    '存量旧文本连值都漏不出来',
+  )
+  // 顺带确认「摘掉字段」没有误伤 —— 别是为了过断言把整行换成了别的东西
+  check('id' in plain && 'archivedAt' in plain && 'copyText' in plain, '列表行其它列没被误伤')
+  check('id' in detail && 'copyText' in detail && 'shots' in detail, '详情行其它列没被误伤')
   check(!('shots' in plain) && !('renderTasks' in plain), '原始关联数组不下发（只给算好的三个标量）')
+
+  // 第三条返回路径：创建（`return created`，同样是整行记录）。这个接口**只写行** ——
+  // 不调模型、不扣积分、不签 URL（函数体就是一个 $transaction），所以直调不花任何成本，
+  // 与前端走 POST /creations 是同一段代码。
+  const fresh = (await createCreation(prisma, merchant.id, {
+    storeId: store.id,
+    title: '创建路径用例',
+  })) as unknown as Record<string, unknown>
+  check(!('userIdea' in fresh), '创建返回值不下发 userIdea（第三条返回路径）')
+  check('id' in fresh && 'title' in fresh && 'track' in fresh, '创建返回值其它列没被误伤')
+  check(fresh.title === '创建路径用例', '创建返回的就是刚写进去的那条（不是空对象）')
 
   // 两条任务，后建的那条才算「最新」—— 断言取的是 id 倒序第一条，不是 SUCCESS 优先
   await prisma.renderTask.create({

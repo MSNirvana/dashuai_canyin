@@ -126,3 +126,91 @@
     word-break: break-all;
   }
 }
+
+/* ── 套餐内容选择器 ────────────────────────────────────────────────
+   候选是本门店的「单菜」（套餐不能套套餐，见服务端 dish.service.ts 的校验）。
+   整行点击 = 勾选 / 取消；已勾选的行右侧才出现份数步进器 ——
+   步进器只在需要它的时候占地方，未勾选的行给菜名留出完整的宽度。 */
+
+/* 两种「这里没东西可选」的提示：加载失败（可点重试）/ 这家店还没有单菜（要先去建） */
+.combo-hint {
+  padding: 24rpx 28rpx;
+  border: 1rpx solid var(--td-component-stroke);
+  border-radius: var(--td-radius-default);
+  background: var(--td-bg-color-secondary);
+  color: var(--td-text-color-secondary);
+  font-size: 24rpx;
+  line-height: 1.6;
+}
+
+.combo-picker {
+  border: 1rpx solid var(--td-component-stroke);
+  border-radius: var(--td-radius-default);
+  overflow: hidden;
+  background: var(--td-bg-color-container);
+}
+
+.combo-row {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  padding: 22rpx 24rpx;
+  border-bottom: 1rpx solid var(--td-component-border);
+
+  &:last-child { border-bottom: none; }
+
+  &--on { background: var(--td-brand-color-soft); }
+
+  &__tick {
+    flex: 0 0 40rpx;
+    width: 40rpx;
+    height: 40rpx;
+    line-height: 40rpx;
+    text-align: center;
+    border-radius: 999rpx;
+    border: 1rpx solid var(--td-component-stroke);
+    background: var(--td-bg-color-secondary);
+    color: #fff;
+    font-size: 24rpx;
+  }
+
+  /* 选中态：勾号要白字红底才看得见（未选中时底色是浅灰，所以文字用白色不影响） */
+  &--on &__tick {
+    border-color: var(--td-brand-color);
+    background: var(--td-brand-color);
+  }
+
+  &__name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font-size: 28rpx;
+    color: var(--td-text-color-primary);
+  }
+
+  &__qty { flex: 0 0 auto; display: flex; align-items: center; gap: 6rpx; }
+
+  /* 步进按钮的点击区给到 52rpx（约 26px）：再小在真机上就容易点空，
+     而这里点空的代价是「以为是 2 份、其实是 1 份」 */
+  &__btn {
+    width: 52rpx;
+    height: 52rpx;
+    line-height: 48rpx;
+    text-align: center;
+    border-radius: var(--td-radius-small);
+    background: var(--td-bg-color-secondary);
+    border: 1rpx solid var(--td-component-stroke);
+    color: var(--td-text-color-primary);
+    font-size: 32rpx;
+  }
+
+  &__num {
+    min-width: 44rpx;
+    text-align: center;
+    font-size: 28rpx;
+    color: var(--td-text-color-primary);
+  }
+}
+

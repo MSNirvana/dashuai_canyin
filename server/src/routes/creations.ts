@@ -22,16 +22,10 @@ function mediaBaseUrl(req: import('express').Request): string {
   return `${req.protocol}://${req.get('host')}/api/v1/media`
 }
 
-// 「你想怎么拍？」用户自填的一句话，选填、≤200 字。字段名与列名（user_idea）一致。
-// 必须走 optionalText 而不是 z.string().max(200)：后者数的是**长度**，`"   "` 能过，
-// 而这句会被原样喂给模型（见 lib/validators.ts 顶部说明）。
-const userIdeaField = optionalText(200)
-
 const createInput = z.object({
   storeId: z.string().min(1),
   dishId: z.string().optional(),
   title: requiredText(255).optional(),
-  userIdea: userIdeaField,
   track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
   // 同款作品的分镜骨架（来自 excellent_work.recipe_json）：有值时在创建的同时**落成初始分镜**，
@@ -55,8 +49,6 @@ const creationPatch = z.object({
   title: requiredText(255).optional(),
   // 口播文案会作为 {{copyText}} 喂给分镜提示词，纯空白值同样要 trim
   copyText: optionalText(20000),
-  // 允许改「你想怎么拍？」：改完重新生成时用得上（空串 = 清空）
-  userIdea: userIdeaField,
   track: z.enum(['TRAFFIC', 'INTRO', 'QUALITY', 'RECOMMEND']).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
 })
@@ -101,7 +93,6 @@ router.post('/', async (req, res) => {
       storeId: idParam(input.storeId, 'storeId'),
       dishId: optionalIdParam(input.dishId, 'dishId'),
       title: input.title,
-      userIdea: input.userIdea,
       track: input.track,
       complexity: input.complexity,
       shotSkeleton: input.shotSkeleton,
@@ -116,7 +107,7 @@ router.post('/', async (req, res) => {
   }
 })
 
-/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度 / 「你想怎么拍？」（编辑不扣积分） */
+/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度（编辑不扣积分） */
 router.patch('/:id', async (req, res) => {
   try {
     const input = creationPatch.parse(req.body)

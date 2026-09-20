@@ -14,13 +14,11 @@ import { useMerchantStore } from '../../store/merchant'
 import Segmented from '../../components/segmented'
 // 到期日只要「到日为止」，但仍走统一入口（原来这里有一份自己的 fmtDate，三个页面各写一份必然漂移）
 import { formatDay } from '../../utils/time'
+// 同理：金额的「分 → 元」也收进 utils/money.ts（套餐价上线后会出现第二个用价的地方）
+import { fenToYuan } from '../../utils/money'
 import './index.scss'
 
 type Tab = 'subscribe' | 'bean'
-
-function fenToYuan(fen: number): string {
-  return (fen / 100).toFixed(fen % 100 === 0 ? 0 : 2)
-}
 
 export default function Recharge() {
   const router = useRouter()

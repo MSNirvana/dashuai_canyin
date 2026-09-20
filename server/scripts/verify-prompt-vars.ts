@@ -11,6 +11,13 @@
  *   ③ 拼装格式：门店介绍必须带值；人设两个字段必须带标签，全空时必须整段消失而不是留空标签
  *   ④ 真实数据链路：临时门店（分别填/不填介绍与人设）→ buildVariables → 渲染，逐项对值
  *
+ * ★ 2026-09-20：「你想拍什么风格？」模块（{{userIdea}}）已从整条链路删除 ⇒
+ *   本脚本原本钉住它的正向断言，现改成**反向**断言（模板与白名单里都不许再出现）。
+ *
+ * ★ 2026-09-20：菜单资产新增**套餐**（`dish.kind='COMBO'`）⇒ 新增变量 {{comboInfo}}。
+ *   它与上面的字段不同，是**正向**断言（6 个模板都必须引用、恰好一次），
+ *   并且单菜那一侧要反向断言「comboInfo 必须是空串」—— 否则每道炒菜都会被写成套餐。
+ *
  * 用法：npm run ai-prompts:verify
  * 用一个一次性手机号造临时商户/门店/菜品/创作，跑完硬删；不动任何真实商户数据。
  * 未配置数据库时只跑 ①②③（纯离线），仍然有意义。
@@ -41,7 +48,7 @@ import {
   SCENE_VARIABLES,
 } from '../src/ai/prompt-vars.js'
 import { renderTemplate } from '../src/ai/gateway.js'
-import { buildVariables, formatPersona, createCreation } from '../src/services/creation.service.js'
+import { buildVariables, formatPersona, formatComboInfo, createCreation } from '../src/services/creation.service.js'
 import { upsertAiScene, AdminAiInvalidTemplateError } from '../src/services/admin-ai.service.js'
 
 const prisma = new PrismaClient()
@@ -106,18 +113,42 @@ for (const t of TEMPLATES) {
   check(t.tpl.includes('{{persona}}'), `${t.label} 引用了门店人设 {{persona}}`)
 }
 
-// 「你想怎么拍？」({{userIdea}}) 是用户唯一的自由输入 —— 掉出提示词 = 这个功能**静默失效**
-// （前端照常填、照常扣积分、生成结果就是没理他）。所以 6 个模板逐个钉住。
-// 同时必须**只出现一次**：同一句话在上下文里出现两遍会被模型当成两条独立要求放大。
+// ★ 套餐信息（{{comboInfo}}）与上面两个字段不同，它**必须**在 6 个模板里都被引用：
+//   套餐与单菜在库里是同一张表，「菜名/简介/卖点」表达不出「含哪些菜、多少钱」，
+//   而这两件事正是套餐推广的全部卖点 —— 模板少引用一个场景，那个场景的套餐文案就退回编造。
+//   所以这里逐个钉「引用」而不是「可以引用」。
 for (const t of TEMPLATES) {
-  const n = (t.tpl.match(/\{\{userIdea\}\}/g) ?? []).length
-  check(n === 1, `${t.label} 恰好引用一次 {{userIdea}}`, `实际 ${n} 次`)
+  check(t.tpl.includes('{{comboInfo}}'), `${t.label} 引用了套餐信息 {{comboInfo}}`)
 }
-// 文案与分镜都要认这个变量：一个场景漏登记白名单的话，后台一保存就报「未支持的变量」
+// 且必须**只出现一次**：同一份套餐信息出现两遍，模型会当成两份不同的套餐去写（同 userIdea 的教训）
+for (const t of TEMPLATES) {
+  const n = (t.tpl.match(/\{\{comboInfo\}\}/g) ?? []).length
+  check(n === 1, `${t.label} 恰好引用一次 {{comboInfo}}`, `实际 ${n} 次`)
+}
+// 兜底模板不加：兜底文案本来就短，塞套餐明细只会更容易超出口播长度（同 storeIntro 的取舍）
 check(
-  findUnknownPlaceholders('copy_traffic', '{{userIdea}}').length === 0 &&
-    findUnknownPlaceholders('storyboard_generate', '{{userIdea}}').length === 0,
-  'userIdea 已在文案与分镜两个场景的白名单里',
+  TEMPLATES.every((t) => !t.fallback.includes('{{comboInfo}}')),
+  '兜底模板不引用 {{comboInfo}}（避免超出口播长度）',
+)
+// 文案与分镜都要认这个变量：一个场景漏登记白名单，后台一保存就报「未支持的变量」
+check(
+  findUnknownPlaceholders('copy_traffic', '{{comboInfo}}').length === 0 &&
+    findUnknownPlaceholders('storyboard_generate', '{{comboInfo}}').length === 0,
+  'comboInfo 已在文案与分镜两个场景的白名单里',
+)
+
+// ★ 反向断言：{{userIdea}} 已随「你想拍什么风格？」模块一起删除，**不许再出现**。
+//   为什么会有人加回来：模板里那一行看着「挺合理」，顺手补回去就成了一段
+//   永远渲染成兜底文案的假内容 —— 模型看得见、用户却填不了，而且不改代码查不出来。
+for (const t of TEMPLATES) {
+  check(!t.tpl.includes('{{userIdea}}'), `${t.label} 模板已不含 {{userIdea}}`)
+  check(!t.fallback.includes('{{userIdea}}'), `${t.label} 兜底模板已不含 {{userIdea}}`)
+}
+// 反向的一半：白名单里也必须没有 —— 这样后台有人手填会当场被拒，而不是静默渲染成兜底文案
+check(
+  findUnknownPlaceholders('copy_traffic', '{{userIdea}}').length === 1 &&
+    findUnknownPlaceholders('storyboard_generate', '{{userIdea}}').length === 1,
+  'userIdea 已不在文案与分镜的白名单里（后台若手填会被拒）',
 )
 
 // 兜底文案刻意保持短，不塞门店介绍（见 prisma/prompts.ts 注释）
@@ -207,6 +238,60 @@ check(
 )
 check(formatPersona(null) === '', '门店没有填写过任何东西 → 空串')
 
+// ── 套餐信息（纯函数，可离线验：不连库就能把每个分支走一遍）──
+const comboDish = {
+  kind: 'COMBO',
+  priceFen: 8800,
+  originalPriceFen: 12000,
+  comboItems: [
+    { quantity: 1, dish: { name: '宫保鸡丁', deletedAt: null } },
+    { quantity: 2, dish: { name: '米饭', deletedAt: null } },
+    // 故意混一条指向已软删菜的明细：读取侧必须把它滤掉
+    { quantity: 1, dish: { name: '例汤', deletedAt: new Date() } },
+  ],
+}
+const comboInfo = formatComboInfo(comboDish)
+check(
+  comboInfo.includes('¥88') && comboInfo.includes('¥120') && comboInfo.includes('省 ¥32'),
+  'comboInfo 带出套餐价 / 原价 / 省多少',
+  comboInfo,
+)
+check(
+  comboInfo.includes('宫保鸡丁') && comboInfo.includes('米饭×2'),
+  'comboInfo 带出套餐内容与份数（份数 >1 才标 ×N）',
+)
+check(!comboInfo.includes('例汤'), 'comboInfo 不含已软删的菜（读取侧过滤）')
+check(
+  formatComboInfo({ ...comboDish, kind: 'SINGLE' }) === '',
+  '★ 单菜 → comboInfo 是**空串**（不是「本菜品不是套餐」这类占位文字，否则模型会在一道炒菜上讨论套餐）',
+)
+check(formatComboInfo(null) === '', '没有关联菜品 → comboInfo 是空串')
+check(formatComboInfo(undefined) === '', 'undefined 也不会抛（落库路径可能给空）')
+// 原价不高于套餐价（假划线价）：宁可完全不提「省」，也不要在文案里写「省 ¥-8」
+check(
+  !formatComboInfo({ kind: 'COMBO', priceFen: 8800, originalPriceFen: 8800, comboItems: [] }).includes('省'),
+  '原价 == 套餐价 → 不说「省」（假划线价比不划线更伤信任）',
+)
+// 套餐没有内容是**异常**状态：整段消失会让模型自己编「包含什么」
+check(
+  formatComboInfo({ kind: 'COMBO', priceFen: 8800, originalPriceFen: null, comboItems: [] }).includes('还没有填'),
+  '明细为空 → 明确说「还没有填」，而不是让这一段消失（否则模型会编出不存在的菜）',
+)
+check(
+  formatComboInfo({
+    kind: 'COMBO',
+    priceFen: 8800,
+    originalPriceFen: null,
+    comboItems: [{ quantity: 1, dish: { name: '已删菜', deletedAt: new Date() } }],
+  }).includes('还没有填'),
+  '明细全指向已删菜 → 同样按「还没有填」处理',
+)
+// 没有价格时不要凭空造一个「套餐价 ¥0」
+check(
+  !formatComboInfo({ kind: 'COMBO', priceFen: null, originalPriceFen: null, comboItems: [{ quantity: 1, dish: { name: '米饭', deletedAt: null } }] }).includes('¥'),
+  '套餐价为空 → 整段不提价格（而不是写出「套餐价 ¥0」）',
+)
+
 // ──────────────────────── ④ 真实数据链路（需要数据库） ────────────────────────
 section('④ 真实数据链路：临时门店 → buildVariables → 渲染')
 
@@ -216,7 +301,6 @@ async function makeStore(
   tag: string,
   intro: string | null,
   persona: { bossTags: string | null; activity: string | null } | null,
-  userIdea?: string | null,
 ) {
   const store = await prisma.store.create({
     data: { merchantId, name: `契约测试门店-${tag}`, category: '川菜', city: '济南', intro },
@@ -234,7 +318,6 @@ async function makeStore(
     dishId: dish.id,
     track: 'TRAFFIC',
     complexity: 'COMPLEX',
-    userIdea: userIdea ?? undefined,
   })
   await prisma.creation.update({ where: { id: creation.id }, data: { copyText: '测试用口播文案正文' } })
   return { storeId: store.id, dishId: dish.id, creationId: creation.id }
@@ -243,9 +326,6 @@ async function makeStore(
 const INTRO = '开了十二年的老川菜馆，招牌是每天现炒的辣子鸡。'
 const BOSS_TAGS = '90后老板 / 退伍军人'
 const ACTIVITY = '开业酬宾 8 折'
-/** 用户在「你想怎么拍？」里自己写的一句话：要验证它**原样**进提示词，不被截断/改写 */
-const USER_IDEA = '想让老板出镜讲两句，重点拍锅里现炒的画面，结尾说「报我名字送例汤」'
-
 let dbReady = true
 try {
   await prisma.$queryRaw`SELECT 1`
@@ -261,7 +341,7 @@ if (dbReady) {
     merchantId = merchant.id
 
     // 4.1 信息填全的门店
-    const full = await makeStore(merchantId, 'full', INTRO, { bossTags: BOSS_TAGS, activity: ACTIVITY }, USER_IDEA)
+    const full = await makeStore(merchantId, 'full', INTRO, { bossTags: BOSS_TAGS, activity: ACTIVITY })
     const v = await buildVariables(prisma, full.creationId, { track: 'TRAFFIC' })
     check(v.storeIntro === INTRO, 'buildVariables 产出了门店介绍', `storeIntro=${JSON.stringify(v.storeIntro).slice(0, 40)}`)
     check(
@@ -271,37 +351,68 @@ if (dbReady) {
     )
     check(v.dishName === '契约测试菜品-full', '菜品名称仍在变量里')
     check(v.sellingPoints === '分量实在 / 价格透明', '菜品卖点仍在变量里')
-    check(v.userIdea === USER_IDEA, '「你想怎么拍？」原样带出来（没被删改）', v.userIdea)
 
     // 渲染一次真模板，确认值真的落到了提示词里（而不只是变量对象里有）
     const rendered = renderTemplate(COPY_TRAFFIC_PROMPT, v as unknown as Record<string, string>)
     check(rendered.includes(INTRO), '渲染后提示词含门店介绍正文')
     check(rendered.includes(BOSS_TAGS) && rendered.includes(ACTIVITY), '渲染后提示词含门店人设两字段')
-    check(rendered.includes(USER_IDEA), '渲染后提示词含用户原话（「最高优先级」那一段）')
-    check(
-      rendered.includes('最高优先级'),
-      '提示词里明确标了这句话的优先级（否则模型容易把它当成一条普通的补充信息）',
-    )
-    // 分镜那一侧也要吃到同一句话：两次调用是两个场景，漏一个就等于「只有文案听了」
-    const renderedStory = renderTemplate(STORY_PROMPT, v as unknown as Record<string, string>)
-    check(renderedStory.includes(USER_IDEA), '分镜提示词同样含用户原话')
     check(!rendered.includes('{{'), '渲染后提示词已无残留占位符', rendered.match(/\{\{[^}]*\}\}/g)?.join('、') ?? '')
     check(rendered.includes('【门店介绍】'), '提示词保留了【门店介绍】段落标题')
+
+    // ★ 4.1b 套餐链路：光测纯函数只能验格式，「include 有没有真把 comboItems 读出来」
+    //   只有连库才测得到 —— 漏了 include 的话 comboInfo 会静默变成「（门店还没有填具体菜品）」，
+    //   而那句提示看起来完全合理，没人会怀疑是代码没读。
+    const comboStore = await prisma.store.create({
+      data: { merchantId, name: '契约测试门店-combo', category: '川菜', city: '济南' },
+    })
+    const memberA = await prisma.dish.create({ data: { storeId: comboStore.id, name: '套餐里的辣子鸡' } })
+    const memberB = await prisma.dish.create({ data: { storeId: comboStore.id, name: '套餐里的米饭' } })
+    const combo = await prisma.dish.create({
+      data: { storeId: comboStore.id, name: '契约测试套餐', kind: 'COMBO', priceFen: 8800, originalPriceFen: 12000 },
+    })
+    await prisma.dishComboItem.createMany({
+      data: [
+        { comboId: combo.id, dishId: memberA.id, quantity: 1, sort: 0 },
+        { comboId: combo.id, dishId: memberB.id, quantity: 2, sort: 1 },
+      ],
+    })
+    const comboCreation = await createCreation(prisma, merchantId, {
+      storeId: comboStore.id,
+      dishId: combo.id,
+      track: 'TRAFFIC',
+      complexity: 'COMPLEX',
+    })
+    const vCombo = await buildVariables(prisma, comboCreation.id, { track: 'TRAFFIC' })
+    check(vCombo.dishName === '契约测试套餐', '选套餐时 dishName 就是套餐名（复用同一张表的直接收益）')
+    check(
+      vCombo.comboInfo.includes('套餐里的辣子鸡') && vCombo.comboInfo.includes('套餐里的米饭×2'),
+      'buildVariables 真的读出了套餐明细（漏 include 会静默退化成「还没有填」）',
+      vCombo.comboInfo,
+    )
+    check(vCombo.comboInfo.includes('¥88') && vCombo.comboInfo.includes('省 ¥32'), '套餐价与优惠额进了变量')
+    const renderedComboCopy = renderTemplate(COPY_INTRO_PROMPT, vCombo as unknown as Record<string, string>)
+    const renderedComboStory = renderTemplate(STORY_PROMPT, vCombo as unknown as Record<string, string>)
+    check(
+      renderedComboCopy.includes('套餐里的辣子鸡') && renderedComboCopy.includes('¥88'),
+      '文案提示词里出现了套餐内容与价格',
+    )
+    // 分镜那一侧也要吃到：文案与分镜是两次独立调用，漏一个就等于「只有文案知道这是套餐」
+    check(
+      renderedComboStory.includes('套餐里的辣子鸡') && renderedComboStory.includes('¥88'),
+      '分镜提示词里同样出现了套餐内容与价格',
+    )
+    check(!renderedComboCopy.includes('{{') && !renderedComboStory.includes('{{'), '套餐场景渲染后无残留占位符')
+    // 反向：上面 4.1 那家门店关联的是**单菜**，它的 comboInfo 必须是空串，
+    // 否则每道炒菜的提示词里都会挂一句「套餐价」，模型会把单菜写成套餐
+    check(v.comboInfo === '', '★ 单菜门店的 comboInfo 是空串（反向：单菜不该带套餐信息）')
 
     // 4.2 什么都没有的门店：介绍为空串、人设为空串（模板会留下一行空标题，这是可接受的）
     const bare = await makeStore(merchantId, 'bare', null, null)
     const v2 = await buildVariables(prisma, bare.creationId, { track: 'TRAFFIC' })
     check(v2.storeIntro === '', '未填门店介绍 → storeIntro 为空串（不会变成 undefined）')
     check(v2.persona === '', '未填人设 → persona 为空串（不留空标签）')
-    // ★ 与上面两条相反：userIdea **不允许**为空串。它的标题写着「最高优先级」，
-    //   留下一个没有内容的空标题，模型很可能自己脑补出一条要求（"用户要求……"）。
-    check(v2.userIdea.length > 0, '未填「你想怎么拍？」→ 变量仍非空（空标题会让模型自己编要求）', v2.userIdea)
     const rendered2 = renderTemplate(COPY_TRAFFIC_PROMPT, v2 as unknown as Record<string, string>)
     check(!rendered2.includes('老板人设标签：') && !rendered2.includes('最近想重点告诉顾客：'), '渲染后不出现空的人设标签')
-    check(
-      !/【用户对怎么拍的要求[^\n]*】\s*(\n|$)/.test(rendered2),
-      '未填时「最高优先级」那一段也不是空标题（变量兜住了）',
-    )
     check(!rendered2.includes('{{'), '未填内容的门店渲染后同样无残留占位符')
 
     // 4.3 后台保存场景的闸门：非法模板必须被拒，且库里内容不变
@@ -399,6 +510,8 @@ if (dbReady) {
       const storeIds = stores.map((s) => s.id)
       await prisma.shot.deleteMany({ where: { creation: { merchantId } } })
       await prisma.creation.deleteMany({ where: { merchantId } })
+      // 套餐明细先删（虽然外键 CASCADE 也会兜住，但显式删让清理顺序一眼可读）
+      await prisma.dishComboItem.deleteMany({ where: { combo: { storeId: { in: storeIds } } } })
       await prisma.dish.deleteMany({ where: { storeId: { in: storeIds } } })
       await prisma.persona.deleteMany({ where: { storeId: { in: storeIds } } })
       await prisma.store.deleteMany({ where: { merchantId } })

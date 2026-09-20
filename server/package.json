@@ -55,7 +55,8 @@
     "chatcut:authorize": "tsx scripts/chatcut-authorize.ts",
     "chatcut:call": "tsx scripts/chatcut-call.ts",
     "chatcut:smoke": "tsx scripts/chatcut-smoke.ts",
-    "shot-skip:verify": "tsx scripts/verify-shot-skip.ts"
+    "shot-skip:verify": "tsx scripts/verify-shot-skip.ts",
+    "dish-combo:verify": "tsx scripts/verify-dish-combo.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

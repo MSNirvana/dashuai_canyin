@@ -22,11 +22,6 @@ export const COMPLEXITY_OPTIONS: { value: Complexity; label: string; desc: strin
 export interface CreationItem {
   id: string
   title: string | null
-  /**
-   * 「你想拍什么风格？」用户自填的一句话（≤200 字，未填为 null）。
-   * 详情接口（getCreation）会带回来用于回填；列表接口不一定返回，所以是可选的。
-   */
-  userIdea?: string | null
   storeId: string
   dishId: string | null
   track: string
@@ -137,8 +132,6 @@ export function createCreation(input: {
   storeId: string
   dishId?: string
   title?: string
-  /** 「你想拍什么风格？」选填，≤200 字。会作为最高优先级要求喂给模型 */
-  userIdea?: string
   track?: CopyTrack
   complexity?: Complexity
   /**
@@ -156,10 +149,10 @@ export function createCreation(input: {
   return http.post<CreationDetail>('/creations', input)
 }
 
-/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度 / 「你想拍什么风格？」（不扣积分） */
+/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度（不扣积分） */
 export function updateCreation(
   id: string,
-  input: { title?: string; copyText?: string; userIdea?: string; track?: CopyTrack; complexity?: Complexity },
+  input: { title?: string; copyText?: string; track?: CopyTrack; complexity?: Complexity },
 ) {
   return http.patch<CreationDetail>(`/creations/${id}`, input)
 }

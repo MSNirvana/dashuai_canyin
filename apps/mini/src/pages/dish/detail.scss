@@ -17,3 +17,25 @@
 .dish-detail__muted { color: var(--td-text-color-placeholder); font-size: 24rpx; }
 .dish-detail__footer { position: fixed; left: 0; right: 0; bottom: 0; padding: 24rpx 36rpx calc(24rpx + env(safe-area-inset-bottom)); background: rgba(255,255,255,.96); backdrop-filter: blur(20rpx); border-top: 1rpx solid var(--td-component-border); }
 .dish-detail__footer view { height: 96rpx; border-radius: var(--td-radius-default); background: var(--td-brand-color); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 32rpx; font-weight: 600; }
+
+/* ── 套餐 ────────────────────────────────────────────────────── */
+/* 名称与「套餐」标签同一行。`.dish-detail__name` 自带 margin-bottom: 24rpx（它是块级元素时
+   用来拉开与下一段的距离），搬进 flex 行之后那个间距要由行本身来出，否则行内会空出一截。
+   选择器写两个类是为了让这条覆盖住上面那条单类规则。 */
+.dish-detail__name-row { display: flex; align-items: center; gap: 16rpx; margin-bottom: 24rpx; }
+.dish-detail__name-row .dish-detail__name { margin-bottom: 0; min-width: 0; }
+.dish-detail__badge { flex: 0 0 auto; padding: 6rpx 16rpx; border-radius: 999rpx; background: var(--ds-warning-soft); color: var(--ds-warning); font-size: 22rpx; font-weight: 600; }
+
+/* 价格行：现价最重（红），原价划线，省多少用绿色 —— 这是全站唯一用绿色表示「省」的地方，
+   与股票的红涨绿跌无关；餐饮场景里「省」属于让利提示，不跟着行情色走。 */
+.dish-detail__price-row { display: flex; align-items: baseline; gap: 14rpx; margin-bottom: 8rpx; }
+.dish-detail__price { font-size: 48rpx; font-weight: 750; color: var(--td-brand-color); letter-spacing: -0.02em; }
+.dish-detail__price-was { font-size: 26rpx; color: var(--td-text-color-placeholder); text-decoration: line-through; }
+.dish-detail__price-save { padding: 4rpx 14rpx; border-radius: 999rpx; background: var(--ds-success-soft); color: var(--ds-success); font-size: 22rpx; font-weight: 600; }
+
+.dish-detail__combo { display: flex; flex-direction: column; gap: 4rpx; }
+.dish-detail__combo-row { display: flex; align-items: center; gap: 12rpx; padding: 10rpx 0; border-bottom: 1rpx solid var(--td-component-border); }
+.dish-detail__combo-row:last-child { border-bottom: none; }
+.dish-detail__combo-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--td-text-color-primary); font-size: 28rpx; }
+.dish-detail__combo-qty { flex: 0 0 auto; color: var(--td-text-color-secondary); font-size: 26rpx; font-weight: 600; }
+

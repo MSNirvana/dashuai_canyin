@@ -9,6 +9,8 @@ import * as mediaSvc from './media.service.js'
 import { generateVideoCover, coverKeyForVideoKey } from '../lib/thumbnail.js'
 import { isLocalStorage, localPathForKey } from '../lib/local-storage.js'
 import { SCENE } from '../ai/scene-codes.js'
+// 套餐判断复用同一个常量：`kind === 'COMBO'` 这种字面量散在两处，哪天改了值只会有一处跟着变
+import { DISH_KIND_COMBO } from './dish.service.js'
 
 export const SCENE_COPY = SCENE.copy_generate
 export const SCENE_STORYBOARD = SCENE.storyboard_generate
@@ -77,8 +79,6 @@ export interface CreateCreationInput {
   storeId: bigint
   dishId?: bigint
   title?: string
-  /** 「你想怎么拍？」用户自填的一句话（选填，≤200 字），进提示词且权重最高 */
-  userIdea?: string
   track?: CopyTrack
   complexity?: Complexity
   /**
@@ -127,6 +127,30 @@ export interface StoryboardResult {
   isFallbackTemplate: boolean
   complexity: Complexity
   complexityLabel: string
+}
+
+/**
+ * 从创作记录里摘掉 `user_idea` 再往外送。
+ *
+ * 「你想拍什么风格？」那个输入框已于 2026-09-20 从整条链路删除，数据库列 `creation.user_idea`
+ * **保留但不读不写**（见 schema.prisma 上该列的说明）—— 与门店「联系电话」整链移除同一口径。
+ * ★ 关键：这里的「不读不写」**包含「不往响应里带」**。留着它有两个坏处：
+ *   ① 前端看到响应里有这字段，会以为还存在一个可用的「风格」输入；
+ *   ② 形态不一致 —— 改动后新建的记录永远是 `null`，改动前的老记录却带着旧文本。
+ *
+ * 用解构而不是 `delete`：解构是纯函数式、不碰入参；`_drop` 只起占位作用
+ * （本仓 tsconfig 未开 noUnusedLocals，下划线前缀表明「故意不要」）。
+ *
+ * ★ 泛型**不能**加 `extends { userIdea?: unknown }` —— 见函数体内的说明，
+ *   那会把调用方记录的整个类型窄化掉，属于「修一个类型错、炸出十四条」那种坑。
+ */
+function withoutUserIdea<T extends object>(row: T): Omit<T, 'userIdea'> {
+  // 断言而不是约束：`T` 必须保持**原样**。若写成 `T extends { userIdea?: unknown }`，
+  // 因为该类型里字段全可选，TS 的「弱类型检测」会要求实参至少有一个同名属性 ——
+  // 而列表查询走 select、记录里根本没有 userIdea ⇒ 实参被拒，T 退化成那个字面量类型，
+  // 于是返回值只剩几个计算字段、`.map((s) => …)` 的参数变成 any（实测报 14 条）。
+  const { userIdea: _drop, ...rest } = row as T & { userIdea?: unknown }
+  return rest
 }
 
 export async function listCreations(
@@ -213,7 +237,7 @@ export async function listCreations(
 
   // 附带中文标签与**服务端算好的进度字段**；原始 shots / renderTasks 数组不下发
   return rows.map((r) => {
-    const { shots, renderTasks, ...rest } = r
+    const { shots, renderTasks, ...rest } = withoutUserIdea(r)
     return {
       ...rest,
       shotsTotal: shots.length,
@@ -311,7 +335,6 @@ export async function createCreation(
         storeId: input.storeId,
         dishId: input.dishId,
         title: input.title,
-        userIdea: input.userIdea,
         track: input.track ?? DEFAULT_COPY_TRACK,
         complexity: input.complexity ?? DEFAULT_COMPLEXITY,
       },
@@ -332,7 +355,7 @@ export async function createCreation(
         })),
       })
     }
-    return created
+    return withoutUserIdea(created)
   })
 }
 
@@ -402,7 +425,7 @@ export async function getCreation(
     : []
   const libMap = new Map(libs.map((l) => [l.id, l]))
   return {
-    ...c,
+    ...withoutUserIdea(c),
     trackLabel: isCopyTrack(c.track) ? COPY_TRACKS[c.track].label : null,
     complexityLabel: isComplexity(c.complexity) ? COMPLEXITIES[c.complexity].label : null,
     shots: c.shots.map((s) => ({
@@ -514,18 +537,56 @@ export function formatPersona(p: { bossTags?: string | null; activity?: string |
 }
 
 /**
- * 「你想怎么拍？」的变量值 —— ★ **这个函数永不返回空串**。
- *
- * 模板里那一段的标题写的是「最高优先级」。用户没填时若原样渲染出一个**没有内容的空标题**，
- * 模型很可能把那个标题当成一条待满足的要求自己脑补（"用户要求……"）。
- * 所以没填时塞一句明确的「这次没有特别要求」，把这一行本身变成一条指令。
- *
- * 不做长度截断：200 字上限由 zod（`optionalText(200)`）和列类型 `VarChar(200)` 共同兜住，
- * 这里再截一次只会把「上游漏了校验」这个信号悄悄吃掉。
+ * 分 → 元。与小程序 `utils/money.ts::fenToYuan` 同一口径（两端没有共享包，各留一份小实现）。
+ * `Math.round` 那一步这里不做 —— 这个函数只用于**展示**，不参与任何金额计算。
  */
-function buildUserIdea(raw: string | null | undefined): string {
-  const t = (raw ?? '').trim()
-  return t || '（用户这次没有特别要求，按下面的要求正常发挥即可）'
+function fenText(fen: number): string {
+  return (fen / 100).toFixed(fen % 100 === 0 ? 0 : 2)
+}
+
+/** formatComboInfo 需要的最小形状（`dish` 的 include 结果里挑出来的几个字段） */
+export interface ComboInfoDish {
+  kind?: string | null
+  priceFen?: number | null
+  originalPriceFen?: number | null
+  comboItems?: Array<{ quantity: number; dish: { name: string; deletedAt: Date | null } }>
+}
+
+/**
+ * 套餐信息 —— 喂给 AI 的一个变量。
+ *
+ * 为什么必须有它：套餐与单菜在库里是**同一张表**，而 `{{dishName}}/{{dishIntro}}/{{sellingPoints}}`
+ * 这套变量只能表达「它叫什么、一句话介绍」，**说不出「含哪些菜、多少钱」**——
+ * 可这两件事恰好是套餐推广的全部卖点。缺了它，模型要么凭空编几道店里没有的菜，
+ * 要么写出一条对套餐毫无作用的文案（用户花了积分，看不出这是一份套餐）。
+ *
+ * 单菜返回**空串**（同 formatPersona 的约定），模板那一段自己写着「空 = 单道菜」。
+ * ★ 不要在这里塞「（本菜品不是套餐）」之类占位文字 —— 那会让模型在一道炒菜上讨论「套餐」。
+ */
+export function formatComboInfo(dish: ComboInfoDish | null | undefined): string {
+  if (!dish || dish.kind !== DISH_KIND_COMBO) return ''
+  const segs: string[] = []
+  const price = dish.priceFen ?? null
+  if (price !== null && price > 0) {
+    const original = dish.originalPriceFen ?? null
+    // ★ 只有**原价确实更高**时才算优惠：服务端有「原价必须高于套餐价」的硬约束，
+    //   但历史数据/后台直改都可能违反。宁可少算一笔省的钱，也不要让文案里出现「省 ¥-8」。
+    const discounted = original !== null && original > price
+    segs.push(
+      discounted
+        ? `套餐价 ¥${fenText(price)}（原价 ¥${fenText(original)}，省 ¥${fenText(original - price)}）`
+        : `套餐价 ¥${fenText(price)}`,
+    )
+  }
+  // ★ 明细为空时刻意说「还没填」而不是让这一段消失：套餐没有内容是**异常状态**，
+  //   空着的话模型会自己决定「包含什么」，多半编出几道店里根本没有的菜。
+  const rows = (dish.comboItems ?? []).filter((it) => it.dish.deletedAt === null)
+  segs.push(
+    rows.length
+      ? `包含：${rows.map((it) => (it.quantity > 1 ? `${it.dish.name}×${it.quantity}` : it.dish.name)).join('、')}`
+      : '包含：（门店还没有填具体菜品）',
+  )
+  return segs.join('｜')
 }
 
 /**
@@ -542,7 +603,21 @@ export async function buildVariables(
     where: { id: creationId },
     include: {
       store: { include: { persona: true } },
-      dish: true,
+      dish: {
+        include: {
+          /**
+           * ★ 套餐明细必须一起读出来，否则「选了套餐」与「选了一道同名的单菜」对模型完全一样。
+           * · orderBy 与 dish.service.ts 保持一致（sort → id）：不然「包含」那一串的顺序
+           *   会随数据库返回顺序漂移，同一份套餐生成两次可能给出不同的菜序。
+           * · 这里不按 `dish.deletedAt` 过滤，改由 formatComboInfo 过滤 ——
+           *   过滤放在**拼装函数**里，契约测试才能不连库、直接喂一条假数据把这个分支测了。
+           */
+          comboItems: {
+            orderBy: [{ sort: 'asc' }, { id: 'asc' }],
+            select: { quantity: true, sort: true, dish: { select: { name: true, deletedAt: true } } },
+          },
+        },
+      },
     },
   })
   if (!c) throw new CreationNotFoundError()
@@ -556,9 +631,8 @@ export async function buildVariables(
     dishName: c.dish?.name ?? '',
     dishIntro: c.dish?.intro ?? '',
     sellingPoints: c.dish?.sellingPoints ?? '',
+    comboInfo: formatComboInfo(c.dish),
     persona: formatPersona(c.store.persona),
-    // 用户自填的「你想怎么拍？」。注意它**不是** `c.userIdea ?? ''`：见 buildUserIdea 的说明。
-    userIdea: buildUserIdea(c.userIdea),
     copyText: c.copyText ?? '',
     track,
     trackLabel: COPY_TRACKS[track].label,
@@ -634,15 +708,12 @@ export async function updateCreation(
   prisma: PrismaClient,
   merchantId: bigint,
   creationId: bigint,
-  input: { copyText?: string; title?: string; userIdea?: string; track?: CopyTrack; complexity?: Complexity },
+  input: { copyText?: string; title?: string; track?: CopyTrack; complexity?: Complexity },
 ) {
   await getCreation(prisma, merchantId, creationId)
-  const data: { copyText?: string; title?: string; userIdea?: string | null; track?: string; complexity?: string } = {}
+  const data: { copyText?: string; title?: string; track?: string; complexity?: string } = {}
   if (input.copyText !== undefined) data.copyText = input.copyText
   if (input.title !== undefined) data.title = input.title
-  // 允许改回「没写」：路由层的 optionalText 会把纯空白串收敛成 '',这里把 '' 落成 null，
-  // 免得库里同时存在 null 和 '' 两种「没填」。
-  if (input.userIdea !== undefined) data.userIdea = input.userIdea.trim() === '' ? null : input.userIdea
   if (input.track !== undefined) data.track = input.track
   if (input.complexity !== undefined) data.complexity = input.complexity
   if (Object.keys(data).length === 0) return getCreation(prisma, merchantId, creationId)

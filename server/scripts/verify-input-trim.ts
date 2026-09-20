@@ -95,6 +95,10 @@ const GUARDED: Array<{ file: string; fields: string[] }> = [
   // 数据库列 store.contact 仍在（只留存量数据，不读不写），所以本清单里也不该出现它。
   { file: '../src/routes/stores.ts', fields: ['name', 'category', 'province', 'city', 'district', 'address', 'intro'] },
   { file: '../src/routes/dishes.ts', fields: ['name', 'intro', 'sellingPoints'] },
+  // creations 的 `userIdea`（创作页「你想拍什么风格？」）已于 2026-09-20 从整条链路移除，
+  // **不要再加回来** —— 数据库列 creation.user_idea 仍在（不读不写），所以本清单里也不该出现它。
+  // 它为什么特别危险：那个值会**直接进提示词**，加回来却没有对应的用户输入时，
+  // 模板里那一行只会永远渲染成兜底文案（对照 src/ai/prompt-vars.ts 的警告）。
   { file: '../src/routes/creations.ts', fields: ['title', 'copyText'] },
   { file: '../src/routes/persona.ts', fields: ['bossTags', 'activity'] },
   // 昵称是用户可见文本，同样不许退回裸 z.string()；avatarKey 是对象键，**故意**不走工厂函数

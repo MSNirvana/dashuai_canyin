@@ -222,7 +222,7 @@ export default function AiScenesPage() {
         每个场景（Skill）对应一条可在本页编辑的提示词，业务层只传 <code>sceneCode</code> + 变量。
         共 <b>{list.length}</b> 个：已接入业务 <b>{liveCount}</b> 个、待接入 <b>{pendingCount}</b> 个。
         <br />
-        模板变量：<code>{'{{storeName}} {{category}} {{city}} {{dishName}} {{dishIntro}} {{sellingPoints}} {{persona}} {{copyText}} {{complexity}} {{complexityLabel}} {{shotCountRule}} {{shotLibrary}}'}</code>
+        模板变量：<code>{'{{storeName}} {{category}} {{city}} {{dishName}} {{dishIntro}} {{sellingPoints}} {{comboInfo}} {{persona}} {{copyText}} {{complexity}} {{complexityLabel}} {{shotCountRule}} {{shotLibrary}}'}</code>
       </p>
 
       <div style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
@@ -318,7 +318,7 @@ export default function AiScenesPage() {
             <Textarea
               value={form.promptTemplate}
               onChange={(v) => setForm((f) => ({ ...f, promptTemplate: v as string }))}
-              placeholder="支持 {{变量}}，如 {{storeName}} / {{storeIntro}} / {{dishName}} / {{persona}}；分镜场景另有 {{copyText}} / {{complexityLabel}} / {{shotLibrary}}"
+              placeholder="支持 {{变量}}，如 {{storeName}} / {{storeIntro}} / {{dishName}} / {{comboInfo}} / {{persona}}；分镜场景另有 {{copyText}} / {{complexityLabel}} / {{shotLibrary}}"
               autosize={{ minRows: 10, maxRows: 24 }}
             />
           </Field>

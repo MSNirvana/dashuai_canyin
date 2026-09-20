@@ -294,26 +294,6 @@
     gap: 16rpx;
     margin-bottom: 24rpx;
   }
-  // 卡片内的小节标题行：「你想拍什么风格？」这类标题右边跟一枚「选填」小徽标。
-  // 徽标用浅灰底而不是品牌红 —— 它只是提示可跳过，不该抢成第二视觉焦点。
-  //
-  // 这里给了 20rpx 下边距，补的是原来那行 `&__hint` 的位置：「写一句你的想法」被删掉后，
-  // 标题与输入框之间就只剩 0 间距，textarea 会像贴在标题上。
-  &__sechead {
-    display: flex;
-    align-items: center;
-    gap: 12rpx;
-    margin-bottom: 20rpx;
-  }
-  &__optional {
-    flex: none;
-    font-size: 20rpx;
-    line-height: 1.5;
-    color: var(--td-text-color-placeholder);
-    background: var(--td-bg-color-secondary);
-    border-radius: var(--td-radius-small);
-    padding: 2rpx 12rpx;
-  }
   &__sectitle {
     display: block;
     font-size: 34rpx;
@@ -624,29 +604,6 @@
     border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-default);
     margin-bottom: 16rpx;
-  }
-  // 「你想拍什么风格？」的自由输入框。刻意与上面的 &__textarea（编辑文案用）同款 —— 同一个页面里
-  // 两种输入框应当长得一样 —— 只把高度抬到 200rpx（这里填的是一段话，不是一行字），
-  // 并去掉 margin-bottom：它下面跟的是字数计数，不是一排按钮。
-  &__idea {
-    width: 100%;
-    box-sizing: border-box;
-    min-height: 200rpx;
-    padding: 24rpx 26rpx;
-    font-size: 28rpx;
-    line-height: 1.7;
-    color: var(--td-text-color-primary);
-    background: var(--td-bg-color-secondary);
-    border: 1rpx solid var(--td-component-stroke);
-    border-radius: var(--td-radius-default);
-  }
-  // 字数计数（右对齐、贴输入框下沿）。上限 200 与输入框 maxlength、服务端 zod、库列同值
-  &__count {
-    display: block;
-    margin-top: 10rpx;
-    text-align: right;
-    font-size: 22rpx;
-    color: var(--td-text-color-placeholder);
   }
   &__row {
     display: flex;

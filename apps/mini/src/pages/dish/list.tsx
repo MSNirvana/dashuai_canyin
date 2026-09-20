@@ -1,11 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { View, Text, Image } from '@tarojs/components'
 import Taro, { useRouter, useDidShow } from '@tarojs/taro'
-import { listDishes, deleteDish, getDishMediaUrl, type DishItem } from '../../services/dish'
+import { listDishes, deleteDish, getDishMediaUrl, type DishItem, type DishKind } from '../../services/dish'
 import { useMerchantStore } from '../../store/merchant'
 import StoreSwitcher from '../../components/store-switcher'
+import Segmented from '../../components/segmented'
 import { readRouteId } from '../../utils/route-id'
+import { fenToYuan } from '../../utils/money'
 import './list.scss'
+
+/** 列表筛选：全部 / 只看单菜 / 只看套餐 */
+type Filter = 'ALL' | DishKind
 
 /** 菜品库：跟随左上角当前门店（门店为最高层，菜品全部跟门店走） */
 export default function DishListPage() {
@@ -17,6 +22,12 @@ export default function DishListPage() {
   const [list, setList] = useState<DishItem[]>([])
   const [coverUrls, setCoverUrls] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
+  /**
+   * 类型筛选。
+   * ★ 它是**本地筛选**而不是重新请求：菜品库按门店整体加载（菜单的量级，几十条），
+   *   切筛选再打一次接口只会让列表闪一下，还要处理「切回来时数据旧了」。
+   */
+  const [filter, setFilter] = useState<Filter>('ALL')
   /**
    * 加载失败的原因。
    * ★ 与「这家店真的没有菜品」必须分开：旧实现把失败静默吞成空列表，
@@ -84,24 +95,36 @@ export default function DishListPage() {
       firstRun.current = false
       return
     }
+    // ★ 换店后筛选回到「全部」：在 A 店选了「只看套餐」，切到 B 店时筛选还生效，
+    //   而 B 店恰好没有套餐 —— 用户看到的是「还没有套餐」，很容易以为 B 店的菜丢了
+    //   （他不知道筛选器还停在上一次的选择上）。
+    setFilter('ALL')
     void load()
   }, [currentStoreId])
 
   const onDelete = (d: DishItem) =>
-    Taro.showModal({ title: '删除菜品', content: '确认删除「' + d.name + '」？', confirmColor: '#e1251b' }).then(async (r) => {
+    Taro.showModal({
+      title: d.kind === 'COMBO' ? '删除套餐' : '删除菜品',
+      content: `确认删除「${d.name}」？`,
+      confirmColor: '#e1251b',
+    }).then(async (r) => {
       if (!r.confirm) return
       try {
         await deleteDish(currentStoreId, d.id)
         Taro.showToast({ title: '已删除', icon: 'success' })
         load()
       } catch {
-        /* request layer */
+        /* request layer 已提示（例如「该菜品已被 N 个套餐引用，请先从套餐里移除」） */
       }
     })
 
   const onAdd = () => Taro.navigateTo({ url: '/pages/dish/edit' })
   const onDetail = (d: DishItem) => Taro.navigateTo({ url: '/pages/dish/detail?id=' + d.id })
   const storeName = stores.find((s) => s.id === currentStoreId)?.name || ''
+
+  const singleCount = list.filter((d) => d.kind !== 'COMBO').length
+  const comboCount = list.filter((d) => d.kind === 'COMBO').length
+  const visible = filter === 'ALL' ? list : list.filter((d) => (filter === 'COMBO' ? d.kind === 'COMBO' : d.kind !== 'COMBO'))
 
   return (
     <View className='dish-list'>
@@ -117,6 +140,21 @@ export default function DishListPage() {
         <StoreSwitcher />
         {storeName && <Text className='dish-list__barhint'>菜品归属该门店</Text>}
       </View>
+
+      {/* 有菜才显示筛选器：空列表时它只是一排点了没反应的按钮 */}
+      {currentStoreId && !loading && !loadError && list.length > 0 && (
+        <View className='dish-list__filter'>
+          <Segmented
+            options={[
+              { value: 'ALL', label: `全部 ${list.length}` },
+              { value: 'SINGLE', label: `单菜 ${singleCount}` },
+              { value: 'COMBO', label: `套餐 ${comboCount}` },
+            ]}
+            value={filter}
+            onChange={(v) => setFilter(v as Filter)}
+          />
+        </View>
+      )}
 
       {!currentStoreId && !loading && (
         <View className='dish-list__empty'>
@@ -144,26 +182,65 @@ export default function DishListPage() {
           <View className='dish-list__empty-action' onClick={onAdd}>添加第一道菜</View>
         </View>
       )}
+      {/*
+        ★ 「筛完之后什么都没有」必须与「这家店真的没有菜」分开说。
+          两者共用同一套空态文案的话，用户在「套餐」筛选下会看到
+          「把招牌菜变成创作素材 / 添加第一道菜」—— 他明明有 8 道菜，
+          只会以为数据丢了，或者跑去再建一道已经有的菜。
+      */}
+      {currentStoreId && !loading && !loadError && list.length > 0 && visible.length === 0 && (
+        <View className='dish-list__empty'>
+          <Text className='dish-list__empty-kicker'>{filter === 'COMBO' ? '还没有套餐' : '还没有单菜'}</Text>
+          <Text className='dish-list__empty-title'>
+            {filter === 'COMBO' ? '把几道菜组合起来，卖得更省心' : '这家店的菜单里目前只有套餐'}
+          </Text>
+          <Text className='dish-list__empty-desc'>
+            {filter === 'COMBO'
+              ? '套餐能一次带上主食和配菜，顾客不用逐个点，客单价也更稳。'
+              : '单菜是套餐的组成部分，可以先把常点的菜建起来。'}
+          </Text>
+          <View className='dish-list__empty-action' onClick={() => setFilter('ALL')}>看看全部</View>
+        </View>
+      )}
 
-      {currentStoreId && !loading && list.length > 0 && (
+      {currentStoreId && !loading && visible.length > 0 && (
         <View className='dish-list__items'>
-          {list.map((d) => (
-            <View key={d.id} className='dish-card' onClick={() => onDetail(d)}>
+          {visible.map((d) => (
+            <View key={d.id} className={'dish-card' + (d.kind === 'COMBO' ? ' dish-card--combo' : '')} onClick={() => onDetail(d)}>
               <View className='dish-card__row'>
                 <View className='dish-card__cover'>
                   {coverUrls[d.id] ? (
                     <Image className='dish-card__cover-image' src={coverUrls[d.id]} mode='aspectFill' />
                   ) : (
-                    <Text className='dish-card__cover-empty'>菜品</Text>
+                    <Text className='dish-card__cover-empty'>{d.kind === 'COMBO' ? '套餐' : '菜品'}</Text>
                   )}
                 </View>
                 <View className='dish-card__main'>
                   <View className='dish-card__title-row'>
                     <Text className='dish-card__name'>{d.name}</Text>
-                    {d.sellingPoints && <Text className='dish-card__badge'>招牌卖点</Text>}
+                    {/*
+                      ★ 套餐卡**只挂「套餐」这一个标签**，不再同时挂「招牌卖点」：
+                        标题行是 名称 + 标签们 + 删除，全都不许收缩（flex: 0 0 auto），
+                        名称只能靠 ellipsis 让位。四个元素挤在 430rpx 里，
+                        再加上店铺名一长就会把名称压成「双人…」。
+                        套餐的类型标签比「有卖点」这个提示重要，留它；
+                        卖点正文本来就在下面显示，并不因为少了标签而看不见。
+                    */}
+                    {d.kind === 'COMBO' ? (
+                      <Text className='dish-card__badge dish-card__badge--combo'>套餐</Text>
+                    ) : (
+                      d.sellingPoints && <Text className='dish-card__badge'>招牌卖点</Text>
+                    )}
                     {/* 删除并进标题行右端：贴在内容里，不再是卡片最右边一个孤立标签 */}
                     <Text className='dish-card__del' onClick={(e) => { e.stopPropagation(); onDelete(d) }}>删除</Text>
                   </View>
+                  {d.kind === 'COMBO' && (
+                    <View className='dish-card__combo'>
+                      <Text className='dish-card__price'>¥{fenToYuan(d.priceFen ?? 0)}</Text>
+                      {!!d.originalPriceFen && <Text className='dish-card__price-was'>¥{fenToYuan(d.originalPriceFen)}</Text>}
+                      <Text className='dish-card__combo-count'>含 {d.comboItems?.length ?? 0} 样</Text>
+                    </View>
+                  )}
                   {d.sellingPoints && <Text className='dish-card__sp'>{d.sellingPoints}</Text>}
                   {d.intro && <Text className='dish-card__intro'>{d.intro}</Text>}
                 </View>

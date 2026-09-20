@@ -8,17 +8,20 @@
 /**
  * 文案类场景可用变量（= creation.service.ts::buildVariables 的产出，4 款 + 通用兜底共用）
  *
- * `userIdea` = 用户在「你想怎么拍？」里自己写的一句话。★ 它**永远是非空串**：
- * 没填时 buildVariables 会塞一句「用户这次没有特别要求」的说明，而不是空串 ——
- * 模板里那一行写的是「最高优先级」，留下一个没有内容的空标题会让模型自己脑补要求。
- * 分镜场景同样要用（用户说的多半就是怎么拍），所以它进 COPY_VARS，
- * STORYBOARD_VARS / SYNTH_VARS 由展开自动继承。
+ * ★ 2026-09-20 移除了 `userIdea`：「你想拍什么风格？」那个自由输入框已从整条链路删掉，
+ *   它的值不再进提示词（`creation.service.ts::buildUserIdea` 也一并删除）。
+ *   **不要再加回来** —— 没有对应的用户输入时，模板里那一行只会永远渲染成兜底文案，
+ *   变成一个模型看得见、用户却填不了的假段落。
  */
 const COPY_VARS = [
   'storeName', 'storeIntro', 'category', 'city',
   'dishName', 'dishIntro', 'sellingPoints',
+  // 套餐信息（价格 + 包含哪些菜）。★ 与 userIdea 相反，这是**加**变量 ⇒ 白名单先放开是安全的：
+  // 库里模板还没引用它时什么都不会发生，而模板一旦引用，若白名单没放开就当场被拒。
+  // 语义：有内容 = 这次推广的是一份套餐；单菜时 formatComboInfo 给空串。
+  // 所以模板那一段必须写清「空 = 单道菜」，否则模型看到空的套餐标题会自己编一份出来。
+  'comboInfo',
   'persona',
-  'userIdea',
 ] as const
 
 /** 分镜场景：在文案变量之上，多了文案正文与镜头数/镜头库 */
