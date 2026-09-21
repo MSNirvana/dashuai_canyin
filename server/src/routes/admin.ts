@@ -32,6 +32,7 @@ import { getSharedPlayUrlByKey } from '../services/media.service.js'
 import * as ttsSvc from '../services/tts-provider.service.js'
 import { PackageNotFoundError } from '../services/order.service.js'
 import * as payReconcile from '../services/pay-reconcile.service.js'
+import * as opsAlert from '../services/ops-alert.service.js'
 import * as premium from '../render/premium.js'
 import * as premiumDeliverSvc from '../services/premium-delivery.service.js'
 import { invalidate } from '../lib/settings.js'
@@ -177,6 +178,43 @@ router.post('/orders/:orderNo/reconcile', async (req, res) => {
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     console.error('[admin] 补单异常:', e)
     fail(res, 500, (e as Error).message || '补单失败', 500)
+  }
+})
+
+// ──────────────────────── 异常告警（支付风控） ────────────────────────
+//
+// 为什么这些告警必须能在后台看到，而不能只靠推送：
+//   推送会失败、会被忽略、会被撤回，而「扣款成功但开通失败」每一笔都是真金白银。
+//   落库这一层是**事实**，推送只是触达手段 —— 所以即使没配 OPS_ALERT_WEBHOOK，
+//   这里也照样能看到全部告警（push_status=SKIPPED 而已）。
+//
+// 处理动作只有「标记已处理」（ack），刻意不提供「删除」：
+//   一条被 ack 的告警仍然留在表里，`acked_by` / `ack_note` 就是这笔资金问题的处理记录。
+//   删掉它等于销毁证据。
+const opsAlertQ = z.object({
+  status: z.enum(['OPEN', 'ACKED', 'ALL']).default('OPEN'),
+  code: z.string().max(48).optional(),
+  severity: z.enum(['CRITICAL', 'WARN']).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+})
+router.get('/ops-alerts', async (req, res) => {
+  try {
+    const q = opsAlertQ.parse(req.query)
+    ok(res, await opsAlert.listOpsAlerts(prisma, q))
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    fail(res, 500, '查询失败', 500)
+  }
+})
+router.post('/ops-alerts/:id/ack', async (req, res) => {
+  try {
+    const { note } = z.object({ note: z.string().max(255).optional() }).parse(req.body ?? {})
+    ok(res, await opsAlert.ackOpsAlert(prisma, idParam(req.params.id, 'id'), BigInt(req.adminId!), note))
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof opsAlert.OpsAlertNotFoundError) return fail(res, 4049, e.message, 404)
+    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
+    fail(res, 500, '操作失败', 500)
   }
 })
 

@@ -686,6 +686,45 @@ model Order {
   @@map("order")
 }
 
+/// 结算回执 —— 「订单已 PAID」这件事的**唯一凭据**。
+///
+/// ★ 为什么需要它（而不是靠推断权益反推）：
+///   `markOrderPaid()` 把「PENDING → PAID 的终态 CAS」与「发积分 / 开会员」放在**同一个事务**里，
+///   所以今天 `PAID ⇒ 权益已发` 在结构上成立。但这条不变量**只存在于注释里**，
+///   没有任何机器可验证的证据 —— 一旦将来有人在事务外补一条 `order.update({status:'PAID'})`
+///   （或手工改库），就会出现「钱收了、货没发」而我们**完全不知道**。
+///
+///   想用权益表反推是**不可靠**的，两处都会误报：
+///     · MEMBER 续期时 `Membership.sourceOrderId` 仍指向**上一张**订单，不是本次这张；
+///     · `grantPoints = 0` 时 `grant()` 根本不会被调用（order.service.ts 的 `if (grantPoints > 0n)`），
+///       于是「没有任何流水」既可能是没发、也可能是本就该发 0。
+///
+///   回执在**同一事务内**写入 ⇒ 它存在 ⟺ 事务提交 ⟺ 权益已发，判据唯一且无需启发式。
+///   顺带把「本次到底发了多少」留痕，这是对账真正需要的那一列。
+model OrderSettlement {
+  id              BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  /// 一张订单只结算一次（终态 CAS 保证）⇒ 天然唯一，可当幂等锚点
+  orderId         BigInt    @unique @map("order_id") @db.UnsignedBigInt()
+  orderNo         String    @map("order_no") @db.VarChar(64)
+  merchantId      BigInt    @map("merchant_id") @db.UnsignedBigInt()
+  orderType       String    @map("order_type") @db.VarChar(24)
+  amountFen       Int       @map("amount_fen") @db.UnsignedInt()
+  /// 本次实际发放：BEAN = 充值的积分数；MEMBER = 赠送的积分数
+  grantedBeans    BigInt    @default(0) @map("granted_beans")
+  /// MEMBER 专用：本次结算后的会员到期时间（续期时是顺延后的新值）
+  membershipEndAt DateTime? @map("membership_end_at") @db.DateTime(3)
+  /// 结算来源，便于事后区分「正常回调」与「兜底补单」：
+  /// NOTIFY = 微信回调 / QUERY = 用户端主动查单 / RECONCILE = 后台人工补单
+  /// RISK = 窗口外取证扫描 / ADMIN = 后台手动开通 / DEMO = 演示支付
+  source          String    @db.VarChar(24)
+  wxTransactionId String?   @map("wx_transaction_id") @db.VarChar(128)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+
+  @@index([merchantId, createdAt])
+  @@index([orderType, createdAt])
+  @@map("order_settlement")
+}
+
 model AiProvider {
   id                BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
   code              String    @unique @db.VarChar(64)
@@ -900,4 +939,52 @@ model SubscribeMessageRecord {
   @@unique([merchantId, templateCode])
   @@index([templateCode, grantedCount, usedCount])
   @@map("subscribe_message_record")
+}
+
+/// 运维告警 —— 支付链路上「只能靠人发现」的异常的唯一出口。
+///
+/// ★ 为什么必须有**落库**这一层（不能只推 webhook）：
+///   webhook 会失败、会被人忽略、会被撤回；而「扣款成功但开通失败」这类事件
+///   每一笔都对应真金白银，必须能事后逐笔查证、能标记已处理、能看见处理人。
+///   推送只是**触达**手段，落库才是**事实**。
+///
+/// ★ 去重口径（见 ops-alert.service.ts）：同一个 `dedupeKey` 在去重窗口内重复触发
+///   只累加 `occurrences` + 刷新 `lastSeenAt`，**不新增行、不重复推送**。
+///   回滚到「未处理 + 窗口内」才重新计一条。已 ack 的键再次出现会**新开一条**
+///   （说明问题复发，必须重新提醒）。
+///
+/// ★ 刻意不建外键：告警必须能在**任何**数据状态下写入成功。
+///   若为一行已被清理的订单建了 FK，告警本身就会写失败 —— 恰恰在最需要它的时刻。
+model OpsAlert {
+  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt()
+  /// 稳定类型标识（代码里判断 / 后台筛选用），如 PAY_AMOUNT_MISMATCH
+  code        String    @db.VarChar(48)
+  /// CRITICAL = 涉及资金，必须人工介入；WARN = 需要关注但不一定动账
+  severity    String    @default("WARN") @db.VarChar(16)
+  /// 一句话标题（会原样进推送正文）
+  title       String    @db.VarChar(200)
+  /// 详情：订单号、金额、具体原因
+  detail      String?   @db.Text
+  /// 关联对象，供后台跳转
+  refType     String?   @map("ref_type") @db.VarChar(32)
+  refId       String?   @map("ref_id") @db.VarChar(64)
+  dedupeKey   String    @map("dedupe_key") @db.VarChar(160)
+  occurrences Int       @default(1)
+  firstSeenAt DateTime  @default(now()) @map("first_seen_at") @db.DateTime(3)
+  lastSeenAt  DateTime  @default(now()) @map("last_seen_at") @db.DateTime(3)
+  /// PENDING / SENT / SKIPPED（未配置推送渠道）/ FAILED
+  pushStatus  String    @default("PENDING") @map("push_status") @db.VarChar(16)
+  pushError   String?   @map("push_error") @db.VarChar(500)
+  ackedAt     DateTime? @map("acked_at") @db.DateTime(3)
+  ackedBy     BigInt?   @map("acked_by") @db.UnsignedBigInt()
+  ackNote     String?   @map("ack_note") @db.VarChar(255)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.DateTime(3)
+
+  // 去重查询的走法：dedupeKey + ackedAt IS NULL + lastSeenAt >= 窗口起点
+  @@index([dedupeKey, ackedAt, lastSeenAt])
+  // 后台默认视图：未处理的按时间倒序
+  @@index([ackedAt, createdAt])
+  @@index([code, lastSeenAt])
+  @@map("ops_alert")
 }

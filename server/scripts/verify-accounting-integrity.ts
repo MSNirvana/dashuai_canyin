@@ -48,6 +48,7 @@ let tempMerchantId: bigint | null = null
 async function cleanup(merchantId: bigint) {
   await prisma.membershipReminder.deleteMany({ where: { merchantId } })
   await prisma.membership.deleteMany({ where: { merchantId } })
+  await prisma.orderSettlement.deleteMany({ where: { merchantId } })
   await prisma.order.deleteMany({ where: { merchantId } })
   // 账务：先删流水与预留，再删账户
   await prisma.beanLedger.deleteMany({ where: { merchantId } })

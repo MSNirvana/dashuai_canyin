@@ -61,7 +61,7 @@ router.get('/:orderNo([A-Za-z0-9_-]+)', async (req, res) => {
 router.post('/:orderNo([A-Za-z0-9_-]+)/query', async (req, res) => {
   try {
     const orderNo = req.params.orderNo!
-    const r = await reconcile.queryAndSettle(prisma, orderNo, { merchantId: req.merchantId! })
+    const r = await reconcile.queryAndSettle(prisma, orderNo, { merchantId: req.merchantId!, source: 'QUERY' })
     if (r.status === 'NOT_FOUND') return fail(res, 3004, '订单不存在', 404)
     // 查单可能已把订单改成 PAID/EXPIRED，回读一次给前端最新状态
     const order = await orderSvc.getOrderForMerchant(prisma, req.merchantId!, orderNo)

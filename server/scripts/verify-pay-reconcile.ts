@@ -18,7 +18,8 @@
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 import { devLogin } from '../src/auth/auth.service.js'
-import { queryAndSettle, scanPendingOrders } from '../src/services/pay-reconcile.service.js'
+import { queryAndSettle, scanPendingOrders, type ReconcileDeps } from '../src/services/pay-reconcile.service.js'
+import type { RaiseOpsAlertInput } from '../src/services/ops-alert.service.js'
 import { getBalance } from '../src/bean/bean.service.js'
 import type { WxQueryResult } from '../src/lib/wxpay.js'
 
@@ -59,20 +60,37 @@ function fakeClose(result: { ok: boolean; note: string }) {
   return { close, calls }
 }
 
+/** 默认吞掉告警：所有裸 `...REAL` 的调用点都不会往 ops_alert 写测试数据、也不会发 HTTP */
+const noopAlert = (async () => ({})) as NonNullable<ReconcileDeps['alert']>
+
+/** 收集告警的桩 —— 用来断言「该报的时候真的报了」 */
+function alertCollector() {
+  const raised: RaiseOpsAlertInput[] = []
+  const alert = (async (i: RaiseOpsAlertInput) => {
+    raised.push(i)
+    return {}
+  }) as NonNullable<ReconcileDeps['alert']>
+  return { alert, raised, codes: () => raised.map((r) => r.code) }
+}
+
 /**
  * 真支付模式 + **默认关单成功**。
  * ★ 关单桩必须内建在这里：过期单会先关微信侧再置本地状态，
  *   任何裸 `...REAL` 的调用点若没带 close，就会用真 closeOrder 去打微信。
+ * ★ alert 桩同理：缺省必须吞掉，否则会真的往 ops_alert 落库（甚至推 webhook）。
  */
 const REAL = {
   payMode: () => 'real' as const,
   close: (async () => ({ ok: true, note: 'SUCCESS' })) as (outTradeNo: string) => Promise<{ ok: boolean; note: string }>,
+  alert: noopAlert,
 }
 
 async function cleanup(merchantId: bigint) {
   // 顺序受外键约束：membership 依赖 package/merchant
   await prisma.membershipReminder.deleteMany({ where: { merchantId } })
   await prisma.membership.deleteMany({ where: { merchantId } })
+  // 结算回执随订单一起删（markOrderPaid 在同一事务内写它；留着会指向已不存在的订单）
+  await prisma.orderSettlement.deleteMany({ where: { merchantId } })
   await prisma.order.deleteMany({ where: { merchantId } })
   await prisma.beanLedger.deleteMany({ where: { merchantId } })
   await prisma.beanAccount.deleteMany({ where: { merchantId } })
@@ -154,7 +172,8 @@ async function main() {
     const before = await getBalance(prisma, mid)
     const no = await mkOrder(mid, { prefix: 'B', refId: beanRef, orderType: 'BEAN', amountFen: 10000, beans: 1234n })
     const { query, calls } = fakeQuery({ [no]: ok(10000, 'WXVERIFY_TX_1') })
-    const r = await queryAndSettle(prisma, no, { query, ...REAL })
+    const ac = alertCollector()
+    const r = await queryAndSettle(prisma, no, { query, ...REAL, alert: ac.alert })
     const st = await statusOf(no)
     const after = await getBalance(prisma, mid)
 
@@ -164,6 +183,18 @@ async function main() {
     check(st.wxTransactionId === 'WXVERIFY_TX_1', '微信交易号已落库', String(st.wxTransactionId))
     check(after.balance - before.balance === 1234n, '积分已到账 +1234', String(after.balance - before.balance))
     check(calls.length === 1, '只查了一次微信', `calls=${calls.length}`)
+    check(
+      ac.codes().includes('PAY_SETTLED_BY_RECONCILE'),
+      '★ 留下了「回调丢失、由对账补单」的告警（成批出现即说明 notify_url 有问题）',
+      ac.codes().join(',') || '无告警',
+    )
+
+    // 结算回执：与订单转 PAID 在同一事务内写入 ⇒ 这里必然存在
+    const receiptOrder = await prisma.order.findUniqueOrThrow({ where: { orderNo: no }, select: { id: true } })
+    const receipt = await prisma.orderSettlement.findUnique({ where: { orderId: receiptOrder.id } })
+    check(receipt !== null, '★ 结算回执已写入（「PAID ⇒ 权益已发」的可验证凭据）')
+    check(receipt?.grantedBeans === 1234n, '回执记录了实际发放的积分数', String(receipt?.grantedBeans))
+    check(receipt?.source === 'RECONCILE', '回执记录了结算来源（缺省 RECONCILE）', String(receipt?.source))
 
     // 幂等：再来一次（模拟「用户端查单」与「对账 sweeper」同时命中）
     const again = await queryAndSettle(prisma, no, { query, ...REAL })
@@ -179,7 +210,8 @@ async function main() {
     const before = await getBalance(prisma, mid)
     const no = await mkOrder(mid, { prefix: 'M', refId: beanRef, orderType: 'BEAN', amountFen: 10000, beans: 98000n })
     const { query } = fakeQuery({ [no]: ok(1, 'WXVERIFY_TX_CHEAP') }) // 微信侧只付了 1 分
-    const r = await queryAndSettle(prisma, no, { query, ...REAL })
+    const ac = alertCollector()
+    const r = await queryAndSettle(prisma, no, { query, ...REAL, alert: ac.alert })
     const st = await statusOf(no)
     const after = await getBalance(prisma, mid)
 
@@ -187,6 +219,19 @@ async function main() {
     check(/金额/.test(r.message), 'message 明确说明是金额不一致', r.message)
     check(st.status === 'PENDING', '订单保持 PENDING，未被误结算', st.status)
     check(after.balance === before.balance, '★ 一分积分都没发', `${before.balance} → ${after.balance}`)
+    check(
+      ac.codes().includes('PAY_AMOUNT_MISMATCH'),
+      '★★ 报出了 CRITICAL 金额不符告警（这条不会自愈，必须有人知道，否则 48h 后永久静默）',
+      ac.codes().join(',') || '无告警',
+    )
+    check(
+      ac.raised.find((a) => a.code === 'PAY_AMOUNT_MISMATCH')?.severity === 'CRITICAL',
+      '金额不符告警的级别是 CRITICAL',
+    )
+    check(
+      ac.raised.find((a) => a.code === 'PAY_AMOUNT_MISMATCH')?.dedupeKey === `PAY_AMOUNT_MISMATCH:${no}`,
+      '去重键按订单区分（同一张单不再重复报警）',
+    )
   }
 
   // ── ④ 未支付 / 支付中 ───────────────────────────────────────────
@@ -273,8 +318,9 @@ async function main() {
     })
     const { query } = fakeQuery({ [no]: notpay })
     const failClose = fakeClose({ ok: false, note: 'WX_PAY_PRIVATE_KEY not set' })
+    const ac = alertCollector()
 
-    const r = await queryAndSettle(prisma, no, { query, ...REAL, close: failClose.close })
+    const r = await queryAndSettle(prisma, no, { query, ...REAL, close: failClose.close, alert: ac.alert })
     check(r.outcome === 'NOT_PAID', '关单失败 → NOT_PAID（不是 CLOSED）', r.outcome)
     check(
       (await statusOf(no)).status === 'PENDING',
@@ -282,6 +328,11 @@ async function main() {
       (await statusOf(no)).status,
     )
     check(failClose.calls.length === 1, '确实尝试过微信关单', `calls=${failClose.calls.length}`)
+    check(
+      ac.codes().includes('PAY_CLOSE_FAILED'),
+      '关单失败也留下了告警（累计次数增长即代表「一直关不掉」的敞口）',
+      ac.codes().join(',') || '无告警',
+    )
 
     // 下一轮：关单恢复正常 ⇒ 这时才允许置过期（证明「保持 PENDING 等重试」是有效的）
     const okClose = fakeClose({ ok: true, note: 'SUCCESS' })

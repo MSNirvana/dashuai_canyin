@@ -19,7 +19,8 @@
 // 且**金额必须与本地订单一致**才结算（否则等于「用 1 分钱买 980 元会员」）。
 import type { PrismaClient } from '@prisma/client'
 import { queryOrderByOutTradeNo, closeOrder, type WxQueryResult, type WxTradeState } from '../lib/wxpay.js'
-import { markOrderPaid, resolvePayMode } from './order.service.js'
+import { markOrderPaid, resolvePayMode, type SettlementSource } from './order.service.js'
+import { raiseOpsAlert, type RaiseOpsAlertInput } from './ops-alert.service.js'
 
 /** 只有线上单（B=充值 / M=会员）在微信侧有对应订单；A=后台线下单，查不到也不该查 */
 const QUERYABLE_PREFIXES = ['B', 'M']
@@ -52,12 +53,22 @@ export interface ReconcileDeps {
    */
   close?: (outTradeNo: string) => Promise<{ ok: boolean; note: string }>
   payMode?: () => 'real' | 'demo' | 'disabled'
+  /**
+   * 告警出口。缺省写 `ops_alert` 表（并可能推 webhook）。
+   * 验证脚本注入收集器，既避免真的推送，又能断言「该报的时候真的报了」。
+   */
+  alert?: (input: RaiseOpsAlertInput) => Promise<unknown>
 }
 
 export interface QueryAndSettleOptions extends ReconcileDeps {
   /** 传入则校验订单归属该商户（用户端接口必须传，后台不传） */
   merchantId?: bigint
   now?: Date
+  /**
+   * 结算来源，只进回执留痕。
+   * 缺省 `RECONCILE`（对账/后台补单）；用户端查单传 `QUERY`，窗口外取证扫描传 `RISK`。
+   */
+  source?: SettlementSource
 }
 
 async function closeLocal(
@@ -81,6 +92,8 @@ export async function queryAndSettle(
   const close = options.close ?? closeOrder
   const payMode = (options.payMode ?? resolvePayMode)()
   const now = options.now ?? new Date()
+  const alert = options.alert ?? ((i: RaiseOpsAlertInput) => raiseOpsAlert(prisma, i))
+  const source: SettlementSource = options.source ?? 'RECONCILE'
 
   const order = await prisma.order.findFirst({
     where: { orderNo, ...(options.merchantId !== undefined ? { merchantId: options.merchantId } : {}) },
@@ -144,6 +157,21 @@ export async function queryAndSettle(
       console.error(
         `[pay-reconcile] 金额不一致，拒绝结算 order=${orderNo} 本地=${order.amountFen} 微信=${q.amountFen}`,
       )
+      // ★ 这条 MUST 告警：它不是一个会自愈的失败。对账每轮都会走到这里、每轮都拒绝，
+      //   48 小时后这张单滑出扫描窗口 ⇒ 永久静默。而它背后是真实的资金差异。
+      await alert({
+        code: 'PAY_AMOUNT_MISMATCH',
+        severity: 'CRITICAL',
+        title: '微信侧金额与本地订单不一致，已拒绝结算',
+        detail:
+          `订单 ${orderNo}：微信侧收款 ${q.amountFen} 分，本地订单 ${order.amountFen} 分。` +
+          `系统按「拒绝结算」处理（防止用错误金额发放权益），该单会一直停在待支付直到人工介入。` +
+          `请核对是本地金额写错、还是这笔钱不属于这张单。`,
+        refType: 'order',
+        refId: orderNo,
+        // 与 handleNotify 用同一个键：无论回调还是查单先发现，同一张单只留一条告警
+        dedupeKey: `PAY_AMOUNT_MISMATCH:${orderNo}`,
+      })
       return {
         orderNo,
         outcome: 'NOT_PAID',
@@ -152,8 +180,23 @@ export async function queryAndSettle(
         message: `微信侧金额（${q.amountFen}）与本地订单（${order.amountFen}）不一致，已拒绝自动结算，请人工核对`,
       }
     }
-    await markOrderPaid(prisma, orderNo, q.transactionId)
+    await markOrderPaid(prisma, orderNo, q.transactionId, false, undefined, source)
     console.log(`[pay-reconcile] 补单成功 order=${orderNo}（回调丢失，由查单结算）`)
+    // ★ 补单成功是好事，但仍然必须可见：
+    //   它意味着「微信的异步回调丢了，而且自动通道直到现在才发现」。
+    //   单笔看是兜底生效，成批出现就是 notify_url 或网络出了问题 ——
+    //   没有这条告警，运营永远不会知道回调链路已经坏了一整天。
+    await alert({
+      code: 'PAY_SETTLED_BY_RECONCILE',
+      severity: 'WARN',
+      title: '微信回调丢失，已由查单/对账补发权益',
+      detail:
+        `订单 ${orderNo}（金额 ${order.amountFen} 分）微信侧已支付，但本地一直停在待支付，` +
+        `本次由「${source}」通道查单后补发权益。若此类告警成批出现，请检查 WX_PAY_NOTIFY_URL 是否可达。`,
+      refType: 'order',
+      refId: orderNo,
+      dedupeKey: `PAY_SETTLED_BY_RECONCILE:${orderNo}`,
+    })
     return {
       orderNo,
       outcome: 'SETTLED',
@@ -166,6 +209,17 @@ export async function queryAndSettle(
   if (q.tradeState === 'REFUND') {
     // 本项目的会员/充值没有退款入口，走到这里说明状态异常 —— 不自动动账，交给人工
     console.error(`[pay-reconcile] 微信侧为已退款但本地未支付，需人工核对 order=${orderNo}`)
+    await alert({
+      code: 'PAY_REFUND_ANOMALY',
+      severity: 'CRITICAL',
+      title: '微信侧订单已退款，但本地订单从未结算',
+      detail:
+        `订单 ${orderNo}（本地 ${order.amountFen} 分）微信侧状态为已退款，而本地一直是 ${order.status}。` +
+        `本项目没有退款入口，出现这个组合说明账实不符。系统**不自动动账**，需人工核对。`,
+      refType: 'order',
+      refId: orderNo,
+      dedupeKey: `PAY_REFUND_ANOMALY:${orderNo}`,
+    })
     return {
       orderNo,
       outcome: 'NOT_PAID',
@@ -191,6 +245,20 @@ export async function queryAndSettle(
       const closed = await close(orderNo)
       if (!closed.ok) {
         console.warn(`[pay-reconcile] 订单 ${orderNo} 已过期但微信关单失败（${closed.note}），暂不置为过期，下轮重试`)
+        // 单次失败会自动重试，不必惊动人；`occurrences` 会把它累计成「一直关不掉」。
+        // 真正需要人介入的时候，是它累计出几十次 —— 那种「本地一直留着可支付的单」是敞口。
+        await alert({
+          code: 'PAY_CLOSE_FAILED',
+          severity: 'WARN',
+          title: '微信侧关单失败，订单保持待支付等下一轮重试',
+          detail:
+            `订单 ${orderNo} 已过支付有效期、微信侧仍未支付，但调用关单失败：${closed.note}。` +
+            `订单保持待支付（宁可多挂一会儿，也不要造出「本地已关、微信仍可付」的不可恢复状态）。` +
+            `若本条累计次数持续增长，说明关单一直失败，请检查商户私钥/证书配置。`,
+          refType: 'order',
+          refId: orderNo,
+          dedupeKey: `PAY_CLOSE_FAILED:${orderNo}`,
+        })
         return {
           orderNo,
           outcome: 'NOT_PAID',
@@ -256,6 +324,14 @@ export async function queryAndSettle(
 const SWEEP_INTERVAL_MS = Math.max(60_000, Number(process.env.PAY_RECONCILE_SWEEP_MS ?? 300_000))
 /** 只看最近 N 小时创建的单：更早的早已过期，反复查微信没有意义 */
 const WINDOW_HOURS = Math.max(1, Number(process.env.PAY_RECONCILE_WINDOW_HOURS ?? 48))
+/**
+ * 导出给 `pay-risk.service.ts` 用。
+ *
+ * ★ 这个数字是**风险扫描的起点**：本 sweeper 只负责窗口内的单，
+ *   窗口外那批「真实微信单 + 本地未结清」必须由风险扫描接手 ——
+ *   两边共用同一个常量，才不会出现「我以为是别人的责任」的空档。
+ */
+export const RECONCILE_WINDOW_HOURS = WINDOW_HOURS
 const BATCH = 50
 
 export interface ScanResult {
@@ -311,7 +387,23 @@ export async function scanPendingOrders(
     } catch (e) {
       // 单笔失败不影响其余（例如微信侧偶发超时 / 验签失败）；下一轮会重试
       result.failed += 1
-      console.error(`[pay-reconcile] 查单失败 order=${o.orderNo}:`, (e as Error).message)
+      const reason = (e as Error).message
+      console.error(`[pay-reconcile] 查单失败 order=${o.orderNo}:`, reason)
+      // ★ 用**粗粒度**去重键（不含订单号）：微信侧整体不可用时会有几十笔同时失败，
+      //   逐笔记一条会把告警表刷成噪音。合并成一条、用 occurrences 说话，
+      //   运维看到「查单失败 累计 137 次」比看到 137 条一模一样的告警有用得多。
+      await (deps.alert ?? ((i: RaiseOpsAlertInput) => raiseOpsAlert(prisma, i)))({
+        code: 'PAY_QUERY_FAILED',
+        severity: 'WARN',
+        title: '向微信查单失败（订单仍可下一轮重试）',
+        detail:
+          `最近一次失败：订单 ${o.orderNo} —— ${reason}。` +
+          `单笔失败会由下一轮重试覆盖，无需处理；但若本条累计次数持续增长，` +
+          `说明查单通道整体不可用（网络 / 商户凭据 / 微信侧限流），此时**所有订单的兜底都失效**，必须立刻介入。`,
+        refType: 'order',
+        refId: o.orderNo,
+        dedupeKey: 'PAY_QUERY_FAILED',
+      })
     }
   }
   return result

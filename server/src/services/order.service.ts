@@ -12,6 +12,14 @@ import { wxpayEnabled, createJsapiOrder, buildPayParams, decryptResource, type P
 import { getNumber } from '../lib/settings.js'
 import { paymentsEnabled } from '../lib/config.js'
 import { activeSubscription, getStorage, SubscriptionRequiredError } from './subscription.service.js'
+import { raiseOpsAlert, type RaiseOpsAlertInput } from './ops-alert.service.js'
+
+/**
+ * 结算来源。只用于回执留痕与告警文案，**不参与任何业务判断**。
+ * 它的存在意义：事后有人翻到一张可疑订单时，能立刻知道「它是被哪条通道结算的」——
+ * `RISK` 意味着「这笔差点永久丢在窗口外」，`RECONCILE` 意味着「人工补的」。
+ */
+export type SettlementSource = 'NOTIFY' | 'QUERY' | 'RECONCILE' | 'RISK' | 'ADMIN' | 'DEMO'
 
 export class OrderAlreadyPaidError extends Error {
   constructor() {
@@ -185,7 +193,7 @@ export async function createBeanOrder(
   })
 
   if (payMode === 'demo') {
-    await markOrderPaid(prisma, orderNo, `TEST${orderNo}`, true)
+    await markOrderPaid(prisma, orderNo, `TEST${orderNo}`, true, undefined, 'DEMO')
     return { dev: true, orderNo, amountFen, beans: beans.toString(), memberDiscountApplied: false, payParams: null }
   }
 
@@ -240,7 +248,7 @@ export async function createMemberOrder(
   })
 
   if (payMode === 'demo') {
-    await markOrderPaid(prisma, orderNo, `TEST${orderNo}`, true)
+    await markOrderPaid(prisma, orderNo, `TEST${orderNo}`, true, undefined, 'DEMO')
     return { dev: true, orderNo, amountFen: pkg.priceFen, beans: '0', memberDiscountApplied: false, payParams: null }
   }
 
@@ -263,6 +271,11 @@ export async function createMemberOrder(
  * `wxTransactionId` 允许为 null —— 后台手动开通会员没有微信交易号，走的也是这个函数，
  * 这样「赠积分进哪个桶 / 到期怎么清 / 续期怎么顺延 / 幂等键怎么算」只有一份实现，
  * 不会出现「后台开的会员和付钱买的会员账务口径不一样」。
+ *
+ * ★ 本函数是「订单变 PAID」的**唯一**写入点（全仓已核对），因此它同时负责写
+ *   `order_settlement` 回执 —— 回执存在 ⟺ 事务提交 ⟺ 权益已发。
+ *   这条不变量是 `pay-risk.service.ts` 的核对依据；一旦将来有人在事务外
+ *   补一句 `order.update({status:'PAID'})`，回执核对会立刻报出来。
  */
 export async function markOrderPaid(
   prisma: PrismaClient,
@@ -270,6 +283,7 @@ export async function markOrderPaid(
   wxTransactionId: string | null,
   _dev = false,
   grantRemark?: string,
+  source: SettlementSource = 'NOTIFY',
 ): Promise<void> {
   const order = await prisma.order.findUnique({ where: { orderNo } })
   if (!order) throw new Error(`order not found: ${orderNo}`)
@@ -280,6 +294,16 @@ export async function markOrderPaid(
   const subGrantPoints = BigInt(
     Math.round(await getNumber(prisma, 'subscription', 'grant_points', 98000)),
   )
+
+  /**
+   * 事务内**收集**、提交后**才发**的告警。
+   *
+   * ★ 不能在事务内直接 raiseOpsAlert：它要发 HTTP，把网络往返塞进持有行锁的事务里，
+   *   等于用一个第三方服务的超时去阻塞一笔资金事务。收集起来提交后再发，
+   *   代价是「事务提交成功但进程在发告警前崩了 ⇒ 这条告警只丢在日志里」——
+   *   可接受，因为回执已经落库，`auditPaidSettlements()` 的下一次扫描仍能发现问题。
+   */
+  const afterCommitAlerts: RaiseOpsAlertInput[] = []
 
   // ★ isolationLevel 必须显式设为 READ COMMITTED，否则 activateMembership 里那把商户锁**形同虚设**：
   //   MySQL 默认 REPEATABLE READ 下，「一致读」的读视图由事务内第一条**非锁定** SELECT 建立。
@@ -309,27 +333,79 @@ export async function markOrderPaid(
         `[pay] 订单 ${orderNo} 在本地状态为 ${order.status} 时收到支付成功，已按补发处理` +
           `（关单/过期与支付之间的竞态）。本地过期时间 ${order.expireAt.toISOString()}，请核对微信侧交易号 ${wxTransactionId ?? '-'}`,
       )
+      // 这是「钱已经收了、货差点没发」的现场 —— 必须有人知道，不能只有一行 console.warn
+      afterCommitAlerts.push({
+        code: 'PAY_SETTLE_AFTER_TERMINAL',
+        severity: 'CRITICAL',
+        title: `订单在终态（${order.status}）下收到支付成功，已按补发处理`,
+        detail:
+          `订单 ${orderNo} 本地状态曾是 ${order.status}（过期时间 ` +
+          `${order.expireAt.toISOString()}），微信侧仍完成了收款（交易号 ${wxTransactionId ?? '-'}）。` +
+          `系统已补发权益，但需核对：是否真的收到了钱、以及「本地已关单、微信仍可付」这个窗口是怎么出现的。`,
+        refType: 'order',
+        refId: orderNo,
+        // 按订单去重：同一张单的重复回调不该重复告警
+        dedupeKey: `PAY_SETTLE_AFTER_TERMINAL:${orderNo}`,
+      })
     }
+
+    let grantedBeans = 0n
+    let membershipEndAt: Date | null = null
     if (order.orderType === 'BEAN') {
       await recharge(tx, { merchantId: order.merchantId, amount: order.beans, bizId: order.orderNo })
+      grantedBeans = order.beans
     } else if (order.orderType === 'MEMBER') {
-      await activateMembership(tx, order.merchantId, order.refId, order.id, {
+      const activated = await activateMembership(tx, order.merchantId, order.refId, order.id, {
         durationDays: subDurationDays,
         grantPoints: subGrantPoints,
         grantRemark,
       })
+      grantedBeans = activated.grantedPoints
+      membershipEndAt = activated.endAt
     }
+
+    // ★ 结算回执：与上面的 CAS、发权益在**同一事务**内。
+    //   用 upsert 而不是 create：orderId 上有唯一索引，正常情况下 create 足够
+    //   （CAS 保证一张单只结算一次）；但万一有人把已 PAID 的单手工改回 PENDING 再走一次结算，
+    //   create 会抛唯一键冲突 ⇒ 整个事务回滚 ⇒ 订单永远卡在 PENDING 且没有任何线索。
+    //   upsert 让「重复结算」退化成无害的幂等写，把那种极端情形的影响限制在「回执保留首次值」。
+    await tx.orderSettlement.upsert({
+      where: { orderId: order.id },
+      create: {
+        orderId: order.id,
+        orderNo: order.orderNo,
+        merchantId: order.merchantId,
+        orderType: order.orderType,
+        amountFen: order.amountFen,
+        grantedBeans,
+        membershipEndAt,
+        source,
+        wxTransactionId,
+      },
+      update: {},
+    })
   }, { isolationLevel: 'ReadCommitted' })
+
+  // ── 提交后补发告警（永不抛错，见 ops-alert.service.ts 的契约）──
+  for (const a of afterCommitAlerts) {
+    await raiseOpsAlert(prisma, a)
+  }
 }
 
-/** 激活 / 续期订阅，并发放赠送积分 */
+/** 激活 / 续期订阅，并发放赠送积分。
+ *
+ * 返回值供**结算回执**留痕：本次结算后会员到哪天、实际发了多少积分。
+ * 之所以要返回而不是让调用方自己再查一遍：`grantedPoints` 是「本次实际发放」，
+ * 而 `grantPoints > 0n` 的短路意味着「发了 0」也可能是一个合法结果 ——
+ * 只有在这里才能把「本该发多少」与「实际发了多少」一次说清。
+ */
 async function activateMembership(
   tx: Db,
   merchantId: bigint,
   packageId: bigint,
   sourceOrderId: bigint | null,
   override?: { durationDays: number; grantPoints: bigint; grantRemark?: string },
-): Promise<void> {
+): Promise<{ endAt: Date; grantedPoints: bigint; renewed: boolean }> {
   const pkg = await tx.memberPackage.findUnique({ where: { id: packageId } })
   if (!pkg) throw new PackageNotFoundError()
   const now = new Date()
@@ -351,6 +427,7 @@ async function activateMembership(
     orderBy: { endAt: 'desc' },
   })
 
+  let endAt: Date
   if (existing) {
     // 续期：在现有结束时间上顺延
     const newEnd = new Date(existing.endAt.getTime() + durationMs)
@@ -358,6 +435,7 @@ async function activateMembership(
       where: { id: existing.id },
       data: { endAt: newEnd, grantBeans: { increment: grantPoints }, grantExpireAt: newEnd },
     })
+    endAt = newEnd
   } else {
     // 锁内重判后仍无有效会员，才允许新建。同时把历史遗留的 ACTIVE 但已过期的行收口，
     // 避免「一行已过期仍 ACTIVE + 一行新 ACTIVE」在到期扫描里被反复当成候选。
@@ -365,7 +443,7 @@ async function activateMembership(
       where: { merchantId, status: 'ACTIVE', endAt: { lte: now } },
       data: { status: 'EXPIRED' },
     })
-    const endAt = new Date(now.getTime() + durationMs)
+    endAt = new Date(now.getTime() + durationMs)
     await tx.membership.create({
       data: {
         merchantId,
@@ -389,6 +467,7 @@ async function activateMembership(
       remark: override?.grantRemark,
     })
   }
+  return { endAt, grantedPoints: grantPoints, renewed: !!existing }
 }
 
 export interface AdminMembershipResult {
@@ -451,6 +530,7 @@ export async function adminActivateMembership(
     remark?.trim()
       ? `后台手动开通会员（操作人 admin#${operatorId}）：${remark.trim()}`
       : `后台手动开通会员（操作人 admin#${operatorId}）`,
+    'ADMIN',
   )
 
   const after = await activeMembership(prisma, merchantId)
@@ -464,21 +544,70 @@ export async function adminActivateMembership(
   }
 }
 
-/** 微信支付回调：解密 → 落库（幂等） */
+/** 微信支付回调：解密 → 落库（幂等）
+ *
+ * ★ 这个函数的所有失败路径原本都只返回 `{code:'FAIL'}` —— 对微信有意义（它会重试），
+ *   对**我们**毫无意义：重试 15 次后微信也放弃，本地就永久停在 PENDING，而没有任何人知道。
+ *   所以每个失败分支都必须留下一行告警。这就是「扣款成功但开通失败」最直接的现场。
+ *
+ * 关于阻塞：告警里有一次 webhook 推送（最长 `OPS_ALERT_TIMEOUT_MS`）。放在这里可以接受 ——
+ *   ① 只有**首次**出现才会推（同键后续都命中去重，只剩一次 DB 写）；
+ *   ② 走到这里本来就要返回 FAIL、微信本来就要重试，慢一点不改变结局；
+ *   ③ 一条 5 秒的推送换「有人知道钱收错了」，很划算。
+ */
 export async function handleNotify(prisma: PrismaClient, rawBody: string): Promise<{ code: 'SUCCESS' | 'FAIL'; message?: string }> {
+  let outTradeNo = ''
   try {
     const payload = JSON.parse(rawBody) as { resource?: { ciphertext: string; nonce: string; associated_data?: string } }
     if (!payload.resource) throw new Error('missing resource')
     const decrypted = decryptResource(payload.resource)
       if (decrypted.appid !== (process.env.WX_APPID ?? '') || decrypted.mchid !== (process.env.WX_PAY_MCH_ID ?? '')) throw new Error('payment merchant mismatch')
+    outTradeNo = decrypted.outTradeNo
     if (decrypted.tradeState === 'SUCCESS') {
       const order = await prisma.order.findUnique({ where: { orderNo: decrypted.outTradeNo }, select: { amountFen: true } })
-      if (!order || order.amountFen !== decrypted.amountFen) throw new Error('payment amount mismatch')
-      await markOrderPaid(prisma, decrypted.outTradeNo, decrypted.transactionId)
+      // ★ 查无此单与金额不符是**两件事**，必须给不同的 message：
+      //   下面那个 catch 用 message 判断「是否已单独告警过」，共用一个字符串会让
+      //   「收到一笔本地根本不存在的订单的钱」这条更严重的情况被静默跳过。
+      if (!order) throw new Error('order not found for notify')
+      if (order.amountFen !== decrypted.amountFen) {
+        // ★ 单独拉出来：这不是「回调处理失败」，而是**资金对不上**。
+        //   本地会永久拒绝结算（对账查单走同一条金额校验，同样拒），
+        //   所以它不是「重试一下就好了」，必须人工核对 —— 用 CRITICAL。
+        await raiseOpsAlert(prisma, {
+          code: 'PAY_AMOUNT_MISMATCH',
+          severity: 'CRITICAL',
+          title: '微信回调查询金额与本地订单不一致，已拒绝结算',
+          detail:
+            `订单 ${decrypted.outTradeNo}：微信侧收款 ${decrypted.amountFen} 分，本地订单 ${order.amountFen} 分。` +
+            `本地已按「拒绝结算」处理（防止用错误金额发放权益），该单会**一直停在待支付**直到人工介入。` +
+            `微信交易号 ${decrypted.transactionId ?? '-'}。请核对是本地金额写错、还是这笔钱不属于这张单。`,
+          refType: 'order',
+          refId: decrypted.outTradeNo,
+          dedupeKey: `PAY_AMOUNT_MISMATCH:${decrypted.outTradeNo}`,
+        })
+        throw new Error('payment amount mismatch')
+      }
+      await markOrderPaid(prisma, decrypted.outTradeNo, decrypted.transactionId, false, undefined, 'NOTIFY')
     }
     return { code: 'SUCCESS' }
   } catch (e) {
-    return { code: 'FAIL', message: (e as Error).message }
+    const message = (e as Error).message
+    // 金额不一致已经在上面单独告警过；这里只兜「其他」失败，避免同一个原因报两次。
+    if (message !== 'payment amount mismatch') {
+      await raiseOpsAlert(prisma, {
+        code: 'PAY_NOTIFY_FAILED',
+        severity: 'WARN',
+        title: '微信支付回调处理失败（已返回 FAIL，微信会重试）',
+        detail:
+          `订单 ${outTradeNo || '(未解析出订单号)'} 回调处理抛错：${message}。` +
+          `微信会重试，但重试耗尽后本单将永久停在待支付 —— 若持续失败请人工介入。`,
+        refType: outTradeNo ? 'order' : undefined,
+        refId: outTradeNo || undefined,
+        // 按订单+原因去重：微信 15 次重试只应产生一条告警
+        dedupeKey: `PAY_NOTIFY_FAILED:${outTradeNo || 'unknown'}:${message.slice(0, 60)}`,
+      })
+    }
+    return { code: 'FAIL', message }
   }
 }
 

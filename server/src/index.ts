@@ -256,6 +256,18 @@ async function bootstrap() {
       process.once('SIGTERM', m.stopPayReconcileSweeper)
     })
     .catch((e) => console.error('[pay-reconcile] 启动失败:', (e as Error).message))
+
+  // 支付风险巡检：对账只负责**窗口内**的单，窗口外那批「微信侧有真实订单、本地却未结清」
+  // 的单会永久静默（确定性失败永不成功、金额不符被拒结算）。这里把它们捞回来逐笔取证，
+  // 并把所有只能靠人发现的异常推进 ops_alert（落库 + 可选推送）。
+  // 同时核对「订单已 PAID ⇒ 有结算回执」这条不变量。
+  void import('./services/pay-risk.service.js')
+    .then((m) => {
+      m.startPayRiskSweeper(prisma)
+      process.once('SIGINT', m.stopPayRiskSweeper)
+      process.once('SIGTERM', m.stopPayRiskSweeper)
+    })
+    .catch((e) => console.error('[pay-risk] 启动失败:', (e as Error).message))
 }
 
 bootstrap().catch((e) => {

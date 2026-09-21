@@ -632,9 +632,16 @@ bash scripts/build-weapp-prod.sh https://api.<你的域名>/api/v1
 
 **阻断当前场景的**
 
-- 微信支付商户号申请中 → 无法真实充值/开会员。**已不再阻断 `NODE_ENV=production`**：
-  用 `PAYMENTS_ENABLED=false` 显式关闭支付即可上线，其余八个生产守卫正常生效（见 0.1 节）
-- 短信通道未接入 → 只能用微信一键登录
+- ~~微信支付商户号申请中 → 无法真实充值/开会员~~ → **2026-09-21 已上线**：
+  `PAYMENTS_ENABLED=true` + `PAYMENT_MODE=real`，七项凭据齐备，`[pay-reconcile] started` 已出现。
+  ⚠ 后续任何改动都不要动 `PAYMENT_MODE`：`paymentsEnabled` 为真时
+  `validateProductionConfig()` 要求它必须是 `real`，否则**服务直接起不来**。
+- ~~短信通道未接入 → 只能用微信一键登录~~ → **2026-09-21 已接入**（`SMS_PROVIDER=tencent`
+  + 5 个 `TENCENT_SMS_*`；签名「廊坊大帅餐饮管理」报备成功、模板 2731941 已过审）。
+  ⚠ 缺任意一个 `TENCENT_SMS_*` 都**不会阻止服务启动**（与支付的 fail-closed 刻意不同），
+  但每次发码会明确失败 —— 换机/重建 `.env` 后务必跑 `npm run sms:verify`。
+- 线上收款的**风控缺口已补**（2026-09-21）：`order_settlement` 结算回执 + `ops_alert` 告警出口
+  + 窗口外取证巡检。见 `deploy/支付风控告警-运维说明.md`。
 
 **不阻断本次测试，但会影响体验**
 
@@ -671,6 +678,7 @@ bash scripts/build-weapp-prod.sh https://api.<你的域名>/api/v1
 | `deploy/nginx/dashuai-web.conf` | **主域首页站点**（备案号悬挂页 + 接管 `default_server`） |
 | `deploy/site/index.html` | 主域首页本体（底部悬挂 ICP 备案号；公安备案号位已预置为注释） |
 | `deploy/公安联网备案办理指引-2026-09-21.md` | 公安联网备案的办理清单、要准备的信息、办完怎么挂 |
+| `deploy/支付风控告警-运维说明.md` | **线上收款的风控口径**：10 类告警的含义与处置、webhook 怎么配、后台接口、排查顺序、设计取舍 |
 | `scripts/build-weapp-prod.sh` | 用正式域名给小程序出包（带 HTTPS/端口校验） |
 | `deploy/install-cron.sh` | 装「存储孤儿对象回收」的每日 cron（幂等，按 `# dashuai-storage-gc` 标记行替换） |
 | `deploy/install-cert-watch.sh` | 装「证书续期守望」cron（每日剩余天数 + 每周 staging 干跑），补「续期失败无人知」这个缺口。守望脚本本体**内嵌在本文件里**，装到 `/usr/local/bin/dashuai-cert-watch.sh` —— 只维护一处，不会出现仓库版与服务器版漂移 |

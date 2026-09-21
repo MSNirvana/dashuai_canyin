@@ -36,6 +36,7 @@
     "sms:status": "tsx scripts/sms-status.ts",
     "wxpay:probe": "tsx scripts/probe-wxpay-live.ts",
     "pay-reconcile:verify": "tsx scripts/verify-pay-reconcile.ts",
+    "pay-risk:verify": "tsx scripts/verify-pay-risk.ts",
     "accounting:verify": "tsx scripts/verify-accounting-integrity.ts",
     "upload-boundary:verify": "tsx scripts/verify-upload-and-ssrf.ts",
     "storage:dup-assets": "tsx scripts/report-duplicate-assets.ts",

@@ -51,6 +51,8 @@ async function main() {
     data: { balance: { decrement: gained }, totalRecharge: { decrement: gained } },
   })
   await prisma.beanLedger.deleteMany({ where: { merchantId: merchant.id, bizId: orderNo } })
+  // 结算回执随订单一起删（markOrderPaid 在同一事务内写它，留着会指向一个已不存在的订单）
+  await prisma.orderSettlement.deleteMany({ where: { orderId: order.id } })
   await prisma.order.delete({ where: { id: order.id } })
   console.log('（测试数据已清理）')
 
