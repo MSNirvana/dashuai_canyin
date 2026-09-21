@@ -3,13 +3,13 @@
  *   ★ 唯一的例外：若 ChatCut 在刷新时**轮换了** refresh_token，会把它写回 server/.env
  *     —— 不写就永久丢失、只能重走浏览器授权。详见 persistRotatedRefreshToken()。
  *
- * 为什么需要它（2026-09-17）：
- *   AI 档（外部剪辑）走 ChatCut MCP，`chatCutConfigured()` 要求**三样齐全** ——
- *   凭证 + `CHATCUT_MCP_SUBMIT_TOOL` + `CHATCUT_MCP_STATUS_TOOL`。
- *   其中最坑的是工具名：必须用授权后 `tools/list` 的真实返回，**不能猜**。
- *   猜错的表现极具误导性 —— 提交会成功、轮询必失败、任务卡满 30 分钟才被 sweeper 退款，
- *   期间没有任何一条日志明说「工具名是错的」。所以把「用真 token 打一次 tools/list、
- *   把工具名和入参 schema 打出来、并给出该填的 .env 行」做成本脚本。
+ * 为什么需要它（2026-09-17 建，2026-09-21 随判据变更修订）：
+ *   AI 档（外部剪辑）走 ChatCut MCP。`chatCutConfigured()` 的判据是
+ *   **有凭证 ∧ 没被 `CHATCUT_ADAPTER_ENABLED=false` 关掉**（★ 不再看工具名，见下）。
+ *   本脚本要回答的问题是「AI 档为什么没开 / 开了之后到底能不能出片」：
+ *     ① 凭证是否有效（真换一次 access token）；
+ *     ② `chatCutConfigured()` 会返回什么（逐项列出**参与判定的**变量）；
+ *     ③ 驱动依赖的工具名是否都还在 ChatCut 上（ChatCut 改了名 ⇒ 跑到那一步才炸）。
  *
  * 用法（两种都支持）：
  *   ① 读 .env 里既有的配置：        npx tsx scripts/chatcut-probe.ts
@@ -22,10 +22,11 @@
  *   本脚本「先 initialize 再 tools/list」和「直接 tools/list」两种都打一遍并对比 ——
  *   若前者成功、后者失败，说明生产代码必须补握手；症状会是「探测一切正常、线上一直失败」。
  *
- * ★ 另一处同样重要的对照：工具**入参 schema**。
- *   `submitChatCutJob()` 发的是一个固定形状的大对象（render / voice / captions / audio / editing / clips），
- *   `getChatCutJob()` 发的是 `{ jobId }`。如果 ChatCut 真实工具的参数名对不上，
- *   那这活**不是填 .env 能解决的**，得改代码去适配。本脚本会把这件事直接摆在台面上。
+ * ★ 另一处同样重要的对照（2026-09-21 改写）：**驱动实际调用的工具名是否还在**。
+ *   旧版这段是拿 `submitChatCutJob()` 那 10 个字段去和真实工具对照 —— 但那个函数
+ *   2026-09-17 已经删除了，照抄的字段清单只会得出「需要改代码」这个**早已完成**的结论。
+ *   现在改为**运行时扫** `src/render/chatcut-driver.ts` 里的 `callTool('<name>'`，
+ *   与真实 `tools/list` 求差集：缺哪个，就是哪一步会在运行时炸（而不是启动时就报）。
  */
 import 'dotenv/config'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -43,8 +44,8 @@ const OAUTH_TIMEOUT_MS = Number(process.env.CHATCUT_OAUTH_TIMEOUT_MS ?? 15_000)
  *
  * 为什么需要它：⑤ 节默认把 description 截断到 90 字符、且完全不打印 inputSchema，
  * 那个粒度够用来「认工具」，**不够用来写适配代码**。
- * 而适配层（`src/render/chatcut.ts`）的每个字段都必须按真实 schema 落 —— 猜字段名的代价
- * 就是这个项目已经踩过一次的坑（`submitChatCutJob()` 那 10 个字段真实工具一个都不认）。
+ * 而适配层（`src/render/chatcut-driver.ts`）的每个字段都必须按真实 schema 落 —— 猜字段名的
+ * 代价就是这个项目已经踩过一次的坑（早期作业式适配器那 10 个字段真实工具一个都不认，已删除）。
  */
 const WANT_TOOLS = process.argv
   .slice(2)
@@ -65,8 +66,16 @@ const PROTECTED_RESOURCE_METADATA =
  * 本脚本**不 import `src/render/chatcut.ts`**，是刻意的：
  * 那个模块会连带加载 `src/db.js`（PrismaClient + ioredis）——「通道坏了」的场景里
  * 数据库/Redis 很可能也起不来，一 import 就整脚本挂掉，恰好在最需要它的时候失效。
- * 代价是下面这三条判定规则与 `chatCutConfigured()` 重复了一份：
+ * 代价是下面的判定规则与 `chatCutConfigured()` 重复了一份：
  * ★ 改动 `src/render/chatcut.ts::chatCutConfigured()` 的判定条件时，**必须同步改这里**。
+ *
+ * ⚠ 2026-09-21：这条「手工同步」的契约**已经翻过一次车**。2026-09-17 把判据从
+ *   「凭证 + CHATCUT_MCP_SUBMIT_TOOL + CHATCUT_MCP_STATUS_TOOL 三样齐全」改成
+ *   「有凭证 ∧ 没被 CHATCUT_ADAPTER_ENABLED=false 关掉」，但没同步改本脚本 —— 于是它在
+ *   **凭证完全正确**的情况下仍然打印「chatCutConfigured() = false / 现在是半配置」，
+ *   把「AI 档为什么没开」的判断直接带反；而同一个脚本的 ⑧ 段又在说「不要填工具名」，自相矛盾。
+ *   ⇒ 教训：**凡是「照抄一份判据」的地方，就是最容易过时的地方。能现场从源码/接口取事实的，
+ *     就别抄** —— ⑦ 段的驱动工具核对就是这么改的（运行时扫 chatcut-driver.ts）。
  */
 
 /** 直接打印值的变量（它们不是秘密，打印出来才有诊断价值） */
@@ -74,6 +83,10 @@ const PLAIN_VARS = [
   'CHATCUT_MCP_URL',
   'CHATCUT_MCP_SURFACE',
   'CHATCUT_OAUTH_TOKEN_URL',
+  // 急停开关：一旦为 false，凭证再全也会被判不可用。属于判定的一部分，必须能看见。
+  'CHATCUT_ADAPTER_ENABLED',
+  // ↓ 这两个自 2026-09-17 起**已作废**（旧作业式适配器 submitChatCutJob/getChatCutJob 已删除）。
+  //   留在打印列表里是为了让「有人照旧文档填了它们」这件事被看见 —— ② 段会单独告警。它们不该有值。
   'CHATCUT_MCP_SUBMIT_TOOL',
   'CHATCUT_MCP_STATUS_TOOL',
   'CHATCUT_MCP_ACCESS_TOKEN_EXPIRES_AT',
@@ -110,23 +123,10 @@ const SECRET_VARS = [
   'CHATCUT_OAUTH_CLIENT_SECRET',
 ] as const
 
-/**
- * 生产代码实际会发出去的参数形状（照抄自 `src/render/chatcut.ts`）。
- * 用来和 ChatCut 真实工具的 inputSchema 做对照 —— 对不上说明要改代码，不是改 .env。
- */
-const OUR_SUBMIT_ARGS = [
-  'idempotencyKey',
-  'projectName',
-  'source',
-  'keywords',
-  'render',
-  'voice',
-  'captions',
-  'audio',
-  'editing',
-  'clips',
-] as const
-const OUR_STATUS_ARGS = ['jobId'] as const
+// ★ 原 `OUR_SUBMIT_ARGS`（idempotencyKey/projectName/source/...）与 `OUR_STATUS_ARGS`（jobId）
+//   已于 2026-09-21 删除：它们照抄自**已删除**的作业式适配器（submitChatCutJob / getChatCutJob），
+//   留着只会让 ⑦ 段拿一套不存在的字段去和真实工具对照，得出「需要改代码」这个**早已完成**的结论。
+//   现在核对的是「驱动实际调用的工具名是否还在 ChatCut 上」，见 ⑦ 段的 readDriverTools()。
 
 let rpcId = 0
 
@@ -395,22 +395,28 @@ function schemaKeys(tool: ToolInfo): string[] {
   return Object.keys(properties as Record<string, unknown>)
 }
 
-function compareArgs(label: string, ours: readonly string[], tool: ToolInfo): void {
-  const keys = schemaKeys(tool)
-  if (keys.length === 0) {
-    console.log(`      ⚠ ${tool.name} 没有可读的 inputSchema.properties，无法自动对照 —— 请人工看工具描述。`)
-    return
+/**
+ * 从驱动源码里**现场提取**它调用的所有 ChatCut 工具名。
+ *
+ * ★ 为什么扫源码、而不是在脚本里再抄一份清单：
+ *   抄一份就一定会随代码改动而**过时** —— 本文件头部记的那次事故就是这么来的
+ *   （判据被抄了一份，真实代码改了却忘了改它，于是结论被带反）。
+ *   扫源码虽然土，但永远不会脱节：driver 里加了新工具，这里立刻就能核对得上。
+ */
+async function readDriverTools(): Promise<string[]> {
+  const file = resolve(dirname(fileURLToPath(import.meta.url)), '../src/render/chatcut-driver.ts')
+  let source: string
+  try {
+    source = await readFile(file, 'utf8')
+  } catch {
+    return []
   }
-  const missing = ours.filter((key) => !keys.includes(key))
-  console.log(`      ${label} ${tool.name} 的参数：${keys.join(', ')}`)
-  console.log(`      我们代码发的是：${ours.join(', ')}`)
-  if (missing.length === 0) {
-    console.log('      ✓ 我们发的每一个字段，这个工具都收。')
-  } else {
-    console.log(`      ✗ 我们发但工具不认的字段（${missing.length} 个）：${missing.join(', ')}`)
-    console.log('        ⇒ 参数形状对不上。这**不是填 .env 能解决的**，需要改')
-    console.log('          src/render/chatcut.ts 去适配真实工具，否则提交会直接被判失败。')
+  const names = new Set<string>()
+  for (const match of source.matchAll(/callTool\(\s*'([a-z_][a-z0-9_]*)'/g)) {
+    const name = match[1]
+    if (name) names.add(name)
   }
+  return [...names].sort()
 }
 
 /** 按名字打印指定工具的完整 description + inputSchema（供 `--tool` 用） */
@@ -447,26 +453,39 @@ async function main(): Promise<void> {
   for (const key of PLAIN_VARS) console.log(`  ${key.padEnd(38)} ${plainState(key)}`)
   for (const key of SECRET_VARS) console.log(`  ${key.padEnd(38)} ${secretState(key)}`)
 
-  section('② 三样齐全判定（即 chatCutConfigured()）')
+  section('② 可用性判定（即 chatCutConfigured()）')
+  // ★ 判据以 src/render/chatcut.ts::chatCutConfigured() 为准，只有两项：
+  //   ① 有凭证  ② 没被急停开关 CHATCUT_ADAPTER_ENABLED=false 关掉。
+  //   ⚠ 这里以前是「凭证 + CHATCUT_MCP_SUBMIT_TOOL + CHATCUT_MCP_STATUS_TOOL 三样齐全」，
+  //     那套语义 2026-09-17 就已作废 —— 留着会让**任何**配置都打印 false，把判断带反。
+  // ⚠ 2026-09-21 又给真实判据加了**第三条**（授权确定性失效时提前置灰），本脚本**复现不了**：
+  //   它读的是**本进程内**最近一次 token 刷新是否属于 `auth` 类失败，而本脚本是一次性进程、
+  //   该状态恒为 null。所以下面的 configured 是「冷启动语义」——
+  //   若线上进程已经刷新失败过，线上会是 false 而这里仍可能 true，两者不一致是正常的。
+  const adapterDisabled = env('CHATCUT_ADAPTER_ENABLED')?.trim().toLowerCase() === 'false'
   const hasCredential = Boolean(env('CHATCUT_MCP_ACCESS_TOKEN') || env('CHATCUT_OAUTH_REFRESH_TOKEN'))
-  const hasSubmitTool = Boolean(env('CHATCUT_MCP_SUBMIT_TOOL'))
-  const hasStatusTool = Boolean(env('CHATCUT_MCP_STATUS_TOOL'))
   const rows: Array<[string, boolean]> = [
-    ['凭证（access token 或 refresh token）', hasCredential],
-    ['CHATCUT_MCP_SUBMIT_TOOL', hasSubmitTool],
-    ['CHATCUT_MCP_STATUS_TOOL', hasStatusTool],
+    ['凭证（access token 或 refresh_token）', hasCredential],
+    ['急停开关未置 false（CHATCUT_ADAPTER_ENABLED）', !adapterDisabled],
   ]
   for (const [name, ok] of rows) console.log(`  ${ok ? '✓' : '✗'} ${name}`)
-  const configured = hasCredential && hasSubmitTool && hasStatusTool
+  const configured = hasCredential && !adapterDisabled
   console.log(
     configured
       ? '\n⇒ chatCutConfigured() = true：AI 档会对小程序开放（能力表 available=true）'
       : '\n⇒ chatCutConfigured() = false：AI 档被挡住 —— 小程序里会置灰并把选中档弹回基础档，' +
           '服务端另有 409+4013 硬拒（在冻结积分之前，不扣积分）',
   )
-  if (hasCredential && !(hasSubmitTool && hasStatusTool)) {
-    console.log('  ⚠ 现在是「半配置」：有凭证但工具名没填全。若只填提交、漏填查询，')
-    console.log('    提交会成功但轮询必失败，任务要卡满 30 分钟才被 sweeper 退款。')
+  if (adapterDisabled && hasCredential) {
+    console.log('  ⚠ 凭证是齐的，但急停开关 CHATCUT_ADAPTER_ENABLED=false 主动关掉了它 ——')
+    console.log('    这是运维行为（额度异常 / 商务未谈拢时一键停 AI 档），不是配置缺失。')
+  }
+  // 反向告警：这两个变量自 2026-09-17 起已作废（旧作业式适配器已删）。一旦有人照旧文档填了，
+  // 必须报出来 —— 填了不会让通道可用，只会让 AI 档从「直接置灰」变成「可点但一点就失败」。
+  const strayTools = ['CHATCUT_MCP_SUBMIT_TOOL', 'CHATCUT_MCP_STATUS_TOOL'].filter((key) => env(key))
+  if (strayTools.length > 0) {
+    console.log(`  ⚠ 检测到**已作废**的变量被填：${strayTools.join(' / ')}`)
+    console.log('    它们不参与任何判定，请清空。真实驱动在 src/render/chatcut-driver.ts（多步驱动）。')
   }
 
   const token = await acquireToken()
@@ -514,7 +533,7 @@ async function main(): Promise<void> {
       const tools = toolsOf(listed.payload)
       if (tools.length > 0) {
         toolsPath = 'handshake'
-        printTools(tools)
+        await printTools(tools, configured)
         return
       }
       console.log('      ⚠ 握手成功但 tools/list 没返回工具，继续试「直接 tools/list」。')
@@ -531,7 +550,7 @@ async function main(): Promise<void> {
     const tools = toolsOf(listed.payload)
     if (tools.length > 0) {
       toolsPath = 'direct'
-      printTools(tools)
+      await printTools(tools, configured)
       return
     }
     const err = errorOf(listed.payload)
@@ -556,7 +575,12 @@ async function main(): Promise<void> {
   }
 }
 
-function printTools(tools: ToolInfo[]): void {
+/**
+ * ⑤-⑧ 段：先是工具面清单，然后是「驱动依赖是否都还在」与结论/行动项。
+ * `configured` 由 main() 按真实判据算好后传进来 —— 判定只做一次，避免两处各判一套。
+ * 这里必须是 async：⑦ 段要读 chatcut-driver.ts 源码来提取工具名。
+ */
+async function printTools(tools: ToolInfo[], configured: boolean): Promise<void> {
   section(`⑤ tools/list 真实返回：共 ${tools.length} 个工具`)
   for (const tool of tools) {
     const brief = tool.description.replace(/\s+/g, ' ').slice(0, 90)
@@ -591,27 +615,43 @@ function printTools(tools: ToolInfo[]): void {
   console.log(`  名字含 track/status/query 的 ${status.length} 个：`)
   console.log(`    ${status.map((t) => t.name).join(', ') || '（无）'}`)
 
-  section('⑦ 与我们代码发送的参数形状做对照')
-  console.log('  下面自动挑一个工具来对照，只为证明「我们发出去的字段名，真实工具一个都不认」。')
-  if (submit[0]) compareArgs('提交（自动挑出的第一个候选）：', OUR_SUBMIT_ARGS, submit[0])
-  else console.log('  没有候选，无法对照 —— 请在 ⑤ 的完整列表里人工挑一个。')
-  if (status[0]) compareArgs('查询（自动挑出的第一个候选）：', OUR_STATUS_ARGS, status[0])
-  else console.log('  没有候选，无法对照 —— 请在 ⑤ 的完整列表里人工挑一个。')
+  section('⑦ ★ 驱动依赖核对：chatcut-driver.ts 用到的工具，ChatCut 是否都还有')
+  const driverTools = await readDriverTools()
+  if (driverTools.length === 0) {
+    console.log('  ⚠ 没能从 src/render/chatcut-driver.ts 提取到 callTool(...) —— 文件改名或路径变了？跳过。')
+  } else {
+    const hasTool = new Set(tools.map((tool) => tool.name))
+    const missing = driverTools.filter((name) => !hasTool.has(name))
+    console.log(`  驱动依赖 ${driverTools.length} 个工具：${driverTools.join(', ')}`)
+    if (missing.length === 0) {
+      console.log('  ✓ 全部存在于 ChatCut 当前工具面 —— 驱动与对方一致。')
+    } else {
+      console.log(`  ✗ **ChatCut 上找不到 ${missing.length} 个**：${missing.join(', ')}`)
+      console.log('    ⇒ 这条链路会在**跑到那一步时**失败（不是启动时就报，所以更要在这里盯住）。')
+      console.log('      改法：按 ⑤ 的完整列表 + 真实 schema 修 src/render/chatcut-driver.ts。')
+    }
+  }
 
-  section('⑧ 结论：这两个环境变量的语义不适用于 ChatCut')
-  console.log('  `chatCutConfigured()` 要求 CHATCUT_MCP_SUBMIT_TOOL / CHATCUT_MCP_STATUS_TOOL')
-  console.log('  各填一个工具名 —— 这个设计假设「存在一个工具能一口气吃下整片配置」。')
-  console.log('  **ChatCut 不满足这个假设。** 两条路：')
+  section('⑧ 结论与行动项')
+  console.log('  适配层已是**多步驱动**（src/render/chatcut-driver.ts，2026-09-17 重写）：')
+  console.log('      create_project → import_media → edit_item / edit_track → edit_captions')
+  console.log('        → submit_music → submit_export → track_export')
+  console.log('  旧的作业式适配器（submitChatCutJob / getChatCutJob）**已删除**，')
+  console.log('  所以 CHATCUT_MCP_SUBMIT_TOOL / CHATCUT_MCP_STATUS_TOOL 不存在「该填什么」的问题 —— 留空即可。')
   console.log('')
-  console.log('    A. 重写 src/render/chatcut.ts：把「提交一个 job」改成「多步驱动编辑器」')
-  console.log('       （建项目 → 导入 → 编排 → 字幕 → 导出 → 轮询）。')
-  console.log('       工作量不小，每一步都要按真实 schema 落参数。')
-  console.log('    B. 不用 ChatCut 做整片：走本地 ffmpeg 补那 5 项，或用腾讯云 VOD')
-  console.log('       ComposeMedia 当渲染层（同云、按普通转码计费、约 ¥0.09/条）。')
-  console.log('')
-  console.log('  ⚠ 在 A 完成之前，**不要**为了让 chatCutConfigured() 变成 true 而随便填两个工具名：')
-  console.log('     那会让 AI 档从「直接置灰」变成「可点但一点就失败」，比现在更难排查。')
-  console.log('     凭证（OAuth 那三行）是对的，已经写进 server/.env，保留即可。')
+  if (!configured) {
+    console.log('  ⇒ 本机 AI 档**不可用**。行动项：')
+    console.log('     1) 补上 ② 里缺的那一项（凭证，或把急停开关打开）')
+    console.log('     2) 重启（tsx watch 不监听 .env：touch src/index.ts）')
+    console.log('     3) 验收：curl -s http://127.0.0.1:3000/api/v1/render/capabilities → AI.available 应为 true')
+  } else {
+    console.log('  ⇒ 本机 AI 档**已具备放开条件**（chatCutConfigured() = true）。')
+    console.log('     ⚠ 这只代表「有凭证」，不代表「端到端能出片」——')
+    console.log('       端到端自证：cd server && npm run chatcut:smoke（真建项目 / 导素材 / 导出成片）')
+    console.log('     ⚠ refresh_token 是**轮换**的：谁刷新谁作废旧值。')
+    console.log('       多环境共用同一个 refresh_token 会互相踢掉（本脚本一轮换就会写回本机 .env）。')
+    console.log('       ⇒ 生产多实例靠共享 Redis（代码已实现 Redis 值优先于 .env）；别在第二个环境再跑本脚本。')
+  }
 }
 
 await main().catch((error: unknown) => {
