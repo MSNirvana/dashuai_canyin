@@ -35,7 +35,7 @@ const submitInput = z.object({
   requestId: z.string().trim().min(8).max(64).optional(),
   aiMode: z.boolean().optional(),
   chatcut: z.object({
-    voiceId: z.enum(['warm-female', 'bright-female', 'gentle-male', 'magnetic-male', 'energetic-youth']).optional(),
+    voiceId: z.enum(['none', 'warm-female', 'bright-female', 'gentle-male', 'magnetic-male', 'energetic-youth']).optional(),
     subtitles: z.boolean().optional(),
     subtitleStyle: z.enum(['CLEAN', 'EMPHASIS', 'SOCIAL']).optional(),
     bgm: z.enum(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM']).optional(),
