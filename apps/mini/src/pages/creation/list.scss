@@ -43,68 +43,8 @@
   // ── 流量款独立入口卡 ──
   // 与下面的创作卡片刻意长得不一样：它不是一个内容项，而是一个「另外一件事」的入口，
   // 所以用品牌色描边 + 淡底把它和内容区区分开，避免被当成某条创作。
-  &__topic {
-    display: flex;
-    align-items: center;
-    gap: 16rpx;
-    padding: 22rpx 24rpx;
-    margin-bottom: 18rpx;
-    border-radius: var(--td-radius-large);
-    background: var(--td-bg-color-container);
-    border: 1rpx solid var(--td-brand-color-light);
-    box-shadow: var(--ds-shadow-card);
-  }
-
-  &__topic-icon {
-    width: 68rpx;
-    height: 68rpx;
-    border-radius: 20rpx;
-    background: var(--td-brand-color-light);
-    color: var(--td-brand-color);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-  }
-
-  &__topic-main {
-    flex: 1;
-    min-width: 0;
-  }
-
-  &__topic-head {
-    display: flex;
-    align-items: center;
-    gap: 10rpx;
-  }
-
-  &__topic-title {
-    font-size: 29rpx;
-    font-weight: 650;
-    letter-spacing: -0.015em;
-    color: var(--td-text-color-primary);
-  }
-
-  // 「新」角标：这个功能刚上线，给一个视觉动因让人点进去
-  &__topic-new {
-    font-size: 19rpx;
-    line-height: 1.5;
-    padding: 0 8rpx;
-    border-radius: 8rpx;
-    background: var(--td-brand-color);
-    color: #fff;
-    flex: none;
-  }
-
-  &__topic-desc {
-    display: block;
-    margin-top: 6rpx;
-    font-size: 22rpx;
-    color: var(--td-text-color-secondary);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
+  // ⚠ `&__topic*`（流量款入口卡的样式）已于 2026-09-21 随卡片一起挪到 `edit.scss`。
+  //   卡片不在本页了，样式留着会让人以为还在 —— 而且改本页时容易误改到一份死代码。
 
   &__filter {
     margin-bottom: 16rpx;

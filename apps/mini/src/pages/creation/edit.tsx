@@ -116,7 +116,8 @@ export default function CreationEdit() {
    */
   const workId = readRouteId(params, 'workId') ?? ''
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
-  const setStore = useMerchantStore((s) => s.setStore)
+  // ⚠ 这里**不再**取 `setStore`：门店的唯一入口是左上角的 StoreSwitcher（2026-09-21）。
+  //   表单里那个「门店」下拉已删掉 —— 同一页两个门店选择器，用户会以为是两件事。
   const loadStores = useMerchantStore((s) => s.loadStores)
   /**
    * 本页的创作编号。
@@ -357,18 +358,10 @@ export default function CreationEdit() {
     return () => { cancelled = true }
   }, [localId, loadDetail])
 
-  const onStoreChange = (e: { detail: { value: string | number } }) => {
-    const idx = Number(e.detail.value)
-    setStoreIdx(idx)
-    // 换店后菜品列表整体换掉，回到第一个（菜品必选，没有「不指定」可以退）
-    setDishIdx(0)
-    const sid = stores[idx]?.id
-    if (sid) {
-      // 同步为全局当前门店，保证首页/菜品/人设上下文一致
-      setStore(sid)
-      loadDishesFor(sid)
-    }
-  }
+  // ★ 表单里原来的「门店」下拉已删（2026-09-21）：它和左上角 StoreSwitcher 是同一件事，
+  //   而且两个选择器会各写一次全局门店，谁覆盖谁取决于点的顺序 —— 用户只会觉得「换了一家没生效」。
+  //   现在门店**只能**从 StoreSwitcher 换，本页的 storeIdx / 菜品列表跟着 currentStoreId 走
+  //   （下面那个 useEffect）。所以这里不需要 onStoreChange 了。
 
   // 从左上角切换器换店时，表单里的门店与菜品同步跟随
   useEffect(() => {
@@ -471,7 +464,9 @@ export default function CreationEdit() {
   const onCreate = async () => {
     const sid = stores[storeIdx]?.id
     if (!sid) {
-      Taro.showToast({ title: '请选择门店', icon: 'none' })
+      // ★ 文案要指到**唯一**能选门店的地方（本页已没有门店选择器）：
+      //   原来写「请选择门店」，而页面上根本没有那个控件了，用户只会原地找不到北。
+      Taro.showToast({ title: '请先在左上角选择门店', icon: 'none' })
       return
     }
     /**
@@ -579,6 +574,13 @@ export default function CreationEdit() {
     }
     Taro.navigateTo({ url: `/pages/creation/shots?id=${targetId}` })
   }
+
+  /**
+   * 流量款入口：跳到独立的「话题稿」页。
+   * ★ 它是**另一条链路**（不选门店、不选菜品），所以不是在本页切个款式的开关，而是换页面。
+   *   把话题稿塞进本页当第四款，用户会以为还得先选菜 —— 那正是要拆掉的东西。
+   */
+  const onOpenTraffic = () => Taro.navigateTo({ url: '/pages/creation/traffic' })
 
   /**
    * 失败后「稍后再说」：只收起悬浮窗，落到编辑视图。
@@ -730,7 +732,8 @@ export default function CreationEdit() {
    */
   const dishPickerText = (() => {
     const cur = stores[storeIdx]
-    if (!cur) return '请先选择门店'
+    // 门店选择器已不在本页 ⇒ 这一句必须说清**去哪儿选**，否则用户在这一屏找不到入口
+    if (!cur) return '请先在左上角选择门店'
     if (dishesFailed) return '菜品加载失败，点此重试'
     if (dishesStoreId !== cur.id) return '菜品加载中…'
     if (!dishes.length) return '该门店还没有菜品，请先添加'
@@ -788,19 +791,37 @@ export default function CreationEdit() {
 
         <View className='cedit__new-head'>
           <Text className='cedit__new-kicker'>NEW PROJECT</Text>
-          <Text className='cedit__new-title'>今天想为哪道菜拍一条？</Text>
+          <Text className='cedit__new-title'>每天5分钟坚持同城曝光！</Text>
           {/* 原来这里的副标题（「选好门店、菜品和表达方向，AI 会帮你…」）已挪到页脚做小字提醒。
               它说的是「接下来要做什么」，摆在标题下方会先于表单占掉一屏注意力；
               而且带「AI」的说法在这里是多余的 —— 按钮和页脚已经说清会发生什么。 */}
         </View>
 
-        <View className='cedit__card'>
-          <View className='cedit__field'>
-            <Text className='cedit__label'>门店</Text>
-            <Picker mode='selector' range={stores.map((s) => s.name)} onChange={onStoreChange}>
-              <View className='cedit__picker'>{stores[storeIdx]?.name || '请选择门店'}</View>
-            </Picker>
+        {/* ── 流量款独立入口（2026-09-21 从创作列表页挪到标题下面）──
+            它是「今天该蹭什么话题」，和下面那张表单（某门店的某道菜）**不是同一类东西**；
+            摆在标题正下方，用户一进创作页就能看到「不拍菜、每天也能发一条」这条路。
+            ⚠ 生成中（autoRunning）不渲染：那时页面正跑着一次生成，点它会把用户带走，
+              只剩一个没人看的等待态（同一段里其他控件之所以能留，是因为它们都不离开本页）。 */}
+        {!autoRunning && (
+          <View className='cedit__topic' hoverClass='ds-hover--press' onClick={onOpenTraffic}>
+            <View className='cedit__topic-icon'>
+              <t-icon name='cloud' size='38rpx' />
+            </View>
+            <View className='cedit__topic-main'>
+              <View className='cedit__topic-head'>
+                <Text className='cedit__topic-title'>流量款 · 跟热点</Text>
+                <Text className='cedit__topic-new'>新</Text>
+              </View>
+              <Text className='cedit__topic-desc'>不用选门店和菜品，跟着节气、节日和当下话题出文案与分镜</Text>
+            </View>
+            <t-icon name='chevron-right' size='36rpx' />
           </View>
+        )}
+
+        <View className='cedit__card'>
+          {/* ★ 这里**没有**「门店」字段（2026-09-21 删）：门店由顶上的 StoreSwitcher 决定，
+              本页只负责「这道菜」。同一页放两个门店选择器，用户会以为是两件事，
+              而且两个都写全局门店时谁生效取决于点的顺序 ⇒ 表现为「换了一家没生效」。 */}
           <View className='cedit__field'>
             <Text className='cedit__label'>菜品</Text>
             {/* 必选：range 里不再有「不指定」这一项，所以下标与 dishes 一一对应，

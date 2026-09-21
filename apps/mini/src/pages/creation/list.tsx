@@ -234,8 +234,8 @@ export default function CreationList() {
   const onOpen = (id: string, mode?: string) =>
     Taro.navigateTo({ url: mode === 'TOPIC' ? `/pages/creation/traffic?id=${id}` : `/pages/creation/edit?id=${id}` })
 
-  /** 流量款独立入口：不选门店、不选菜品，靠节气/节日/时令出稿。话题稿与菜品稿是两条链路 */
-  const onOpenTraffic = () => Taro.navigateTo({ url: '/pages/creation/traffic' })
+  // ⚠ 原来的 `onOpenTraffic`（列表页的流量款入口）已于 2026-09-21 随卡片一起挪到
+  //   `pages/creation/edit`。列表里 mode=TOPIC 的卡片仍走上面的 `onOpen` 分流。
 
   /** 动作统一收口：成功提示 + 重载。列表是唯一数据源，不在本地增删（避免与服务端不一致） */
   const runAction = async (fn: () => Promise<unknown>, okText: string) => {
@@ -282,23 +282,11 @@ export default function CreationList() {
       {/* 这句话紧跟门店筛选，作为当前门店内容区的说明 */}
       <Text className='clist__intro'>每一条视频，都是一次客流机会</Text>
 
-      {/* ── 流量款独立入口 ──
-          放在列表最上方是因为它和下面那串卡片**不是同一类东西**：下面每条都挂在某个门店的
-          某个菜品上，而它是「今天该蹭什么话题」——不选门店、不选菜品。
-          放进「新建创作」里面做成一款，用户会以为还得先选菜（而那正是要拆掉的东西）。 */}
-      <View className='clist__topic' hoverClass='ds-hover--press' onClick={onOpenTraffic}>
-        <View className='clist__topic-icon'>
-          <t-icon name='cloud' size='38rpx' />
-        </View>
-        <View className='clist__topic-main'>
-          <View className='clist__topic-head'>
-            <Text className='clist__topic-title'>流量款 · 跟热点</Text>
-            <Text className='clist__topic-new'>新</Text>
-          </View>
-          <Text className='clist__topic-desc'>不用选门店和菜品，跟着节气、节日和当下话题出文案与分镜</Text>
-        </View>
-        <t-icon name='chevron-right' size='36rpx' />
-      </View>
+      {/* ⚠ 流量款入口卡 2026-09-21 已挪到**创作页**（`pages/creation/edit`）的标题下面：
+          那一页的标题就是「每天5分钟坚持同城曝光！」，入口摆在它下面语义才对得上；
+          留在列表页会变成「一进创作 tab 就先看到一条不属于当前门店的东西」。
+          本页仍有两条去话题稿的路：下面列表里 mode=TOPIC 的卡片（onOpen 分流）、
+          以及右上角「+」进创作页后的那张卡。这里不要再加回来。 */}
 
       {currentStoreId && (
         <Segmented
