@@ -117,6 +117,12 @@ PAYMENTS_ENABLED=false     # 商户号申请期间：跳过支付七项校验，
 | 11 | 小程序后台「服务器域名」修改权限 | ❓ 需管理员或有「开发设置」权限的成员 |
 | 12 | 代码已提交并推送 | ❌ **硬阻断**，见第 7 节 |
 
+> **（2026-09-21 更新）上表 5 / 6 / 12 三项已全部解除**，此处按当时实测留存不改写单元格：
+> · 第 5 项 `api.dspcz.top` A 记录**已补**，且 HTTPS 已上线（`https://api.dspcz.top/healthz` → **200**）；
+> · 第 6 项 安全组 **80 / 443 已放行**（外网实测 443 返回 `HTTP/2 200`、80 → 301 跳 https）；
+> · 第 12 项 代码已提交并推送（远端与本地一致）。
+> 第 7 项（手机号快速验证）与第 11 项（服务器域名修改权限）仍待你在后台确认 —— **这两项只能人工点，脚本替不了**。
+
 **域名规划**（一个主域名切两个子域，都要 HTTPS）：
 
 ```
@@ -413,6 +419,45 @@ curl -sS https://api.<你的域名>/healthz     # 期望 {"code":0,...,"data":{"
 
 > 微信要求 TLS 1.2+，证书链必须完整。certbot 的 fullchain.pem 已包含中间证书，配置里已指向它，不要改成 cert.pem。
 
+### ★ HTTPS 实况与自动续期（2026-09-21 实测）
+
+上面那套 `certbot --nginx` 是通用写法；**本项目实际落地的是一条更省事的路线**，差别值得记住：
+
+| 项 | 实际做法 | 为什么不照通用写法 |
+|---|---|---|
+| 申请方式 | `certbot certonly --webroot -w /var/www/certbot -d api.<域名> -d admin.<域名>` | `--nginx` 会反过来改写 nginx 配置，而本项目的机型配置**以仓库 `deploy/nginx/*.conf` 为准**，被 certbot 改过就变成「仓库 = 目标态、服务器 = 被改过的态」两份不一致。为此 `deploy/nginx/*.conf` 里已预置 `location /.well-known/acme-challenge/ { root /var/www/certbot; }` |
+| 证书数量 | **一张 SAN 证书同时覆盖 api + admin** | Let's Encrypt 支持一张证书多域名；腾讯云免费证书不支持多域名/通配符 ⇒ 用 LE 少一个续期对象 |
+| 落盘目录 | `/etc/letsencrypt/live/api.dspcz.top/`（**主域名**） | 照「每个域名一个目录」的直觉配 `live/admin.<域名>/` 会**找不到文件**。两个站的 `ssl_certificate` 都指向 `live/api.dspcz.top/`（`deploy/nginx/dashuai-admin.conf` 里有注释说明） |
+| 自动续期 | `certbot.timer`（**系统自带**，每天 08:54 / 20:54 CST 各跑一次；到期前 30 天才真签发 ⇒ 天然有 ~30 天重试窗口） | 不需要自己写 cron 做续期 |
+| 续期后动作 | `renew_hook = systemctl reload nginx`（写进 `/etc/letsencrypt/renewal/<证书名>.conf`） | 续期只换文件，**不 reload nginx 就还在用内存里的旧证书** |
+| 有效期 | 90 天（LE 与腾讯云免费证书**同为 90 天**） | 「换 LE 能拿到更长期限」是**错的**；真正差别是**续期方式**（腾讯云纯手工 vs LE 全自动）。且行业新规在收短：2026-03-15 起公共 CA 上限已降到 200 天，2027-03-15 → 100 天，2029-03-15 → 47 天 |
+
+**★ 配了自动续期 ≠ 可靠。** 本服务器没有任何邮件/短信通道，certbot 续期失败只写 journal 和一个 `failed` 的 systemd 单元 —— 没人会去看，一路静默到证书过期、小程序全线请求失败。补这个缺口：
+
+```bash
+sudo bash deploy/install-cert-watch.sh          # 安装（幂等，可反复跑）
+sudo bash deploy/install-cert-watch.sh --check  # 只看当前状态
+sudo bash deploy/install-cert-watch.sh --uninstall
+```
+
+装完得到两条 **root crontab** 任务（按 `# dashuai-cert` 标记行做幂等替换，**不动同机其他任务**）：
+
+- **每天 09:17**：把「剩余天数 + 到期时间 + SAN + timer 状态」追加到 `/var/log/dashuai/cert-watch.log`；剩余 < 21 天、timer 停了、或出现 `certbot.*` failed 单元 ⇒ 打 `[WARN]` / `[FAIL]`（并返回非 0，将来接了告警通道可直接挂上）
+- **每周日 10:07**：`certbot renew --dry-run`（走 ACME staging，**不动真实证书**）→ `/var/log/dashuai/cert-renewal-drill.log`。这是唯一能**自证续期链路当前仍可用**的办法：webroot 目录被删、80 被封、DNS 被改，只有干跑才暴露。（实操提醒：一次干跑约 **3~4 分钟**，别用 2 分钟的超时窗口去等它，会误判成「卡住」——实测日志末尾会写 `Congratulations, all simulated renewals succeeded`）
+
+判活一行：
+
+```bash
+tail -3 /var/log/dashuai/cert-watch.log     # 出现 `| OK |` 即正常
+```
+
+> ⚠ **手工验证某条 cron 时，必须剥掉前 5 个调度字段**再交给 shell。
+> `sudo crontab -l | grep xxx` 拿到的是**整行**（含 `7 10 * * 0`），直接 `sh -c` 会去执行一个叫 `7` 的命令，
+> 报 `sh: 7: not found` + `rc=127` —— 那是**脚手架自己的错**，看上去却像任务失败。
+> 正确取法：`awk '{for(i=6;i<=NF;i++) printf "%s%s", $i, (i<NF?" ":"\n")}'`
+> （此法已实测：剥完再跑，`rc=0`，日志写出 `all simulated renewals succeeded`）。
+> 另：crontab 行里**不能出现 `%`**（cron 把它当换行符），所以时间戳统一用 `date --iso-8601=seconds`。
+
 ### 运营后台
 
 ```bash
@@ -577,3 +622,5 @@ bash scripts/build-weapp-prod.sh https://api.<你的域名>/api/v1
 | `deploy/nginx/dashuai-api.conf` | API 域名站点（HTTPS + 支付回调 body 直通） |
 | `deploy/nginx/dashuai-admin.conf` | 后台域名站点（静态站 + `/admin/api/v1` 反代） |
 | `scripts/build-weapp-prod.sh` | 用正式域名给小程序出包（带 HTTPS/端口校验） |
+| `deploy/install-cron.sh` | 装「存储孤儿对象回收」的每日 cron（幂等，按 `# dashuai-storage-gc` 标记行替换） |
+| `deploy/install-cert-watch.sh` | 装「证书续期守望」cron（每日剩余天数 + 每周 staging 干跑），补「续期失败无人知」这个缺口。守望脚本本体**内嵌在本文件里**，装到 `/usr/local/bin/dashuai-cert-watch.sh` —— 只维护一处，不会出现仓库版与服务器版漂移 |
