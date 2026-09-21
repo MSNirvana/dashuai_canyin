@@ -137,8 +137,8 @@ let deepseekModelId = 0n
   const chainOf = (s: (typeof scenes)[number]) =>
     [s.defaultModelId, ...(Array.isArray(s.fallbackModelIds) ? (s.fallbackModelIds as unknown[]) : []).map((v) => BigInt(v as number))]
 
-  // 默认链：所有场景都是 主GPT → 备Claude → 备DeepSeek
-  // 已知例外：storyboard_generate（大输出场景，Claude 实测不胜任）→ 见下单独断言
+  // 默认链：其余场景都是 主GPT → 备Claude → 备DeepSeek
+  // 已知例外：storyboard_generate（**大输出**场景，候选链完全不同）→ 见下单独断言
   const SPECIAL = new Set(['storyboard_generate'])
   const bad = scenes.filter((s) => {
     if (SPECIAL.has(s.code)) return false
@@ -152,15 +152,41 @@ let deepseekModelId = 0n
     }
   }
 
-  // storyboard_generate 的例外必须成立，否则「GPT 挂掉 → 该场景只能回落 3 分镜模板」
+  // storyboard_generate 的例外必须成立。
+  // ★ 2026-09-21 重定向：这条链**不再包含 GPT**（对长输出必然失败），主候选换成 DeepSeek。
+  //   依据（同一真 prompt 直连实测，绕过熔断器、上限给足）：
+  //     · gpt-5.5：极短 ping 就要 15s；长请求稳定 125s 后 HTTP 524（上游网关硬时限）
+  //     · claude-sonnet-5：max_tokens=4000 时**连续两次空正文**（finish_reason=length），
+  //       给到 12000 才成功（109.8s，out=10433）
+  //     · deepseek-v4-flash：无视 max_tokens 上限，max_tokens=4000 也能出稿，但耗时
+  //       在 60~130+ 秒之间波动 ⇒ 超时必须给到 150s
   const sb = scenes.find((s) => s.code === 'storyboard_generate')
   if (sb) {
     const c = chainOf(sb)
     check(
-      c.length === 3 && c[0] === gptModelId && c[1] === deepseekModelId && c[2] === claudeModelId,
-      'storyboard_generate 备用顺序 = [DeepSeek, Claude]（Claude 实测 105s 且空正文，不胜任该场景）',
+      c.length === 2 && c[0] === deepseekModelId && c[1] === claudeModelId,
+      'storyboard_generate 候选链 = [DeepSeek → Claude]',
+      `实际 ${JSON.stringify(c.map((v) => String(v)))}`,
     )
-    check(sb.timeoutMs >= 90_000, 'storyboard_generate 超时 ≥ 90s（DeepSeek 实测需 46s）', `实际 ${sb.timeoutMs}ms`)
+    check(
+      !c.includes(gptModelId),
+      'storyboard_generate 候选链里没有 GPT（长输出必被上游 524 掐断，留着只是白等一个超时）',
+    )
+    check(
+      sb.timeoutMs >= 150_000,
+      'storyboard_generate 超时 ≥ 150s（DeepSeek 实测 60~130+ 秒，130s 会误杀它）',
+      `实际 ${sb.timeoutMs}ms`,
+    )
+    check(
+      (sb.maxOutputTokens ?? 0) >= 10_000,
+      'storyboard_generate 输出预算 ≥ 10000（实测思考+正文需 ~10500；4000 会让严格截断的通道返回空正文）',
+      `实际 ${sb.maxOutputTokens}`,
+    )
+    check(
+      sb.maxRetries === 0,
+      'storyboard_generate 不重试（单次尝试 ~100s，重试代价大于换通道；并保证最坏 2×150s=300s 不超过前端 340s）',
+      `实际 ${sb.maxRetries}`,
+    )
   } else {
     check(false, 'storyboard_generate 场景存在')
   }

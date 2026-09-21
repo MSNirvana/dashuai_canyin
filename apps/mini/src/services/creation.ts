@@ -220,16 +220,23 @@ export function updateCreation(
  * 两个手动按钮 —— 像是刚才那次点击根本没自动生成。2026-09-16 实测就是这个形状
  * （服务端 72.4s 成功落库 6 条分镜，前端 30s 就断了）。
  *
- * 取值算法 = 该场景「候选数 × 单候选超时」，取最坏情况：
- *   · 分镜：候选 [11, 12, 7] 各 90s ⇒ 最坏 270s ⇒ 取 300s
- *   · 文案：候选 [11, 7, 12] 各 30s ⇒ 最坏 90s  ⇒ 取 120s
- * ⚠ 上限而已，正常 15~25 秒就回来；改服务端 `ai_scene.timeout_ms` 或候选数组时要同步重算。
+ * 取值算法 = 该场景「候选数 × 单候选超时 × (maxRetries+1)」，取最坏情况：
+ *   · 分镜：候选 [deepseek, claude] 各 150s、不重试 ⇒ 最坏 300s ⇒ 取 340s
+ *   · 文案：候选 [gpt, claude, deepseek] 各 30s、各重试 1 次 ⇒ 最坏 180s ⇒ 取 120s（实测够用）
+ * ⚠ 上限而已，正常 60~100 秒就回来；改服务端 `ai_scene.timeout_ms` / 候选数组 /
+ *   `max_retries` 时**必须同步重算**，否则前端会比服务端先放弃：
+ *   服务端最坏耗时一旦超过本值，用户等到的就是「前端超时」，而服务端其实成功落库了。
+ *
+ * ★ 2026-09-21 重算依据（分镜场景改配置）：`max_retries` 从 1 调成 0、
+ *   `timeout_ms` 从 90s 抬到 150s、主候选换成 deepseek-v4-flash、移除 gpt-5.5。
+ *   DeepSeek 对分镜 prompt 的实测耗时在 **60~130+ 秒**之间波动
+ *   （62.2s / 91.2s / 95.8s / 100.1s / >130s），所以 150s 上限 + 340s 前端兜底。
  *
  * 实测（2026-09-16，主通道 gpt-5.5 挂掉期间）：文案 44.9s、分镜 90.1s（三候选全败退兜底）。
  * 都远大于原来的 30 秒默认值 —— 那才是「点了生成却像没生效」的直接原因。
  */
 const COPY_TIMEOUT_MS = 120_000
-const STORYBOARD_TIMEOUT_MS = 300_000
+const STORYBOARD_TIMEOUT_MS = 340_000
 
 export function generateCopy(id: string, requestId: string, track?: CopyTrack) {
   return http.post<{
