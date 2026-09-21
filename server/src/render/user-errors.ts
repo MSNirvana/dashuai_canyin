@@ -52,6 +52,19 @@ const RULES: [RegExp, string][] = [
     /取素材大小失败|下载素材失败|导入失败|元数据|大小非法|字节数非法|上传槽位|未返回上传槽位|import registration|complete metadata/i,
     '素材上传到云端合成失败，请重试；若反复失败请换一个素材',
   ],
+  // ②½ 云端额度/计费类（2026-09-21 补）。
+  //   背景：ChatCut 侧额度耗尽时不返回 401/403（那是鉴权），而是 402 或
+  //   "insufficient credits" / "quota exceeded" 一类的文本 —— 它**不命中任何规则**，
+  //   而 userFacingRenderError 末尾有一条「够短且不像技术噪音就原样保留」的分支，
+  //   于是英文原文会被**直接展示给商户**。这里给它一个中文出口。
+  //   ⚠ 对商户统一说「服务暂不可用」：额度是**平台成本**，不是商户能操作的东西，
+  //     把「我们额度不够」告诉他既无用、又泄露了我们的供应商链路。
+  //     真实原因照旧留在 render_task.error_msg 与日志里，运维看得到。
+  //   ⚠ 必须排在 ④ 之前：ChatCut 的错误报文里常带 `MCP` 字样，先撞上 ④ 就没这条了。
+  [
+    /\b402\b|credit|quota|insufficient|billing|payment.?required|余额不足|额度/i,
+    '云端合成服务暂不可用，请稍后重试，或改用「基础生成」',
+  ],
   // ③ 任务提交/会话环节：上传会话、分片、ETag、项目与导出的 id
   [
     /分片上传|ETag|上传会话|签名地址|未返回 renderId|未返回 projectId|create_project|submit_export|upload.?session/i,
