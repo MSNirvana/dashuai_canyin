@@ -57,6 +57,18 @@ export default function CreationTraffic() {
   const [err, setErr] = useState<string | null>(null)
   /** 生成期间的「退出点」：离开页面后不再自动跳转，但请求照常跑完落库 */
   const leavingRef = useRef(false)
+  /**
+   * 本页「正在用的那条创作」的 id。
+   *
+   * ★ 为什么必须有它（2026-09-21 实测缺陷）：从创作页的「流量款」卡片进来时
+   *   `navigateTo('/pages/creation/traffic')` **不带参数** ⇒ `routeId` 恒为空串
+   *   （`useState` 只在挂载时读一次路由参数，之后不会再变）。
+   *   而本页唯一的自动刷新点 `useDidShow` 以前只认 `routeId` ⇒ 生成中途离开再回来时
+   *   **永远不补拉**：分镜在服务端已经生成成功、也已经落库，页面却停在「还没有分镜」。
+   *   实测现场：生成耗时 259 秒，用户等不及离开，回来看到的就是空分镜
+   *   （nginx 日志里分镜返回之后再无 `GET /creations/:id`，与「routeId 为空不补拉」吻合）。
+   */
+  const activeIdRef = useRef('')
 
   const load = useCallback(async (id: string) => {
     try {
@@ -72,7 +84,10 @@ export default function CreationTraffic() {
 
   useDidShow(() => {
     leavingRef.current = false
-    if (routeId) void load(routeId)
+    // ★ 用「本页正在用的 id」兜底：新建的话题稿没有 routeId（入口不带参数），
+    //   只看 routeId 会让「生成成功但页面拿不到」永久无法自愈。
+    const id = routeId || activeIdRef.current
+    if (id) void load(id)
   })
 
   /** 生成：新建 → 落库 → 出文案 → 出分镜。任一步失败都停在本页并说清断在哪一步 */
@@ -97,6 +112,9 @@ export default function CreationTraffic() {
         const updated = await updateCreation(id, { complexity })
         setDetail(updated)
       }
+      // ★ 记下本页正在用的稿子：新建的稿子没有 routeId，之后 `useDidShow` 的
+      //   补拉只能靠它，否则「生成成功但页面拿不到」无法自愈。
+      activeIdRef.current = id
 
       stepName = '文案'
       setStep('正在想今天的话题…')
@@ -107,10 +125,19 @@ export default function CreationTraffic() {
       stepName = '分镜'
       setStep('正在排分镜…')
       const board = await generateStoryboard(id, newRequestId(), complexity)
-      if (leavingRef.current) return
 
+      // ★★ 生成成果必须无条件回填 —— **不能**因为「用户中途离开过」就先 return。
+      //
+      //   反面教材（2026-09-21 实测）：原先这里先 `if (leavingRef.current) return`
+      //   再拉取，于是用户等分镜等不及（实测 259 秒）离开后，分镜虽然已在服务端
+      //   生成成功、也已经落库，但**页面与 nginx 日志里都看不到任何补拉请求**
+      //   （分镜返回后再无 `GET /creations/:id`）；再回到本页时 `routeId` 为空、
+      //   `useDidShow` 也不补拉 ⇒ 用户看到的是「还没有分镜」，
+      //   等于白等一次、白扣一次积分。分镜是这条链上最慢最贵的一步，
+      //   它的结果必须无条件落回页面；「离开过」只该影响要不要再弹提示。
       const fresh = await getCreation(id)
       setDetail(fresh)
+      if (leavingRef.current) return
 
       if (!board.parsed || board.shots.length === 0) {
         // 没有分镜就没法拍摄，停在本页让用户重试，别把他送进一个空的拍摄列表
