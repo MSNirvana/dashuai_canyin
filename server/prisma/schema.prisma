@@ -721,6 +721,16 @@ model AiProvider {
   logs   AiCallLog[]
 
   @@index([enabled, priority])
+  // ★ 2026-09-21 补声明：`ai_provider_auto_disabled_idx` 由迁移
+  //   20260921120000_add_ai_provider_auto_disabled 建立，但当时**漏了在 schema 里声明**
+  //   ⇒ 库比 schema 多一个索引。
+  //   后果不是功能问题（多一个索引不影响任何查询），而是部署安全网
+  //   `deploy/db-baseline.sh --verify` 会**永久报假警**：diff 每次都吐
+  //   `DROP INDEX ai_provider_auto_disabled_idx`，久而久之这个断言就没人信了 ——
+  //   而它恰恰是「有没有迁移被 migrate resolve 标掉却没执行」的唯一自动检查。
+  //   这里只是把库里**已经存在**的索引补声明回来。索引名按 Prisma 默认规则
+  //   （`<表>_<列>_idx`）生成，与库中完全一致 ⇒ **不需要新增迁移**。
+  @@index([autoDisabled])
   @@map("ai_provider")
 }
 
