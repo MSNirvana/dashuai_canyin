@@ -62,6 +62,7 @@ import {
   formatPersona,
   formatComboInfo,
   createCreation,
+  updateCreation,
   CONTENT_MODES,
   TOPIC_TRACK,
 } from '../src/services/creation.service.js'
@@ -606,6 +607,27 @@ if (dbReady) {
       '★ 调用方硬塞 topicCity 不生效（地域只认门店档案，留口子会让地点无法追溯）',
       `topicCity=${JSON.stringify(staleParam.topicCity)}`,
     )
+
+    // ★ 存量话题稿补快照：2026-09-21 之前，话题稿的城市是用户手填的，不填就落 null。
+    //   改成「从门店档案取」之后，那些老稿子若不补就会**永远**少一行地域钩子，而且不报错
+    //   （模型只是写得没那么接地气）。补的时机 = 下一次「保存设置」（前端点生成必走这一步）。
+    await prisma.creation.update({ where: { id: topicCreation.id }, data: { topicCity: null } })
+    const backfilled = await updateCreation(prisma, merchantId, topicCreation.id, {})
+    check(
+      backfilled.topicCity === '河北省廊坊市固安县',
+      '★ 存量话题稿（快照为 null）在保存设置时自动补上地域快照',
+      `topicCity=${JSON.stringify(backfilled.topicCity)}`,
+    )
+    // 反向：**已经取过快照的不许被改写** —— 门店改了位置不该让历史稿跟着变，
+    // 否则「同一条稿重新生成结果不可复现」，用户只会觉得是玄学。
+    await prisma.store.update({ where: { id: locStore.id }, data: { city: '石家庄市' } })
+    const keptSnapshot = await updateCreation(prisma, merchantId, topicCreation.id, {})
+    check(
+      keptSnapshot.topicCity === '河北省廊坊市固安县',
+      '★ 已有快照的话题稿不会被门店位置的变化改写（快照语义）',
+      `topicCity=${JSON.stringify(keptSnapshot.topicCity)}`,
+    )
+    await prisma.store.update({ where: { id: locStore.id }, data: { city: '廊坊市' } })
 
     // 宿主门店一个位置字段都没填 ⇒ 地域钩子整行不出现（不硬塞城市、也不去借别的门店的位置）。
     // 直接改这家临时门店的档案再还原 —— 整个临时商户跑完就删，不会污染别的用例。
