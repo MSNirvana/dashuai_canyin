@@ -192,12 +192,12 @@ export default function DishListPage() {
         <View className='dish-list__empty'>
           <Text className='dish-list__empty-kicker'>{filter === 'COMBO' ? '还没有套餐' : '还没有单菜'}</Text>
           <Text className='dish-list__empty-title'>
-            {filter === 'COMBO' ? '把几道菜组合起来，卖得更省心' : '这家店的菜单里目前只有套餐'}
+            {filter === 'COMBO' ? '几道菜组成一组，拍摄时一次选齐' : '这家店的菜品库里目前只有套餐'}
           </Text>
           <Text className='dish-list__empty-desc'>
             {filter === 'COMBO'
-              ? '套餐能一次带上主食和配菜，顾客不用逐个点，客单价也更稳。'
-              : '单菜是套餐的组成部分，可以先把常点的菜建起来。'}
+              ? '拍「一桌怎么搭配」这类视频时，一次就能把这几道菜的图挑好。'
+              : '单菜是套餐的组成，先建几道常拍的菜，就能组合成套餐。'}
           </Text>
           <View className='dish-list__empty-action' onClick={() => setFilter('ALL')}>看看全部</View>
         </View>
