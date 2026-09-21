@@ -56,7 +56,7 @@ import {
 import { renderTemplate } from '../src/ai/gateway.js'
 import { formatDateInfo, shanghaiYmd, upcomingNodes, LUNAR_FESTIVAL_MAX_YEAR } from '../src/lib/festival.js'
 // 话题方向库（流量款独立功能的时间/话题来源）
-import { formatTopicInfo, topicDirections } from '../src/lib/topic.js'
+import { formatTopicInfo, topicDirections, IDENTITY_CUTS, EVERGREEN_TOPICS } from '../src/lib/topic.js'
 import {
   buildVariables,
   formatPersona,
@@ -849,6 +849,57 @@ check(
   '内容模式注册表含 DISH / TOPIC 两种',
 )
 
+// 5.10.1 ★★ 第三轮（2026-09-21）：**口播骨架**落进流量款模板。
+//   在这一版之前，「挑一条方向」只解决了**往哪个方向写**；至于**具体怎么起承转合**，
+//   模板里只有一句笼统的「三段」。骨架是从 39 条对标视频里**下载 + 本地 ASR**
+//   拿到 35 条逐句口播之后拆出来的 —— 标题/标签层无论如何推不出来。
+check(trafficTpl.includes('【口播骨架'), '流量款含【口播骨架】段（第三轮新增，方向层给不出的那一层）')
+check(
+  ['骨架一', '骨架二', '骨架三', '骨架四'].every((s) => trafficTpl.includes(s)),
+  '流量款落了四副骨架（前三副按方向族分，第四副是时令/节点线兼兜底）',
+)
+check(
+  trafficTpl.includes('老乡线') && trafficTpl.includes('方言验证') && trafficTpl.includes('本地悬念'),
+  '四副骨架各自有名字（老乡线 / 方言验证 / 本地悬念 / 时令节点）',
+)
+check(trafficTpl.includes('城市点名'), '骨架一含「城市点名」这一步（一口气报 5~8 个地名 = 多开同城入口）')
+check(
+  trafficTpl.includes('公开常识') && trafficTpl.includes('编街道'),
+  '★ 城市点名划了边界：公开常识里的地级市/县名可以写，街道/小区/店名不许编',
+)
+check(trafficTpl.includes('区号'), '骨架二的出题优先用电话区号（如固安 0316，天然无歧义）')
+check(
+  trafficTpl.includes('口播里一个字都不要提你的生意') && trafficTpl.includes('账号名'),
+  '★ 流量款明写「口播里不提生意，卖货交给账号名和标签」（真实样本里 4/6 条就是这么做的）',
+)
+check(
+  trafficTpl.includes('4.3 字/秒') && trafficTpl.includes('砍到一半'),
+  '★ 流量款按语速给篇幅（普通话 4.3 字/秒；方言口播只有约一半语速 ⇒ 字数砍半）',
+)
+// ★ 反向断言：骨架里的示例占位只能写成 XX / A、B、C 这种纯文本。
+//   写成单花括号（`{省}`）本身不会被网关替换、也不会被 findMalformedPlaceholders 抓到
+//   （那条正则要求 `{{…}}`），但会原样出现在提示词里 —— 与「禁用清单」同一个道理，
+//   要钉的是**不许出现**，不是「应该出现」。
+check(
+  (trafficTpl.replace(/\{\{\s*\w+\s*\}\}/g, '').match(/[{}]/g) ?? []).length === 0,
+  '★ 骨架示例占位用 XX / A、B、C，不出现单花括号（不会被替换、只会原样进提示词）',
+)
+
+// 5.10.2 门店线（通用款）也补了两副「像真人」的写法。
+//   依据同一批逐字稿：门店线的真实爆款里有相当一部分**口播就是现场原话、根本不用写文案**
+//   （最短的一条 9 秒 / 23 字：「诶哥，好久没来啦，老规矩，等等等等，一样啊，两桌 18 个人」）；
+//   另一部分走「排比递进 + 落到自己店」（「饭太淡了可以加盐，感情淡了可以加钱，那生意淡了呢」）。
+const generic = TEMPLATES.find((t) => t.code === 'copy_generate')!
+check(
+  generic.tpl.includes('现场对白式') && generic.tpl.includes('段子落店式'),
+  '★ 通用款补了门店线的两副写法（现场对白式 / 段子落店式）',
+)
+check(
+  generic.tpl.includes('发布文案可以比口播长得多'),
+  '★ 通用款写明现场对白式的发布文案可以比口播长（真实样本里有一条口播 0 字、文案 100+ 字）',
+)
+check(generic.tpl.includes('4.3 字/秒'), '通用款按同一套语速参数给篇幅（80~150 字）')
+
 // 5.11 分镜这一版的核心改动：台词逐字照抄 + 一个人能拍完 + 对空值稳健
 const story = TEMPLATES.find((t) => t.code === 'storyboard_generate')!
 const storyTpl = story.tpl
@@ -937,6 +988,87 @@ check(!ti('2026-09-20T09:00:00+08:00').includes('所在地区：'), '没给位�
 check(
   !ti('2026-09-20T09:00:00+08:00', '   ').includes('所在地区：'),
   '★ 位置只给空白字符 → 视同没有（不许出现空的位置行）',
+)
+
+// 6.8.1 ★★ 地域例句必须**跟着位置走**，不许写死。
+//   原先那两句是硬编码的「咱河北的」「咱固安的」，门店在福建时提示词里就会出现
+//   一句**和自己的位置互相矛盾**的例句 —— 真跑抓到过：门店「福建省福州市台江区」，
+//   提示词给的例子却是「咱固安的」。这类矛盾不报错，只会让模型偶尔跟着例句跑偏。
+const FJ = ti('2026-09-21T09:00:00+08:00', '福建省福州市台江区')
+check(
+  FJ.includes('咱福建的') && FJ.includes('咱台江的'),
+  '★ 地域例句跟着位置走（福建门店给的是「咱福建的」「咱台江的」，不是写死的河北）',
+  FJ.split('\n').find((l) => l.startsWith('所在地区：')) ?? '',
+)
+check(
+  !FJ.includes('固安') && !FJ.includes('河北'),
+  '★★ 福建门店的 topicInfo 里完全不出现「河北 / 固安」（写死例句会自相矛盾）',
+)
+check(
+  ti('2026-09-21T09:00:00+08:00', '固安县').includes('咱固安的'),
+  '单级位置（只填了区县）也能取出一条例句',
+)
+
+// 6.9 ★★ 常驻基线：**地域身份线每天必出**，且永远在第一位。
+//   一份 39 条真实对标清单里，地域身份族（省级身份／老乡／本地区县／方言）占「同城热点」组
+//   的 61.5%，是这一档真正的主引擎。它一旦混进 EVERGREEN_TOPICS 的按天轮转，
+//   就只在十几组里轮到 1 组 —— 等于把主力方向摊薄成约 1/15（原实现实测错配 6~9 倍），
+//   而且**全程不报错**：方向照常产出、其余用例全绿，只是主力方向大部分天里根本不出现。
+const identityIdx = (x: string[]) => x.findIndex((d) => (IDENTITY_CUTS as readonly string[]).includes(d))
+check(identityIdx(day1) === 0, '★ 地域身份线是每天的第一条方向（常驻基线，不进轮转池）', day1.join(' ｜ '))
+check(identityIdx(oct) === 0, '★ 2026-10-20 那天基线同样在第一位', oct.join(' ｜ '))
+check(
+  IDENTITY_CUTS.length >= 3,
+  `基线自带多个「切口」（实得 ${IDENTITY_CUTS.length} 个）—— 只写死一句会让用户连着几天看到同一句话`,
+)
+// 切口按天轮转：7 天里至少换过 3 种；而且换出来的必须**都还是**地域身份线（换族 = 基线断档）
+const cuts7 = [0, 1, 2, 3, 4, 5, 6].map(
+  (i) => topicDirections(at(`2026-09-${String(20 + i).padStart(2, '0')}T09:00:00+08:00`))[0]!,
+)
+check(
+  new Set(cuts7).size >= 3,
+  `★ 基线的「切口」在 7 天里至少换过 3 种（实得 ${new Set(cuts7).size} 种）`,
+  cuts7.join(' ｜ '),
+)
+check(
+  cuts7.every((d) => (IDENTITY_CUTS as readonly string[]).includes(d)),
+  '★ 基线只在地域身份线**内部**换切口，不许换成别族方向',
+)
+
+// 6.10 ★ 反向：地域身份**不许**同时留在轮转池里。
+//   留在池子里 = 有的天出两条地域身份方向、有的天一条都不出，两头都不对。
+const everPool = EVERGREEN_TOPICS.flat()
+check(
+  !everPool.some((d) => (IDENTITY_CUTS as readonly string[]).includes(d)),
+  '★ 地域身份线没有同时留在轮转池里（留在池子里 = 主力方向被重新摊薄）',
+)
+check(
+  everPool.some((d) => d.includes('区号') || d.includes('对个暗号')),
+  '轮转池里有「方言验证 / 对暗号」这一族（骨架二的落点）',
+)
+check(
+  everPool.some((d) => d.includes('老规矩') || d.includes('该退了')),
+  '轮转池里有「本地老规矩 / 同城争议」这一族（骨架三的落点）',
+)
+// 每一句都要能当第一句话直接念 —— 写成「亲情 / 归属感」这种标签，模型只会写回播报腔，
+// 而消灭播报腔正是这一档的全部目的（所以长度也一起钉：短到 4 个字的必然是标签）。
+check(
+  everPool.every((d) => d.length >= 8),
+  '★ 每条方向都是能直接开口的句子（长度 ≥8 字），不是「亲情 / 归属感」这类标签',
+  everPool.filter((d) => d.length < 8).join(' ｜ '),
+)
+
+// 6.11 ★ topicInfo 要把第 1 条标成「主力方向」。不标出来，模型会平均地在几条里随手挑，
+//   把占 61.5% 的主力方向当成四选一的备选 —— 这一条是 §6.9 那个改动的**出口**，
+//   光在库里排序、不写进提示词，模型是看不到的。
+check(
+  ti('2026-09-20T09:00:00+08:00').includes('主力方向'),
+  '★ topicInfo 把第 1 条标成「主力方向」（否则排序在库里、模型看不到）',
+)
+check(
+  ti('2026-09-20T09:00:00+08:00', '河北省廊坊市固安县').includes('主力方向') &&
+    !ti('2026-09-20T09:00:00+08:00', '河北省廊坊市固安县').includes('{{'),
+  '带位置时「主力方向」标注同样在，且无残留占位符',
 )
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
