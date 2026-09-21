@@ -25,6 +25,11 @@ apps/admin/.npm-cache/
 apps/admin/npm-cache/
 server/storage/
 
+# outputs/：本地产物落地目录（成片抽帧图、代码审查/依赖评估报告、生成的 patch、口播稿 json）。
+# 这些东西是「某一次操作的输出」，不是源码：抽帧图会随成片变、报告是一次性的。
+# ★ 从未被跟踪过，加进来是为了避免 `git add -A` 之类误收（其中有 130KB+ 的逐字稿 json）。
+outputs/
+
 # docker compose 的本地/服务器专属覆盖（卷名、项目名、生产强口令等），
 # 绝不能提交 —— 里面是"只对某台机器成立"的东西，提交了会部署到服务器上。
 docker-compose.override.yml
