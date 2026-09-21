@@ -23,6 +23,7 @@ import AppLayout from './layouts/AppLayout'
  */
 const LoginPage = lazy(() => import('./pages/Login'))
 const DashboardPage = lazy(() => import('./pages/Dashboard'))
+const OpsAlertsPage = lazy(() => import('./pages/OpsAlerts'))
 const MerchantsPage = lazy(() => import('./pages/Merchants'))
 const MerchantDetailPage = lazy(() => import('./pages/MerchantDetail'))
 const BeanPackagesPage = lazy(() => import('./pages/BeanPackages'))
@@ -64,6 +65,7 @@ export default function App() {
         >
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/ops-alerts" element={<OpsAlertsPage />} />
           <Route path="/merchants" element={<MerchantsPage />} />
           <Route path="/merchants/:id" element={<MerchantDetailPage />} />
           <Route path="/bean-packages" element={<BeanPackagesPage />} />

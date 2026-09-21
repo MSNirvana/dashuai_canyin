@@ -2,6 +2,11 @@ html, body, #root { height: 100%; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f6fa; }
 
 .app-layout { display: flex; min-height: 100vh; }
+/* ★ 让内容区能「缩得比内容更窄」再靠自身 overflow:auto 滚动。
+   flex 子项默认 min-width:auto = 内容的最小宽度 ⇒ 一张宽表格（如运维告警页 7 列合计 1100px）
+   会把内容区顶到 1148px，超过视口可用宽度时整页出现横向滚动条，顶栏的「管理员 / 退出登录」
+   被推出屏幕外。加 min-width:0 之后由 .app-layout__content 自己滚，外壳不再被撑开。 */
+.app-layout > .t-layout__content { min-width: 0; }
 .app-layout__sider { width: 220px; background: #001529; color: #fff; flex-shrink: 0; }
 .app-layout__sider .logo { padding: 24px 16px; font-size: 18px; font-weight: 600; text-align: center; border-bottom: 1px solid #1f2d3d; }
 .app-layout__main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -69,3 +74,43 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft
   border: 1px dashed #d5d5d5; border-radius: 6px; background: #fafafa;
 }
 .upload-field__actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+
+/* ── 运维告警（后台页 + 顶栏横幅 + 菜单角标） ──────────────────────────────
+   配色沿用项目里已有的语义色：危险 #e1251b（.danger-text）、成功 #2ba471。
+   告警是「必须有人处理」的东西，所以顶栏横幅刻意做成实心红底而不是淡色描边 ——
+   淡色提示在密集的后台界面里会被当成装饰忽略掉。 */
+.ops-alert-count {
+  margin-left: 10px; padding: 2px 10px; font-size: 13px; font-weight: 500;
+  color: #fff; background: #e1251b; border-radius: 10px;
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
+}
+.ops-alert-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; font-size: 13px; line-height: 1.5; cursor: pointer;
+  border: 1px solid #f5c2c0; border-radius: 14px;
+  color: #b3261e; background: #fdeceb; font-family: inherit;
+}
+.ops-alert-pill:hover { background: #fbdcd9; }
+/* 有 CRITICAL 时整块转成实心红：一眼能分出「有钱卡住了」与「只是通道抖动」 */
+.ops-alert-pill--critical { color: #fff; background: #e1251b; border-color: #c81f16; }
+.ops-alert-pill--critical:hover { background: #c81f16; }
+.ops-alert-banner {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+  padding: 10px 14px; font-size: 13px; line-height: 1.8; color: #b3261e;
+  background: #fdeceb; border: 1px solid #f5c2c0; border-left: 3px solid #e1251b; border-radius: 6px;
+}
+.menu-label-with-badge { display: inline-flex; align-items: center; gap: 6px; }
+.ops-alert-code {
+  padding: 1px 5px; font-size: 12px; color: #0052d9;
+  background: #eef4ff; border-radius: 4px; word-break: break-all;
+}
+.ops-alert-ref { font-size: 12px; word-break: break-all; }
+/* 告警码 + 关联单号那一行：挂在标题/详情下面，替代两个独立列（列一多每列都窄到没法读） */
+.ops-alert-meta {
+  margin-top: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+/* 告警详情经常带换行（后端拼的多行事实），必须保留换行且能断长串（订单号 / 路径） */
+.ops-alert-detail {
+  margin-top: 4px; font-size: 12px; line-height: 1.7; color: #888;
+  white-space: pre-wrap; word-break: break-all;
+}

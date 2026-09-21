@@ -1,5 +1,5 @@
 import { Suspense } from 'react'
-import { Layout, Menu, Button } from 'tdesign-react'
+import { Layout, Menu, Button, Badge } from 'tdesign-react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   DashboardIcon,
@@ -14,12 +14,19 @@ import {
   TimeIcon,
   ImageIcon,
   AssignmentUserIcon,
+  ErrorCircleFilledIcon,
 } from 'tdesign-icons-react'
 import { useAuth } from '../context/AuthContext'
 import RouteFallback from '../components/RouteFallback'
+import { useOpsAlertSummary } from '../lib/ops-alert'
+
+/** 告警页路径。顶栏横幅与菜单角标都指它，抽出来免得两处写岔 */
+const ALERTS_PATH = '/ops-alerts'
 
 const MENU = [
   { label: '仪表盘', icon: <DashboardIcon />, path: '/dashboard' },
+  // ★ 放在第二个：告警是「必须有人处理」的东西，埋在菜单中段等于没有
+  { label: '运维告警', icon: <ErrorCircleFilledIcon />, path: ALERTS_PATH },
   { label: '商家管理', icon: <UserCircleIcon />, path: '/merchants' },
   { label: '加油包', icon: <MoneyIcon />, path: '/bean-packages' },
   { label: '会员套餐', icon: <MoneyIcon />, path: '/member-packages' },
@@ -47,6 +54,13 @@ export default function AppLayout() {
   const { admin, logout } = useAuth()
   const active = (path: string) =>
     loc.pathname === path || (path !== '/' && loc.pathname.startsWith(path))
+  /**
+   * 未处理告警数：每 60s 拉一次，失败静默（见 lib/ops-alert.ts 的取舍说明）。
+   * ★ 两个出口都要有 —— 只在菜单上加角标，人停在别的页面时看不见；
+   *   只在顶栏加横幅，菜单里那项又看不出有几条。
+   */
+  const { open: openAlerts, critical: criticalAlerts } = useOpsAlertSummary()
+  const showAlertBanner = openAlerts > 0 && !active(ALERTS_PATH)
 
   return (
     <Layout className="app-layout">
@@ -59,15 +73,36 @@ export default function AppLayout() {
         >
           {MENU.map((m) => (
             <Menu.MenuItem key={m.path} value={m.path} icon={m.icon}>
-              {m.label}
+              {m.path === ALERTS_PATH && openAlerts > 0 ? (
+                <span className="menu-label-with-badge">
+                  {m.label}
+                  <Badge count={openAlerts} maxCount={99} size="small" />
+                </span>
+              ) : (
+                m.label
+              )}
             </Menu.MenuItem>
           ))}
         </Menu>
       </Layout.Aside>
       <Layout.Content>
         <div className="app-layout__header">
-          <div style={{ fontSize: 14, color: '#666' }}>
-            {MENU.find((m) => active(m.path))?.label ?? '欢迎'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 14, color: '#666' }}>
+            <span>{MENU.find((m) => active(m.path))?.label ?? '欢迎'}</span>
+            {showAlertBanner && (
+              <button
+                type="button"
+                className={
+                  'ops-alert-pill' + (criticalAlerts > 0 ? ' ops-alert-pill--critical' : '')
+                }
+                onClick={() => nav(ALERTS_PATH)}
+                title="点击查看运维告警"
+              >
+                <ErrorCircleFilledIcon />
+                {criticalAlerts > 0 && <span>{criticalAlerts} 条严重 · </span>}
+                <span>未处理告警 {openAlerts} 条</span>
+              </button>
+            )}
           </div>
           <div>
             <span style={{ marginRight: 12, color: '#666' }}>
