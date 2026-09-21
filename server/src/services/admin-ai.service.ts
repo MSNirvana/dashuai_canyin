@@ -9,6 +9,8 @@ import { encryptSecret, decryptSecret, maskSecret } from '../lib/secret.js'
 import { getAdapter } from '../ai/adapters.js'
 import { assertSafeOutboundUrl } from '../lib/outbound-url.js'
 import { LIVE_SCENE_CODES } from '../ai/scene-codes.js'
+import { normalizeModelCapability } from '../ai/model-capabilities.js'
+import { HEALTH_PROBE_PROMPT, HEALTH_PROBE_MAX_OUTPUT_TOKENS } from '../ai/health-probe.js'
 import { validateTemplate, SCENE_VARIABLES } from '../ai/prompt-vars.js'
 
 export class AdminAiNotFoundError extends Error {
@@ -49,6 +51,8 @@ export interface AiProviderView {
   enabled: boolean
   priority: number
   healthStatus: string
+  /** 这行的 enabled=false 是健康体检 sweeper 自己写的（可自动恢复），不是运营手动停用 */
+  autoDisabled: boolean
   circuitOpenUntil: string | null
   lastTestAt: string | null
   lastTestLatencyMs: number | null
@@ -71,6 +75,7 @@ function providerView(p: {
   enabled: boolean
   priority: number
   healthStatus: string
+  autoDisabled: boolean
   circuitOpenUntil: Date | null
   lastTestAt: Date | null
   lastTestLatencyMs: number | null
@@ -92,6 +97,7 @@ function providerView(p: {
     enabled: p.enabled,
     priority: p.priority,
     healthStatus: p.healthStatus,
+    autoDisabled: p.autoDisabled,
     circuitOpenUntil: p.circuitOpenUntil?.toISOString() ?? null,
     lastTestAt: p.lastTestAt?.toISOString() ?? null,
     lastTestLatencyMs: p.lastTestLatencyMs,
@@ -115,6 +121,7 @@ const providerSelect = {
   enabled: true,
   priority: true,
   healthStatus: true,
+  autoDisabled: true,
   circuitOpenUntil: true,
   lastTestAt: true,
   lastTestLatencyMs: true,
@@ -161,6 +168,11 @@ export async function upsertAiProvider(
     enabled: input.enabled ?? true,
     priority: input.priority ?? 100,
     monthlyBudgetFen: input.monthlyBudgetFen ?? null,
+    // ★ 这里**故意不写** autoDisabled：改配置 ≠ 决定开关。
+    //   后台编辑表单会把当前的 enabled 原样回传（自动停用的行回传 false），若在这里清掉
+    //   autoDisabled，运营只是进来改个 Key 再保存，就会把体检的归属权静默摘掉 ——
+    //   上游其实已经恢复，这条通道却永远不会自动打开，流量长期压在更贵的备用通道上。
+    //   要显式接管开关，请走 setAiProviderEnabled（下方）。新建行由 schema 默认 false。
   }
   if (input.apiKey !== undefined && input.apiKey !== '') {
     const enc = encryptSecret(input.apiKey)
@@ -196,7 +208,15 @@ export async function setAiProviderEnabled(
   return providerView(
     await prisma.aiProvider.update({
       where: { id },
-      data: { enabled },
+      data: {
+        enabled,
+        // ★ 运营点「启用/停用」= 把这一行的开/关**收归人工**，健康体检 sweeper 从此不再碰它。
+        //   不清这一位会有两个方向都错的后果：
+        //     · 点了「停用」→ sweeper 下一轮（≤30 分钟）探测通过就把它打开，运营的动作被静默撤销；
+        //     · 点了「启用」→ 它仍是 sweeper 的，一探测失败又被自己关掉，看起来像「按钮没生效」。
+        //   注意只清这一位，不动 healthStatus —— 健康状态由探测/调用写，不由开关写。
+        autoDisabled: false,
+      },
       select: providerSelect,
     }),
   )
@@ -233,10 +253,15 @@ export async function testAiProvider(
       baseUrl: provider.baseUrl,
       apiKey,
       model: model.modelCode,
-      user: 'ping',
+      // ★ 内容型探活提示词，不是 'ping'：旧写法那个请求体的读数**不可复现**
+      //   （同一形态实测有过 200/4.9s、400、200 但耗 90s 三种结果），拿它判活判死都会错。
+      //   实测记录见 src/ai/health-probe.ts 文件头。
+      user: HEALTH_PROBE_PROMPT,
       temperature: 0,
-      maxOutputTokens: 16,
-      timeoutMs: 10_000,
+      maxOutputTokens: HEALTH_PROBE_MAX_OUTPUT_TOKENS,
+      // ★ 60s 而不是 10s：gpt-5.5 实测要 36~52s 才回完这句概括，10s 必然假失败。
+      //   上限由 nginx 的 proxy_read_timeout(300s) 兜住；test-all 是并发的，3 条通道也在 60s 内。
+      timeoutMs: 60_000,
       sceneCode: 'TEST',
     })
     const latencyMs = Date.now() - startedAt
@@ -330,7 +355,7 @@ export function modelView(m: AiModel & { provider?: { code: string; name: string
     providerId: m.providerId.toString(),
     modelCode: m.modelCode,
     displayName: m.displayName,
-    capability: m.capability,
+    capability: normalizeModelCapability(m.capability),
     maxContextTokens: m.maxContextTokens,
     maxOutputTokens: m.maxOutputTokens,
     inputPricePerMtok: m.inputPricePerMtok,
@@ -370,7 +395,9 @@ export async function upsertAiModel(
     providerId: input.providerId,
     modelCode: input.modelCode,
     displayName: input.displayName,
-    capability: input.capability ?? 'TEXT',
+    // 写入侧归一：路由的 zod enum 已经拒绝未知取值，这里是纵深防御 ——
+    // 直接调 service 的脚本（seed / setup-ai-channels）绕过路由，不该能把自由文本写进这个分类字段。
+    capability: normalizeModelCapability(input.capability),
     maxContextTokens: input.maxContextTokens ?? null,
     maxOutputTokens: input.maxOutputTokens ?? null,
     inputPricePerMtok: input.inputPricePerMtok,

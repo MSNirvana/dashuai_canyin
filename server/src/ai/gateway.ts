@@ -7,6 +7,7 @@ import { AiCallError, getAdapter, type AiUsage } from './adapters.js'
 import { CircuitBreaker } from './circuit-breaker.js'
 import { decryptSecret } from '../lib/secret.js'
 import { ceilDiv } from '../lib/decimal.js'
+import { HEALTH_PROBE_PROMPT, HEALTH_PROBE_MAX_OUTPUT_TOKENS } from './health-probe.js'
 
 export type SceneRunResult =
   | {
@@ -121,6 +122,15 @@ export class AiGateway {
       if (!model || !model.enabled) continue
 
       const provider = model.provider
+      // ★ 这几个 `continue` 都是**静默跳过**：用户看不到「第 2 条候选被跳过了」，
+      //   只能感知到总耗时变长（前端超时 = 候选数 × 单候选超时 × (maxRetries+1)）。
+      //   `!provider.enabled` 这一条是 30 分钟健康体检（ai-health.service.ts）自动停用的
+      //   落点：被停用的通道在**请求路径**上从此刻起不再被调用（这正是我们要的），
+      //   但也意味着**它再也不会被请求路径探到** —— 所以体检必须自己按
+      //   `enabled = 1 OR auto_disabled = 1` 扫，而不是只看 enabled。
+      //   ⚠ 若以后有人给体检加上「重排候选链 / 按可用性前置过滤」，务必把这里的
+      //   `!provider.enabled` 判断提到上面 `findUnique` **之前**做前置过滤；
+      //   留在原地的话，一条 2 候选的链会变成「实际只跑 1 条」，而前端仍按 2 条算超时。
       if (!provider.enabled || provider.healthStatus === 'DOWN') continue
       if (await this.circuit.isOpen(provider.id)) continue
       if (
@@ -221,8 +231,27 @@ export class AiGateway {
     }
   }
 
-  /** 后台通道测试：极短探测请求，不参与毛利统计，也不触发熔断阈值之外的副作用 */
-  async testProvider(providerId: bigint, modelCode?: string): Promise<{
+  /**
+   * 后台通道测试：极短探测请求，不参与毛利统计，也不触发熔断阈值之外的副作用。
+   *
+   * 也被 30 分钟一轮的健康体检 sweeper（ai-health.service.ts）复用，所以有三个可选开关：
+   *   · `timeoutMs`  —— 探活超时。★ 默认 10s 对**推理模型**是偏短的：gpt-5.5 这类模型
+   *     即使被要求只回 30 字，实测也要 36~52s（见 health-probe.ts 的实测记录）。
+   *     体检若照搬 10s，会把「只是慢」误判成「不可用」并自动停用，进而把流量全压到
+   *     更贵的备用通道 —— 所以体检显式放宽（见 PROBE_TIMEOUT_MS）。
+   *   · `writeLog`    —— 是否落一条 status='TEST' 的 ai_call_log。后台手动测试要留痕；
+   *     体检是**常驻**的（3 通道 × 每 30 分钟），落下来只会把调用日志刷满真实使用记录。
+   *     体检关掉它，探活结果仍写在 provider.lastTest* 上。
+   *   · `user`        —— 提示词。默认是内容型探活提示词（health-probe.ts）。
+   *     ⚠ 绝不要改回 'ping'：这个请求体的读数**不可复现**（实测同一形态有过
+   *     200/4.9s、400、200 但耗 90s 三种结果，见 health-probe.ts 文件头）
+   *     ⇒ 拿它判活或判死都会错。
+   */
+  async testProvider(
+    providerId: bigint,
+    modelCode?: string,
+    opts: { timeoutMs?: number; writeLog?: boolean; user?: string } = {},
+  ): Promise<{
     status: 'SUCCESS' | 'FAILED'
     latencyMs: number
     modelReturned?: string
@@ -252,9 +281,9 @@ export class AiGateway {
         baseUrl: provider.baseUrl,
         apiKey: decryptSecret(provider.apiKeyEncrypted),
         model: model.modelCode,
-        user: 'ping',
-        maxOutputTokens: 16,
-        timeoutMs: 10_000,
+        user: opts.user ?? HEALTH_PROBE_PROMPT,
+        maxOutputTokens: HEALTH_PROBE_MAX_OUTPUT_TOKENS,
+        timeoutMs: opts.timeoutMs ?? 10_000,
       })
       const latencyMs = Date.now() - startedAt
       const costFen = computeCostFen(
@@ -272,20 +301,22 @@ export class AiGateway {
           lastTestError: null,
         },
       })
-      await this.prisma.aiCallLog.create({
-        data: {
-          sceneCode: 'PROVIDER_TEST',
-          requestId: `test-${provider.id}-${Date.now()}`,
-          providerId: provider.id,
-          modelId: model.id,
-          promptTokens: res.usage.promptTokens,
-          completionTokens: res.usage.completionTokens,
-          totalTokens: res.usage.promptTokens + res.usage.completionTokens,
-          costFen,
-          latencyMs,
-          status: 'TEST',
-        },
-      })
+      if (opts.writeLog !== false) {
+        await this.prisma.aiCallLog.create({
+          data: {
+            sceneCode: 'PROVIDER_TEST',
+            requestId: `test-${provider.id}-${Date.now()}`,
+            providerId: provider.id,
+            modelId: model.id,
+            promptTokens: res.usage.promptTokens,
+            completionTokens: res.usage.completionTokens,
+            totalTokens: res.usage.promptTokens + res.usage.completionTokens,
+            costFen,
+            latencyMs,
+            status: 'TEST',
+          },
+        })
+      }
       return {
         status: 'SUCCESS',
         latencyMs,

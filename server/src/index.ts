@@ -234,6 +234,17 @@ async function bootstrap() {
     })
     .catch((e) => console.error('[ai-recovery] 启动失败:', (e as Error).message))
 
+  // AI 通道健康体检：30 分钟一轮探活，连续失败自动停用、探测恢复后自动启用。
+  // ★ 只动 ai_provider 的 enabled / healthStatus / auto_disabled，**不重排候选链、不改 priority**
+  //   （原因见 src/ai/ai-health.service.ts 文件头：priority 不参与故障转移，重排等于改 ai_scene）。
+  void import('./ai/ai-health.service.js')
+    .then((m) => {
+      m.startAiHealthSweeper(prisma)
+      process.once('SIGINT', m.stopAiHealthSweeper)
+      process.once('SIGTERM', m.stopAiHealthSweeper)
+    })
+    .catch((e) => console.error('[ai-health] 启动失败:', (e as Error).message))
+
   // 支付对账：主动查微信，把「回调丢了 = 钱付了没权益」的单补回来。
   // 微信回调不是可靠通道（notify_url 域名被备案拦、网络抖动、重试耗尽都会静默丢），
   // 这是用户端主动查单之外的第二条兜底；两条都复用 markOrderPaid() 的终态 CAS，重复不会双发。

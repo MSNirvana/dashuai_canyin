@@ -23,6 +23,8 @@ import { tutorialCategoryEnum } from '../lib/tutorial-categories.js'
 import * as adminSvc from '../services/admin.service.js'
 import * as adminExtra from '../services/admin-extra.service.js'
 import * as adminAi from '../services/admin-ai.service.js'
+import { MODEL_CAPABILITIES } from '../ai/model-capabilities.js'
+import { triggerHealthSweep } from '../ai/ai-health.service.js'
 import * as workSvc from '../services/work.service.js'
 import * as publicAssetSvc from '../services/public-asset.service.js'
 import * as tutorialSvc from '../services/tutorial.service.js'
@@ -591,6 +593,32 @@ router.post('/ai/providers/test-all', async (_req, res) => {
   }
 })
 
+/**
+ * 手动触发一轮「健康体检」（与常驻 sweeper 同一段逻辑）。
+ *
+ * ★ 它是**异步**的：只答应「已开始」，不等结果。
+ *   为什么不能同步返回：一轮体检最坏约 18.5 分钟（3 通道 × (4 × 90s + 3 × 3s)），
+ *   而 nginx 的 `proxy_read_timeout` 是 300s（dashuai-api.conf 与 00-dashuai-dev-ip.conf
+ *   两处都是）。同步等只会拿到 504，而**通道其实已经被改了状态** —— 运营看到「失败」，
+ *   实际生效了，这比不做更糟。结果通过 provider.last_test_* 与列表里的启用状态呈现。
+ *
+ * 为什么要有这个端点（而不只是让运营等 30 分钟）：
+ *   自动停用/启用是**会改线上路由**的动作，运营改完通道配置后必须能立刻验证
+ *   「它现在会怎么判」，否则只能靠等和猜。
+ *
+ * ⚠ 它是**写操作**（会真的停用/启用通道），不是只读的「测试全部」。
+ *   与 test-all 的区别：test-all 只写 last_test_*；这里还会把失败通道置
+ *   enabled=false（auto_disabled=true），并尝试恢复被自动停用的通道。
+ */
+router.post('/ai/providers/health-sweep', async (_req, res) => {
+  try {
+    ok(res, triggerHealthSweep(prisma))
+  } catch (e) {
+    console.error('[admin] 触发健康体检失败:', e)
+    fail(res, 500, '触发健康体检失败', 500)
+  }
+})
+
 router.get('/ai/models', async (req, res) => {
   try {
     const providerId = optionalIdParam(req.query.providerId, 'providerId')
@@ -605,7 +633,7 @@ const modelInput = z.object({
   providerId: z.union([z.string(), z.number()]),
   modelCode: z.string().min(1).max(128),
   displayName: z.string().min(1).max(128),
-  capability: z.string().optional(),
+  capability: z.enum(MODEL_CAPABILITIES).optional(),
   maxContextTokens: z.number().int().nullable().optional(),
   maxOutputTokens: z.number().int().nullable().optional(),
   inputPricePerMtok: z.number().int().min(0),

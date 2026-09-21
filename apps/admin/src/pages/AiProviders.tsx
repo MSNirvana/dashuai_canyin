@@ -18,6 +18,8 @@ interface Provider {
   enabled: boolean
   priority: number
   healthStatus: string
+  /** 这行的 enabled=false 是健康体检 sweeper 自己写的（探测恢复后会自动打开），不是运营手动停用 */
+  autoDisabled: boolean
   lastTestAt: string | null
   lastTestLatencyMs: number | null
   lastTestStatus: string | null
@@ -38,11 +40,22 @@ const EMPTY: Partial<Provider> & { apiKey: string } = {
   monthlyBudgetFen: null,
 }
 
+/**
+ * 手动健康体检（POST /ai/providers/health-sweep）的返回体。
+ * ★ 它只回「有没有启动」，不回结果：一轮体检最坏约 18.5 分钟（3 通道 × 4 轮 × 90s），
+ *   远超 nginx 的 300s 读超时，同步等只会拿到 504 而通道其实已经改了状态。
+ */
+interface SweepTriggerResult {
+  started: boolean
+  reason?: string
+}
+
 export default function AiProvidersPage() {
   const [list, setList] = useState<Provider[]>([])
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Provider | null>(null)
   const [form, setForm] = useState({ ...EMPTY })
+  const [sweeping, setSweeping] = useState(false)
 
   const load = () =>
     request<Provider[]>({ url: '/ai/providers' })
@@ -84,6 +97,30 @@ export default function AiProvidersPage() {
     } catch {}
   }
 
+  /**
+   * 手动触发一轮健康体检（与常驻 sweeper 同一段逻辑）。
+   * 与「一键测试全部」的区别：那个只读（只写 last_test_*），这个**会真的改启用状态**。
+   */
+  const healthSweep = async () => {
+    setSweeping(true)
+    try {
+      const r = await request<SweepTriggerResult>({ url: '/ai/providers/health-sweep', method: 'POST' })
+      if (!r.started) {
+        message.warning(r.reason ?? '体检已在进行中，请稍后刷新列表')
+        return
+      }
+      message.success('体检已在后台开始（通常 1~3 分钟）')
+      // 体检是异步跑的：列表里的「最近测试 / 启用 / 健康」会在过程中逐步变化，
+      // 这里自动刷两次，省得运营自己盯着按刷新（按钮的 loading 只管触发那一次请求）。
+      window.setTimeout(() => void load(), 20_000)
+      window.setTimeout(() => void load(), 90_000)
+    } catch {
+      // 拦截器已提示；这里只负责恢复按钮状态
+    } finally {
+      setSweeping(false)
+    }
+  }
+
   const toggle = async (p: Provider) => {
     try {
       await request({ url: `/ai/providers/${p.id}/enable`, method: 'POST', data: { enabled: !p.enabled } })
@@ -101,6 +138,12 @@ export default function AiProvidersPage() {
       url: `/ai/providers/${p.id}/test`,
       method: 'POST',
       data: { modelCode: m.modelCode },
+      // ★ 必须放大超时：探活请求体改成了内容型。旧写法发 'ping'，其读数**不可复现**
+      //   （同一形态实测有过 200/4.9s、400、200 但耗 90s），拿它判活判死都会错；
+      //   而内容型 gpt-5.5 实测要 36~52s 才回完，
+      //   而 axios 实例默认 30s —— 不放大就会「前端先放弃、后端成功」，
+      //   症状正是运营最熟悉的那句「点了没反应」。服务端 nginx 读超时是 300s。
+      timeout: 120_000,
     })
     if (r.ok) message.success(`${p.name} 测试成功 · 延迟 ${r.latencyMs}ms`)
     else message.error(`${p.name} 失败: ${r.errorMsg ?? '未知'}`)
@@ -111,6 +154,8 @@ export default function AiProvidersPage() {
     const r = await request<{ providerId: string; code: string; ok: boolean; latencyMs: number; errorMsg: string | null }[]>({
       url: '/ai/providers/test-all',
       method: 'POST',
+      // 同上：并发测 3 条通道，慢的那条（gpt）本身就要 ~45s
+      timeout: 180_000,
     })
     void load()
     const ok = r.filter((x) => x.ok).length
@@ -130,9 +175,16 @@ export default function AiProvidersPage() {
         <h2>AI 通道配置</h2>
         <Space>
           <Button onClick={testAll}>一键测试全部</Button>
+          <Button onClick={healthSweep} loading={sweeping}>立即体检</Button>
           <Button theme="primary" onClick={startCreate}>新增通道</Button>
         </Space>
       </div>
+      <p className="muted" style={{ margin: '-8px 0 12px' }}>
+        健康体检每 30 分钟自动跑一轮：探测失败的通道会被自动停用（标记「自动停用」），探测恢复后自动启用。
+        最近 24 小时内有真实调用成功的通道不会被探测、也不会被停用（真实证据优先于合成探测）。
+        它只改启用状态，不改候选顺序、不改优先级。「立即体检」在后台异步执行（约 1~3 分钟），会真的改启用状态。
+        「一键测试全部」是只读的，只刷新最近测试结果。
+      </p>
       <DataTable
         rowKey="id"
         data={list}
@@ -144,7 +196,16 @@ export default function AiProvidersPage() {
           { colKey: 'baseUrl', title: 'Base URL', render: ({ row }: any) => <code style={{ fontSize: 12 }}>{row.baseUrl}</code> },
           { colKey: 'apiKeyMasked', title: 'Key (掩码)', width: 150, render: ({ row }: any) => row.apiKeyMasked ?? <span className="muted">未配</span> },
           { colKey: 'priority', title: '优先级', width: 90 },
-          { colKey: 'enabled', title: '启用', width: 80, render: ({ row }: any) => row.enabled ? <Tag theme="success">是</Tag> : <Tag>否</Tag> },
+          { colKey: 'enabled', title: '启用', width: 110,
+            render: ({ row }: any) =>
+              !row?.id ? '启用'
+                : row.enabled ? <Tag theme="success">是</Tag>
+                  : row.autoDisabled ? (
+                    // 与人工「停用」必须长得不一样：否则运营会以为是自己关的，去点「启用」
+                    // 却又被下一轮体检关掉，看起来像「按钮没生效」
+                    <Tag theme="warning">自动停用</Tag>
+                  ) : <Tag>否</Tag>,
+          },
           { colKey: 'healthStatus', title: '健康', width: 110,
             render: ({ row }: any) => <Tag theme={row.healthStatus === 'DOWN' ? 'danger' : row.healthStatus === 'DEGRADED' ? 'warning' : 'success'}>{row.healthStatus}</Tag>,
           },
@@ -196,7 +257,16 @@ export default function AiProvidersPage() {
           <Field label="月预算(分)">
             <InputNumber value={form.monthlyBudgetFen ?? undefined} onChange={(v) => setForm((s) => ({ ...s, monthlyBudgetFen: (v as number) ?? null }))} placeholder="不填=不限" />
           </Field>
-          <Field label="启用"><Switch value={!!form.enabled} onChange={(v) => setForm((s) => ({ ...s, enabled: v as boolean }))} /></Field>
+          <Field
+            label="启用"
+            help={
+              editing?.autoDisabled
+                ? '当前是「自动停用」（健康体检写入）。保存本表单不会改变归属，体检通过后仍会自动启用；要长期停用（不再自动恢复）请回列表点该行的「停用」。'
+                : undefined
+            }
+          >
+            <Switch value={!!form.enabled} onChange={(v) => setForm((s) => ({ ...s, enabled: v as boolean }))} />
+          </Field>
         </FieldGroup>
       </Dialog>
     </div>

@@ -653,6 +653,14 @@ model AiProvider {
   enabled           Boolean   @default(true)
   priority          Int       @default(100)
   healthStatus      String    @default("HEALTHY") @map("health_status") @db.VarChar(16)
+  /// 这行 enabled=false 是**健康体检 sweeper 自己**写下的（不是运营点的）。
+  /// ★ 为什么必须单独加一列，而不是「enabled=false 就一律当成是 sweeper 关的」：
+  ///   运营手动停用要**永久**生效（成本太高 / 已废弃 / 换供应商），而 sweeper 的停用必须
+  ///   在下次探测通过后自动打开。两种「关」混在一个布尔位上，sweeper 一定会在某个凌晨
+  ///   把运营故意关掉的通道打开 —— 或者反过来，永远不再探活一个其实能用的通道。
+  ///   ⇒ 语义：autoDisabled=true 表示「sweeper 拥有这行的开/关」，运营任何一次显式写 enabled
+  ///     都会把它清回 false（运营意图优先，sweeper 从此不再碰它的开/关）。
+  autoDisabled      Boolean   @default(false) @map("auto_disabled")
   circuitOpenUntil  DateTime? @map("circuit_open_until") @db.DateTime(3)
   lastTestAt        DateTime? @map("last_test_at") @db.DateTime(3)
   lastTestLatencyMs Int?      @map("last_test_latency_ms")
