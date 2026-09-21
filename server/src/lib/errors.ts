@@ -24,6 +24,12 @@ import {
   RenderGradeUnavailableError,
 } from '../services/render.service.js'
 import { SubscriptionRequiredError, StorageQuotaExceededError } from '../services/subscription.service.js'
+import {
+  PublishMaterialUnavailableError,
+  PublishMaterialNotReadyError,
+  PublishCoverFailedError,
+} from '../services/publish-material.service.js'
+import { RemoteImageError } from '../services/remote-asset.service.js'
 import { fail } from './result.js'
 import { RequestConflictError } from '../domain/request.js'
 import { InvalidObjectKeyError } from './object-key.js'
@@ -67,6 +73,17 @@ function mapError(e: unknown): MappedError {
   if (e instanceof RenderNoAssetError) return { code: 4003, message: e.message, httpStatus: 400 }
   if (e instanceof RenderAlreadyRunningError) return { code: 4001, message: e.message, httpStatus: 409 }
   if (e instanceof RenderDurationUnknownError) return { code: 4009, message: e.message, httpStatus: 400 }
+  // ── 发布素材（标题/文案/封面）──
+  // 2012：功能未开通（场景没建/停用）—— 部署配置问题，不是用户操作问题，故 503 而非 400
+  if (e instanceof PublishMaterialUnavailableError) return { code: 2012, message: e.message, httpStatus: 503 }
+  // 2013：前置条件没满足（还没生成过标题与文案就想单独重出封面）
+  if (e instanceof PublishMaterialNotReadyError) return { code: 2013, message: e.message, httpStatus: 400 }
+  // 2014：出图这次没成功。message 由服务层收敛过（不含图床地址/curl 原文），可以直接回给用户
+  if (e instanceof PublishCoverFailedError) return { code: 2014, message: e.message, httpStatus: 502 }
+  // ★ RemoteImageError 的 message 里**带图床域名与 curl 原文**（第三方内部信息），
+  //   正常路径已在 publish-material.service 里被收成 PublishCoverFailedError，
+  //   这里兜住漏网的那种：回一句固定文案，原文只进日志。
+  if (e instanceof RemoteImageError) return { code: 2014, message: '封面生成失败，请稍后重试', httpStatus: 502 }
   return { code: 5001, message: '服务器内部错误，请稍后重试', httpStatus: 500, unexpected: true }
 }
 

@@ -23,6 +23,12 @@ export const SCENE = {
   copy_quality: 'copy_quality',
   copy_recommend: 'copy_recommend',
   storyboard_generate: 'storyboard_generate',
+  // 发布素材（文本 + 图像两个场景，链路见 publish-material.service.ts）。
+  // ★ publish_cover 是本项目**第一个图像场景**：它的候选模型必须是
+  //   `ai_model.capability='IMAGE'`，且 `ai_scene.kind='IMAGE'`（网关据此选图像适配器）。
+  //   把文本模型配进它的候选链，网关会在调用前就跳过并给出明确原因，不会「拿一段文字当图片」。
+  publish_material: 'publish_material',
+  publish_cover: 'publish_cover',
 
   // ── 待接入：提示词已配好，业务方尚未引用 ──
   script_polish: 'script_polish',
@@ -42,4 +48,15 @@ export const LIVE_SCENE_CODES: readonly SceneCode[] = [
   SCENE.copy_quality,
   SCENE.copy_recommend,
   SCENE.storyboard_generate,
+  SCENE.publish_material,
+  SCENE.publish_cover,
 ]
+
+/**
+ * 图像场景（`ai_scene.kind='IMAGE'`）的候选**必须**是 `capability='IMAGE'` 的模型。
+ *
+ * ★ 单独导出成集合而不是就地写 `scene.kind === 'IMAGE'` 判断：后台「AI 场景」页的模型下拉
+ *   目前不按能力过滤（运营能看到全部模型），所以下面这条约束是**唯一**的防线：
+ *   配错了就在调用前跳过并报明确原因，而不是调错协议、扣了钱、拿回一段没法用的文本。
+ */
+export const IMAGE_SCENE_CODES: readonly SceneCode[] = [SCENE.publish_cover]

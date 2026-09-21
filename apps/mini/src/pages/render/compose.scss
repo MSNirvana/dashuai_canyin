@@ -268,6 +268,26 @@
   &__history {
     padding: 24rpx 0;
     border-top: 1rpx solid var(--td-component-border);
+    /* 可点区与右侧按钮是**兄弟**，所以这里横向排布（详见 compose.tsx 那段注释） */
+    display: flex;
+    align-items: center;
+    gap: 16rpx;
+  }
+  /* 可点区域（描述块）。flex:1 让它吃掉除按钮外的全部宽度 ——
+     点击区越大越好点，而按钮保持自己的尺寸不被拉伸。 */
+  &__history-main {
+    flex: 1;
+    min-width: 0;
+    padding: 8rpx 0;
+  }
+  /* 「看视频 / 发布素材 ›」：不给它做按钮样式，它是**提示**不是第二个操作 ——
+     真按钮只有一个（在页内播放），两个同权按钮会让人不知道该点哪个。 */
+  &__history-go {
+    display: block;
+    margin-top: 10rpx;
+    font-size: 22rpx;
+    font-weight: 600;
+    color: var(--td-brand-color);
   }
   &__history-heading {
     display: flex;
@@ -432,6 +452,93 @@
     border-radius: 6rpx;
     padding: 2rpx 10rpx;
   }
+  /* 展开 / 收起开关（分镜素材区默认收起，见 compose.tsx 的 clipsOpen）
+     ★ 内边距撑到 ≥88rpx 的点击高度：它和「去上传素材」同处一行，
+       太小的点击区会让人反复点到旁边的按钮。 */
+  &__clipstoggle {
+    flex: none;
+    padding: 14rpx 20rpx;
+    font-size: 24rpx;
+    font-weight: 600;
+    color: var(--td-brand-color);
+    background: var(--td-bg-color-page);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+  }
+  &__clipshint {
+    display: block;
+    margin-top: 16rpx;
+    font-size: 22rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-placeholder);
+  }
+
+  /* ── 分镜素材：就地放大播放的浮层 ──
+     ★ position: fixed（不是 absolute）：页面是可滚动的，浮层必须相对**视口**定位，
+       否则滚到列表中部打开时会出现在屏幕外。
+     ★ z-index 高于底部固定条（&__bar 所在 .ds-footer），否则浮层下面还露着半截按钮。 */
+  &__lightbox {
+    position: fixed;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  &__lightboxmask {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.82);
+  }
+  &__lightboxcard {
+    position: relative;
+    width: 92%;
+  }
+  &__lightboxhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16rpx;
+    margin-bottom: 16rpx;
+  }
+  &__lightboxtitle {
+    font-size: 28rpx;
+    font-weight: 600;
+    color: #fff;
+  }
+  &__lightboxclose {
+    flex: none;
+    padding: 10rpx 24rpx;
+    font-size: 26rpx;
+    color: #fff;
+    border: 1rpx solid rgba(255, 255, 255, 0.45);
+    border-radius: var(--td-radius-default);
+  }
+  /* 竖版素材按 3:4 给高度：定高 + objectFit=contain ⇒ 横竖素材都能完整看到、不变形 */
+  &__lightboxvideo {
+    width: 100%;
+    height: 62vh;
+    background: #000;
+    border-radius: var(--td-radius-default);
+  }
+  &__lightboxph {
+    height: 62vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: var(--td-radius-default);
+  }
+  &__lightboxphtext {
+    font-size: 26rpx;
+    color: rgba(255, 255, 255, 0.85);
+  }
 
   &__recolor {
     margin-top: 24rpx;
@@ -441,6 +548,96 @@
     font-size: 26rpx;
     font-weight: 600;
     border-radius: var(--td-radius-default);
+  }
+
+  /* ── 发布素材（标题 / 封面 / 文案） ── */
+  &__pubhint {
+    display: block;
+    margin-top: 8rpx;
+    font-size: 23rpx;
+    line-height: 1.7;
+    color: var(--td-text-color-secondary);
+  }
+  &__pubcost {
+    display: block;
+    margin-top: 10rpx;
+    font-size: 22rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-placeholder);
+  }
+  &__pubbtn {
+    margin-top: 20rpx;
+  }
+  /* 封面按 3:4 展示：服务端出图就是 3:4（1086×1448），用固定高 + aspectFill 会裁掉构图，
+     所以用 aspectFill + 3:4 的高度（宽度 100% ⇒ 高度 = 宽 × 4/3）。
+     ★ 不写 aspectFit：竖版图在横向容器里 letterbox 会留两条大白边，看着像加载失败。 */
+  &__pubcover {
+    width: 100%;
+    height: 812rpx;
+    margin-top: 20rpx;
+    border-radius: var(--td-radius-default);
+    background: var(--td-bg-color-page);
+  }
+  &__pubcoverph {
+    height: 240rpx;
+    margin-top: 20rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 40rpx;
+    text-align: center;
+    font-size: 23rpx;
+    line-height: 1.7;
+    color: var(--td-text-color-placeholder);
+    background: var(--td-bg-color-page);
+    border-radius: var(--td-radius-default);
+  }
+  &__pubcoverphtext {
+    font-size: 23rpx;
+  }
+  &__pubblock {
+    margin-top: 24rpx;
+  }
+  &__publabel {
+    display: block;
+    margin-bottom: 8rpx;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__pubtitle {
+    display: block;
+    font-size: 30rpx;
+    font-weight: 650;
+    line-height: 1.5;
+    color: var(--td-text-color-primary);
+    user-select: text;
+  }
+  &__pubcaption {
+    display: block;
+    font-size: 25rpx;
+    line-height: 1.75;
+    color: var(--td-text-color-primary);
+    user-select: text;
+    word-break: break-all;
+    /* 文案带 \n（服务端保留换行），文本节点默认会压成空格 —— 话题标签会挤成一行 */
+    white-space: pre-wrap;
+  }
+  &__pubacts {
+    margin-top: 24rpx;
+  }
+  &__pubnotice {
+    display: block;
+    margin-top: 16rpx;
+    font-size: 22rpx;
+    line-height: 1.6;
+    color: var(--td-text-color-secondary);
+  }
+  &__puberr {
+    display: block;
+    margin-top: 16rpx;
+    font-size: 22rpx;
+    line-height: 1.6;
+    color: var(--ds-danger);
   }
 
   /* ── 底部条 ── */

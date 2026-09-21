@@ -12,6 +12,7 @@ import {
   COPY_QUALITY_PROMPT, COPY_QUALITY_FALLBACK,
   COPY_RECOMMEND_PROMPT, COPY_RECOMMEND_FALLBACK,
   STORY_PROMPT, STORY_FALLBACK,
+  PUBLISH_SCENES,
 } from './prompts.js'
 
 const prisma = new PrismaClient()
@@ -74,8 +75,10 @@ const LEGACY_PACKAGE_NAMES = [
 ]
 
 // ================= AI 通道 / 模型 / 场景 =================
-// mock-local：本地联调协议，不发起网络请求，直接返回可解析样例（文案/分镜 JSON）
-// deepseek  ：真实 OpenAI 兼容通道，默认 disabled；填入 DEEPSEEK_API_KEY 并 enabled=true 即可上线
+// ★ MOCK / 本地联调通道已于 2026-09-21 移除（理由见下面 seedAi() 第一段注释）——
+//   现在唯一合法的 AI 通道是**真实通道**（每场景必须指向 enabled=true 的真实供应商）。
+// deepseek  ：历史真实通道，本文件按 disabled 建出来做占位；填入 DEEPSEEK_API_KEY 并 enabled=true 才可用。
+//             ★ 当前生产实际走的是 `scripts/setup-ai-channels.ts` 配的三通道（tokenbox 系）。
 // 文案四款 + 分镜的提示词模板已抽到 ./prompts.ts（唯一源，含变量契约说明）：
 // 改完模板后用 npm run ai-prompts:sync 同步进库（只更新模板字段，不动价格/模型等运营配置）。
 
@@ -160,41 +163,19 @@ async function seedAi() {
   // 场景上的 beanPrice 不再是「标价」，而是**单次冻结上限**（财务安全网）：
   // 实际扣费按成本计算且不超过该上限，超出部分由平台承担。后台可调。
 
-  // 1) MOCK 本地通道（默认启用）
-  const mockProvider = await prisma.aiProvider.upsert({
-    where: { code: 'mock-local' },
-    create: {
-      code: 'mock-local',
-      name: '本地联调（MOCK）',
-      providerType: 'MOCK',
-      protocol: 'MOCK',
-      baseUrl: 'mock://local',
-      apiKeyEncrypted: encryptSecret('mock-local-key'),
-      apiKeyMasked: 'mock****local',
-      enabled: true,
-      priority: 100,
-      healthStatus: 'HEALTHY',
-    },
-    update: {
-      name: '本地联调（MOCK）',
-      protocol: 'MOCK',
-      enabled: true,
-      priority: 100,
-      // 每次 seed 都重写密钥：避免历史密文用旧主密钥加密后无法解密，导致 AI 全失败
-      apiKeyEncrypted: encryptSecret('mock-local-key'),
-      apiKeyMasked: 'mock****local',
-    },
-  })
-  const mockChat = await prisma.aiModel.upsert({
-    where: { providerId_modelCode: { providerId: mockProvider.id, modelCode: 'mock-chat' } },
-    create: { providerId: mockProvider.id, modelCode: 'mock-chat', displayName: 'Mock 对话', capability: 'TEXT', inputPricePerMtok: 100, outputPricePerMtok: 400, enabled: true },
-    update: { displayName: 'Mock 对话', inputPricePerMtok: 100, outputPricePerMtok: 400, enabled: true },
-  })
-  const mockReasoner = await prisma.aiModel.upsert({
-    where: { providerId_modelCode: { providerId: mockProvider.id, modelCode: 'mock-reasoner' } },
-    create: { providerId: mockProvider.id, modelCode: 'mock-reasoner', displayName: 'Mock 推理', capability: 'TEXT', inputPricePerMtok: 100, outputPricePerMtok: 400, enabled: true },
-    update: { displayName: 'Mock 推理', inputPricePerMtok: 100, outputPricePerMtok: 400, enabled: true },
-  })
+  // 1) 本地联调 MOCK 通道 —— ★ 2026-09-21 已整块移除，**不要再加回来**。
+  //
+  //    移除理由（三条都真实发生过）：
+  //    a) 它的适配器**不发网络请求、直接返回可解析的样例文案/分镜 JSON** ⇒ 一旦真实通道
+  //       全部不可用，网关会「成功」拿到一段看起来正常、实际是占位样例的文案交给商户。
+  //    b) 本文件把 `mockChat.id` 写进**每个场景**的 `fallbackModelIds` ⇒ 上一行那个后果
+  //       会发生在**所有 11 个场景**上，而不只是联调时。
+  //    c) 这里用的是 upsert 且 update 里强制 `enabled: true` ⇒ 任何人在**生产库**跑一次
+  //       `npm run db:seed`，都会把线下配好的真实通道链覆盖掉、并把 MOCK 重新点亮。
+  //
+  //    要联调就配一个真实通道（`scripts/setup-ai-channels.ts`，Key 走环境变量），
+  //    没有 Key 的环境**允许 AI 直接失败**（落兜底模板、不扣积分），这比返回假文案正确。
+
 
   // 2) DeepSeek 真实通道（默认禁用；配置密钥后启用）
   const dsKey = process.env.DEEPSEEK_API_KEY ?? 'sk-demo-placeholder'
@@ -227,20 +208,34 @@ async function seedAi() {
 
   // 3) 场景：文案（通用 + 四款）/ 分镜 / 合成增强
   //
-  //    模型绑定策略：优先绑定「已启用的真实模型」（如后台配好的 gpt-5.6-sol / DeepSeek），
-  //    找不到才退回 MOCK，保证本地无 key 也能跑通全链路。
-  //    ⚠ 必须保证 defaultModelId 指向 enabled=true 的 provider：若指向已停用通道，
-  //      网关候选链会直接 ALL_FAILED 落兜底模板（前端提示「AI 繁忙」）。
-  const realModel = await prisma.aiModel.findFirst({
-    where: { enabled: true, provider: { enabled: true, protocol: { not: 'MOCK' } } },
+  //    模型绑定策略：只绑定「当前已启用的真实模型」（真实通道由 `ai-channels:setup` 配好）。
+  //    ★ 2026-09-21 起**没有 MOCK 兜底**：一个真实模型都找不到时**直接中止**，
+  //      绝不悄悄绑到占位模型上 —— 「找不到模型」是配置问题，应该在 seed 这一步就炸出来，
+  //      而不是让商户在生成时收到一段样例文案。
+  //    ⚠ defaultModelId 必须指向 enabled=true 的 provider：指向已停用通道时，
+  //      网关候选链会 ALL_FAILED 落兜底模板（前端提示「AI 繁忙」）。
+  //
+  //    ★ 2026-09-21 加 `capability: 'TEXT'`（原本只按 protocol 过滤）：
+  //      出图模型（capability='IMAGE'）现在也在 ai_model 里，而它**恰好是 id 最小的那个**
+  //      （新通道后建、但 id 由自增决定，顺序不可依赖）。一旦它被排到 realModels[0]，
+  //      下面所有**文本**场景的主候选都会变成出图模型 —— 网关的能力闸门会把它们全部跳过，
+  //      表现是「所有 AI 功能集体失败，原因却是『候选是图像模型』」。
+  //      按能力过滤后，文本场景与图像场景各取所需，互不污染。
+  const realModels = await prisma.aiModel.findMany({
+    where: { enabled: true, capability: 'TEXT', provider: { enabled: true, protocol: { not: 'MOCK' } } },
     orderBy: { id: 'asc' },
   })
-  const defaultModelId = realModel?.id ?? mockChat.id
-  const fallbackModelIds = realModel ? [Number(mockChat.id)] : [Number(mockReasoner.id)]
+  if (realModels.length === 0) {
+    throw new Error(
+      '[seed] 找不到任何「已启用的真实模型」⇒ 拒绝为 AI 场景绑定模型（已移除 MOCK 兜底）。\n' +
+        '        正解：先配真实通道 —— cd server && npx tsx scripts/setup-ai-channels.ts（Key 走 TB_*_KEY 环境变量）。\n' +
+        '        ★ 不要引入 MOCK / 占位模型来「让链路先跑起来」：它返回的是样例文案，会被当成真结果扣费交付。',
+    )
+  }
+  const defaultModelId = realModels[0]!.id
+  const fallbackModelIds = realModels.slice(1).map((m) => Number(m.id))
   console.log(
-    realModel
-      ? `[seed] AI 场景默认模型 = ${realModel.modelCode} (id=${realModel.id})，MOCK 作兜底`
-      : '[seed] 未找到已启用的真实模型，AI 场景回退到 MOCK 通道（本地联调）',
+    `[seed] AI 场景候选链 = ${realModels.map((m) => m.modelCode).join(' → ')}（无 MOCK 兜底）`,
   )
 
   // 文案四款与小程序端「流量款 / 介绍款 / 质量款 / 种草型」一一对应，提示词均可在后台「AI 场景」页修改
@@ -312,7 +307,48 @@ async function seedAi() {
     await prisma.aiScene.upsert({ where: { code: s.code }, create: { code: s.code, ...data }, update: data })
   }
 
-  console.log(`[seed] ai providers: 2, models: 4, scenes: ${copyScenes.length + 1 + synthScenes.length}`)
+  // 4) 发布素材（文本 + 出图）
+  //
+  //    ★ 这两个场景的定义（模板 / fallback / kind / beanPrice / timeout）**全部来自
+  //      prompts.ts 的 PUBLISH_SCENES**，seed 里不再抄一份 —— 与上面 synthScenes 的写法
+  //      不同是刻意的：上面那批的提示词在 seed 和 prompts.ts 里各有一份，已经是个隐患。
+  //    ★ kind 必须落库：它决定网关走 chat/completions 还是 images/generations。
+  const imageModels = await prisma.aiModel.findMany({
+    where: { enabled: true, capability: 'IMAGE', provider: { enabled: true, protocol: { not: 'MOCK' } } },
+    orderBy: { id: 'asc' },
+  })
+  for (const s of PUBLISH_SCENES) {
+    const isImage = s.kind === 'IMAGE'
+    // 图像场景只在有出图模型时才挂它；没有就退回文本模型并**明确告警**（见下）。
+    const model = isImage ? (imageModels[0] ?? realModels[0]!) : realModels[0]!
+    const data = {
+      name: s.name,
+      kind: s.kind,
+      promptTemplate: s.prompt,
+      fallbackTemplate: s.fallback,
+      defaultModelId: model.id,
+      // 图像场景不给备用候选：文本模型在这条链上只会在能力闸门被跳过
+      fallbackModelIds: isImage ? [] : fallbackModelIds,
+      beanPrice: BigInt(s.beanPrice),
+      timeoutMs: s.timeoutMs,
+      maxRetries: s.maxRetries,
+      temperature: s.temperature,
+      maxOutputTokens: s.maxOutputTokens,
+      enabled: true,
+    }
+    await prisma.aiScene.upsert({ where: { code: s.code }, create: { code: s.code, ...data }, update: data })
+    if (isImage && !imageModels[0]) {
+      console.log(
+        `[seed] ⚠ ${s.code}（出图场景）暂时挂在文本模型 ${model.modelCode} 上 —— ` +
+          `它现在**用不了**（网关会以「候选是文本模型，图像场景需要 IMAGE」拒绝）。\n` +
+          `        要开通：TB_IMAGE_KEY=sk-xxx npx tsx scripts/setup-ai-channels.ts`,
+      )
+    }
+  }
+
+  console.log(
+    `[seed] ai providers: 2, models: 4, scenes: ${copyScenes.length + 1 + synthScenes.length + PUBLISH_SCENES.length}`,
+  )
 }
 
 // ================= 演示商家（开发登录用） =================

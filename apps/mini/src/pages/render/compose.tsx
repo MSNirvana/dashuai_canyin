@@ -3,6 +3,10 @@ import { View, Text, Button, Slider, Video, Image, Switch, Textarea } from '@tar
 import Taro, { useDidShow, useDidHide } from '@tarojs/taro'
 import { getCreation, type CreationDetail } from '../../services/creation'
 import {
+  getPublishMaterial, generatePublishMaterial,
+  type PublishMaterial, type PublishMaterialEstimate,
+} from '../../services/publish-material'
+import {
   submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl, getGradeCapabilities, previewColor,
   type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions, CHATCUT_VOICES, isVoiceOff,
 } from '../../services/render'
@@ -14,6 +18,15 @@ import ProgressLine from '../../components/progress-line'
 import './compose.scss'
 
 const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
+/**
+ * 每次生成类调用都新建一个 requestId（与 creation/edit.tsx 同款）。
+ * ★ 不要"省事"复用一个模块级常量：服务端按 requestId 做幂等 ——
+ *   复用同一个 id 会让第二次点击被当成**重放**，直接返回上次结果且不再扣费，
+ *   表现就是「改了参数再点生成，什么都没变」。
+ */
+function newRequestId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
+}
 const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3 }
 /**
  * AI 档的 6 项选项（2026-09-21 已全部接到真实原语，面板放回）。
@@ -217,6 +230,43 @@ export default function RenderCompose() {
   const [renders, setRenders] = useState<RenderTask[]>([])
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [selectedResult, setSelectedResult] = useState<RenderTask | null>(null)
+  /**
+   * 分镜素材区是否展开。
+   *
+   * ★ 默认**收起**（需求原话：「分镜素材默认做一个收缩，用户可以点击打开」）。
+   *   理由不只是"少占屏"：这块是「挑素材、检查画面」用的，而进这个页面的主目的是出片 ——
+   *   一屏 2 列的全部分镜会把播放窗和生成按钮全顶到屏幕外，反而让主路径更难走。
+   * ★ 不持久化到 storage：这里存的是「临时看一眼」的状态，写盘后一旦因为别的原因
+   *   残留成「展开」，用户下次进来又变成满屏素材 —— 而这类"记忆"没人会去关。
+   */
+  const [clipsOpen, setClipsOpen] = useState(false)
+  /**
+   * 就地放大播放的那一条分镜素材。
+   *
+   * ★ 为什么是浮层而不是「把下方播放窗换掉 + 滚过去」（改之前的行为）：
+   *   用户在素材列表中部点一下，页面会整页跳走 —— 看起来像点了别的东西，
+   *   而且下方播放窗里原本正在看的**成片/调色预览被顶掉了**，看完还得再切回来。
+   *   浮层没有滚动、没有副作用，关掉就回到原来的位置与原来的播放内容。
+   */
+  const [shotPreview, setShotPreview] = useState<{
+    assetId: string
+    seq: number
+    shotType: string
+    url: string | null
+    error: string
+  } | null>(null)
+  /**
+   * 发布素材（标题 / 封面 / 文案）。挂在**创作**上，每个创作一份 ——
+   * 所以它是「这条创作的发布包装」，与具体某个档位的成片无关。
+   */
+  const [publishMat, setPublishMat] = useState<PublishMaterial | null>(null)
+  const [publishEstimate, setPublishEstimate] = useState<PublishMaterialEstimate | null>(null)
+  const [publishLoading, setPublishLoading] = useState(false)
+  const [publishError, setPublishError] = useState('')
+  /** 服务端给的一句补充说明（封面失败 / 文本降级 / 重复提交），与 publishError 分开：它是提示不是错误 */
+  const [publishNotice, setPublishNotice] = useState('')
+  /** 生成已过去的毫秒数（只用于把"在动"显示出来，见下面 ProgressLine 的说明） */
+  const [pubElapsed, setPubElapsed] = useState(0)
   const [submittingGrades, setSubmittingGrades] = useState<RenderGrade[]>([])
   const submitting = submittingGrades.includes(grade)
   const [saving, setSaving] = useState(false)
@@ -372,9 +422,19 @@ export default function RenderCompose() {
     const version = ++loadVersion.current
     setLoadError('')
     try {
-      const [creation, tasks] = await Promise.all([getCreation(target), listRenders(target)])
+      const [creation, tasks, publishRes] = await Promise.all([
+        getCreation(target),
+        listRenders(target),
+        // ★ 发布素材**不让整页加载失败**：它是"发出去"那一步的产物，视频与生成入口才是主体。
+        //   拉不到就当"还没生成过"（下面还有单独的错误提示），绝不能因此白屏。
+        getPublishMaterial(target).catch(() => null),
+      ])
       if (version !== loadVersion.current) return
       setDetail(creation)
+      if (publishRes) {
+        setPublishMat(publishRes.material)
+        setPublishEstimate(publishRes.estimate)
+      }
       const sorted = [...tasks].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       setRenders(sorted)
       // 优先恢复离开时正在看的那条；它已不可用（被删/失败）才退回最新一条成功任务
@@ -470,6 +530,22 @@ export default function RenderCompose() {
   }, [])
 
   /**
+   * 发布素材生成中的计时器（只为把"在动"显示出来，见发布素材卡片里 ProgressLine 的说明）。
+   * ★ 依赖是 publishLoading：结束时立刻停表并归零，否则下一次生成会从上一秒的位置继续。
+   * ★ 必须 clearInterval：小程序页面里漏掉的 interval 会在页面卸载后继续跑，
+   *   每 500ms 触发一次 setState（已卸载的组件）—— 这是最典型的"越用越卡"来源。
+   */
+  useEffect(() => {
+    if (!publishLoading) {
+      setPubElapsed(0)
+      return
+    }
+    const started = Date.now()
+    const timer = setInterval(() => setPubElapsed(Date.now() - started), 500)
+    return () => clearInterval(timer)
+  }, [publishLoading])
+
+  /**
    * 活跃任务集合的指纹，用作轮询 effect 的依赖。
    * 用**字符串**而不是数组：数组每次渲染都是新引用，effect 会无限重启（每 3 秒重排一次计时器，
    * 轮询实际永远不会按节奏跑）。集合内容不变时这个串不变。
@@ -541,43 +617,82 @@ export default function RenderCompose() {
     return () => { cancelled = true; if (timer) clearTimeout(timer) }
   }, [visible, id, activeIdsKey, pollRetry, refreshMe, showResult])
 
-  /**
-   * 把播放窗滚进视野（**仅当它当前不在屏幕上**）。
-   *
-   * 「分镜素材」在播放窗**上方**，列表一长、或用户正停在列表中部时，播放窗其实在屏幕外 ——
-   * 点缩略图会「看着没反应」，用户以为按钮坏了。所以预览前先把播放窗露出来。
-   * ★ 已经在视野里就**绝不滚**：无条件滚动会把用户当前位置顶掉，列表短时尤其恼人。
-   * ★ 注意 boundingClientRect 的 top/bottom 是**视口相对**坐标（不是文档坐标），
-   *   所以直接和 windowHeight 比即可，不需要再叠一次 scrollTop。
-   */
-  const revealPreview = () => {
-    Taro.createSelectorQuery()
-      .select('#rcompose-preview')
-      .boundingClientRect()
-      .exec((res) => {
-        const rect = res[0] as { top: number; bottom: number } | null
-        if (!rect) return
-        const windowHeight = Taro.getWindowInfo().windowHeight
-        if (rect.top >= 0 && rect.bottom <= windowHeight) return
-        void Taro.pageScrollTo({ selector: '#rcompose-preview', duration: 260 })
-      })
-  }
+  /** 浮层里那条请求的代次：连点两条素材时，先回来的旧响应不许覆盖后点开的那条 */
+  const shotPreviewVersion = useRef(0)
 
-  const previewShot = async (assetId: string) => {
-    clearColorPreview()
-    const version = ++previewVersion.current
-    setSelectedResult(null)
-    setVideoUrl(null)
-    setResultError('')
-    // 先滚再拉地址：等待期间用户就能看到播放窗，不至于「点了没反应」
-    revealPreview()
+  /**
+   * 点分镜素材 → 就地放大播放。
+   *
+   * ★ 先把浮层打开（loading 态）再去取地址：取签名地址要 0.3~1s，
+   *   等地址回来才出现浮层 = 用户以为没点上，然后又点一次。
+   * ★ 不碰 `videoUrl` / `selectedResult`：下方播放窗里正在看的成片或调色预览
+   *   **必须留着**，看素材只是"瞟一眼"，关掉浮层要回到原样。
+   * ★ 地址每次现取（不缓存）：签名 URL 会过期，缓存到 state 里跨天就是「打不开的黑屏」。
+   */
+  const openShotPreview = async (shot: { assetId: string | null; seq: number; shotType: string | null }) => {
+    if (!shot.assetId) return
+    const assetId = shot.assetId
+    const version = ++shotPreviewVersion.current
+    setShotPreview({ assetId, seq: shot.seq, shotType: shot.shotType || '通用', url: null, error: '' })
     try {
       const result = await getPlayUrl(assetId)
-      if (version !== previewVersion.current) return
+      if (version !== shotPreviewVersion.current) return
       if (!result.url) throw new Error('素材暂不可播放')
-      setVideoUrl(result.url)
+      setShotPreview((cur) => (cur && cur.assetId === assetId ? { ...cur, url: result.url! } : cur))
     } catch (error) {
-      if (version === previewVersion.current) setResultError((error as Error).message || '素材播放失败，请重试')
+      if (version !== shotPreviewVersion.current) return
+      const message = (error as Error).message || '素材播放失败，请重试'
+      setShotPreview((cur) => (cur && cur.assetId === assetId ? { ...cur, error: message } : cur))
+    }
+  }
+
+  const closeShotPreview = () => {
+    // 代次 +1：关掉之后，那条还在飞的请求回来也不许把浮层重新打开
+    shotPreviewVersion.current += 1
+    setShotPreview(null)
+  }
+
+  /**
+   * 生成发布素材：标题 + 文案 + 封面（`part='COVER'` 时只重出封面）。
+   *
+   * ★ 先弹确认再发请求：封面是**固定价**（当前 300 积分/张，见 prisma/prompts.ts 的
+   *   PUBLISH_SCENES），在不知情的情况下花掉一笔相对大的积分是最容易被投诉的那种体验。
+   *   价格取服务端给的 `estimate`，不在客户端写死 —— 后台改价后这里跟着变。
+   * ★ 不假装进度：服务端是先出文本再出图（约 1 分钟），但那两段没有可订阅的进度事件，
+   *   编一个「进度条」只会让人盯着一个假的百分比。所以只说清"要等多久、在等什么"。
+   */
+  const doGeneratePublish = async (part: 'ALL' | 'COVER') => {
+    if (!id || publishLoading) return
+    const cap = publishEstimate?.textBeanCap
+    const cover = publishEstimate?.coverBeans
+    const costText =
+      part === 'COVER'
+        ? `封面固定 ${cover ?? '?'} 积分`
+        : `标题与文案最多 ${cap ?? '?'} 积分 + 封面固定 ${cover ?? '?'} 积分`
+    const { confirm } = await Taro.showModal({
+      title: part === 'COVER' ? '重新生成封面' : '生成发布素材',
+      content:
+        `${costText}。\n大约需要 1 分钟：先出标题与文案，再出封面（3:4 竖版）。\n` +
+        (part === 'COVER' ? '标题与文案会沿用已生成的那版，不会重复扣费。' : ''),
+      confirmText: '开始生成',
+      cancelText: '再想想',
+    })
+    if (!confirm) return
+
+    setPublishLoading(true)
+    setPublishError('')
+    setPublishNotice('')
+    try {
+      const r = await generatePublishMaterial(id, newRequestId(), part)
+      setPublishMat(r.material)
+      // duplicated = 同一 requestId 又打了一次（连点/重试），库里并没有再扣钱
+      setPublishNotice(r.duplicated ? '这次是重复提交，没有再扣积分。' : (r.notice ?? ''))
+      // 扣过积分就要把底部条的「可用」刷新掉，否则用户会以为没扣
+      if (!r.duplicated) void refreshMe()
+    } catch (error) {
+      setPublishError((error as Error).message || '生成失败，请稍后重试')
+    } finally {
+      setPublishLoading(false)
     }
   }
 
@@ -901,10 +1016,11 @@ export default function RenderCompose() {
         </Text>
       </View>
 
-      {/* ── 分镜素材 ── 放在播放窗**上方**：点缩略图 → 紧邻的下方播放窗出片。
-          原来它在整页最底部（在生成方式/调色/任务/成片记录之后），点了要看结果得先滚半页 ——
-          点缩略图「像没反应」的根因就在这儿。卡片紧跟页头，所以用 --lead 去掉重复的 24rpx 上边距
-          （页头自己已经有 padding-bottom: 24rpx）。 */}
+      {/* ── 分镜素材 ── 默认收起（见 clipsOpen 的说明）。
+          ★ 展开开关**只做在右侧那个按钮上**，标题行整行不绑定点击：
+            「去上传素材」按钮就在同一行里，若把 onClick 挂在父容器上，
+            在小程序里按钮的 tap 会冒泡到父节点 ⇒ 点「去上传」会顺手把列表收起来。
+            （stopPropagation 在 weapp 里不可靠，所以从结构上避开，而不是靠它。） */}
       <View className='rcompose__card rcompose__card--lead'>
         <View className='rcompose__history-heading'>
           <Text className='rcompose__sectitle'>分镜素材 · 已上传 {readyShots.length}/{detail.shots.length}</Text>
@@ -914,15 +1030,31 @@ export default function RenderCompose() {
           {!materialsReady && (
             <Button size='mini' onClick={() => Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })}>去上传素材</Button>
           )}
+          {/* 用 View 而不是 Text 承载点击：Text 的 props 里没有 hoverClass，
+              而这两个要点的元素都需要按压反馈（微信下没有 hover 态会像"点不动"） */}
+          <View
+            className='rcompose__clipstoggle'
+            hoverClass='ds-hover'
+            onClick={() => setClipsOpen((v) => !v)}
+          >
+            <Text>{clipsOpen ? '收起 ▴' : '展开 ▾'}</Text>
+          </View>
         </View>
-        {/* 一行两个。格子宽按 50% − 半个列间距算、不写死 rpx：卡片内外边距一改，
-            写死的宽度就会把第二个挤到下一行（同 dish/detail 的三列写法） */}
+        {/* 收起时给一句"这里有什么"，否则只剩一行数字，用户不知道该不该点开 */}
+        {!clipsOpen && (
+          <Text className='rcompose__clipshint'>
+            {readyShots.length > 0
+              ? '展开可以逐个看画面：点任意一格就地放大播放，不用跳走。'
+              : '还没有可用素材，先去把分镜拍完。'}
+          </Text>
+        )}
+        {clipsOpen && (
         <View className='rcompose__clips'>
           {detail.shots.map((shot) => (
             <View className='rcompose__clip' key={shot.id}>
-              {/* 整块缩略图可点即预览：两列布局里放不下一个独立的「预览」按钮，
-                  居中的播放角标已经说明它能点（点下去能否看见由 revealPreview() 保证） */}
-              <View className='rcompose__clipthumbwrap' onClick={() => shot.assetId && previewShot(shot.assetId!)}>
+              {/* 整块缩略图可点即就地放大播放（浮层），见 openShotPreview 的说明。
+                  两列布局里放不下一个独立的「预览」按钮，居中的播放角标已经说明它能点 */}
+              <View className='rcompose__clipthumbwrap' onClick={() => void openShotPreview(shot)}>
                 {shot.assetId && shot.coverUrl ? (
                   <Image className='rcompose__clipthumb' mode='aspectFill' src={shot.coverUrl} />
                 ) : (
@@ -948,10 +1080,12 @@ export default function RenderCompose() {
             </View>
           ))}
         </View>
+        )}
       </View>
 
-      {/* ── 预览 ── id 供 revealPreview() 定位用，别删 */}
-      <View className='rcompose__preview' id='rcompose-preview'>
+      {/* ── 预览 ── 这里只放「成片 / 整片调色预览」；分镜素材改成点开浮层就地播放（见 openShotPreview），
+          不再占用这个窗口 —— 否则看一条素材就要把正在看的成片顶掉 */}
+      <View className='rcompose__preview'>
         {showingStill ? (
           <>
             {/* 拖动中/请求中的近似预览：CSS 滤镜是「乘法 + 曲线」体系，与服务端 ffmpeg（YUV）
@@ -968,7 +1102,7 @@ export default function RenderCompose() {
           <Video className='rcompose__video' src={playUrl} controls autoplay={false} onError={() => setResultError('播放失败，请重试获取地址')} />
         ) : (
           <View className='rcompose__placeholder'>
-            {selectedResult ? '成片地址暂不可用，请稍后重试' : '点击上方分镜素材可预览视频'}
+            {selectedResult ? '成片地址暂不可用，请稍后重试' : '生成成片后在这里播放（素材在展开后点一下就地放大）'}
           </View>
         )}
         {!!previewBadge && <Text className='rcompose__preview-badge'>{previewBadge}</Text>}
@@ -1250,34 +1384,143 @@ export default function RenderCompose() {
           </View>
           {renders.map((task) => (
             <View className='rcompose__history' key={task.id}>
-              <View className='rcompose__history-top'>
-                <Text className='rcompose__history-title'>{gradeTitle(task.grade)}</Text>
-                <Text
-                  className={`ds-pill ${
-                    task.status === 'SUCCESS'
-                      ? 'ds-pill--green'
-                      : task.status === 'FAILED' || task.status === 'TIMEOUT'
-                        ? 'ds-pill--red-soft'
-                        : 'ds-pill--gold'
-                  }`}
-                >
-                  {STATUS_LABEL[task.status] || task.status}
+              {/* ── 可点区域 = 左半边的「描述块」，里面**不含任何按钮** ──
+                  ★ 为什么不把整行做成可点：行里还有「在本页播放」按钮，而小程序里
+                    子元素的 tap 会冒泡到父节点（stopPropagation 不可靠），
+                    整行可点 = 点播放会顺带跳走。把点击区与按钮区做成**兄弟**节点，
+                    结构上就没有冒泡关系。 */}
+              <View
+                className='rcompose__history-main'
+                hoverClass='ds-hover'
+                onClick={() =>
+                  Taro.navigateTo({ url: `/pages/render/result?id=${task.creationId}&task=${task.id}` })
+                }
+              >
+                <View className='rcompose__history-top'>
+                  <Text className='rcompose__history-title'>{gradeTitle(task.grade)}</Text>
+                  <Text
+                    className={`ds-pill ${
+                      task.status === 'SUCCESS'
+                        ? 'ds-pill--green'
+                        : task.status === 'FAILED' || task.status === 'TIMEOUT'
+                          ? 'ds-pill--red-soft'
+                          : 'ds-pill--gold'
+                    }`}
+                  >
+                    {STATUS_LABEL[task.status] || task.status}
+                  </Text>
+                </View>
+                <Text className='rcompose__history-meta'>
+                  {formatMinute(task.finishAt || task.createdAt)} · {task.status === 'SUCCESS' ? '结算' : '任务积分'} {task.beanCharged} 积分
+                </Text>
+                {/* ★ 只读 errorText（服务端已脱敏），**绝不**去读原始 error_msg：
+                    那条里会有第三方产品名、服务端本机绝对路径、HTTP 报文原文。详见
+                    apps/mini/src/services/render.ts 里 errorText 的说明。 */}
+                {task.errorText && <Text className='rcompose__history-err'>{task.errorText}</Text>}
+                <Text className='rcompose__history-go'>
+                  {task.status === 'SUCCESS' ? '看视频 / 发布素材 ›' : '查看详情 ›'}
                 </Text>
               </View>
-              <Text className='rcompose__history-meta'>
-                {formatMinute(task.finishAt || task.createdAt)} · {task.status === 'SUCCESS' ? '结算' : '任务积分'} {task.beanCharged} 积分
-              </Text>
-              {/* ★ 只读 errorText（服务端已脱敏），**绝不**去读原始 error_msg：
-                  那条里会有第三方产品名、服务端本机绝对路径、HTTP 报文原文。详见
-                  apps/mini/src/services/render.ts 里 errorText 的说明。 */}
-              {task.errorText && <Text className='rcompose__history-err'>{task.errorText}</Text>}
               {task.status === 'SUCCESS' && (
-                <Button className='rcompose__action' size='mini' onClick={() => void showResult(task)}>播放成片</Button>
+                <Button className='rcompose__action' size='mini' onClick={() => void showResult(task)}>在本页播放</Button>
               )}
             </View>
           ))}
         </View>
       )}
+
+      {/* ── 发布素材：标题 / 封面 / 文案 ──
+          放在成片记录之后，因为它是整条链路的**最后一步**（视频出来了才谈发布包装）。
+          ★ 它依赖的是**口播文案**（服务端会重新读一遍创作的门店/菜品上下文），
+            与档位、调色都无关 —— 所以没有必要跟三档/调色并排挤在一起。 */}
+      <View className='rcompose__card'>
+        <View className='rcompose__history-heading'>
+          <Text className='rcompose__sectitle'>发布素材 · 标题 / 封面 / 文案</Text>
+          {!!publishMat && !publishLoading && (
+            <Button size='mini' onClick={() => void doGeneratePublish('ALL')}>重新生成</Button>
+          )}
+        </View>
+
+        {!publishMat && !publishLoading && (
+          <>
+            <Text className='rcompose__pubhint'>
+              按这条视频的口播文案，生成可以直接发布的三样东西：标题、3:4 竖版封面、发布文案。
+            </Text>
+            {publishEstimate && (
+              <Text className='rcompose__pubcost'>
+                预计消耗：标题与文案最多 {publishEstimate.textBeanCap} 积分（按实际用量结算）
+                ＋ 封面固定 {publishEstimate.coverBeans} 积分
+              </Text>
+            )}
+            <Button
+              className='ds-btn ds-btn--primary rcompose__pubbtn'
+              onClick={() => void doGeneratePublish('ALL')}
+            >
+              生成发布素材
+            </Button>
+          </>
+        )}
+
+        {publishLoading && (
+          <>
+            <Text className='rcompose__pubhint'>
+              正在生成：先写标题与文案，再出封面。大约需要 1 分钟，请不要离开本页。
+            </Text>
+            {/* ★ 这里用「按耗时估算」的进度而不是无反馈的转圈：服务端没有可订阅的进度事件，
+                但它两步耗时稳定（实测文本 9.7s、封面 28~30s），所以估算是有信息量的。
+                percent 封顶 95 —— 永远不能显示 100%，那等于在结果回来之前宣称已完成。
+                文案分两段近似服务端的两个阶段（30s 是实测的文本耗时上界，不是精确分界）。 */}
+            <ProgressLine
+              percent={Math.min(95, (pubElapsed / 60_000) * 100)}
+              label={pubElapsed < 30_000 ? '正在写标题与文案…' : '正在出封面（3:4 竖版）…'}
+              hint='进度按实测耗时估算，通常 1 分钟内完成'
+            />
+          </>
+        )}
+
+        {!!publishMat && (
+          <>
+            {publishMat.coverUrl ? (
+              <Image className='rcompose__pubcover' mode='aspectFill' src={publishMat.coverUrl} />
+            ) : (
+              <View className='rcompose__pubcoverph'>
+                <Text className='rcompose__pubcoverphtext'>
+                  {publishMat.coverError || '封面还没生成出来'}
+                </Text>
+                <Button size='mini' onClick={() => void doGeneratePublish('COVER')}>重试封面</Button>
+              </View>
+            )}
+
+            <View className='rcompose__pubblock'>
+              <Text className='rcompose__publabel'>标题</Text>
+              <Text className='rcompose__pubtitle'>{publishMat.title || '（空）'}</Text>
+            </View>
+
+            <View className='rcompose__pubblock'>
+              <Text className='rcompose__publabel'>文案</Text>
+              <Text className='rcompose__pubcaption'>{publishMat.caption || '（空）'}</Text>
+            </View>
+
+            <View className='rcompose__pubacts'>
+              <Button
+                className='ds-btn rcompose__pubbtn'
+                onClick={() => Taro.navigateTo({ url: `/pages/render/result?id=${publishMat.creationId}` })}
+              >
+                详情页查看 / 保存
+              </Button>
+            </View>
+          </>
+        )}
+
+        {/* 兜底与失败提示：不显示的话，用户会以为"模型就这水平"或者"封面就是这样" */}
+        {!!publishMat?.degraded && (
+          <Text className='rcompose__puberr'>
+            这次的标题与文案是简单拼出来的（AI 没给出可用结果），可以点「重新生成」再试一次。
+          </Text>
+        )}
+        {!!publishNotice && !publishLoading && <Text className='rcompose__pubnotice'>{publishNotice}</Text>}
+        {!!publishError && <Text className='rcompose__puberr'>{publishError}</Text>}
+      </View>
 
       {/* 「重新导出」入口：复用归一化缓存，只跑「拼接 + 一遍调色」，所以比首次合成便宜。
           只在已有 BASIC 成片、且当前仍选 BASIC 时出现 —— RECOLOR 的语义是「把上一版成片重调色」，
@@ -1291,6 +1534,44 @@ export default function RenderCompose() {
         >
           按当前调色重新出片（参考 {estimatePoints(detail.shots, grade, true)} 积分）
         </Button>
+      )}
+
+      {/* ── 分镜素材：就地放大播放的浮层 ──
+          ★ 结构上刻意分成「背景遮罩」和「视频卡片」两个**兄弟**节点，而不是
+            「卡片里 stopPropagation」：weapp 里 tap 的冒泡由原生 `bindtap` 决定，
+            Taro 的 `e.stopPropagation()` 并不能可靠地拦住它 —— 而拦不住的后果是
+            「点播放键 / 进度条 → 浮层被关掉」，还是个间歇性复现的问题。
+            兄弟节点没有冒泡关系，卡片上的任何点击都到不了遮罩。
+          ★ 视频只在 url 就绪后才挂载：`autoplay` 必须在挂载时就带上（weapp 下
+            「先挂 Video 再改 src」不会自动播），所以这里用一个三元把挂载时机钉住。 */}
+      {shotPreview && (
+        <View className='rcompose__lightbox'>
+          <View className='rcompose__lightboxmask' onClick={closeShotPreview} />
+          <View className='rcompose__lightboxcard'>
+            <View className='rcompose__lightboxhead'>
+              <Text className='rcompose__lightboxtitle'>
+                分镜 {shotPreview.seq} · {shotPreview.shotType}
+              </Text>
+              <View className='rcompose__lightboxclose' hoverClass='ds-hover' onClick={closeShotPreview}>
+                <Text>关闭</Text>
+              </View>
+            </View>
+            {shotPreview.url ? (
+              <Video
+                className='rcompose__lightboxvideo'
+                src={shotPreview.url}
+                controls
+                autoplay
+                objectFit='contain'
+                onError={() => setShotPreview((cur) => (cur ? { ...cur, error: '播放失败，请重试' } : cur))}
+              />
+            ) : (
+              <View className='rcompose__lightboxph'>
+                <Text className='rcompose__lightboxphtext'>{shotPreview.error || '正在取素材…'}</Text>
+              </View>
+            )}
+          </View>
+        </View>
       )}
 
       {/* ── 底部：积分预估 + 生成 ── */}

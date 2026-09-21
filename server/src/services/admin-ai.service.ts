@@ -425,6 +425,13 @@ export interface AiSceneView {
   id: string
   code: string
   name: string
+  /**
+   * 场景类型：`TEXT`（chat/completions）或 `IMAGE`（images/generations）。
+   * ★ 后台必须**看得见**它：网关的候选链是**按能力**过滤的，给图像场景选了文本模型会被静默跳过
+   * ⇒ 症状是「全部通道都失败、落到兜底模板」，而日志上看起来每个通道都"试过"。
+   * 只读，不提供后台编辑（改它等于换调用协议，须由脚本/迁移明示修改）。
+   */
+  kind: string
   promptTemplate: string
   fallbackTemplate: string | null
   defaultModelId: string
@@ -454,6 +461,7 @@ export function sceneView(s: AiScene): AiSceneView {
     id: s.id.toString(),
     code: s.code,
     name: s.name,
+    kind: s.kind ?? 'TEXT',
     promptTemplate: s.promptTemplate,
     fallbackTemplate: s.fallbackTemplate,
     defaultModelId: s.defaultModelId.toString(),

@@ -8,6 +8,7 @@ import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import { requiredText, optionalText } from '../lib/validators.js'
 import * as creationSvc from '../services/creation.service.js'
+import * as publishSvc from '../services/publish-material.service.js'
 import { aiGateway } from '../ai/gateway-instance.js'
 import { BeanNotEnoughError } from '../bean/bean.service.js'
 import { ScenePendingError } from '../ai/ai.service.js'
@@ -258,6 +259,57 @@ router.post('/:id/storyboard', async (req, res) => {
     ok(res, r)
   } catch (e) {
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    handleAiErr(e, res)
+  }
+})
+
+/**
+ * 发布素材（标题 / 文案 / 封面）：读。
+ *
+ * 除了素材本身，还回一个 `estimate`（这次生成大概要花多少积分）——
+ * 出图是固定价且不便宜（当前 300 积分/张），客户端**必须在点击前**把这个数字摆出来，
+ * 否则用户是在不知情的情况下花掉一笔相对大的积分。
+ */
+router.get('/:id/publish-material', async (req, res) => {
+  try {
+    const r = await publishSvc.getPublishMaterial(prisma, req.merchantId!, idParam(req.params.id, 'id'))
+    ok(res, r)
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof creationSvc.CreationNotFoundError) return fail(res, 4046, '创作不存在', 404)
+    console.error('[creations] 读取发布素材异常:', e)
+    fail(res, 500, '查询失败', 500)
+  }
+})
+
+/**
+ * 发布素材：生成。
+ *
+ * body: `{ requestId, part?: 'ALL' | 'COVER' }`
+ *   · `ALL`（默认）＝ 标题 + 文案 + 封面一起生成
+ *   · `COVER`      ＝ 只重出封面（标题/文案沿用已存的，**不会重复扣文本那笔钱**）
+ *
+ * ★ 两步是两笔独立计费（文本按 token 成本、封面按固定价）：
+ *   所以「封面失败」不等于「整次失败」—— 客户端应保留已拿到的标题/文案，
+ *   只把封面标为可重试。响应里的 `notice` 已经把这件事说成人话了。
+ */
+router.post('/:id/publish-material', async (req, res) => {
+  try {
+    const part = req.body?.part === 'COVER' ? 'COVER' : 'ALL'
+    const r = await publishSvc.generatePublishMaterial(prisma, aiGateway, {
+      merchantId: req.merchantId!,
+      creationId: idParam(req.params.id, 'id'),
+      requestId: String(req.body?.requestId ?? randomUUID()),
+      part,
+    })
+    ok(res, r)
+  } catch (e) {
+    if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
+    if (e instanceof publishSvc.PublishMaterialUnavailableError) return fail(res, 2012, e.message, 503)
+    if (e instanceof publishSvc.PublishMaterialNotReadyError) return fail(res, 2013, e.message, 400)
+    // 防御性映射：封面失败正常会被服务层收进 `coverError`（那次调用仍然 200）。
+    // 万一它逃到这里，也不能落进 500 —— 它的 message 是给用户看的，且这个错是可重试的。
+    if (e instanceof publishSvc.PublishCoverFailedError) return fail(res, 2014, e.message, 502)
     handleAiErr(e, res)
   }
 })

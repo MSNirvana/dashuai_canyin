@@ -3,7 +3,7 @@
 
 import type { PrismaClient } from '@prisma/client'
 import type { Redis } from 'ioredis'
-import { AiCallError, getAdapter, type AiUsage } from './adapters.js'
+import { AiCallError, getAdapter, openaiImage, type AiUsage } from './adapters.js'
 import { CircuitBreaker } from './circuit-breaker.js'
 import { decryptSecret } from '../lib/secret.js'
 import { ceilDiv } from '../lib/decimal.js'
@@ -20,6 +20,15 @@ export type SceneRunResult =
       modelCode: string
       usedFallback: boolean
       attempts: number
+      /**
+       * 「这次调用的价格不由 token 决定，就是场景标价」。
+       *
+       * ★ 只有图像场景会带上它（见候选循环里的 kind==='IMAGE' 分支）。原因：出图返回里
+       *   **没有 token 用量**（实测 usage=null），按 token 结算会把一整张封面算成 0 积分，
+       *   而平台是真的付了钱的。所以图像场景的 `ai_scene.bean_price` 语义是**报价本身**，
+       *   不是「单次上限」。由这里显式传给账务层，免得结算函数再去猜「什么时候按固定价」。
+       */
+      fixedBeans?: bigint
     }
   | {
       ok: false
@@ -112,6 +121,14 @@ export class AiGateway {
     const prompt = renderTemplate(scene.promptTemplate, params.variables)
     let attempts = 0
     let lastError = ''
+    /**
+     * 「这条候选为什么没被用」。
+     *
+     * ★ 全部候选都被跳过时（enabled=false / 熔断 / 超预算 / 能力不匹配），
+     *   旧实现只会回一句 `no available provider` —— 运营在后台看到的是一句无法行动的话，
+     *   而这恰恰是最常见的配置类故障。这里把原因收集起来一并返回（见下面的 ALL_FAILED）。
+     */
+    const skipped: string[] = []
 
     for (let i = 0; i < candidates.length; i++) {
       const modelId = candidates[i]!
@@ -140,7 +157,32 @@ export class AiGateway {
         continue
       }
 
-      const adapter = getAdapter(provider.protocol)
+      /**
+       * 能力匹配：图像场景的候选**必须**是 capability='IMAGE' 的模型，文本场景反过来排除它。
+       *
+       * ★ 这条存在的唯一理由，是「配错」在这里是**静默**的：
+       *   后台「AI 场景」页的模型下拉不按 capability 过滤，运营完全可能把 gpt-5.5 填进出图场景。
+       *   没有这条判断时，网关会照常调 chat/completions、拿回一段文字，
+       *   然后被当成图片地址交给下游去下载 —— 报错在很远的地方出现，而积分已经扣了。
+       *   有了它，配错会在**调用前**就跳过，并把原因带进最终错误消息（见下面的 skipped）。
+       */
+      const wantImage = scene.kind === 'IMAGE'
+      if (wantImage && model.capability !== 'IMAGE') {
+        skipped.push(`候选模型 ${model.modelCode} 的能力是 ${model.capability}（图像场景需要 IMAGE）`)
+        continue
+      }
+      if (!wantImage && model.capability === 'IMAGE') {
+        skipped.push(`候选模型 ${model.modelCode} 是图像模型，不能用于文本场景 ${scene.code}`)
+        continue
+      }
+
+      // MOCK 协议只实现 chat（用于无网络联调），出图没有 mock —— 明确跳过而不是发一个假请求
+      if (wantImage && provider.protocol === 'MOCK') {
+        skipped.push(`候选通道 ${provider.code} 是 MOCK 协议，不支持图像生成`)
+        continue
+      }
+
+      const adapter = wantImage ? openaiImage : getAdapter(provider.protocol)
       const maxTry = scene.maxRetries + 1
 
       for (let t = 0; t < maxTry; t++) {
@@ -203,6 +245,8 @@ export class AiGateway {
             modelCode: model.modelCode,
             usedFallback: i > 0,
             attempts,
+            // 图像场景：本次调用的价格就是场景标价（出图无 token 用量，按 token 结算会算成 0）
+            ...(wantImage ? { fixedBeans: scene.beanPrice } : {}),
           }
         } catch (e) {
           const err = e as AiCallError
@@ -226,7 +270,15 @@ export class AiGateway {
     return {
       ok: false,
       reason: 'ALL_FAILED',
-      message: lastError || 'no available provider',
+      // 一个候选都没真正跑过时（attempts===0），lastError 是空的 ——
+      // 这时把「每条候选为什么被跳过」拼进消息，否则后台只能看到
+      // 一句 `no available provider`，那是无法行动的（不知道是没配通道、
+      // 被熔断、超预算，还是模型能力配错了）。实测最有价值的就是最后这一种。
+      message:
+        lastError ||
+        (skipped.length > 0
+          ? `没有可用的候选通道：${skipped.join('；')}`
+          : 'no available provider'),
       attempts,
     }
   }

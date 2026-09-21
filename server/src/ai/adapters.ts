@@ -290,6 +290,66 @@ export const mockAdapter: AiAdapter = async (p) => {
   return { text: copy, usage: { promptTokens: 120, completionTokens: 180 } }
 }
 
+/**
+ * OpenAI 兼容的**图像生成**协议：`POST {baseUrl}/images/generations`。
+ *
+ * ★ 与 chat 适配器的三点不同，每一点都有实际后果：
+ *
+ *   1. **请求体是 `prompt` 而不是 `messages`**：AI 场景模板渲染出来的那段文字，
+ *      在文本场景里是「用户消息」，在这里就是图像模型的提示词本身。
+ *      所以图像场景的模板必须**写成给图像模型看的画风/规格说明**，不能有「你是…专家」这种
+ *      对话式人设（见 prisma/prompts.ts 的 PUBLISH_COVER_PROMPT）。
+ *
+ *   2. **没有 token 用量**：实测返回体 `usage: null`（中转站不回落上游的计费字段）。
+ *      因此 `usage` 恒为 0 —— 也就意味着**按 token 结算会把出图算成 0 积分**。
+ *      出图场景的计费走「按张固定价」（网关把 ai_scene.bean_price 作为该次调用的价格，
+ *      见 gateway.ts 的 fixedBeans 与 ai.service.ts 的 settleAiCharge）。
+ *      ⚠ 所以图像场景的 `bean_price` **不是**「单次上限」，而是**报价本身**，别当成安全网随手调小。
+ *
+ *   3. **结果是 URL 或 base64，不是文本**：中转站给的是 `data[0].url`
+ *      （域名通常与 API 域名不同，本机/国内直连可能被 SNI 拦，见下面的取样说明）；
+ *      有的上游只回 `data[0].b64_json`。两种情况都在这里收敛成 `text`：
+ *        · 有 url      → text = 该 url（**绝对地址**，调用方负责下载，见 lib/media-fetch.ts）
+ *        · 只有 b64    → text = `data:image/png;base64,…` 这种 data URI，调用方按前缀解码
+ *      ⚠ 只有 b64 时，`ai_call_log.response_snapshot` 会存下一段被截断的 base64
+ *        （网关只截前 8000 字）。这是刻意接受的代价：宁可日志难看，也不要为此改全局日志契约。
+ *
+ * `size` 从环境变量读（`AI_IMAGE_SIZE`），默认 `1024x1365`：
+ *   实测该中转站**接受**这个非标准尺寸，并按 3:4 出图（route 里 native_size=864x1152、
+ *   最终落盘 1086x1448）。而标准竖版 `1024x1536` 是 2:3 —— 不是产品要的封面比例。
+ */
+export const openaiImage: AiAdapter = async (p) => {
+  const url = joinUrl(p.baseUrl, '/images/generations')
+  const size = (process.env.AI_IMAGE_SIZE ?? '1024x1365').trim()
+  const data = (await postJson(url, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${p.apiKey}`,
+    },
+    body: JSON.stringify({ model: p.model, prompt: p.user, n: 1, size }),
+    timeoutMs: p.timeoutMs,
+  })) as any
+
+  const item = data?.data?.[0]
+  const remote = typeof item?.url === 'string' && item.url ? item.url : ''
+  const b64 = typeof item?.b64_json === 'string' && item.b64_json ? item.b64_json : ''
+  if (!remote && !b64) {
+    // 报错里带上实际拿到的东西：这类失败最常见的成因是「模型码填错，被中转站按文本模型处理」，
+    // 只写「无图片」会让人以为是网络问题。
+    throw new AiCallError(
+      `出图返回里既没有 data[0].url 也没有 data[0].b64_json（实际拿到 ${JSON.stringify(item ?? data).slice(0, 200)}）`,
+      undefined,
+      'BAD_RESPONSE',
+    )
+  }
+  return {
+    text: remote || `data:image/png;base64,${b64}`,
+    usage: { promptTokens: 0, completionTokens: 0 },
+    modelReturned: data?.model,
+  }
+}
+
 export function getAdapter(protocol: string): AiAdapter {
   switch (protocol) {
     case 'ANTHROPIC_NATIVE':

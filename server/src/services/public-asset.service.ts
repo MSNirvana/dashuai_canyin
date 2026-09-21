@@ -55,7 +55,7 @@ export interface PublicImage {
   url: string
 }
 
-interface ImageKind {
+export interface ImageKind {
   ext: string
   contentType: string
 }
@@ -72,7 +72,7 @@ const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
  *   部分端直接不渲染，见 lib/local-storage.ts::contentTypeForKey 的注释）。
  *   一次嗅探同时解决「拒掉非图片」「扩展名正确」「Content-Type 正确」三件事。
  */
-function sniffImage(buffer: Buffer): ImageKind | null {
+export function sniffImage(buffer: Buffer): ImageKind | null {
   // JPEG：SOI + 首个段标记
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
     return { ext: '.jpg', contentType: 'image/jpeg' }

@@ -102,6 +102,17 @@ export interface AiChargeParams {
   costFen: number
   usedFallback: boolean
   /**
+   * ★ 固定价调用（只有图像场景会给）：本次应付**就是这个数**，不按 token 成本换算。
+   *
+   * 为什么必须有这条路：出图返回里没有 token 用量，`costFen` 恒为 0，
+   * 而 `beansFromCost(0) = 0n` ⇒ 按成本结算等于**一张封面收 0 积分**，
+   * 平台却真实付了上游的钱。图像场景的 `ai_scene.bean_price` 因此是「报价」而非「上限」。
+   *
+   * ⚠ 仍然受 `cap` 约束（`charged = min(固定价, 预留余额)`）：运营在调用进行中调价时，
+   *   结算必须仍然以**当初冻结的那个数**为界，否则会扣出预留不存在的钱。
+   */
+  fixedBeans?: bigint
+  /**
    * ★ 冻结快照 = 本次预留的未结余量（`bean_reservation.reserved - consumed - released`）。
    * 所有加减都以它为界；**不要**在这里重新读 `ai_scene.bean_price`。
    */
@@ -137,7 +148,8 @@ export async function settleAiCharge(
     getDecimal(prisma, 'bean', 'points_per_yuan', 100),
     getDecimal(prisma, 'bean', 'cost_multiplier', 4),
   ])
-  const wantCharge = beansFromCost(p.costFen, beansPerYuan, multiplier)
+  // 固定价场景（图像）直接用报价，不走 token 换算 —— 见 AiChargeParams.fixedBeans 的说明。
+  const wantCharge = p.fixedBeans ?? beansFromCost(p.costFen, beansPerYuan, multiplier)
   const charged = wantCharge > p.cap ? p.cap : wantCharge
   // 被单次上限截断的部分由平台承担。必须落库 + 告警，否则「上限是安全网还是
   // 常态折扣」在账上完全看不出来（实测 copy 系场景 10/10 次调用都被截掉 3 积分）。
@@ -226,7 +238,7 @@ export async function runBilledScene(
   }
 
   const chargeArgs = (
-    o: { costFen: number; usedFallback: boolean; cap: bigint },
+    o: { costFen: number; usedFallback: boolean; cap: bigint; fixedBeans?: bigint },
   ): AiChargeParams => ({
     merchantId: params.merchantId,
     sceneCode: params.sceneCode,
@@ -276,7 +288,17 @@ export async function runBilledScene(
             charged: log.beanCharged ?? 0n,
             bucket: log.beanBucket === 'GRANT' ? 'GRANT' as const : log.beanBucket === 'RECHARGE' ? 'RECHARGE' as const : null,
           }
-        : await settleAiCharge(prisma, chargeArgs({ costFen: log.costFen, usedFallback: log.isFallback, cap }))
+        : await settleAiCharge(prisma, chargeArgs({
+            costFen: log.costFen,
+            usedFallback: log.isFallback,
+            cap,
+            // ★ 重放图像场景时必须**照样按固定价**结。这条路径是「首次调用成功、
+            //   日志已落库、进程在结算前退出」的恢复点：此时 log.costFen=0（出图没有 token 用量），
+            //   若这里不补固定价，重放会把预留**全额释放**——用户拿走了封面却一分没扣。
+            //   金额取 `cap`（当初冻结的那个数）而不是当前 scene.beanPrice：
+            //   运营可能中途改过价，而预留是按旧价冻的，用新价结算会「超扣」。
+            ...(scene.kind === 'IMAGE' ? { fixedBeans: cap } : {}),
+          }))
       const b = await balanceAfter()
       return {
         text: log.responseSnapshot ?? '',
@@ -403,7 +425,12 @@ export async function runBilledScene(
   }
 
   // 4) 成功：按实际成本结算，并与业务请求完成状态同事务提交。
-  const res = await settleAiCharge(prisma, chargeArgs({ costFen: r.costFen, usedFallback: r.usedFallback, cap }))
+  const res = await settleAiCharge(prisma, chargeArgs({
+    costFen: r.costFen,
+    usedFallback: r.usedFallback,
+    cap,
+    fixedBeans: r.fixedBeans,
+  }))
   await releaseRequestLease(prisma, {
     merchantId: params.merchantId,
     operation,

@@ -19,7 +19,8 @@
  *    的对象。本地模式下 multer 的中转目录 `.incoming/` 也会被列表实现跳过。
  *
  * 3) 对象键列**漏一列 = 误删一类在用文件**。所以已引用的键由下面 `collectReferencedKeys()`
- *    集中定义，覆盖 schema 里全部 17 个对象键列 / 9 张表（含软删行，宽松保护）。
+ *    集中定义，覆盖 schema 里全部 18 个对象键列 / 10 张表（含软删行，宽松保护）。
+ *    （最近一次新增：`creation_publish_material.cover_key`，2026-09-21。）
  *
  * 另外一并处理一类「看不见的垃圾」——**未完成的分片上传（碎片）**：
  *   上传中途失败会留下 UploadId 与已上传分片，它们照样占存储、照样计费，
@@ -124,7 +125,7 @@ async function collectReferencedKeys(): Promise<Set<string>> {
     if (v) keys.add(v)
   }
 
-  const [stores, dishes, mediaAssets, dishMedia, shotLibrary, excellentWorks, tutorialVideos, renderTasks, merchants] =
+  const [stores, dishes, mediaAssets, dishMedia, shotLibrary, excellentWorks, tutorialVideos, renderTasks, merchants, publishMaterials] =
     await Promise.all([
       prisma.store.findMany({ select: { coverKey: true, videoKey: true } }),
       prisma.dish.findMany({ select: { coverKey: true, videoKey: true } }),
@@ -141,6 +142,11 @@ async function collectReferencedKeys(): Promise<Set<string>> {
       prisma.renderTask.findMany({ select: { resultKey: true, previewKey: true } }),
       // 商家自传头像（个人主页）。注意只取 avatarKey：avatarUrl 是微信侧外部链接，不是存储键。
       prisma.merchant.findMany({ select: { avatarKey: true } }),
+      // 发布素材封面（2026-09-21 新增，前缀 uploads/{merchantId}/publish/…）。
+      // ★ 这一列**必须**登记：它落的是已有的 uploads/ 前缀，扫得到也删得掉，
+      //   漏登记就等于「24 小时后封面被当孤儿删掉，而库里那行还在」——
+      //   表现是发布素材页有标题有文案、封面是一片白，且没有任何报错。
+      prisma.creationPublishMaterial.findMany({ select: { coverKey: true } }),
     ])
 
   for (const r of stores) {
@@ -177,6 +183,9 @@ async function collectReferencedKeys(): Promise<Set<string>> {
   }
   for (const r of merchants) {
     add(r.avatarKey)
+  }
+  for (const r of publishMaterials) {
+    add(r.coverKey)
   }
   return keys
 }

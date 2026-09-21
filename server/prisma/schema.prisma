@@ -43,6 +43,7 @@ model Merchant {
   businessRequests    BusinessRequest[]
   beanReservations    BeanReservation[]
   membershipReminders MembershipReminder[]
+  publishMaterials    CreationPublishMaterial[]
 
   @@map("merchant")
 }
@@ -243,14 +244,58 @@ model Creation {
   storyboardAppliedRequestId String?   @map("storyboard_applied_request_id") @db.VarChar(64)
   storyboardAppliedAt        DateTime? @map("storyboard_applied_at") @db.DateTime(3)
 
-  merchant    Merchant     @relation(fields: [merchantId], references: [id])
-  store       Store        @relation(fields: [storeId], references: [id])
-  dish        Dish?        @relation(fields: [dishId], references: [id])
-  shots       Shot[]
-  renderTasks RenderTask[]
+  merchant        Merchant                @relation(fields: [merchantId], references: [id])
+  store           Store                   @relation(fields: [storeId], references: [id])
+  dish            Dish?                   @relation(fields: [dishId], references: [id])
+  shots           Shot[]
+  renderTasks     RenderTask[]
+  publishMaterial CreationPublishMaterial?
 
   @@index([merchantId, deletedAt, createdAt])
   @@map("creation")
+}
+
+/// 发布素材：成片出来之后，为了让商户「能直接发出去」而生成的一组内容。
+///
+/// ★ 绑定粒度 = **创作**（不是成片任务），product 明确要求「每个创作一份」。
+///   所以这里 creationId 是唯一键：同一条创作只保留**最新一版**发布素材，
+///   重新生成 = 覆盖（旧封面对象由 GC 按「不再被引用」回收）。
+///
+/// ★ 为什么不放进 creation 表的几列：一张 3:4 封面图 + 标题 + 文案，
+///   未来还会长出「话题标签」「封面模板」「多张封面备选」这类字段。
+///   塞进 creation 会让主表宽度跟着发布形态一起长，而这些字段对**创作本身**
+///   的语义（分镜、素材、成片）是无关的。
+model CreationPublishMaterial {
+  id         BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
+  creationId BigInt   @unique @map("creation_id") @db.UnsignedBigInt()
+  merchantId BigInt   @map("merchant_id") @db.UnsignedBigInt()
+  /// 视频标题（发布时填在标题栏的那一行）
+  title      String   @db.VarChar(120)
+  /// 发布文案 / 简介正文
+  caption    String   @db.Text
+  /// 封面图对象键（私有对象，读取时现签 URL）。
+  /// ★ 前缀必须落在既有白名单内（`uploads/{merchantId}/…`）—— 新增前缀要同步 5 处，
+  ///   见 scripts/gc-orphan-objects.ts 顶部说明；这里刻意复用 `uploads/`。
+  /// ★ 并且必须登记进 `collectReferencedKeys()`，否则保留期后会被当孤儿删掉。
+  coverKey   String?  @map("cover_key") @db.VarChar(512)
+  /// 这次封面用的提示词（重出封面时复用；也是线上唯一的「为什么生成成这样」线索）
+  coverPrompt String? @map("cover_prompt") @db.Text
+  /// 封面实际像素。★ 存下来是因为「3:4」是产品约定，而模型/降级路径可能给出别的比例，
+  ///   客户端据此判断要不要按比例展示（而不是猜）。
+  coverWidth  Int?    @map("cover_width") @db.UnsignedInt()
+  coverHeight Int?    @map("cover_height") @db.UnsignedInt()
+  /// 生成用的模型码（排查「换了模型之后文案变差了」这类问题）
+  modelCode  String?  @map("model_code") @db.VarChar(128)
+  /// 产出这一版的 requestId：客户端重试同一个 requestId 时用它幂等返回
+  requestId  String?  @map("request_id") @db.VarChar(64)
+  createdAt  DateTime @default(now()) @map("created_at") @db.DateTime(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.DateTime(3)
+
+  merchant Merchant @relation(fields: [merchantId], references: [id])
+  creation Creation @relation(fields: [creationId], references: [id])
+
+  @@index([merchantId, createdAt])
+  @@map("creation_publish_material")
 }
 
 model Shot {
@@ -705,6 +750,15 @@ model AiScene {
   id               BigInt   @id @default(autoincrement()) @db.UnsignedBigInt()
   code             String   @unique @db.VarChar(64)
   name             String   @db.VarChar(128)
+  /// 场景种类：TEXT（默认，走 chat/completions 返回文本）| IMAGE（走 images/generations 返回图片 URL）
+  ///
+  /// ★ 为什么必须有这一列，而不是靠「候选模型的 capability 是不是 IMAGE」推断：
+  ///   网关是按 `ai_scene` 的候选链去取模型的，**取到哪个模型**才是决定调哪个协议的依据；
+  ///   用模型的 capability 反推场景种类，等于让运营的一次误配（把文本模型填进图像场景）
+  ///   静默变成「调 chat 接口、拿一段文字当图片 URL」—— 报错点到为止、钱照扣。
+  ///   有了 kind，网关可以在候选模型能力不匹配时**直接跳过并给出明确原因**。
+  /// ★ 默认 'TEXT' 且存量全部落在这个默认值上 ⇒ 这次迁移对已有场景是纯加列，语义不变。
+  kind             String   @default("TEXT") @db.VarChar(16)
   promptTemplate   String   @map("prompt_template") @db.MediumText
   fallbackTemplate String?  @map("fallback_template") @db.MediumText
   defaultModelId   BigInt   @map("default_model_id") @db.UnsignedBigInt()

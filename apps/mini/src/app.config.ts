@@ -15,6 +15,8 @@ export default defineAppConfig({
     'pages/creation/traffic',
     'pages/creation/shots',
     'pages/render/compose',
+    // 成片记录详情（?id=创作编号&task=成片任务编号）：视频 + 封面 + 标题 + 文案，视频可存相册
+    'pages/render/result',
     'pages/work/detail',
     'pages/recharge/index',
     'pages/mine/index',

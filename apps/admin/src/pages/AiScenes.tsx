@@ -10,6 +10,7 @@ interface AiModelRef {
   modelCode: string
   displayName: string
   enabled?: boolean
+  capability?: string
   provider?: { code: string; name: string }
 }
 
@@ -17,6 +18,8 @@ interface AiScene {
   id: string
   code: string
   name: string
+  /** 场景类型：TEXT=文本对话接口 / IMAGE=出图接口。只读，由脚本或迁移决定 */
+  kind?: string
   promptTemplate: string
   fallbackTemplate: string | null
   defaultModelId: string
@@ -41,11 +44,12 @@ interface AiModel extends AiModelRef {
   provider: { code: string; name: string }
 }
 
-/** 分组：文案创作 / 分镜脚本 / 合成增强 */
+/** 分组：文案创作 / 分镜脚本 / 发布素材 / 合成增强 */
 const GROUPS = [
   { key: 'all', label: '全部' },
   { key: 'copy', label: '文案创作' },
   { key: 'storyboard', label: '分镜脚本' },
+  { key: 'publish', label: '发布素材' },
   { key: 'synth', label: '合成增强' },
 ] as const
 
@@ -56,12 +60,14 @@ function groupOf(code?: string | null): GroupKey {
   if (typeof code !== 'string') return 'synth'
   if (code.startsWith('copy_')) return 'copy'
   if (code === 'storyboard_generate') return 'storyboard'
+  if (code.startsWith('publish_')) return 'publish'
   return 'synth'
 }
 
 const GROUP_LABEL: Record<string, string> = {
   copy: '文案创作',
   storyboard: '分镜脚本',
+  publish: '发布素材',
   synth: '合成增强',
 }
 
@@ -120,6 +126,8 @@ export default function AiScenesPage() {
       shown.map((s) => ({
         ...s,
         groupLabel: GROUP_LABEL[groupOf(s.code)] ?? '—',
+        // 图像场景必须一眼可见：它走的是出图接口，模型下拉的候选范围与文本场景完全不同
+        kindLabel: s.kind === 'IMAGE' ? '图像（出图）' : '文本',
         defaultModelText: fmtModel(s.defaultModel),
         fallbackModelText: s.fallbackModels?.length
           ? s.fallbackModels.map((m) => m.modelCode).join(', ')
@@ -132,6 +140,17 @@ export default function AiScenesPage() {
   const pendingCount = list.length - liveCount
 
   /**
+   * 页首「模板变量」提示的变量并集。
+   * ★ 不再硬编码一串变量名：硬编码会随新增场景静默过期（本次新增 `publish_cover` 就漏了
+   * `{{coverPrompt}}`，运营在弹窗里看不到可用变量，只能猜）。这里直接从服务端返回的白名单汇总。
+   */
+  const allVars = useMemo(() => {
+    const set = new Set<string>()
+    for (const s of list) for (const v of s.variables ?? []) set.add(v)
+    return [...set]
+  }, [list])
+
+  /**
    * 当前表单里场景编码支持的变量（用于把「可用变量」直接显示在编辑弹窗里）。
    * 新增场景时随编码输入联动；查不到（场景未登记白名单）就是空数组 —— 那种情况下服务端也不校验。
    */
@@ -139,6 +158,20 @@ export default function AiScenesPage() {
     () => list.find((s) => s.code === form.code.trim())?.variables ?? [],
     [list, form.code],
   )
+
+  /** 正在编辑的场景类型；新增场景按 TEXT 处理（与后端 create 时的列默认值一致） */
+  const formKind: 'TEXT' | 'IMAGE' = editing?.kind === 'IMAGE' ? 'IMAGE' : 'TEXT'
+  const isImageScene = formKind === 'IMAGE'
+
+  /**
+   * ★ 模型下拉的候选池**必须按场景类型过滤**。
+   * 网关的候选链是按能力闸门筛的：给图像场景选文本模型 ⇒ 每个候选都被跳过 ⇒ 全失败落兜底模板，
+   * 而调用日志上看不出「选的模型根本不会出图」。所以这里从源头上不给出错误选项。
+   */
+  const modelPool = useMemo(() => {
+    if (!isImageScene) return models.filter((m) => (m.capability ?? 'TEXT') !== 'IMAGE')
+    return models.filter((m) => (m.capability ?? 'TEXT') === 'IMAGE')
+  }, [models, isImageScene])
 
   const startCreate = () => {
     setEditing(null)
@@ -222,7 +255,8 @@ export default function AiScenesPage() {
         每个场景（Skill）对应一条可在本页编辑的提示词，业务层只传 <code>sceneCode</code> + 变量。
         共 <b>{list.length}</b> 个：已接入业务 <b>{liveCount}</b> 个、待接入 <b>{pendingCount}</b> 个。
         <br />
-        模板变量：<code>{'{{storeName}} {{category}} {{city}} {{dishName}} {{dishIntro}} {{sellingPoints}} {{comboInfo}} {{persona}} {{copyText}} {{complexity}} {{complexityLabel}} {{shotCountRule}} {{shotLibrary}}'}</code>
+        模板变量（各场景可用范围不同，以编辑弹窗内该场景的提示为准）：
+        <code>{allVars.length ? allVars.map((v) => `{{${v}}}`).join(' ') : '—'}</code>
       </p>
 
       <div style={{ display: 'flex', gap: 8, margin: '12px 0' }}>
@@ -249,7 +283,8 @@ export default function AiScenesPage() {
         columns={[
           { colKey: 'groupLabel', title: '分类', width: 96 },
           { colKey: 'code', title: '场景编码', width: 176 },
-          { colKey: 'name', title: '名称', ellipsis: true, width: 240 },
+          { colKey: 'name', title: '名称', ellipsis: true, width: 200 },
+          { colKey: 'kindLabel', title: '类型', width: 108 },
           { colKey: 'defaultModelText', title: '默认模型', width: 180 },
           { colKey: 'fallbackModelText', title: '备用模型', width: 140 },
           { colKey: 'beanPrice', title: '冻结(积分)', width: 112 },
@@ -298,8 +333,20 @@ export default function AiScenesPage() {
           <Field label="名称">
             <Input value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v as string }))} />
           </Field>
-          <Field
-            label="提示词模板"
+          <Field label="场景类型">
+            {isImageScene ? (
+              <Tag theme="warning" variant="light">图像（出图）</Tag>
+            ) : (
+              <Tag variant="light">文本</Tag>
+            )}
+            <span style={{ marginLeft: 8, color: '#888', fontSize: 12 }}>
+              {isImageScene
+                ? '走 images/generations 接口：结果落成图片文件，按固定价计费（冻结上限＝报价），模型只能选「图像」能力'
+                : '走 chat/completions 接口：按 token 成本结算'}
+              （只读，由脚本或迁移决定）
+            </span>
+          </Field>
+          <Field label="提示词模板"
             help={
               allowedVars.length ? (
                 <>
@@ -330,13 +377,20 @@ export default function AiScenesPage() {
               autosize={{ minRows: 3, maxRows: 10 }}
             />
           </Field>
-          <Field label="默认模型">
+          <Field
+            label="默认模型"
+            help={
+              isImageScene && modelPool.length === 0 ? (
+                <>★ 没有「图像」能力的模型可选。请先到「AI 供应商」页配置出图通道，再回来绑定。</>
+              ) : null
+            }
+          >
             <Select
               value={form.defaultModelId}
               onChange={(v) => setForm((f) => ({ ...f, defaultModelId: v as string }))}
-              options={models.map(modelOpt)}
+              options={modelPool.map(modelOpt)}
               filterable
-              placeholder="首选执行模型（须为已启用通道）"
+              placeholder={isImageScene ? '首选出图模型（只能选图像能力）' : '首选执行模型（须为已启用通道）'}
             />
           </Field>
           <Field label="备用模型">
@@ -344,10 +398,10 @@ export default function AiScenesPage() {
               multiple
               value={form.fallbackModelIds}
               onChange={(v) => setForm((f) => ({ ...f, fallbackModelIds: (v as string[]) ?? [] }))}
-              options={models.map(modelOpt)}
+              options={modelPool.map(modelOpt)}
               filterable
               clearable
-              placeholder="默认模型失败后按序尝试，可多选"
+              placeholder={isImageScene ? '出图场景通常留空（备用链对图像接口不生效）' : '默认模型失败后按序尝试，可多选'}
             />
           </Field>
           <Field label="冻结上限(积分)">

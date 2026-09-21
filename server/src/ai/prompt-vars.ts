@@ -71,6 +71,26 @@ const STORYBOARD_VARS = [
 const SYNTH_VARS = [...COPY_VARS, 'copyText', 'shotCountRule'] as const
 
 /**
+ * 发布素材 · 文本场景：门店/菜品上下文 + **口播文案正文**。
+ *
+ * ★ 为什么必须有 `copyText` 而没有别的：这条链路的验收标准是
+ *   「标题与文案不超出老板实际说出口的范围」—— 口播文案是唯一的事实来源。
+ *   分镜那套 `shotCountRule` / `shotLibrary` 与它无关，**故意不放进来**：
+ *   白名单宽一分，「模板里写了个取不到值的占位符」这种静默失效就多一分机会。
+ */
+const PUBLISH_VARS = [...COPY_VARS, 'copyText'] as const
+
+/**
+ * 发布素材 · 图像场景：只吃**文本场景产出的画面描述**，不吃任何业务字段。
+ *
+ * ★ 这是刻意的窄白名单：出图模板只负责「画风与规格」，拍什么由 coverPrompt 决定。
+ *   放开 storeName/dishName 会让「门店信息」在两份提示词里各写一遍，
+ *   迟早出现「文本场景说拍红烧肉、图像场景按 dishName 拍别的菜」这种自相矛盾，
+ *   而且**不会报错**。
+ */
+const PUBLISH_COVER_VARS = ['coverPrompt'] as const
+
+/**
  * 场景 → 可用变量白名单。
  * 表里**没有**的场景不做校验（宽松放行），避免以后新增场景一上线就被拦。
  */
@@ -87,6 +107,8 @@ export const SCENE_VARIABLES: Record<string, readonly string[]> = {
   title_overlay: SYNTH_VARS,
   bgm_select: SYNTH_VARS,
   rhythm_detect: SYNTH_VARS,
+  publish_material: PUBLISH_VARS,
+  publish_cover: PUBLISH_COVER_VARS,
 }
 
 /**
