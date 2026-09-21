@@ -27,6 +27,7 @@
     "grant-buckets:verify": "tsx scripts/verify-grant-buckets.ts",
     "ai-subsidy:report": "tsx scripts/report-ai-subsidy.ts",
     "ai-failover:verify": "tsx scripts/verify-ai-failover.ts",
+    "ai-health:verify": "tsx scripts/verify-ai-health.ts",
     "ai-channels:setup": "tsx scripts/setup-ai-channels.ts",
     "billing:status": "tsx scripts/billing-status.ts",
     "storage:gc": "tsx scripts/gc-orphan-objects.ts",
