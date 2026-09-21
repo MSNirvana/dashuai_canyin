@@ -52,6 +52,7 @@ import { CircuitBreaker, DEFAULT_CIRCUIT } from '../src/ai/circuit-breaker.js'
 import { AiGateway, isChannelLevelFailure } from '../src/ai/gateway.js'
 import { AiCallError } from '../src/ai/adapters.js'
 import { encryptSecret } from '../src/lib/secret.js'
+import { normalizeModelCapability } from '../src/ai/model-capabilities.js'
 
 const SCENE = 'verify_failover_tmp'
 const PROV_PRIMARY = 'verify-fo-primary'
@@ -59,8 +60,19 @@ const PROV_BACKUP = 'verify-fo-backup'
 const MODEL_PRIMARY = 'verify-fo-primary-model'
 const MODEL_BACKUP = 'verify-fo-backup-model'
 const REQ_PREFIX = 'verify-fo-'
-/** 端口 1 上没有任何服务 ⇒ ECONNREFUSED ⇒ 适配器立即归为 NETWORK（不占 timeout） */
-const BLACKHOLE = 'http://127.0.0.1:1/v1'
+/**
+ * 「连不上」的通道地址：端口 1 上没有任何服务 ⇒ 被 RST ⇒ 适配器立即归为 NETWORK
+ * （通道级故障 ⇒ 当场熔断，不占场景超时）。
+ *
+ * ★ 这里**不能**再用 `http://127.0.0.1:1/v1`（本脚本原来就是这么写的，已失效）：
+ *   `adapters.postJson` 走的是 `safeFetch`，而 `lib/outbound-url.ts` 的 SSRF 闸门会
+ *   在**发出任何请求之前**就把 loopback / 私网 / 保留地址拒掉，抛 `UnsafeOutboundUrlError`
+ *   ⇒ 适配器归为 `UNSAFE_URL`，**不是通道级故障** ⇒ 用例③④⑤ 想验证的「立即熔断」
+ *   永远触发不了（症状是 attempts=4、熔断 key 不存在、TTL=-2）。
+ *   改成公网地址后仍不可达（端口关闭），但错误类型回到了 NETWORK。
+ *   若运行环境对 8.8.8.8 做了丢包而非 RST，也会得到 TIMEOUT —— 同样是通道级故障，用例仍然成立。
+ */
+const BLACKHOLE = 'http://8.8.8.8:1/v1'
 
 const circuit = new CircuitBreaker(redis)
 const gateway = new AiGateway(prisma, redis, circuit)
@@ -109,7 +121,7 @@ console.log('\n=== ① isChannelLevelFailure 判定矩阵 ===')
 }
 
 // ────────────────────────────────────────────────────────────────
-console.log('\n=== ② 生产配置核对（11 场景主备链）===')
+console.log('\n=== ② 生产配置核对（全部启用场景的主备链，按能力分开断言）===')
 let gptModelId = 0n
 let claudeModelId = 0n
 let deepseekModelId = 0n
@@ -140,16 +152,63 @@ let deepseekModelId = 0n
   // 默认链：其余场景都是 主GPT → 备Claude → 备DeepSeek
   // 已知例外：storyboard_generate（**大输出**场景，候选链完全不同）→ 见下单独断言
   const SPECIAL = new Set(['storyboard_generate'])
+
+  /**
+   * ★★ 候选链断言必须**按场景能力分开**，不能一律要求 [GPT → Claude → DeepSeek]。
+   *
+   * 图像场景（`kind='IMAGE'`，如 publish_cover）的候选**只能是图像模型**：
+   * gateway 的能力闸门会把文本模型逐个跳过，最终整链失败、落兜底模板 ——
+   * 运营在后台看到的只是「生成失败」，而根因（候选配错能力）被藏在
+   * `no available provider` 里。所以这里要把它断言成「候选全都是 IMAGE」，
+   * 而不是「不是 GPT→Claude→DeepSeek 就算错」。
+   * （2026-09-21 封面事故里模型的 capability 其实是对的，问题在探活；
+   *   但这条断言此前根本不存在，等于这条最容易配错的地方一直没人守。）
+   */
+  const capOfModel = new Map(
+    (await prisma.aiModel.findMany({ select: { id: true, capability: true } })).map((m) => [
+      m.id.toString(),
+      normalizeModelCapability(m.capability),
+    ]),
+  )
+  const isImageScene = (s: (typeof scenes)[number]) => s.kind === 'IMAGE'
+
   const bad = scenes.filter((s) => {
-    if (SPECIAL.has(s.code)) return false
     const c = chainOf(s)
+    if (isImageScene(s)) {
+      // 图像场景：至少 1 个候选，且每个候选都必须是 IMAGE 模型
+      return c.length === 0 || c.some((id) => capOfModel.get(id.toString()) !== 'IMAGE')
+    }
+    if (SPECIAL.has(s.code)) return false
     return c.length !== 3 || c[0] !== gptModelId || c[1] !== claudeModelId || c[2] !== deepseekModelId
   })
-  check(scenes.length > 0 && bad.length === 0, `${scenes.length} 个场景候选链 = [GPT → Claude → DeepSeek]`)
+  check(
+    scenes.length > 0 && bad.length === 0,
+    `${scenes.length} 个场景候选链符合各自能力要求（文本 = GPT→Claude→DeepSeek；图像 = 全 IMAGE）`,
+  )
   if (bad.length) {
     for (const s of bad.slice(0, 5)) {
       console.log(`      ✗ ${s.code}：主=${s.defaultModelId} 备=${JSON.stringify(s.fallbackModelIds)}`)
     }
+  }
+
+  const imgScenes = scenes.filter(isImageScene)
+  check(
+    imgScenes.length >= 1,
+    `存在图像场景（kind=IMAGE）：${imgScenes.map((s) => s.code).join(', ') || '一个都没有'}`,
+  )
+  const coverScene = scenes.find((s) => s.code === 'publish_cover')
+  if (coverScene) {
+    const c = chainOf(coverScene)
+    check(
+      c.length >= 1 && c.every((id) => capOfModel.get(id.toString()) === 'IMAGE'),
+      '★ publish_cover 的候选全是 IMAGE 模型（配成文本模型 = 每次出图都静默落兜底模板）',
+      `链=${c.map((v) => String(v)).join(',')}`,
+    )
+    check(
+      (coverScene.timeoutMs ?? 0) >= 90_000,
+      '★ publish_cover 超时 ≥ 90s（出图实测 35.7s，给太短会误杀）',
+      `实际 ${coverScene.timeoutMs}ms`,
+    )
   }
 
   // storyboard_generate 的例外必须成立。

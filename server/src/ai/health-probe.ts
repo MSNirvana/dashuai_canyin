@@ -42,3 +42,21 @@ export const HEALTH_PROBE_PROMPT =
   '中午十一点营业到晚上九点，节假日不休息，门店在市中心步行街二楼，提供免费停车。'
 
 export const HEALTH_PROBE_MAX_OUTPUT_TOKENS = 64
+
+/**
+ * 图像通道（capability='IMAGE'）探活用的**合法出图提示词**。
+ *
+ * ★ 图像通道不能用上面那段文本提示词去探：出图接口把 `user` 当成**画面描述**，
+ *   塞一段「请用一句话概括下面这段门店介绍」进去，得到的结果与「通道能否出图」无关
+ *   （照样可能 200，也可能因为内容审核差异而 400 —— 两种读数都不可解释）。
+ *
+ * ★ 更关键的是：图像通道的探活**不是免费的**。实测（2026-09-21，tokenbox / gpt-image-2，
+ *   size=1024x1365）单张 $0.10、耗时 35.7s、返回 `data[0].url`、`usage=null`。
+ *   所以它绝不能按文本通道的 30 分钟节奏探 —— 见 ai-health.service.ts 的
+ *   `AI_HEALTH_IMAGE_PROBE_MS` 节流与「图像通道只探 1 轮」。
+ *
+ * 提示词本身选一个「一定不含文字/水印、不涉敏感内容」的简单静物：
+ * 内容越简单，被上游内容审核拒掉（从而造成假失败）的概率越低。
+ */
+export const HEALTH_PROBE_IMAGE_PROMPT =
+  'a red apple on a plain white table, soft daylight, simple product photo, no text'

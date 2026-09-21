@@ -81,6 +81,28 @@ const FIRST_RUN_DELAY_MS = Math.max(0, Number(process.env.AI_HEALTH_FIRST_DELAY_
  * 于是判据自然交回给探活；而偶发使用的通道不会因为「今天恰好没人用 + 探测恰好慢」被误停。
  */
 const EVIDENCE_MS = Math.max(60_000, Number(process.env.AI_HEALTH_EVIDENCE_MS ?? 86_400_000))
+/**
+ * 图像通道的探活节流间隔（默认 6 小时）。
+ *
+ * ★ 图像通道必须单独定节奏，因为它的探活**有真实单价**：实测（2026-09-21，
+ *   tokenbox / gpt-image-2，size=1024x1365）单张 $0.10、耗时 35.7s、返回 data[0].url。
+ *   照文本通道的 30 分钟节奏探 = 48 张/天 ≈ $4.8/天 ≈ $144/月 —— 探活本身会变成
+ *   这条通道的主要成本（比正常业务调用还贵）。
+ *
+ * 判据用 `ai_provider.last_test_at`（`testProvider` 在成功与失败时都会写它），
+ * 不需要新列。真实流量证据仍然优先：24h 内有真实成功 ⇒ 连这个 6 小时的探活也一起省掉。
+ */
+const IMAGE_PROBE_INTERVAL_MS = Math.max(0, Number(process.env.AI_HEALTH_IMAGE_PROBE_MS ?? 21_600_000))
+/**
+ * 图像通道的探活超时（默认 180s）。
+ *
+ * ★ 比文本通道的 90s 更宽松是**故意的**：35.7s 只是实测典型值，而出图耗时波动比文本大，
+ *   探活失败会直接把通道停用 —— 而它可能是某个图像场景**唯一**的候选。
+ *   探活要回答的是「这条通道还活着吗」，不是「它有没有达到我们的 SLA」；
+ *   后者由场景自己的 `timeout_ms`(90s) 在真实请求上把关。
+ *   宁可多等 90 秒，不可错杀唯一候选（同 health-probe.ts 的「宁可放过慢，不可错杀慢」）。
+ */
+const IMAGE_PROBE_TIMEOUT_MS = Math.max(5_000, Number(process.env.AI_HEALTH_IMAGE_PROBE_TIMEOUT_MS ?? 180_000))
 
 /** 构成「真实成功」的证据状态。★ 不含 'TEST'（探活/后台测试自己写的行）。 */
 const REAL_SUCCESS_STATUSES = ['SUCCESS', 'FALLBACK_USED']
@@ -111,7 +133,11 @@ export function decideHealthAction(a: {
   wasAutoDisabled: boolean
   /** 本轮所有探测轮次里是否存在至少一次成功（没探活时为 false） */
   anySuccess: boolean
-  /** 除本条之外，还有几条通道是 enabled=true */
+  /**
+   * 除本条之外，还有几条通道**能顶替它的能力**（enabled=true 且挂得起同能力的启用模型）。
+   * ★ 按能力算而不是按全部通道算：见 sweep 里 `otherEnabledProviderCount` 的注释 ——
+   *   「只有 1 条图像通道」这种局面用全局计数看不出来，会静默停掉唯一的出图通道。
+   */
   otherEnabledProviderCount: number
   /** 最近 EVIDENCE_MS 内有没有真实调用成功（真实证据压过合成探测） */
   hasRecentRealSuccess: boolean
@@ -130,9 +156,13 @@ export function decideHealthAction(a: {
   }
   if (a.wasAutoDisabled) return 'KEEP' // 已经是停用态，不需要重复写（避免每 30 分钟刷一次 updatedAt）
   if (a.otherEnabledProviderCount <= 0) {
-    // ★ 拒绝自锁：把最后一条通道也关掉，等于让**所有** AI 场景直接落到兜底模板，
+    // ★ 拒绝自锁：把最后一条**能顶这个能力的**通道也关掉，等于让依赖它的场景直接落到兜底模板，
     //   而运营完全不知道发生了什么（页面一切正常，只是内容永远不再由 AI 生成）。
-    //   此时的正确取舍是「留着它、让真实调用去承担超时代价」，并把它标成不健康。
+    //   此时的正确取舍是「留着它、让真实调用去承担超时代价」。
+    //   ⚠ 调用方**不会**顺手把它标成 healthStatus='DOWN' —— 那是个坑而不是补充：
+    //     gateway 的候选跳过里 `healthStatus === 'DOWN'` 与 `enabled=false` 完全等价，
+    //     写下去等于绕开本护栏把它停用了（自锁照旧发生，只是路径更隐蔽）。
+    //     所以这里保持 enabled=true 不改，靠「每轮 console.error」持续告警。
     return 'REFUSE_LAST'
   }
   return 'DISABLE'
@@ -162,6 +192,13 @@ export interface AiHealthSweepResult {
   probed: number
   /** 因「最近有真实调用成功」而免探测的条数 */
   skipByEvidence: number
+  /**
+   * 因「图像通道距上次探活太近」而免探测的条数。
+   * ★ 与 skipByEvidence 分开计：那个是**健康判据**（有真实证据 ⇒ 可用），
+   *   这个是**成本节流**（探一张图 $0.10，不能 30 分钟探一次）。
+   *   混在一起会让「免测 m，探测 k 次」这条判据读不出真实含义。
+   */
+  throttled: number
   disabled: number
   enabled: number
   refused: number
@@ -197,6 +234,10 @@ export async function sweepAiProviderHealth(
     retryDelayMs?: number
     gapMs?: number
     evidenceMs?: number
+    /** 图像通道探活节流间隔（测试可注入 0 表示不节流） */
+    imageProbeIntervalMs?: number
+    /** 图像通道探活超时 */
+    imageProbeTimeoutMs?: number
     now?: Date
   } = {},
 ): Promise<AiHealthSweepResult> {
@@ -207,6 +248,8 @@ export async function sweepAiProviderHealth(
   const retryDelayMs = deps.retryDelayMs ?? RETRY_DELAY_MS
   const gapMs = deps.gapMs ?? GAP_MS
   const evidenceMs = deps.evidenceMs ?? EVIDENCE_MS
+  const imageProbeIntervalMs = deps.imageProbeIntervalMs ?? IMAGE_PROBE_INTERVAL_MS
+  const imageProbeTimeoutMs = deps.imageProbeTimeoutMs ?? IMAGE_PROBE_TIMEOUT_MS
   const now = deps.now ?? new Date()
 
   // 候选集 = enabled=true（体检它的健康）∪ auto_disabled=true（体检它能不能恢复）。
@@ -224,6 +267,7 @@ export async function sweepAiProviderHealth(
     scanned: providers.length,
     probed: 0,
     skipByEvidence: 0,
+    throttled: 0,
     disabled: 0,
     enabled: 0,
     refused: 0,
@@ -252,8 +296,18 @@ export async function sweepAiProviderHealth(
   let first = true
   for (const p of providers) {
     const providerId = p.id.toString()
-    // 只挑文本能力模型探活：探一个出图/向量模型得到的结果与业务可用性无关。
-    // 找不到 TEXT 才退回第一个可用模型（老行 capability 可能是自由文本，normalize 兜住）。
+    /**
+     * 探活模型的选择 = 「这条通道靠什么能力干活」。
+     *
+     * ★ 优先 TEXT：绝大多数通道是文本通道（老行 capability 可能是自由文本，normalize 兜住）。
+     * ★ 没有 TEXT 时才退回第一个启用模型 —— 对 tokenbox-image 这类**只挂图像模型**的通道，
+     *   退回的就是 IMAGE。
+     *   ⚠ 旧代码在这里是个静默陷阱：适配器固定用 chat（gateway.testProvider 里那句
+     *     `getAdapter(provider.protocol)`），于是图像模型必然被上游
+     *     「This model is not supported on the Chat Completions endpoint」400 拒绝
+     *     ⇒ 图像通道每 30 分钟被判死一次、自动停用 ⇒ 封面全落兜底模板
+     *     （2026-09-21 生产事故）。适配器已改为按能力选择，所以「退回 IMAGE」现在是正确行为。
+     */
     const model =
       p.models.find((m) => normalizeModelCapability(m.capability) === 'TEXT') ?? p.models[0]
     if (!model) {
@@ -271,23 +325,77 @@ export async function sweepAiProviderHealth(
       continue
     }
 
+    /** 本轮探的是图像通道：探活要花一张图的真钱，节奏与超时都不同（见两个常量） */
+    const isImageProbe = normalizeModelCapability(model.capability) === 'IMAGE'
+
     const hasRecentRealSuccess = withEvidence.has(providerId)
+
+    /**
+     * 图像通道的探活节流：距上次探活不足 IMAGE_PROBE_INTERVAL_MS 就本轮免探。
+     *
+     * ★★ 这里必须**短路 continue，不能只把 anySuccess 留成 false 往下走**。
+     *   下面 `decideHealthAction` 对「一次都没探通 + 别处还有同能力通道」的默认结论是
+     *   **DISABLE** —— 它假定「没探通」等于「探了但失败」。节流恰好打破这个前提：
+     *   照原样往下走，就会**为了省一张图的钱而把图像通道停用**，
+     *   症状和这次事故一模一样（封面全落兜底模板），原因却更加隐蔽。
+     *   所以节流分支只记一笔、原样保留所有状态（KEEP），不参与任何健康判定。
+     *   同一个道理也适用于「已停用」：不能因为「刚探过」就把它打开 ——
+     *   打开要么等真的探通，要么等 24h 内的真实流量证据。
+     *
+     * ★★ `!p.autoDisabled` 是**恢复路径的必要豁免**，不是优化：
+     *   被体检停用的通道，它的 `last_test_at` 正好就是**那次失败**的时间。
+     *   若节流对它也生效，就会出现「刚被误停用 ⇒ 6 小时内不再探 ⇒ 无法自动恢复」，
+     *   而唯一另一条恢复路径（24h 真实流量证据）也断了 —— 通道已停用 ⇒ 没有真实调用
+     *   ⇒ 永远攒不出证据。两条路一起堵死，症状恰恰是本轮事故的翻版。
+     *   代价：停用中的图像通道每 30 分钟探 1 轮（≤180s）。这是可接受的：
+     *   停止服务的通道本来就在烧告警，而且配置类错误（400）不产生出图费用。
+     */
+    const lastProbeAt = p.lastTestAt ? p.lastTestAt.getTime() : 0
+    if (
+      isImageProbe &&
+      !p.autoDisabled &&
+      lastProbeAt > 0 &&
+      now.getTime() - lastProbeAt < imageProbeIntervalMs
+    ) {
+      result.throttled += 1
+      result.outcomes.push({
+        providerId,
+        code: p.code,
+        name: p.name,
+        skippedByEvidence: false,
+        rounds: 0,
+        results: [],
+        action: 'KEEP',
+        note:
+          `图像通道探活节流：距上次探活不足 ${Math.round(imageProbeIntervalMs / 3_600_000)} 小时，` +
+          '本轮免探（出图探活一张约 $0.1，只有它能代表可用性）',
+      })
+      continue
+    }
 
     // 一次都不探：**已经 autoDisabled 的行只做 1 轮**——它只需要发现「恢复了没有」，
     // 4 轮复检只会在一个持续挂掉的通道上每 30 分钟白烧 6 分钟。
-    const roundsToDo = p.autoDisabled ? 0 : retryRounds
+    // ★ 图像通道同样只做 1 轮：出图的读数（HTTP 码）没有文本模型那种「慢与死无固定边界」
+    //   的歧义（见 health-probe.ts 文件头），复检只会在一个真挂掉的通道上多买几张废图。
+    const roundsToDo = p.autoDisabled || isImageProbe ? 0 : retryRounds
     const results: boolean[] = []
     let lastError: string | undefined
     let latencyMs = 0
 
-    if (!hasRecentRealSuccess) {
+    if (hasRecentRealSuccess) {
+      result.skipByEvidence += 1
+    } else {
       if (!first && gapMs > 0) await sleep(gapMs)
       first = false
       for (let round = 0; round <= roundsToDo; round++) {
         if (round > 0 && retryDelayMs > 0) await sleep(retryDelayMs)
         let r: HealthProbeResult
         try {
-          r = await probe({ providerId, modelCode: model.modelCode, timeoutMs })
+          r = await probe({
+            providerId,
+            modelCode: model.modelCode,
+            timeoutMs: isImageProbe ? imageProbeTimeoutMs : timeoutMs,
+          })
         } catch (e) {
           // probe 自身抛错（数据库写失败等）不该让整轮体检挂掉，按一次失败计。
           r = { ok: false, latencyMs: 0, errorMsg: (e as Error).message }
@@ -298,15 +406,36 @@ export async function sweepAiProviderHealth(
         if (r.ok) break
         lastError = r.errorMsg
       }
-    } else {
-      result.skipByEvidence += 1
     }
 
     const anySuccess = results.some(Boolean)
+    /**
+     * ★★ 「拒绝自锁」的计数必须**按能力**算，不能按「所有通道」算。
+     *
+     * 旧实现是 `enabledIds.size - 1`（全局）：库里 4 条通道全在 enabled、其中只有 1 条
+     * 挂图像模型时，图像通道探测失败 → 其它在用=3 → 允许停用。
+     * 而它其实是 `publish_cover` **唯一**的候选 ⇒ 所有封面静默落兜底模板。
+     * 2026-09-21 的封面事故正是这条路径（根因是探活适配器选错，但这条护栏本应拦住它）。
+     *
+     * 改成「除它之外，还有几条 enabled 通道挂得起**同能力**的启用模型」之后：
+     *   · 图像通道成为最后一条图像通道时 → 拒绝停用（保留 + 每轮告警）；
+     *   · 文本通道之间仍是同能力的可替代关系 → 行为不变；
+     *   · 一条**没有模型**的通道不再被算作「别人能顶替我」——它本来什么也顶不了。
+     */
+    const probeCapability = normalizeModelCapability(model.capability)
+    let otherEnabledProviderCount = 0
+    for (const q of providers) {
+      const qid = q.id.toString()
+      if (qid === providerId) continue
+      if (!enabledIds.has(qid)) continue
+      if (q.models.some((m) => normalizeModelCapability(m.capability) === probeCapability)) {
+        otherEnabledProviderCount += 1
+      }
+    }
     const action = decideHealthAction({
       wasAutoDisabled: p.autoDisabled,
       anySuccess,
-      otherEnabledProviderCount: enabledIds.size - (enabledIds.has(providerId) ? 1 : 0),
+      otherEnabledProviderCount,
       hasRecentRealSuccess,
     })
 
@@ -345,8 +474,13 @@ export async function sweepAiProviderHealth(
         )
       } else if (action === 'REFUSE_LAST') {
         result.refused += 1
-        outcome.note = '它是当前唯一启用的通道，拒绝停用（否则所有 AI 场景会静默落到兜底模板）'
-        console.error(`[ai-health] 通道 ${p.code} 探测失败，但它是最后一条启用通道 —— 保留并继续告警`)
+        outcome.note =
+          `它是当前唯一能提供 ${probeCapability} 能力的启用通道，拒绝停用` +
+          '（否则所有依赖该能力的场景会静默落到兜底模板）'
+        console.error(
+          `[ai-health] 通道 ${p.code} 探测失败（能力 ${probeCapability}），但它是最后一条能顶上的通道` +
+            ' —— 保留并继续告警（本分支**故意不写** healthStatus=DOWN：那在 gateway 的候选跳过里等同于停用）',
+        )
       } else if (!p.autoDisabled && anySuccess && p.healthStatus !== 'HEALTHY') {
         // 探测通了但标记还是非健康（例如被别的机制写成 DEGRADED/DOWN）→ 把标记纠正回来。
         await prisma.aiProvider.update({
@@ -389,7 +523,7 @@ async function tick(prisma: PrismaClient): Promise<void> {
     if (r.scanned > 0) {
       console.log(
         `[ai-health] 体检 ${r.scanned} 条通道：停用 ${r.disabled} / 启用 ${r.enabled} / 拒绝停用 ${r.refused}` +
-          `（真实证据免测 ${r.skipByEvidence}，无模型跳过 ${r.noModel}，共探测 ${r.probed} 次）`,
+          `（真实证据免测 ${r.skipByEvidence}，图像节流免测 ${r.throttled}，无模型跳过 ${r.noModel}，共探测 ${r.probed} 次）`,
       )
     }
   } catch (e) {

@@ -29,6 +29,17 @@
  *   ⑫ ★ 证据窗口外的旧成功不算证据
  *   ⑬ ★ 免探测 + 已自动停用 + 有证据 ⇒ 重新启用（否则会死锁：既免探测又不开，白停 24 小时）
  *   ⑭ 探活超时必须够长（gpt 实测 36~52s）——这是配置回归，防止有人调回 10s
+ *   ⑮ ★ 图像通道必须用**图像适配器**探活。用 chat 适配器去探 gpt-image-2 必然拿到
+ *      上游 400「This model is not supported on the Chat Completions endpoint」——
+ *      一次与被探通道是否可用**完全无关**的失败 ⇒ 出图通道每 30 分钟被判死一次、
+ *      自动停用 ⇒ 封面全落兜底模板（2026-09-21 生产事故根因，用户可见症状是
+ *      「标题文案都生成了，封面没出来」）。这条是配置回归：防止有人把它改回 chat。
+ *   ⑯ ★ 「拒绝自锁」的计数必须按**能力**算：库里 3 条通道全在用、其中只有 1 条挂图像模型时，
+ *      全局计数（旧实现）会允许把这条唯一的图像通道停用。
+ *   ⑰ ★ 图像通道的探活**要花真钱**（实测一张 $0.10 / 35.7s）⇒ 距上次探活不足
+ *      IMAGE_PROBE_INTERVAL_MS 就免探，且只探 1 轮；文本通道不受这两条影响。
+ *   ⑱ ★ 但**已自动停用的**图像通道不受节流：它的 last_test_at 正是那次失败的探活，
+ *      再叠加节流就会让「自动恢复」与「24h 真实证据」两条路一起堵死。
  *
  * 跑法：npx tsx scripts/verify-ai-health.ts
  */
@@ -64,6 +75,8 @@ interface StubRow {
   healthStatus: string
   priority: number
   models: { modelCode: string; capability: string; enabled: boolean }[]
+  /** 上次探活时间（图像通道的节流判据） */
+  lastTestAt?: Date
 }
 
 /** 一条 ai_call_log 的「证据」行 */
@@ -180,6 +193,14 @@ const noSleep = async () => {}
 const MODEL = (code = 'stub-model'): { modelCode: string; capability: string; enabled: boolean } => ({
   modelCode: code,
   capability: 'TEXT',
+  enabled: true,
+})
+/** 只挂图像模型的通道（现实里就是 tokenbox-image / gpt-image-2） */
+const IMAGE_MODEL = (
+  code = 'stub-image',
+): { modelCode: string; capability: string; enabled: boolean } => ({
+  modelCode: code,
+  capability: 'IMAGE',
   enabled: true,
 })
 const ROW = (
@@ -496,6 +517,150 @@ console.log('\n=== ⑭ 探活请求体与超时的配置回归 ===')
     timeout >= 60_000,
     '★ 默认探活超时 ≥ 60s（gpt-5.5 实测 36~52s 才回完，10s 会假失败）',
     `实际 ${timeout}ms`,
+  )
+}
+
+console.log('\n=== ⑮ 图像通道必须用图像适配器探活（2026-09-21 封面事故的根因回归） ===')
+{
+  const fs = await import('node:fs')
+  const gw = fs.readFileSync(new URL('../src/ai/gateway.ts', import.meta.url), 'utf8')
+  check(
+    /const wantImage = normalizeModelCapability\(model\.capability\) === 'IMAGE'/.test(gw),
+    '★ testProvider 按模型能力判定 wantImage',
+  )
+  check(
+    /const adapter = wantImage \? openaiImage : getAdapter\(provider\.protocol\)/.test(gw),
+    '★★ 探活适配器按能力选择（写成 chat 会让图像通道必然 400 → 自动停用 → 封面全挂）',
+  )
+  check(
+    /openaiImage/.test(gw.slice(0, gw.indexOf('export class AiGateway'))),
+    'openaiImage 确实被 import 进来了（不是只改了个假分支）',
+  )
+  const hp = fs.readFileSync(new URL('../src/ai/health-probe.ts', import.meta.url), 'utf8')
+  check(
+    /HEALTH_PROBE_IMAGE_PROMPT/.test(hp) && /HEALTH_PROBE_IMAGE_PROMPT/.test(gw),
+    '图像探活有独立的画面描述提示词（不能拿文本探活提示词当画面描述）',
+  )
+}
+
+console.log('\n=== ⑯ 拒绝自锁按能力算：唯一的图像通道失败也不停用 ===')
+{
+  const { prisma, calls } = makeFakePrisma([
+    ROW(1, 'img-only', { models: [IMAGE_MODEL('gpt-image-2')] }),
+    ROW(2, 'txt-a'),
+    ROW(3, 'txt-b'),
+  ])
+  const { probe } = probeAlways(false, 'HTTP 400 upstream')
+  const r = await sweepAiProviderHealth(prisma, { probe, sleep: noSleep, retryRounds: 0 })
+
+  const img = r.outcomes.find((o) => o.code === 'img-only')!
+  check(
+    img.action === 'REFUSE_LAST',
+    '★ 唯一的图像通道探测失败 → REFUSE_LAST（旧的全局计数会给出 =2 于是把它停用）',
+    `实际 ${img.action}`,
+  )
+  check(
+    !calls.updates.some((u) => u.id === '1'),
+    '★ 没有停用它，也没有写 healthStatus=DOWN（那在 gateway 里等同于停用，护栏会形同虚设）',
+  )
+  check(img.note?.includes('IMAGE') === true, '原因说明里点明了能力维度，便于后台展示', img.note ?? '')
+  check(
+    r.disabled === 1 && r.refused >= 1,
+    '★ 本轮只停用了 1 条文本通道：护栏按**实时**状态逐条判定 —— txt-a 被停用后，' +
+      'txt-b 就成为最后一条 TEXT 通道并被拒绝（若按本轮开始时的快照算，两条都会被停光 ⇒ 文本场景全落兜底模板）',
+    `disabled=${r.disabled} refused=${r.refused}`,
+  )
+
+  // 对照组：文本通道之间仍然互为顶替关系 ⇒ 照常停用（护栏没有扩大成"谁都不能停"）
+  const txtA = r.outcomes.find((o) => o.code === 'txt-a')!
+  check(txtA.action === 'DISABLE', '文本通道有同能力顶替者 → 照常 DISABLE', `实际 ${txtA.action}`)
+}
+
+console.log('\n=== ⑰ 图像通道探活节流 + 只探 1 轮（探一次要花一张图的真钱） ===')
+{
+  const now = new Date('2026-09-21T12:00:00Z')
+  const { prisma, calls } = makeFakePrisma([
+    // 1h 前刚探过 → 本轮免探
+    ROW(1, 'img-recent', { models: [IMAGE_MODEL()], lastTestAt: new Date(now.getTime() - 1 * HOUR) }),
+    // 7h 前探过（超出默认 6h 节流窗口）→ 该探了；且图像通道只探 1 轮
+    ROW(2, 'img-stale', { models: [IMAGE_MODEL()], lastTestAt: new Date(now.getTime() - 7 * HOUR) }),
+    // 文本通道即使刚探过也**不受**节流，照常按 retryRounds 探
+    ROW(3, 'txt-recent', { lastTestAt: new Date(now.getTime() - 1 * HOUR) }),
+  ])
+  const { probe, calls: probeCalls } = probeAlways(false, 'HTTP 524')
+  const r = await sweepAiProviderHealth(prisma, { probe, sleep: noSleep, retryRounds: 3, now })
+
+  const recent = r.outcomes.find((o) => o.code === 'img-recent')!
+  check(
+    recent.rounds === 0 && recent.action === 'KEEP',
+    '★ 刚探过的图像通道：0 轮探测 + KEEP',
+    `rounds=${recent.rounds} action=${recent.action}`,
+  )
+  check(
+    !probeCalls.some((c) => c.providerId === '1'),
+    '★ 没有探它（出图探活一张约 $0.1，30 分钟一轮 = $144/月）',
+  )
+  check(
+    !calls.updates.some((u) => u.id === '1'),
+    '节流是成本控制、不是健康判据 ⇒ 不动它的任何状态',
+  )
+  check(recent.note?.includes('节流') === true, '给出了节流说明（不与「探测通过/真实证据」混淆）', recent.note ?? '')
+  check(r.throttled === 1, '汇总 throttled = 1（与 skipByEvidence 分开计）', `实际 ${r.throttled}`)
+
+  const stale = r.outcomes.find((o) => o.code === 'img-stale')!
+  check(
+    stale.rounds === 1,
+    '★ 超出节流窗口的图像通道：只探 1 轮（出图读数是 HTTP 码，没有文本那种慢/死歧义，复检只是多买废图）',
+    `rounds=${stale.rounds}`,
+  )
+
+  const txt = r.outcomes.find((o) => o.code === 'txt-recent')!
+  check(txt.rounds === 4, '★ 文本通道不受节流影响，仍按 retryRounds 复检', `rounds=${txt.rounds}`)
+
+  const fs = await import('node:fs')
+  const src = fs.readFileSync(new URL('../src/ai/ai-health.service.ts', import.meta.url), 'utf8')
+  const iv = Number((/AI_HEALTH_IMAGE_PROBE_MS \?\? ([\d_]+)/.exec(src)?.[1] ?? '0').replace(/_/g, ''))
+  check(
+    iv >= 3_600_000,
+    '★ 图像探活节流默认 ≥ 1 小时（调成 30 分钟 = 每天 48 张图 ≈ $4.8/天，比业务花费还高）',
+    `实际 ${iv}ms`,
+  )
+  const it = Number(
+    (/AI_HEALTH_IMAGE_PROBE_TIMEOUT_MS \?\? ([\d_]+)/.exec(src)?.[1] ?? '0').replace(/_/g, ''),
+  )
+  check(
+    it >= 120_000,
+    '★ 图像探活超时 ≥ 120s（实测 35.7s 只是典型值；探活失败会停掉唯一候选，宁可多等）',
+    `实际 ${it}ms`,
+  )
+}
+
+console.log('\n=== ⑱ 已自动停用的图像通道不受节流（否则它永远无法自动恢复） ===')
+{
+  const now = new Date('2026-09-21T12:00:00Z')
+  const { prisma, calls } = makeFakePrisma([
+    ROW(1, 'img-auto-off', {
+      enabled: false,
+      autoDisabled: true,
+      healthStatus: 'DOWN',
+      models: [IMAGE_MODEL()],
+      // ★ 它就是「被那次失败的探活停用」的通道：last_test_at 正好是刚失败的这次探活。
+      //   若节流对它也生效，就会出现「刚被误停用 ⇒ 6 小时内不再探 ⇒ 无法自动恢复」，
+      //   而另一条恢复路径（24h 真实证据）也断了：通道已停用 ⇒ 没有真实调用 ⇒ 攒不出证据。
+      lastTestAt: new Date(now.getTime() - 5 * 60_000),
+    }),
+  ])
+  const { probe, calls: probeCalls } = probeAlways(true)
+  const r = await sweepAiProviderHealth(prisma, { probe, sleep: noSleep, retryRounds: 3, now })
+
+  const row = r.outcomes.find((o) => o.code === 'img-auto-off')!
+  check(row.rounds === 1, '★ 距上次（失败的）探活只有 5 分钟，仍然探了 1 轮', `rounds=${row.rounds}`)
+  check(probeCalls.some((c) => c.providerId === '1'), '确实探了它（节流豁免）')
+  check(row.action === 'ENABLE', '★ 探通即自动恢复启用', `实际 ${row.action}`)
+  check(r.throttled === 0, '不计入节流汇总', `实际 ${r.throttled}`)
+  check(
+    calls.updates.some((u) => u.id === '1' && u.data.enabled === true),
+    '写回 enabled=true',
   )
 }
 

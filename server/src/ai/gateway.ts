@@ -7,7 +7,8 @@ import { AiCallError, getAdapter, openaiImage, type AiUsage } from './adapters.j
 import { CircuitBreaker } from './circuit-breaker.js'
 import { decryptSecret } from '../lib/secret.js'
 import { ceilDiv } from '../lib/decimal.js'
-import { HEALTH_PROBE_PROMPT, HEALTH_PROBE_MAX_OUTPUT_TOKENS } from './health-probe.js'
+import { HEALTH_PROBE_PROMPT, HEALTH_PROBE_IMAGE_PROMPT, HEALTH_PROBE_MAX_OUTPUT_TOKENS } from './health-probe.js'
+import { normalizeModelCapability } from './model-capabilities.js'
 
 export type SceneRunResult =
   | {
@@ -136,7 +137,10 @@ export class AiGateway {
         where: { id: modelId },
         include: { provider: true },
       })
-      if (!model || !model.enabled) continue
+      if (!model || !model.enabled) {
+        skipped.push(`候选模型 id=${modelId} ${model ? '在模型页被停用' : '不存在（可能已被删除）'}`)
+        continue
+      }
 
       const provider = model.provider
       // ★ 这几个 `continue` 都是**静默跳过**：用户看不到「第 2 条候选被跳过了」，
@@ -148,12 +152,29 @@ export class AiGateway {
       //   ⚠ 若以后有人给体检加上「重排候选链 / 按可用性前置过滤」，务必把这里的
       //   `!provider.enabled` 判断提到上面 `findUnique` **之前**做前置过滤；
       //   留在原地的话，一条 2 候选的链会变成「实际只跑 1 条」，而前端仍按 2 条算超时。
-      if (!provider.enabled || provider.healthStatus === 'DOWN') continue
-      if (await this.circuit.isOpen(provider.id)) continue
+      // ★ 这三个 continue 全都**必须**记进 skipped —— 它们原来是无条件静默跳过，
+      //   于是「候选全被跳掉」时最终错误只剩一句 `no available provider`（见文件尾 ALL_FAILED）。
+      //   2026-09-21 生产事故就是这么被藏住的：出图通道被健康体检自动停用（enabled=false /
+      //   healthStatus=DOWN），`publish_cover` 的唯一候选被这里静默跳过，用户看到
+      //   「封面生成失败」，而真正的原因（通道被停用、谁停的、怎么恢复）一个字都没留下。
+      if (!provider.enabled || provider.healthStatus === 'DOWN') {
+        skipped.push(
+          `候选通道 ${provider.code} 当前不可用（enabled=${provider.enabled}，healthStatus=${provider.healthStatus}` +
+            `${provider.autoDisabled ? '；由健康体检自动停用，可跑一次体检或后台「立即体检」恢复' : ''}）`,
+        )
+        continue
+      }
+      if (await this.circuit.isOpen(provider.id)) {
+        skipped.push(`候选通道 ${provider.code} 处于熔断中（短时故障，稍后自动恢复）`)
+        continue
+      }
       if (
         provider.monthlyBudgetFen !== null &&
         provider.usedBudgetFen >= provider.monthlyBudgetFen
       ) {
+        skipped.push(
+          `候选通道 ${provider.code} 已用完月度预算（已用 ${provider.usedBudgetFen} ≥ 上限 ${provider.monthlyBudgetFen} 分）`,
+        )
         continue
       }
 
@@ -326,14 +347,34 @@ export class AiGateway {
       return { status: 'FAILED', latencyMs: 0, promptTokens: 0, completionTokens: 0, estimatedCostFen: 0, errorMsg: 'no enabled model' }
     }
 
-    const adapter = getAdapter(provider.protocol)
+    /**
+     * ★★ 适配器必须按**模型能力**选，不能只看通道协议 —— 这里是 2026-09-21 生产事故的根因。
+     *
+     * `tokenbox-image` 这类「只挂图像模型」的通道，协议仍然是 OPENAI_COMPATIBLE，
+     * 于是旧实现用 chat 适配器发出 `POST /chat/completions`（model=gpt-image-2），
+     * 上游必然回：
+     *   HTTP 400 {"message":"This model is not supported on the Chat Completions endpoint"}
+     * —— 这是一次**与被探测通道是否可用完全无关**的必然失败。
+     *
+     * 后果不是"后台测试按钮显示失败"这么轻：30 分钟一轮的健康体检把它判成连续失败，
+     * 据此自动停用（enabled=false / healthStatus=DOWN / autoDisabled=true），
+     * 而它是 `publish_cover` 场景**唯一**的候选 ⇒ 每一次封面生成都落兜底模板。
+     * 用户看到的是「标题和文案都生成了，封面没出来」，而日志里只剩一句
+     * `no available provider`（那个静默跳过已在 runScene 里补上原因）。
+     *
+     * ⚠ 探活与业务调用必须走**同一个适配器**，否则探活的读数永远不代表业务可用性 ——
+     *   这正是 `health-probe.ts` 里「ping 的读数与业务可用性无关」那条教训的第二次现身。
+     */
+    const wantImage = normalizeModelCapability(model.capability) === 'IMAGE'
+    const adapter = wantImage ? openaiImage : getAdapter(provider.protocol)
     const startedAt = Date.now()
     try {
       const res = await adapter({
         baseUrl: provider.baseUrl,
         apiKey: decryptSecret(provider.apiKeyEncrypted),
         model: model.modelCode,
-        user: opts.user ?? HEALTH_PROBE_PROMPT,
+        // 图像模型把 user 当画面描述，文本探活提示词在这里毫无意义（见 health-probe.ts）
+        user: opts.user ?? (wantImage ? HEALTH_PROBE_IMAGE_PROMPT : HEALTH_PROBE_PROMPT),
         maxOutputTokens: HEALTH_PROBE_MAX_OUTPUT_TOKENS,
         timeoutMs: opts.timeoutMs ?? 10_000,
       })
