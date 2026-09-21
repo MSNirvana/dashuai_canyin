@@ -18,6 +18,10 @@
 #   /var/log/dashuai/cert-watch.log
 # · 剩余天数 < 21 天、或 certbot.timer 不再 active/enabled、或出现 certbot.* 的 failed
 #   单元 ⇒ 该行打 [WARN] / [FAIL] 并附「!! 需要人工介入」
+# · ★ **本机 443 上正在服务的证书序列号 ≠ 磁盘上的序列号 ⇒ [FAIL]** ——
+#   专防「续期成功但没 reload nginx」这一类**全程无报错**的故障
+#   （`certbot certonly --expand` 会重写 renewal conf 并丢掉 renew_hook，实测踩过）
+# · ★ **没有任何 reload 钩子**（renew_hook 与 renewal-hooks/deploy/ 都缺）⇒ [WARN]
 # · 每周日 10:07 做一次 `certbot renew --dry-run`（走 ACME staging，**不动真实证书**）
 #   —— 这是唯一能自证「续期链路当前仍可用」的办法：webroot 目录被删、80 被封、
 #   DNS 被改，只有干跑才会暴露。结果进 /var/log/dashuai/cert-renewal-drill.log
@@ -107,6 +111,7 @@ if [ -r "$CERT_DIR/fullchain.pem" ]; then
     if end_epoch="$(date -d "$end" +%s 2>/dev/null)"; then
       days=$(( (end_epoch - $(date +%s)) / 86400 ))
       san="$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -ext subjectAltName 2>/dev/null | tail -n1 | tr -d ' ')"
+      serial="$(openssl x509 -in "$CERT_DIR/fullchain.pem" -noout -serial 2>/dev/null | cut -d= -f2)"
       detail="剩余 ${days} 天 | 到期 $end | SAN ${san:-未知}"
     else
       detail="[FAIL] 无法解析到期时间：$end"
@@ -129,6 +134,39 @@ fi
 failed_units="$(systemctl --failed --no-legend --plain 2>/dev/null | awk '{print $1}' | grep -E '^certbot\.' | tr '\n' ' ')"
 if [ -n "${failed_units// /}" ]; then
   detail="$detail | [FAIL] systemd 失败单元：$failed_units"
+fi
+
+# ── 服务中证书 vs 磁盘证书（专防「续期成功但没 reload」）─────────
+# ★ 为什么要有这一条：`certbot certonly --expand` 会**重写 renewal conf 并丢掉
+#   `renew_hook`**（2026-09-21 实测：扩展后 grep 计数 = 0）。于是续期成功、证书文件
+#   换新，nginx 却仍用内存里的旧证书 —— **全程没有任何报错**，直到证书真过期、
+#   浏览器报错才暴露。比对「nginx 实际吐出的序列号」与「磁盘上的序列号」，
+#   是能直接抓住这一类故障的唯一判据。
+if [ -n "${serial:-}" ]; then
+  sni="$(basename "$CERT_DIR")"
+  served_raw="$(echo | timeout 5 openssl s_client -connect 127.0.0.1:443 -servername "$sni" 2>/dev/null)"
+  served_serial="$(printf '%s' "$served_raw" | openssl x509 -noout -serial 2>/dev/null | cut -d= -f2)"
+  served_san="$(printf '%s' "$served_raw" | openssl x509 -noout -ext subjectAltName 2>/dev/null | tail -n1 | tr -d ' ')"
+  if [ -z "$served_serial" ]; then
+    detail="$detail | [WARN] 读不到本机 443 上正在服务的证书（nginx 没在跑？）"
+  elif ! printf '%s' "$served_san" | grep -q "$sni"; then
+    detail="$detail | [WARN] 本机 443 未针对 $sni 配置站点（无法比对服务中证书）"
+  elif [ "$served_serial" != "$serial" ]; then
+    detail="$detail | [FAIL] nginx 仍在用旧证书（服务中 $served_serial ≠ 磁盘 $serial）⇒ 续期后没 reload"
+  fi
+fi
+
+# ── 续期后是否有 reload 钩子 ────────────────────────────────────
+# 没有钩子 ⇒ 续期即使成功，nginx 也仍在用旧证书（同上）。下列两层任一存在即算有：
+#   ① lineage conf 里的 renew_hook  ② /etc/letsencrypt/renewal-hooks/deploy/ 下的全局钩子
+hook=0
+renewal_conf="/etc/letsencrypt/renewal/$(basename "$CERT_DIR").conf"
+grep -qE '^renew_hook' "$renewal_conf" 2>/dev/null && hook=1
+for h in /etc/letsencrypt/renewal-hooks/deploy/*; do
+  [ -x "$h" ] && hook=1
+done
+if [ "$hook" = 0 ]; then
+  detail="$detail | [WARN] 续期后没有 reload 钩子（renew_hook 与 renewal-hooks/deploy/ 都缺）⇒ nginx 仍会用旧证书"
 fi
 
 # ── 判定等级 ────────────────────────────────────────────────────

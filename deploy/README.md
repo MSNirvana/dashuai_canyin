@@ -458,6 +458,53 @@ tail -3 /var/log/dashuai/cert-watch.log     # 出现 `| OK |` 即正常
 > （此法已实测：剥完再跑，`rc=0`，日志写出 `all simulated renewals succeeded`）。
 > 另：crontab 行里**不能出现 `%`**（cron 把它当换行符），所以时间戳统一用 `date --iso-8601=seconds`。
 
+### 主域名首页（**备案号悬挂页**）
+
+管局要求「在**网站首页底部**悬挂 ICP 备案号并链接至工信部备案官网首页，否则将被管局责令更改」。
+本项目**备案的网站是主域 `dspcz.top`**（不是 api / admin 子域），而根域此前没有任何站点 ——
+命中的是那个唯一的 `default_server`（`00-dashuai-dev-ip.conf`），显示的是**运营后台登录页**。
+2026-09-21 备案通过后一并处理：
+
+| 动作 | 说明 |
+|---|---|
+| 新增 `deploy/nginx/dashuai-web.conf` | 主域 + www 站点；**接管 `default_server`** ⇒ 未知 Host / 直连 IP 都落到首页，后台不再从根域或裸 IP 暴露 |
+| 新增 `deploy/site/index.html` | 首页本体（纯静态、零外部依赖），底部悬挂 `冀ICP备2023045927号-2` → `https://beian.miit.gov.cn/`；**已预置公安备案号的注释位** |
+| 删除 `00-dashuai-dev-ip.conf` | 它头部自述「备案通过后应删除」；留着等于让后台经公网 IP 裸奔（无 HTTPS，token/手机号明文过网） |
+| 证书扩到 4 个域名 | `--expand` 把 `dspcz.top` / `www.dspcz.top` 并进**同一张** SAN 证书 |
+
+部署与验证（已实测）：
+
+```bash
+sudo mkdir -p /var/www/dashuai-web
+sudo cp /tmp/web-index.html /var/www/dashuai-web/index.html
+
+# 配置里用 REPLACE_DOMAIN 占位符，部署时替换（与 api/admin 两个站点同一套约定）
+sed 's/REPLACE_DOMAIN/dspcz.top/g' deploy/nginx/dashuai-web.conf | sudo tee /etc/nginx/conf.d/dashuai-web.conf >/dev/null
+sudo nginx -t && sudo systemctl reload nginx
+
+# ★ 扩证书（把根域 / www 并进现有 lineage）
+sudo certbot certonly --webroot -w /var/www/certbot \
+  --cert-name api.dspcz.top --expand \
+  -d api.dspcz.top -d admin.dspcz.top -d dspcz.top -d www.dspcz.top \
+  --key-type ecdsa --non-interactive
+
+# 判据
+curl -s https://dspcz.top/ | grep -o '冀ICP备[0-9]*号-[0-9]*'   # → 冀ICP备2023045927号-2
+curl -sI http://dspcz.top/ | grep -i location                   # → https://dspcz.top/
+```
+
+> ⚠ **两个坑**（都是本次实测踩到，都会误导判断）：
+> 1. **`certbot certonly --expand` 会重写 `renewal/<名字>.conf` 并把 `renew_hook` 丢掉**
+>    （扩展后 `grep -c renew_hook` = **0**）。后果：续期成功、证书文件换新，**nginx 仍用内存里的旧证书**，
+>    全程**无任何报错**，直到证书真过期、浏览器报错才暴露。已做**两层**兜底：
+>    ① 把 `renew_hook` 补回 lineage conf；② 装**全局**钩子
+>    `/etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh`
+>    （全局钩子不写进 lineage conf ⇒ 不会被 certbot 的任何子命令重写掉）。
+>    守望脚本也加了直接判据：**本机 443 实际吐出的证书序列号 ≠ 磁盘序列号 ⇒ `[FAIL] nginx 仍在用旧证书`**。
+> 2. **`systemctl reload nginx` 之后立刻验证，会拿到旧配置的答案** —— reload 是异步的，旧 worker 仍在服务在途请求。
+>    实测：reload 后立即 `curl` 得到 `200`（旧 `default_server` 的答案），**3 秒后**同一请求才是 `301`。
+>    ⇒ 验证前先 `sleep 2~3`，否则会把「还没来得及生效」误判成「配置没生效」。
+
 ### 运营后台
 
 ```bash
@@ -621,6 +668,9 @@ bash scripts/build-weapp-prod.sh https://api.<你的域名>/api/v1
 | `deploy/ecosystem.config.cjs` | PM2 进程配置（含「为什么只起一个进程」的说明） |
 | `deploy/nginx/dashuai-api.conf` | API 域名站点（HTTPS + 支付回调 body 直通） |
 | `deploy/nginx/dashuai-admin.conf` | 后台域名站点（静态站 + `/admin/api/v1` 反代） |
+| `deploy/nginx/dashuai-web.conf` | **主域首页站点**（备案号悬挂页 + 接管 `default_server`） |
+| `deploy/site/index.html` | 主域首页本体（底部悬挂 ICP 备案号；公安备案号位已预置为注释） |
+| `deploy/公安联网备案办理指引-2026-09-21.md` | 公安联网备案的办理清单、要准备的信息、办完怎么挂 |
 | `scripts/build-weapp-prod.sh` | 用正式域名给小程序出包（带 HTTPS/端口校验） |
 | `deploy/install-cron.sh` | 装「存储孤儿对象回收」的每日 cron（幂等，按 `# dashuai-storage-gc` 标记行替换） |
 | `deploy/install-cert-watch.sh` | 装「证书续期守望」cron（每日剩余天数 + 每周 staging 干跑），补「续期失败无人知」这个缺口。守望脚本本体**内嵌在本文件里**，装到 `/usr/local/bin/dashuai-cert-watch.sh` —— 只维护一处，不会出现仓库版与服务器版漂移 |

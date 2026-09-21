@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>廊坊大帅餐饮管理有限公司</title>
+<meta name="description" content="廊坊大帅餐饮管理有限公司 —— 为餐饮门店提供短视频创作与内容运营工具。">
+<!--
+  ═══════════════════════════════════════════════════════════════
+  主域名首页（备案号悬挂页）
+    · 线上路径：/var/www/dashuai-web/index.html
+    · 仓库路径：deploy/site/index.html
+    · 站点配置：deploy/nginx/dashuai-web.conf
+
+  ★ 为什么这一页必须存在
+    管局要求「在网站首页底部悬挂 ICP 备案号并链接至工信部备案官网首页，
+    否则将被管局责令更改」（腾讯云备案控制台列为「必须」项）。
+    本页就是这个「首页」，底部那行备案号是**合规硬要求**，不要删。
+
+  ★ 改动须知
+    · 备案号必须**逐字**与备案系统一致：冀ICP备2023045927号-2
+      （`-2` 是网站序号，不能写成主体备案号冀ICP备2023045927号，也不能漏掉）
+    · 链接必须指向 **https://beian.miit.gov.cn/**（工信部备案官网首页）
+    · 页面**纯静态、零外部依赖**（无 CDN/字体/统计脚本）：备案核查时要求页面
+      即使在弱网下也能打开并看到备案号；引外部资源会引入「备案号没渲染出来」的风险
+  ═══════════════════════════════════════════════════════════════
+-->
+<style>
+  :root {
+    --ink: #1f2329;
+    --ink-2: #5a6473;
+    --line: #e6e8eb;
+    --brand: #c8352b;
+    --bg: #ffffff;
+    --bg-soft: #faf7f5;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.75 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  .wrap { width: 100%; max-width: 760px; margin: 0 auto; padding: 0 24px; }
+
+  header { border-bottom: 1px solid var(--line); }
+  header .wrap {
+    display: flex; align-items: center; gap: 12px;
+    padding-top: 20px; padding-bottom: 20px;
+  }
+  .mark {
+    width: 34px; height: 34px; border-radius: 9px; flex: none;
+    background: var(--brand); color: #fff;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 17px; letter-spacing: .5px;
+  }
+  .co { font-weight: 600; font-size: 15px; letter-spacing: .3px; }
+
+  main { flex: 1 0 auto; padding: 56px 0 44px; }
+  h1 {
+    margin: 0 0 18px;
+    font-size: clamp(24px, 5.2vw, 34px);
+    line-height: 1.35;
+    letter-spacing: .5px;
+  }
+  h1 .accent { color: var(--brand); }
+  .lede { margin: 0 0 36px; color: var(--ink-2); font-size: 16px; }
+
+  .cards { display: grid; gap: 14px; }
+  @media (min-width: 640px) { .cards { grid-template-columns: repeat(3, 1fr); } }
+  .card {
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 18px 20px;
+  }
+  .card h2 { margin: 0 0 8px; font-size: 15px; font-weight: 600; }
+  .card p { margin: 0; font-size: 13.5px; line-height: 1.7; color: var(--ink-2); }
+
+  footer { flex: none; border-top: 1px solid var(--line); padding: 22px 0 30px; }
+  footer .row {
+    display: flex; flex-wrap: wrap; gap: 6px 18px;
+    align-items: center;
+    font-size: 13px; color: var(--ink-2);
+  }
+  footer a { color: var(--ink-2); text-decoration: none; border-bottom: 1px solid transparent; }
+  footer a:hover { color: var(--brand); border-bottom-color: currentColor; }
+  .sep { color: var(--line); }
+  .beian { white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="mark" aria-hidden="true">大</div>
+    <div class="co">廊坊大帅餐饮管理有限公司</div>
+  </div>
+</header>
+
+<main>
+  <div class="wrap">
+    <h1>为餐饮门店做<span class="accent">短视频</span>，<br>从素材到成片一站式完成。</h1>
+    <p class="lede">
+      我们把门店的菜品、环境、后厨拍下来，交给 AI 生成口播文案与分镜，再自动合成为可直接发布的竖屏短视频。
+      门店不需要剪辑经验，也不需要请拍摄团队。
+    </p>
+
+    <div class="cards">
+      <div class="card">
+        <h2>门店素材库</h2>
+        <p>菜品与环境素材集中管理，按门店归档，反复复用。</p>
+      </div>
+      <div class="card">
+        <h2>文案与分镜</h2>
+        <p>结合门店地域与菜品特点生成口播文案，并拆解为可拍摄的分镜。</p>
+      </div>
+      <div class="card">
+        <h2>云端合成</h2>
+        <p>自动配音、字幕与配乐，云端出片，成片可直接导出发布。</p>
+      </div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <span>© 2026 廊坊大帅餐饮管理有限公司</span>
+      <span class="sep" aria-hidden="true">|</span>
+
+      <!-- ★ ICP 备案号（合规硬要求，勿删）
+           备案系统里的网站备案号 = 冀ICP备2023045927号-2
+           链接必须指向工信部备案官网首页 https://beian.miit.gov.cn/ -->
+      <a class="beian" href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">冀ICP备2023045927号-2</a>
+
+      <!-- ══════════════════════════════════════════════════════════
+           ★ 公安联网备案号：**拿到正式编号后**去掉下面注释即可（现在还没办下来）
+             办理入口：https://beian.mps.gov.cn/ （全国互联网安全管理服务平台）
+             时限：网站开通后 **三十日内**（腾讯云备案控制台标注为「指引」项）
+             换编号时只需替换「冀公网安备 XXXXXXXXXXXXXX 号」里的数字，并把
+             code= 后面的值换成你的网站编号（公安备案查询页的 code 参数）。
+             图标：官方图标在 beian.mps.gov.cn 的「备案图标下载」处获取，
+             放本目录 assets/beian.png 即可（当前未放，故不显示 <img>）。
+           ══════════════════════════════════════════════════════════
+      <span class="sep" aria-hidden="true">|</span>
+      <a class="beian" href="https://beian.mps.gov.cn/" target="_blank" rel="noopener noreferrer">冀公网安备 XXXXXXXXXXXXXX 号</a>
+      -->
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
