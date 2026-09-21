@@ -1,5 +1,7 @@
 // 流量款 · 跟热点（话题稿）：与创作页区分开的独立链路。
-// 整页只有三块输入（同城落点 / 镜头复杂度 / 生成），下面全是产物。
+// 整页只有一块输入（镜头复杂度 + 生成），下面全是产物。
+// ⚠ 「同城落点」输入框已于 2026-09-21 删除（地域钩子改由服务端从门店档案取），
+//    它的 __input / __ph 两条样式一并删掉 —— 留着会让人以为那一块还在。
 .ctraffic {
   min-height: 100vh;
   background: var(--td-bg-color-page);
@@ -52,20 +54,6 @@
     font-size: 24rpx;
     color: var(--td-brand-color);
     padding: 4rpx 8rpx;
-  }
-
-  &__input {
-    margin-top: 12rpx;
-    height: 72rpx;
-    padding: 0 20rpx;
-    border-radius: 14rpx;
-    background: var(--td-bg-color-page);
-    font-size: 27rpx;
-    color: var(--td-text-color-primary);
-  }
-
-  &__ph {
-    color: var(--td-text-color-placeholder);
   }
 
   &__hint {

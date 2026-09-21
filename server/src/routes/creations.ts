@@ -41,8 +41,18 @@ const createInput = z.object({
   dishId: z.string().optional(),
   /** 内容模式；不传 = 菜品稿（保持既有客户端行为不变） */
   mode: z.enum(['DISH', 'TOPIC']).optional(),
-  /** 话题稿的同城落点（可选，自由文本）。菜品稿传了会被忽略 */
-  topicCity: optionalText(64).optional(),
+  /**
+   * ⚠ 这里**没有** `topicCity`，是 2026-09-21 刻意移除的，不要再加回来。
+   *
+   * 话题稿的地域钩子改成从**宿主门店档案**直接取（用户原话：「同城落点不需要，
+   * 直接获取店铺位置就行了，没有填写位置就不要这个信息」）⇒ 界面上那个输入框已经删掉。
+   * 于是它既不该是入参，也不该被静默接受 —— 留一个「传了会生效」的口子，
+   * 等于允许前端把地域钩子改成用户没填过的值，而文案里出现的地点没人能追溯。
+   *
+   * ★ 被剥离（不是报 400）：`z.object` 默认 strip，旧小程序包多传的 `topicCity` 会被丢掉。
+   *   这是刻意的向后兼容 —— 那个字段是可选的地域钩子，为它把整次创建打失败会让
+   *   旧包用户**完全用不了话题稿**；而丢掉它恰好等于新语义（位置由门店档案决定）。
+   */
   title: requiredText(255).optional(),
   track: z.enum(DISH_TRACKS).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
@@ -70,8 +80,10 @@ const creationPatch = z.object({
   // 同 createInput：菜品稿三款；流量款属话题稿，不在枚举里（传了会 400）
   track: z.enum(DISH_TRACKS).optional(),
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
-  /** 话题稿的同城落点；改它会改变下一次生成的措辞（城市进了提示词） */
-  topicCity: optionalText(64).optional(),
+  // ⚠ 同上：`topicCity` 也**不在**这个 patch 里（2026-09-21 移除）。
+  //   地域钩子只在创建时从门店档案取一次快照，之后不接受任何来源的改动 ——
+  //   否则「重新生成时结果不可复现」这件事会从一个入口漏回来。
+  //   旧包传上来会被 strip 掉，不报错（旧包里那是个选填项，没人为它把编辑请求打失败）。
 })
 
 const shotPatch = z.object({
@@ -114,7 +126,6 @@ router.post('/', async (req, res) => {
       storeId: input.storeId === undefined ? undefined : idParam(input.storeId, 'storeId'),
       dishId: optionalIdParam(input.dishId, 'dishId'),
       mode: input.mode,
-      topicCity: input.topicCity,
       title: input.title,
       track: input.track,
       complexity: input.complexity,

@@ -6,11 +6,13 @@
 //   既不提门店也不提菜品的稿子，用户只会以为是 AI 坏了（而且不报错）。
 //   拆成独立入口后，两条链路各自闭环：这条出稿 → 拍摄 → 合成，产物仍是同一个 creation。
 //
-// ★ 页面上**不出现**门店与菜品：宿主门店由服务端自己挑（只为媒体归属，不进提示词）。
-//   唯一与地域有关的输入是「同城落点」，那是一个自由文本，因为它决定文案里会不会出现
-//   「咱XX的」——「找老乡」这类话题没有城市就写不出来，但**不填也不影响出稿**。
+// ★ 页面上**不出现**门店与菜品：宿主门店由服务端自己挑（只为媒体归属与下游合成）。
+//   ★ 用户在这一页唯一需要决定的东西只有「镜头复杂度」—— 地域钩子（文案里会不会出现
+//   「咱XX的」）由服务端直接从门店档案的位置取，用户不用手填；门店没填位置就不带这个信息。
+//   2026-09-21 之前这里有个「同城落点（选填）」输入框，已按用户要求整块删掉
+//   （原话：「同城落地不需要，直接获取店铺位置就行了，没有填写位置就不要这个信息」）。
 import { useCallback, useRef, useState } from 'react'
-import { View, Text, Input } from '@tarojs/components'
+import { View, Text } from '@tarojs/components'
 import Taro, { useDidShow, useRouter } from '@tarojs/taro'
 import {
   createCreation,
@@ -48,7 +50,6 @@ export default function CreationTraffic() {
   const brokenId = isBrokenRouteId(router.params)
 
   const [complexity, setComplexity] = useState<Complexity>('COMPLEX')
-  const [city, setCity] = useState('')
   const [detail, setDetail] = useState<CreationDetail | null>(null)
   const [busy, setBusy] = useState(false)
   /** 当前正在做的一步，用于按钮文案（生成要走 15~90 秒，必须让用户知道在等什么） */
@@ -63,7 +64,7 @@ export default function CreationTraffic() {
       setDetail(d)
       const c = d.complexity
       if (c === 'SIMPLE' || c === 'COMPLEX' || c === 'FINE') setComplexity(c)
-      setCity(d.topicCity ?? '')
+      // 地域钩子（d.topicCity）不回填到界面上 —— 它已经不是一个可编辑的输入了
     } catch (e) {
       setErr((e as { message?: string })?.message ?? '加载失败')
     }
@@ -86,13 +87,14 @@ export default function CreationTraffic() {
       if (!id) {
         stepName = '创建'
         setStep('正在准备…')
-        const created = await createCreation({ mode: 'TOPIC', complexity, topicCity: city })
+        const created = await createCreation({ mode: 'TOPIC', complexity })
         id = created.id
         setDetail(created)
       } else {
-        // 已有创作：把页面上的改动落库（复杂度 / 同城落点）。不扣积分。
+        // 已有创作：把页面上的改动落库（只有复杂度）。不扣积分。
+        // 服务端会顺手给老稿子补上地域快照（见 creation.service 的 updateCreation）。
         stepName = '保存设置'
-        const updated = await updateCreation(id, { complexity, topicCity: city })
+        const updated = await updateCreation(id, { complexity })
         setDetail(updated)
       }
 
@@ -161,23 +163,7 @@ export default function CreationTraffic() {
       <View className='ctraffic__hero'>
         <Text className='ctraffic__hero-title'>流量款 · 跟热点</Text>
         <Text className='ctraffic__hero-desc'>
-          不用选门店和菜品。跟着今天的话题、节气、节日出稿，拍完就能发。
-        </Text>
-      </View>
-
-      {/* 同城落点：唯一与地域有关的输入，留空也可以出稿 */}
-      <View className='ctraffic__card'>
-        <Text className='ctraffic__label'>同城落点（选填）</Text>
-        <Input
-          className='ctraffic__input'
-          value={city}
-          maxlength={20}
-          onInput={(e: { detail: { value: string } }) => setCity(e.detail.value)}
-          placeholder='例如：廊坊'
-          placeholderClass='ctraffic__ph'
-        />
-        <Text className='ctraffic__hint'>
-          填了才会写出「咱廊坊的」这类同城共鸣；留空就是纯话题，不提任何地方
+          跟着今天的话题、节气、节日出稿，拍完就能发。
         </Text>
       </View>
 
@@ -197,7 +183,7 @@ export default function CreationTraffic() {
         hoverClass={busy ? 'none' : 'ds-hover'}
         onClick={() => void onGenerate()}
       >
-        {busy ? step || '生成中…' : copyText ? '重新生成' : '生成文案与分镜'}
+        {busy ? step || '生成中…' : copyText ? '重新生成' : '生成'}
       </View>
 
       {!!err && (

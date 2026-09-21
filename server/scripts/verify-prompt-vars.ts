@@ -532,15 +532,29 @@ if (dbReady) {
     }
 
     // 4.5 ★★ 话题稿（流量款独立功能）：`mode='TOPIC'` 的真实链路。
-    //     这一段是本次拆分的核心验收 —— 它要同时证明四件事：
+    //     这一段是本次拆分的核心验收 —— 它要同时证明六件事：
     //       ① 不传门店也能创建（宿主门店由服务端解析）
     //       ② 门店/菜品相关变量**全是空串**（话题稿不喂它们）
-    //       ③ topicInfo 真的进了提示词，且城市只在用户填了的时候才出现
-    //       ④ 传了门店/菜品会被拒（不是静默忽略）
+    //       ③ 地域钩子来自**宿主门店档案**（不是用户填的，也不许调用方硬塞）
+    //       ④ 宿主门店没填位置 ⇒ 整行不出现（不硬塞城市）
+    //       ⑤ topicInfo 真的进了提示词，且提示词里不出现任何门店名/菜名
+    //       ⑥ 传了门店/菜品会被拒（不是静默忽略）
+    //
+    // ★ 地域快照这条断言要能钉住「哪家门店当宿主」的取值规则（isDefault 优先、其次 id 最小）：
+    //   所以先建一家**位置填全 + isDefault** 的门店，让结果与 fixture 的创建顺序无关。
+    const locStore = await prisma.store.create({
+      data: {
+        merchantId,
+        name: '契约测试门店-位置',
+        province: '河北省',
+        city: '廊坊市',
+        district: '固安县',
+        isDefault: true,
+      },
+    })
     const topicCreation = await createCreation(prisma, merchantId, {
       mode: 'TOPIC',
       complexity: 'COMPLEX',
-      topicCity: '廊坊',
     })
     check(
       topicCreation.mode === 'TOPIC' && topicCreation.track === TOPIC_TRACK,
@@ -550,6 +564,16 @@ if (dbReady) {
     check(
       topicCreation.dishId === null && topicCreation.storeId !== null,
       '话题稿没有菜品，但挂了一家宿主门店（媒体归属要用）',
+    )
+    check(
+      topicCreation.storeId === locStore.id,
+      '宿主门店 = isDefault 那家（取值规则：isDefault 优先、其次 id 最小）',
+      `storeId=${topicCreation.storeId} 期望=${locStore.id}`,
+    )
+    check(
+      topicCreation.topicCity === '河北省廊坊市固安县',
+      '★ 地域快照 = 宿主门店档案的省+市+区（服务端自取，不传参）',
+      `topicCity=${JSON.stringify(topicCreation.topicCity)}`,
     )
     const vTopic = await buildVariables(prisma, topicCreation.id, {})
     check(
@@ -561,21 +585,49 @@ if (dbReady) {
     check(vTopic.mode === 'TOPIC', 'buildVariables 带出了内容模式')
     check(vTopic.topicInfo.length > 0, '话题稿拿到了 topicInfo（今天 + 起头方向）')
     const renderedTopic = renderTemplate(COPY_TRAFFIC_PROMPT, vTopic as unknown as Record<string, string>)
-    check(renderedTopic.includes('廊坊'), '填了同城落点 → 提示词里带出城市')
+    check(renderedTopic.includes('河北省廊坊市固安县'), '地域钩子进了提示词（门店档案 → topicInfo）')
     check(!renderedTopic.includes('{{'), '话题稿渲染后无残留占位符')
     check(
       !renderedTopic.includes('契约测试门店') && !renderedTopic.includes('契约测试菜品'),
       '★ 话题稿的提示词里**不出现**任何门店名与菜名',
     )
 
-    // 没填城市时不该硬塞一个
-    const noCity = await createCreation(prisma, merchantId, { mode: 'TOPIC', complexity: 'SIMPLE' })
-    // 城市读**创建行**上的快照（buildVariables 不返回它 —— 它只喂进 topicInfo）
-    check(noCity.topicCity === null, '未填同城落点 → 落库为 null（不是空串）')
+    // ★ 向后兼容：`topicCity` 已从 CreateCreationInput 删除，路由 schema 是 strip 模式，
+    //   所以旧小程序包多传的它会被丢掉（不是 400，旧包不至于整条创建失败）。
+    //   在 service 这一层就表现为「入参里没有这个字段」—— 这里用 as never 硬塞一个，
+    //   断言它**不生效**（快照仍只认门店档案）。
+    const staleParam = await createCreation(prisma, merchantId, {
+      mode: 'TOPIC',
+      complexity: 'SIMPLE',
+      topicCity: '保定',
+    } as never)
     check(
-      !(await buildVariables(prisma, noCity.id, {})).topicInfo.includes('城市：'),
-      '未填同城落点 → topicInfo 里不出现「城市：」行',
+      staleParam.topicCity === '河北省廊坊市固安县',
+      '★ 调用方硬塞 topicCity 不生效（地域只认门店档案，留口子会让地点无法追溯）',
+      `topicCity=${JSON.stringify(staleParam.topicCity)}`,
     )
+
+    // 宿主门店一个位置字段都没填 ⇒ 地域钩子整行不出现（不硬塞城市、也不去借别的门店的位置）。
+    // 直接改这家临时门店的档案再还原 —— 整个临时商户跑完就删，不会污染别的用例。
+    await prisma.store.update({
+      where: { id: locStore.id },
+      data: { province: null, city: null, district: null },
+    })
+    const noLoc = await createCreation(prisma, merchantId, { mode: 'TOPIC', complexity: 'SIMPLE' })
+    // 位置读**创建行**上的快照（buildVariables 不返回它 —— 它只喂进 topicInfo）
+    check(noLoc.topicCity === null, '宿主门店没填位置 → 快照落 null（不是空串）')
+    check(
+      !(await buildVariables(prisma, noLoc.id, {})).topicInfo.includes('所在地区：'),
+      '宿主门店没填位置 → topicInfo 里不出现「所在地区」行',
+    )
+    check(
+      (await prisma.creation.findUnique({ where: { id: noLoc.id }, select: { topicCity: true } }))?.topicCity === null,
+      '没填位置时库里存的也是 null（不是空串 —— 「没填」在库里只留一种形态）',
+    )
+    await prisma.store.update({
+      where: { id: locStore.id },
+      data: { province: '河北省', city: '廊坊市', district: '固安县' },
+    })
 
     // 调用方给话题稿传门店/菜品必须被拒（静默忽略会让「以为按门店生成了」长期藏着）
     let forbidden: unknown = null
@@ -847,13 +899,22 @@ for (const when of ['2026-09-20T09:00:00+08:00', '2026-01-05T09:00:00+08:00', '2
   check(t.length > 30, `${when.slice(0, 10)} topicInfo 非空且有实质内容（${t.length} 字符）`)
 }
 
-// 6.8 城市：填了才出现；**空白字符视同没填**（与输入 trim 契约同一口径）
-check(ti('2026-09-20T09:00:00+08:00', '廊坊').includes('城市：廊坊'), '填了城市 → 出现「城市：廊坊」')
-check(!ti('2026-09-20T09:00:00+08:00').includes('城市：'), '没填城市 → 不出现「城市：」行')
-check(!ti('2026-09-20T09:00:00+08:00', '   ').includes('城市：'), '★ 城市只填空白字符 → 视同没填（不许出现空的城市行）')
+// 6.8 地域钩子：串是从**门店档案**拼出来的（省/市/区），空 / 纯空白 ⇒ 整行不出现。
+//     ★ 这一行文案里**不许出现「门店」二字** —— 话题稿的硬约束是不出现门店，
+//       写成「门店位置：」模型很容易顺手写「我们店就在XX」（对照 COPY_TRAFFIC_PROMPT 的禁令）。
+const LOC = ti('2026-09-20T09:00:00+08:00', '河北省廊坊市固安县')
+const locLine = LOC.split('\n').find((l) => l.startsWith('所在地区：')) ?? ''
+check(LOC.includes('所在地区：河北省廊坊市固安县'), '给了位置 → 出现「所在地区：…」行')
+check(locLine.length > 0 && !locLine.includes('门店'), '★ 地域钩子那一行里不出现「门店」二字', locLine.slice(0, 30))
+check(locLine.includes('挑一级'), '位置是整串地址时明写「挑一级来说」（否则模型会照抄「河北省廊坊市固安县」）')
 check(
-  ti('2026-09-20T09:00:00+08:00', '廊坊').includes('不要编造具体街道'),
-  '带城市时同时禁止编造具体街道/店名（有城市不等于可以编门店）',
+  LOC.includes('不要编造具体街道'),
+  '带位置时同时禁止编造具体街道/店名（有位置不等于可以编门店）',
+)
+check(!ti('2026-09-20T09:00:00+08:00').includes('所在地区：'), '没给位置 → 不出现「所在地区：」行')
+check(
+  !ti('2026-09-20T09:00:00+08:00', '   ').includes('所在地区：'),
+  '★ 位置只给空白字符 → 视同没有（不许出现空的位置行）',
 )
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)

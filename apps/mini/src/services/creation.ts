@@ -126,7 +126,11 @@ export interface CreationDetail extends CreationItem {
   shots: ShotItem[]
   dish: { id: string; name: string } | null
   store: { id: string; name: string } | null
-  /** 话题稿的同城落点（用户当次填的快照）；菜品稿恒为 null */
+  /**
+   * 话题稿的地域钩子**快照**（创建时服务端从门店档案的位置取一次，省+市+区拼串）。
+   * 菜品稿恒为 null。★ **只读** —— 它不是界面上的输入了（那个输入框已删），
+   * 所以前端只可能读到它、不该再往上传（传了服务端也会丢掉）。
+   */
   topicCity?: string | null
 }
 
@@ -176,8 +180,8 @@ export function createCreation(input: {
   dishId?: string
   /** 内容模式；不传 = 菜品稿 */
   mode?: ContentMode
-  /** 话题稿的同城落点（可选自由文本，如「廊坊」）。填了才可能写出「咱廊坊的」 */
-  topicCity?: string
+  // ⚠ 这里**没有** topicCity：话题稿的地域钩子由服务端从宿主门店档案的位置直接取，
+  //   界面上不再有这个输入（旧包若还传，服务端 schema 会 strip 掉，不报错）。
   title?: string
   track?: CopyTrack
   complexity?: Complexity
@@ -196,10 +200,10 @@ export function createCreation(input: {
   return http.post<CreationDetail>('/creations', input)
 }
 
-/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度（不扣积分） */
+/** 保存编辑：标题 / 文案正文 / 款式 / 复杂度（不扣积分）。地域钩子不在可编辑范围内 */
 export function updateCreation(
   id: string,
-  input: { title?: string; copyText?: string; track?: CopyTrack; complexity?: Complexity; topicCity?: string },
+  input: { title?: string; copyText?: string; track?: CopyTrack; complexity?: Complexity },
 ) {
   return http.patch<CreationDetail>(`/creations/${id}`, input)
 }

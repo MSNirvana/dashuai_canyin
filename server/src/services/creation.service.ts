@@ -135,22 +135,54 @@ export class TopicHostStoreMissingError extends Error {
 }
 
 /**
- * 话题稿的「宿主门店」：只用于让媒体归属/拍摄/合成这些下游照旧成立，**不进任何提示词**。
+ * 门店档案里的「所在地区」= 话题稿的同城钩子来源。
+ *
+ * 省 / 市 / 区**都取**，因为这三个粒度在口播里各有各的用处：省是能拉同乡的身份
+ * （「咱河北的」），区县是落点更准的说法（「咱固安的」）。取哪些由模型自己挑
+ * （提示词里明写「挑一级来说」），我们只负责把素材原样给它。
+ *
+ * ★ **一个位置字段都没填 ⇒ 返回 null ⇒ 提示词里整行不出现。**
+ *   绝不退化成「用别的门店的位置」或者一个猜出来的城市：那会让一条本该只讲话题的稿子
+ *   凭空出现一个用户没填过的地方，而且不报错。
+ * ★ 省市同名的（北京市/北京市/朝阳区）去重，否则会拼出「北京市北京市朝阳区」。
+ */
+export function storeLocationOf(store: {
+  province?: string | null
+  city?: string | null
+  district?: string | null
+}): string | null {
+  const parts = [store.province, store.city, store.district]
+    .map((s) => (s ?? '').trim())
+    .filter((s) => s.length > 0)
+  const uniq = parts.filter((s, i) => parts.indexOf(s) === i)
+  return uniq.length > 0 ? uniq.join('') : null
+}
+
+/**
+ * 话题稿的「宿主门店」：让媒体归属/拍摄/合成这些下游照旧成立。
  *
  * 取值规则必须是**确定**的：优先 `isDefault=true`，其次 id 最小（= 最早创建的那家）。
  * ★ 不用「前端当前选中的门店」：那样同一份话题稿的结果会随用户切门店而变，
  *   重新生成时也复现不了；服务端自己定规则，前端不需要知道是哪家。
  * ★ 也不能改用 `storeId` 可空：creation.storeId 是媒体归属校验的锚
  *   （素材绑定按 `mediaAsset.storeId === creation.storeId` 过滤），放开可空会牵动整条渲染链路。
+ *
+ * ★ 宿主门店的**名称/介绍/品类/菜品**仍然一律不进提示词（用户从没选过它，喂进去等于
+ *   拿一家他没选的门店做内容）；但它的**所在地区**是例外 —— 那是「同城共鸣」的唯一来源，
+ *   见 storeLocationOf。这一条是用户明确要求的：界面上不再让用户手填城市，
+ *   位置直接取门店档案，没填就不带这个信息。
  */
-async function resolveTopicHostStore(prisma: PrismaClient, merchantId: bigint): Promise<bigint> {
+async function resolveTopicHostStore(
+  prisma: PrismaClient,
+  merchantId: bigint,
+): Promise<{ id: bigint; location: string | null }> {
   const store = await prisma.store.findFirst({
     where: { merchantId, deletedAt: null },
     orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
-    select: { id: true },
+    select: { id: true, province: true, city: true, district: true },
   })
   if (!store) throw new TopicHostStoreMissingError()
-  return store.id
+  return { id: store.id, location: storeLocationOf(store) }
 }
 
 export interface CreateCreationInput {
@@ -167,11 +199,17 @@ export interface CreateCreationInput {
   /** 内容模式。不传 = `DISH`（保持所有既有调用方的语义不变） */
   mode?: ContentMode
   /**
-   * 话题稿用的城市快照（`mode='TOPIC'` 时才看）。空 = 不带城市。
-   * ★ 存快照而不是「指向门店再实时取城市」：话题稿刻意不绑门店，
-   *   靠门店档案取等于把它偷偷接回来；而且门店城市随时可改，会让同一条稿重新生成结果不可复现。
+   * ⚠ 这里**没有** `topicCity`：话题稿的地域钩子由服务端从宿主门店档案直接取
+   *   （见 resolveTopicHostStore / storeLocationOf），前端不填、也传不进来。
+   *
+   *   上一版它是调用方的入参（页面上有个「同城落点（选填）」输入框）。为什么改：
+   *   用户要的是「直接获取店铺位置，没有填写位置就不要这个信息」—— 让用户为了
+   *   一条不谈门店的稿子再手打一遍城市，本身就是多余的一步。
+   *
+   *   `creation.topic_city` 这一列**保留**，但语义变成「创建当时从门店档案取到的快照」：
+   *   快照仍然必要 —— 门店档案的位置随时可改，改成每次实时读会让同一条稿
+   *   「今天生成」和「下周重新生成」落到不同地方，用户会以为是玄学。
    */
-  topicCity?: string
   /**
    * 同款作品的分镜骨架（来自 excellent_work.recipe_json 的 shotSkeleton）。
    *
@@ -414,7 +452,8 @@ export async function createCreation(
   if (mode === 'TOPIC' && (input.storeId !== undefined || input.dishId !== undefined)) {
     throw new TopicCreationStoreForbiddenError()
   }
-  const storeId = mode === 'TOPIC' ? await resolveTopicHostStore(prisma, merchantId) : input.storeId
+  const host = mode === 'TOPIC' ? await resolveTopicHostStore(prisma, merchantId) : null
+  const storeId = host ? host.id : input.storeId
   if (storeId === undefined) throw new CreationStoreMismatchError()
 
   const store = await prisma.store.findFirst({
@@ -445,7 +484,9 @@ export async function createCreation(
         //   介绍款要求讲清菜名与卖点，而话题稿手里一个字都没有，模型只能编。
         track: mode === 'TOPIC' ? TOPIC_TRACK : (input.track ?? DEFAULT_COPY_TRACK),
         mode,
-        topicCity: mode === 'TOPIC' ? (input.topicCity?.trim() || null) : null,
+        // 地域钩子 = 创建**当时**宿主门店档案里的所在地区快照（门店没填位置 ⇒ null）。
+        // 不是入参：页面上没有这个输入框了，理由见 CreateCreationInput 里那段说明。
+        topicCity: host ? host.location : null,
         complexity: input.complexity ?? DEFAULT_COMPLEXITY,
       },
     })
@@ -744,7 +785,11 @@ export async function buildVariables(
    * 何况 c.store 只是**宿主门店**（服务端为了媒体归属挑的），把它喂进提示词等于
    * 拿一个用户根本没选过的门店去做内容，用户会莫名其妙。
    *
-   * ⚠ 城市走 c.topicCity（用户当次填的快照），**不读宿主门店的 city** —— 理由同上。
+   * ⚠ 城市的来源变了（2026-09-21）：走 c.topicCity，它现在是**创建时从宿主门店档案取的快照**
+   *   （见 storeLocationOf），而不是用户手填的自由文本。
+   *   仍然**不实时读宿主门店的 city** —— 门店改了位置不该让同一条稿重新生成跑出另一个地方，
+   *   而且那样「今天生成」和「下周重新生成」结果不一致，用户只会觉得是玄学。
+   *   快照为 null = 门店一个位置字段都没填 ⇒ topicInfo 里整行不出现（纯话题稿，不提地方）。
    */
   const topic = mode === 'TOPIC'
   return {
@@ -867,7 +912,7 @@ export async function updateCreation(
   prisma: PrismaClient,
   merchantId: bigint,
   creationId: bigint,
-  input: { copyText?: string; title?: string; track?: CopyTrack; complexity?: Complexity; topicCity?: string },
+  input: { copyText?: string; title?: string; track?: CopyTrack; complexity?: Complexity },
 ) {
   await getCreation(prisma, merchantId, creationId)
   /**
@@ -879,7 +924,10 @@ export async function updateCreation(
    *   ⚠ 这是「静默忽略」而不是抛错，是刻意的：前端换款式是本地即时生效的高频操作，
    *     为一个不该出现的入参把整次编辑请求打失败，得不偿失；丢弃后返回的是库里的真实值。
    */
-  const row = await prisma.creation.findUnique({ where: { id: creationId }, select: { mode: true } })
+  const row = await prisma.creation.findUnique({
+    where: { id: creationId },
+    select: { mode: true, storeId: true, topicCity: true },
+  })
   const isTopicRow = isContentMode(row?.mode) && row.mode === 'TOPIC'
 
   const data: {
@@ -893,8 +941,26 @@ export async function updateCreation(
   if (input.title !== undefined) data.title = input.title
   if (input.track !== undefined && !isTopicRow) data.track = input.track
   if (input.complexity !== undefined) data.complexity = input.complexity
-  // 城市只属于话题稿（菜品稿引用不到这个变量，写进去只会变成一个永远不生效的字段）
-  if (input.topicCity !== undefined && isTopicRow) data.topicCity = input.topicCity.trim() || null
+  /**
+   * ★ 给存量话题稿**补**地域快照。
+   *
+   * 2026-09-21 之前，话题稿的城市是用户在页面上手填的，不填就落 null；现在改成从门店档案取。
+   * 那些老稿子的 `topic_city` 会一直是 null ⇒ 提示词里永远少一行地域钩子，**而且不报错**
+   * （模型只是写得没那么接地气，没人会想到是少了一行）。
+   *
+   * 补的时机选在「保存设置」这一步是刻意的：前端每次点「生成」都会先调本接口
+   * （已有创作走这一支），所以老稿子在**下一次生成时自动补齐**，不需要另写一个迁移脚本，
+   * 也不会在只读的详情/列表接口里偷偷写库。
+   * 只在快照为 null 时补 —— 已经取过的一律不动（门店改位置不该改历史稿）。
+   */
+  if (isTopicRow && row?.topicCity === null && row.storeId !== null) {
+    const store = await prisma.store.findFirst({
+      where: { id: row.storeId, merchantId },
+      select: { province: true, city: true, district: true },
+    })
+    const loc = store ? storeLocationOf(store) : null
+    if (loc) data.topicCity = loc
+  }
   if (Object.keys(data).length === 0) return getCreation(prisma, merchantId, creationId)
   await prisma.creation.update({ where: { id: creationId }, data })
   return getCreation(prisma, merchantId, creationId)

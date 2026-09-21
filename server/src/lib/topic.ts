@@ -179,7 +179,10 @@ export function topicDirections(now: Date = new Date()): string[] {
 /**
  * 渲染成给提示词用的文本。**保证非空**。
  *
- * 样例（2026-09-20，带城市「廊坊」）：
+ * `location` = 门店档案里填的所在地区（省/市/区拼起来，见 creation.service 的 storeLocationOf）。
+ * ★ 空串 = 门店没填位置 ⇒ **整行不出现**（纯话题稿，一句地方都不提），绝不硬塞一个城市。
+ *
+ * 样例（2026-09-20，门店位置「河北省廊坊市固安县」）：
  * ```
  * 今天是 2026-09-20（星期日），秋季
  * 临近节点：9月23日 秋分（3 天后）；9月25日 中秋节（5 天后）；10月1日 国庆节（11 天后）
@@ -188,19 +191,28 @@ export function topicDirections(now: Date = new Date()): string[] {
  * 2. 天凉了，就想吃点热乎的
  * 3. 你是哪儿人，多久没吃到家乡那一口了
  * 4. 加班到几点，晚饭都是怎么解决的
- * 城市：廊坊（可以写「咱廊坊的」这类同城共鸣，但不要编造具体街道或事件）
+ * 所在地区：河北省廊坊市固安县（要拉同城共鸣就从里面挑一级来说，比如「咱河北的」「咱固安的」）
  * ★ 不要编造新闻、热搜、明星、政策；拿不准就写上面这几条
  * ```
  */
-export function formatTopicInfo(now: Date = new Date(), city = ''): string {
+export function formatTopicInfo(now: Date = new Date(), location = ''): string {
   const dirs = topicDirections(now)
   const lines: string[] = [formatDateInfo(now)]
 
   lines.push('这次可以用的起头方向（挑一条写，不要几条都用上）：')
   dirs.forEach((d, i) => lines.push(`${i + 1}. ${d}`))
 
-  if (city.trim()) {
-    lines.push(`城市：${city.trim()}（可以写「咱${city.trim()}的」这类同城共鸣，但不要编造具体街道、店名或事件）`)
+  const loc = location.trim()
+  if (loc) {
+    // ★ 两个措辞都是刻意的：
+    //   ① 用「所在地区」而不是「城市 / 门店」—— 话题稿的硬约束是**不出现门店**，
+    //      一旦这里写出「门店」二字，模型很容易顺手写「我们店就在XX」；
+    //   ② 明写「挑一级来说」—— 传进来的可能是「河北省廊坊市固安县」这种整串地址，
+    //      照抄进文案就是一句没人这么说话的念地址；而挑一级（省 或 区县）才是真人说法。
+    lines.push(
+      `所在地区：${loc}（要拉同城共鸣就从里面**挑一级**来说，比如「咱河北的」「咱固安的」；` +
+        `挑一级就够，别把整串地址念出来，也不要编造具体街道、店名、事件）`,
+    )
   }
   lines.push('★ 不要编造新闻、热搜、明星、政策；拿不准就写上面这几条')
   return lines.join('\n')
