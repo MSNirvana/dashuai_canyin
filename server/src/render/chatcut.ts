@@ -10,15 +10,28 @@ export const CHATCUT_VOICES = [
   { id: 'energetic-youth', name: '活力青年', description: '轻快有冲劲，适合同城引流' },
 ] as const
 
+/**
+ * 「不配音」档位（2026-09-21 新增）：保留画面原声，不生成配音轨。
+ * ★ 连带后果：**字幕也没有** —— 字幕是从配音轨转录派生的（driver 第 5 步 `edit_captions`
+ *   依赖 `transcriptionAssetIds`，而那些 id 来自配音素材）。所以选它时字幕开关应一起关掉。
+ */
+export const CHATCUT_VOICE_OFF = 'none'
+
 export const ChatCutOptionsSchema = z.object({
-  voiceId: z.enum(CHATCUT_VOICES.map((voice) => voice.id) as [string, ...string[]]),
+  voiceId: z.enum([CHATCUT_VOICE_OFF, ...CHATCUT_VOICES.map((voice) => voice.id)] as [string, ...string[]]),
   subtitles: z.boolean(),
+  // ── 以下 6 项已于 2026-09-21 **全部接上真实原语**（此前是「收了但不用」的装饰控件）──────
+  // 每一项的落地方式见下面的 *_PRESETS/*_PLANS 常量与 chatcut-driver.ts 里的对应阶段。
+  // ⚠ 仍然存在的前置条件（不是 bug，是额度/依赖约束）：
+  //   · subtitleStyle 只在**有字幕**时生效（无配音 ⇒ 无转录 ⇒ 无字幕）
+  //   · removeSilence 走 clean_script，同样依赖转录
+  //   · bgm 要 `CHATCUT_BGM_ENABLED=true`（生成音乐**消耗 ChatCut 额度**，留作运维开关）
   subtitleStyle: z.enum(['CLEAN', 'EMPHASIS', 'SOCIAL']),
-  bgm: z.enum(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM']),
   pacing: z.enum(['NATURAL', 'FAST', 'STORY']),
   transitions: z.enum(['CLEAN', 'SMOOTH', 'DYNAMIC']),
   removeSilence: z.boolean(),
   normalizeAudio: z.boolean(),
+  bgm: z.enum(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM']),
   note: z.string().trim().max(300),
 })
 
@@ -28,12 +41,115 @@ export const DEFAULT_CHATCUT_OPTIONS: ChatCutOptions = {
   voiceId: 'warm-female',
   subtitles: true,
   subtitleStyle: 'CLEAN',
-  bgm: 'LIGHT',
+  // ★ 默认 NONE：BGM 是**生成类**调用（消耗 ChatCut 额度）且要显式开 `CHATCUT_BGM_ENABLED`，
+  //   默认选 LIGHT 会让每次渲染都白跑一次生成。用户主动选了才做。
+  bgm: 'NONE',
   pacing: 'NATURAL',
   transitions: 'CLEAN',
   removeSilence: true,
   normalizeAudio: true,
   note: '',
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 档位 → 真实原语 的映射表（2026-09-21 实测取得，**改动前必须重新实测核对**）
+//
+// ★ 为什么单独抽成常量而不是散在 driver 里：这三个映射的**取值全部来自外部服务**
+//   （ChatCut 的预设目录 / 内置转场库 / 时间线约束），是本项目里最容易被远端改坏的东西。
+//   集中在一处，出问题时只改一张表；也便于写脚本对着 `edit_captions action=template`
+//   与 `browse_library category=transitions` 的真实返回做断言。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 字幕样式档位 → ChatCut 内置字幕预设 id。
+ * 来源：`edit_captions {action:"template"}`（不带 templatePreset）返回的语言感知目录，
+ * 实测 `catalog="chinese"`、共 10 个预设。
+ * ★ 三个档位**刻意选了视觉差异最大**的三个，而不是三个都「白字带描边」：
+ *   CLEAN 无底无描边、EMPHASIS 黄字黑描边、SOCIAL 带卡片底 —— 用户换档位必须一眼看得出来。
+ */
+export const CAPTION_PRESETS: Record<ChatCutOptions['subtitleStyle'], string> = {
+  CLEAN: 'plain', // 基础：Inter 400 纯白，无底无描边无阴影
+  EMPHASIS: 'yellow-impact', // 黄字黑描边：Xinqingnian 800 + stroke + shadow，促销最强调
+  SOCIAL: 'deyi-card', // 得意黑：Smiley Sans + 卡片底，潮感社媒风
+}
+
+/**
+ * 转场风格档位 → 内置转场 + **时长** + **需要的素材余量（handle）**。
+ *
+ * ★★ 为什么转场要带 handleFrames，而不是「只给一个转场 id」：
+ *   2026-09-21 干跑实测（用真实项目 validateOnly 逐组试出来的）——
+ *   转场不是「往接缝上贴一个效果」，它要**消耗两边的素材**：
+ *     · 前一个镜头要留出**尾部**素材，后一个镜头要留出**头部**素材；
+ *     · 而我们排轨时把每段素材**用满了**（source [0, D)）⇒ 余量 0 ⇒ ChatCut 直接拒：
+ *       `adds[0] transition duration 14f exceeds feasible visual transition limit 0f`。
+ *   实测出精确关系：**可行帧数上限 = 2 × handle − 2**（handle 是两侧各留的帧数）。
+ *   所以想要 d 帧转场，两侧各留 `handleFrames = d/2 + 1` 帧才刚好够 —— 本表的取值
+ *   都是按这条关系算出来并向 ChatCut 验证过的。
+ *
+ * ⚠ 代价（必须让用户知情）：留出来的素材**不会出现在时间线上** ⇒ 整片会变短。
+ *   每个镜头少 `2 × handleFrames` 帧；6 个镜头下 SMOOTH 约短 2.4s、DYNAMIC 约短 3.2s。
+ *   这也是为什么 CLEAN **刻意做成硬切**（assetId=null、不占任何素材）——
+ *   默认档位不能悄悄把片子缩短，用户明确选了转场才付出这个代价。
+ */
+export const TRANSITION_PLANS: Record<ChatCutOptions['transitions'], {
+  /** 内置转场 assetId；`null` = 硬切（不加转场，也不预留素材） */
+  assetId: string | null
+  /** 接缝转场时长（帧）。30fps 下 10 帧≈0.33s / 14 帧≈0.47s */
+  durationFrames: number
+  /** 每个镜头**首尾各**要预留的素材帧数。上限关系：durationFrames ≤ 2×handleFrames − 2 */
+  handleFrames: number
+}> = {
+  CLEAN: { assetId: null, durationFrames: 0, handleFrames: 0 },
+  SMOOTH: { assetId: 'builtin:tr-organic-dissolve', durationFrames: 10, handleFrames: 6 },
+  DYNAMIC: { assetId: 'builtin:tr-whip-pan', durationFrames: 14, handleFrames: 8 },
+}
+
+/**
+ * 剪辑节奏档位 → 镜头时长系数 / 镜头自身的首尾淡入淡出（秒）。
+ *
+ * ★★ 为什么用「缩短镜头」而不是「调 playbackRate（变速）」来体现快节奏：
+ *   变速会让**源素材消耗量**变成 `时长 × 倍率`。加速 ⇒ 需要比现在更多的源字节，
+ *   一旦分镜已经把素材用满（没有 trimEnd 余量），就会撞上 ChatCut 的
+ *   `Source range exceeds video asset duration` 拒单（这个坑 2026-09-17 踩过一次）。
+ *   而**缩短镜头只会减少源消耗**，任何情况下都安全。所以：
+ *     FAST    = 镜头 ×0.78                       —— 切得密
+ *     NATURAL = 原样
+ *     STORY   = 原样 + 镜头首尾 0.3s 淡入淡出      —— 舒缓、连贯
+ *   三者都只改「我们自己排的帧」，不依赖远端对变速的支持。
+ *
+ * ★ 转场的时长、以及「要预留多少素材」**不在这里** —— 那是 `TRANSITION_PLANS`（转场风格档位）的事：
+ *   它要占素材、会改变整片时长，和「节奏快慢」是两件独立的事。
+ *
+ * ⚠ FAST 的 0.78 是**目标**而不是结果：镜头还要给配音让路 ——
+ *   配音是按镜头时长合成的（尾部补静音对齐），把镜头缩到比台词本身还短就会把话吃掉。
+ *   所以 driver 会先量出「这句话真实多长」，再决定「缩到 0.78 需要的语速」是否可接受
+ *   （上限 `MAX_SPEECH_TEMPO`）；不可接受就只缩到「刚好放得下这句话」为止。
+ *   即：**FAST 永远不会以牺牲台词为代价**。
+ */
+export const PACING_PLANS: Record<ChatCutOptions['pacing'], {
+  /** 镜头时长系数（<1 变短；只允许缩短，见上面注释） */
+  shotScale: number
+  /** 每个镜头自身首尾淡入淡出秒数（0 = 不淡） */
+  clipFadeSec: number
+  /** 镜头缩短后的时长下限（毫秒）—— 再短就没信息量了。
+   *  ⚠ 它是「下限」而不是「结果」：driver 最后还会和原始时长取小
+   *    （否则一个本来 1.0s 的镜头会被下限顶到 1.2s，比原来还长 ⇒ 排帧超素材时长被拒单）。 */
+  minShotMs: number
+}> = {
+  NATURAL: { shotScale: 1, clipFadeSec: 0, minShotMs: 0 },
+  FAST: { shotScale: 0.78, clipFadeSec: 0, minShotMs: 1200 },
+  STORY: { shotScale: 1, clipFadeSec: 0.3, minShotMs: 0 },
+}
+
+/**
+ * 配乐档位 → 音乐生成提示词（`submit_music generationType=instrumental`）。
+ * ★ 都显式写了 `no vocals` —— instrumental 模式本就不出人声，但提示词里点明能进一步
+ *   降低模型「哼唱」的概率；餐饮口播底下出现人声是明显的质量事故。
+ */
+export const BGM_PROMPTS: Record<Exclude<ChatCutOptions['bgm'], 'NONE'>, string> = {
+  LIGHT: 'warm minimal acoustic guitar and soft piano, calm, under a restaurant promo voiceover, not distracting, no vocals',
+  UPBEAT: 'upbeat light electronic pop, confident energy, background bed under a short food promo, no vocals',
+  PREMIUM: 'cinematic warm strings and soft piano, elegant premium mood for a food brand film, no vocals',
 }
 
 export interface ChatCutClipInput {
@@ -218,7 +334,17 @@ async function refreshAccessTokenSingleFlight(): Promise<string> {
         console.warn('[chatcut] Redis refresh lock unavailable, using process lock:', (error as Error).message)
         locked = true
       }
-      if (locked) return await performTokenRefresh()
+      if (locked) {
+        try {
+          const token = await performTokenRefresh()
+          markRefreshResult(null)
+          return token
+        } catch (error) {
+          // 留痕后再抛 —— 调用方（worker / 能力表探测）的行为不变，只是多了一份可观测性
+          markRefreshResult(error as Error)
+          throw error
+        }
+      }
 
       const deadline = Date.now() + 15_000
       while (Date.now() < deadline) {
@@ -226,7 +352,9 @@ async function refreshAccessTokenSingleFlight(): Promise<string> {
         const cached = await readCachedAccessToken()
         if (cached) return cached.accessToken
       }
-      throw new Error('等待其他实例刷新 ChatCut access token 超时')
+      const timeoutError = new Error('等待其他实例刷新 ChatCut access token 超时')
+      markRefreshResult(timeoutError)
+      throw timeoutError
     } finally {
       if (locked) {
         try {
@@ -271,6 +399,66 @@ export class ChatCutNotConfiguredError extends Error {
 /** 本进程内成功换过一次 token ⇒ 即便 .env 里只有 Redis 才有 refresh token，也算有凭证 */
 let tokenProvenInMemory = false
 
+/**
+ * 最近一次 token 刷新的结果 —— **只记结果，不记原文**（错误原文含产品名/HTTP 报文，不能外露）。
+ *
+ * ★ 为什么需要它（2026-09-21）：`chatCutConfigured()` 原本**只检查「环境变量在不在」**，
+ *   所以 refresh_token 一旦在 ChatCut 侧被作废，能力表照样返回 `available=true`、小程序照样
+ *   放开 AI 档 ⇒ 商户点了提交（通过）、**冻结了积分**、等上几分钟，才在 worker 里失败。
+ *   这是最难查的一类故障：**档位明明可点，一点就失败**，而且没有任何告警。
+ *   把「最近一次刷新成没成、是哪类失败」留在这里，就能让能力表提前反映出来（见 chatCutConfigured）。
+ *
+ * ★ 为什么只认 `auth` 类：`invalid_grant` / 401 / 403 表示授权**确定性地坏了**（不会自愈），
+ *   这时候置灰是对的。网络类失败（fetch failed / 超时）自己会好，把它算进去会让档位
+ *   莫名其妙地灰掉，反而更糟 —— 所以只做留痕、不参与可用性判定。
+ */
+let lastRefresh: { ok: boolean; atMs: number; kind: RefreshFailureKind } | null = null
+
+type RefreshFailureKind = 'auth' | 'network' | 'other'
+
+/** 分类失败原因。只返回类别，不返回原文 —— 调用方要展示给运维看（能力表不鉴权）。 */
+function classifyRefreshFailure(message: string): RefreshFailureKind {
+  if (/invalid_grant|unauthorized|\b401\b|\b403\b|授权|鉴权/i.test(message)) return 'auth'
+  if (/network|fetch failed|timeout|超时|ECONN|EAI_AGAIN|socket/i.test(message)) return 'network'
+  return 'other'
+}
+
+function markRefreshResult(error: Error | null): void {
+  lastRefresh = error
+    ? { ok: false, atMs: Date.now(), kind: classifyRefreshFailure(error.message) }
+    : { ok: true, atMs: Date.now(), kind: 'other' }
+}
+
+/**
+ * 给运维看的通道健康位（**不含任何凭证或错误原文**）。
+ * 挂在 `/api/v1/render/capabilities` 上，因为那条接口不鉴权、随时可 curl。
+ */
+export interface ChatCutHealth {
+  /** 环境变量是否齐全（= 是否配过，不代表有效） */
+  configured: boolean
+  /** 最近一次 token 刷新结果；null = 本进程还没刷新过（刚重启） */
+  lastRefresh: { ok: boolean; kind: RefreshFailureKind; agoSec: number } | null
+  /** 当前判定结论，与 chatCutConfigured() 一致 */
+  usable: boolean
+  /**
+   * 「配乐」档位是否可用 —— 配乐 = 调 `submit_music` 生成音乐，**消耗 ChatCut 额度**，
+   * 所以留了 `CHATCUT_BGM_ENABLED` 这个运维开关。小程序据此置灰「配乐」那一栏，
+   * 而不是让用户选了之后才收到一句「本次无背景音乐」。
+   */
+  bgmEnabled: boolean
+}
+
+export function chatCutHealth(): ChatCutHealth {
+  return {
+    configured: credentialPresent(),
+    lastRefresh: lastRefresh
+      ? { ok: lastRefresh.ok, kind: lastRefresh.kind, agoSec: Math.round((Date.now() - lastRefresh.atMs) / 1000) }
+      : null,
+    usable: chatCutConfigured(),
+    bgmEnabled: process.env.CHATCUT_BGM_ENABLED?.trim().toLowerCase() === 'true',
+  }
+}
+
 function credentialPresent(): boolean {
   return Boolean(
     tokenProvenInMemory ||
@@ -296,6 +484,14 @@ export function chatCutConfigured(): boolean {
   // 注意：这里必须读原始环境变量，不能调会抛错的取配置函数 ——
   // 否则「是否可用」判断会变成抛异常，调用方（/system/settings 探测、能力表）会 500。
   if (process.env.CHATCUT_ADAPTER_ENABLED?.trim().toLowerCase() === 'false') return false
+  // ★ 2026-09-21 新增：**已知授权失效**时也判不可用（动机见上面 lastRefresh 的注释）。
+  //   只认 `auth` 类 —— 授权坏了是确定性的、不会自愈；网络抖动会自己好，不能拿来置灰。
+  //   ⚠ 冷启动（进程刚起、lastRefresh 为 null）时维持原语义（只看环境变量），
+  //     因为「还没试过」不等于「不可用」。
+  //   ⚠ 代价：手上若还有未过期的 access_token（最长 1 小时），本可以继续出片，
+  //     这里也会置灰。这是**有意为之** —— 授权已废的通道注定会坏，提前让商户换基础档，
+  //     好过让他提交、冻结积分、等几分钟再失败。
+  if (lastRefresh && !lastRefresh.ok && lastRefresh.kind === 'auth') return false
   return credentialPresent()
 }
 

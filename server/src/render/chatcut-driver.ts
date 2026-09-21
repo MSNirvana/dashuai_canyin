@@ -35,11 +35,22 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
-import { callTool, type ChatCutJobInput } from './chatcut.js'
+import {
+  callTool,
+  CHATCUT_VOICE_OFF,
+  // 以下四张表是「面板档位 → 真实原语」的唯一来源，定义在 chatcut.ts（见那里的注释）。
+  // ★ 绝不在这里再抄一份：抄两份就必然会出现「改了一处、另一处还是旧值」的静默失效。
+  CAPTION_PRESETS,
+  TRANSITION_PLANS,
+  PACING_PLANS,
+  BGM_PROMPTS,
+  type ChatCutJobInput,
+  type ChatCutOptions,
+} from './chatcut.js'
 import { prisma } from '../db.js'
 import { activeTtsProvider } from '../services/tts-provider.service.js'
 import { synthesizeNarration } from './tts.js'
-import { probeClipMeta, probeDurationMs } from './ffmpeg.js'
+import { probeClipMeta, probeDurationMs, probeLoudnessLufs, probeSpeechEndMs, retimeAudioTo, MAX_SPEECH_TEMPO } from './ffmpeg.js'
 
 /** 一个上传会话最多导 4 个素材（官方助手的硬限制），超了要重开会话 */
 const SESSION_BATCH_SIZE = 4
@@ -427,16 +438,57 @@ export async function listChatCutTracks(projectId: string): Promise<Record<strin
 
 /**
  * 开启字幕。字幕从**转录**派生（不是烧 SRT），所以要等目标轨的 audio 转录就绪。
- * `preset` 省略即默认 Plain 样式，与 `preset:"auto"` 等价。
+ *
+ * ★ `preset` 就是「字幕样式」档位的落地处：它是 ChatCut 的**内置字幕预设 id**
+ *   （目录见 `chatcut.ts` 的 `CAPTION_PRESETS`）。省略或传 `"auto"` 即默认 Plain 样式。
+ * ⚠ `trackId` 只对 `action='track'` 有效，**绝不能传给 enable**（文档明确禁止）——
+ *   想指定字幕「读哪条轨」要用 `action='set_sources'`。这里因此不接受 trackId。
  */
 export async function enableChatCutCaptions(
   projectId: string,
-  options: { preset?: string; trackId?: string } = {},
+  options: { preset?: string } = {},
 ): Promise<Record<string, unknown>> {
   const args: Record<string, unknown> = { projectId, action: 'enable' }
   if (options.preset) args.preset = options.preset
-  if (options.trackId) args.trackId = options.trackId
   return callTool('edit_captions', args)
+}
+
+/**
+ * 把字幕**限定到指定轨道**（`action='set_sources'`）。
+ *
+ * ★★ 为什么必须做这一步（2026-09-21 实测）：`enable` 的默认行为是
+ *   「Plain 样式 + **所有可听见的轨道**」——在 6 分镜项目上实测返回
+ *   `sourceScope.sources = [V1(video), A1(audio)]`。也就是说默认会把
+ *   **画面素材自带的声音**也当成字幕来源：AI 分镜里只要带上一点环境人声/歌词，
+ *   字幕就会冒出与旁白无关的文字（而观众看到的字幕和听到的旁白对不上，
+ *   比没有字幕更容易被当成事故）。有配音时字幕只该读旁白轨。
+ *
+ * ⚠ 文档明确：这条**不能**用 `action='track'` 代替（那个只改 captions item 的
+ *   存储/遗留单轨字段，不影响「字幕读什么」），也**不能**把 trackId 传给 `enable`。
+ */
+export async function setChatCutCaptionSources(
+  projectId: string,
+  trackIds: string[],
+): Promise<Record<string, unknown>> {
+  return callTool('edit_captions', {
+    projectId,
+    action: 'set_sources',
+    json: JSON.stringify({ sources: trackIds.map((trackId) => ({ trackId })) }),
+  })
+}
+
+/**
+ * 强制重建字幕程序（`action='refresh'`）—— 导出前把 Cue 时刻与当前时间线对齐。
+ *
+ * ★ 什么时候会「不对齐」：字幕是从**转录**派生的，而同一段 PREPARE 里我们还会改时间线
+ *   （`clean_script` 压缩停顿、转场重排），`enable` 的返回里会明确带上
+ *   `captionReconciliation: { status: 'refresh-required' }` 与
+ *   「this edit may have made automatic captions stale」。
+ *   不 refresh 也不报错，只是**导出用的还是旧时刻的字幕**（错位），所以这里补一次。
+ * ★ 文档保证它是幂等的：编辑器若已经自行对账过，refresh 会**直接返回不写入**。
+ */
+export async function refreshChatCutCaptions(projectId: string): Promise<Record<string, unknown>> {
+  return callTool('edit_captions', { projectId, action: 'refresh' })
 }
 
 /** 一次立即的状态读取（不是「阻塞等待到出片」）—— 非终态要隔 ≥10s 再查 */
@@ -466,6 +518,20 @@ export async function trackChatCutProgress(
 function resultText(value: Record<string, unknown>): string {
   const text = value.message ?? value.text ?? value.content
   return typeof text === 'string' ? text : ''
+}
+
+/**
+ * 从人话里捞生成任务 id（`submit_music` 的返回**只有一个 message 字符串**）。
+ *
+ * ★★ 实测原文（2026-09-21，真提交一个 instrumental 任务拿到）：
+ *   `{"message":"Submitted instrumental music generation job.\n  jobId: 75d11fa728\n
+ *     name: dashuai-bgm\n\nUse track_progress with jobId=\"75d11fa728\" to wait for the audio asset."}`
+ *   ⇒ 没有 `jobId` 字段可读，id 只存在于这段文本里（且是**短前缀**，track_progress 明确接受前缀）。
+ *   旧写法只 pickString 结构化字段 ⇒ 永远拿不到 jobId ⇒ 记一句「无法自动排轨」就收工，
+ *   于是「选了配乐」看起来生效、实际**一次都没排上去**。这类静默要靠实测才看得见。
+ */
+function jobIdFromText(text: string): string | undefined {
+  return text.match(/\bjob_?id\b["\s:=]+"?([0-9a-z-]{6,})"?/i)?.[1]
 }
 
 /** 从人话里捞 `renderId: xxx` / `renderIds=x,y` 这类键值，命中全部 */
@@ -625,6 +691,33 @@ export interface ChatCutJobState {
   /** 已记录的原因（字幕被放弃等），用于排查「为什么没有字幕」 */
   notices?: string[]
   /**
+   * BGM 生成任务 id（`submit_music` 在 startChatCutRender 里提交，返回的 jobId）。
+   * ★ 排轨要等生成就绪（分钟级），所以只能跨轮询 tick 做 —— 存放该 id 让每轮能查一次。
+   */
+  bgmJobId?: string
+  /** BGM 生成提交时刻（毫秒时间戳）。与转录一样有**预算**：超了就放弃 BGM 直接出片。 */
+  bgmStartedAtMs?: number
+  /** 已成功排到时间线上（幂等标记：每轮只排一次） */
+  bgmPlaced?: boolean
+  /** BGM 排轨用的音频轨 id（已建过就不要重复建） */
+  bgmTrackId?: string
+  /**
+   * 字幕与「清理停顿」是否已处理过。
+   *
+   * ★ 为什么需要这个标记：PREPARE 阶段可能因为**另一个软等待**（BGM 生成）而多轮进入同一段代码，
+   *   而 `edit_captions enable` 与 `clean_script` 都是**会写时间线**的动作 ——
+   *   每轮重放一遍，轻则白跑一次转录计算，重则把已经压好的停顿再压一次。
+   *   （以前没有 BGM 这条等待链时，这一段的「只会走到一次」是靠流程顺序隐式保证的。）
+   */
+  captionsDone?: boolean
+  /**
+   * 字幕样式档位。★ 要在 PREPARE 阶段（转录就绪时）才用它开字幕，而那时距
+   * `startChatCutRender` 已经隔了好几轮 tick ⇒ 必须随任务状态存下来，不能只当局部变量。
+   */
+  subtitleStyle?: ChatCutOptions['subtitleStyle']
+  /** 是否清理停顿（同样只能在转录就绪后执行，所以也要跨 tick 存） */
+  removeSilence?: boolean
+  /**
    * 阶段内的细粒度进度（0~1），供 worker 换算成用户可见的百分比。
    *
    * ★ 为什么需要：PREPARE 要等「上传就绪」再等「转录就绪」，**分钟级**；而进度在这整段时间里
@@ -660,7 +753,7 @@ const TRANSCRIPTION_WAIT_MS = Number(process.env.CHATCUT_TRANSCRIPTION_WAIT_MS ?
  * 没配就沿用后台 TTS 供应商自己的 voiceId —— 表现为「换档位不改音色」，
  * 这比猜一个不存在的 speaker id 直接合成失败要好。
  */
-const VOICE_ENV_KEYS: Record<string, string> = {
+export const VOICE_ENV_KEYS: Record<string, string> = {
   'warm-female': 'CHATCUT_TTS_VOICE_WARM_FEMALE',
   'bright-female': 'CHATCUT_TTS_VOICE_BRIGHT_FEMALE',
   'gentle-male': 'CHATCUT_TTS_VOICE_GENTLE_MALE',
@@ -782,10 +875,379 @@ function safePhase(input: ChatCutJobInput, ratio: number, label: string): void {
   }
 }
 
+// ───────────────────── 「6 项打磨」的真实落地（2026-09-21） ─────────────────────
+//
+// 此前这 6 项是「收了但不用的装饰控件」：schema 与默认值都在，行为为零。
+// 本段把它们接到真实原语上。三条设计判据都是**实测**得出的，改之前先读：
+//
+//   ① 转场 / 音量 / 节奏必须**排在排轨之后**：转场要引用已存在的 item id
+//      （`edit_item adds:[{type:'transition', outgoingItemId, incomingItemId}]`），
+//      而 item id 只有排轨之后才存在。取 id 的唯一可靠来源是 `preview_timeline`
+//      —— `edit_item` 自己的文档就写着「要复制刚加进去的 item，请在 preview_timeline
+//      之后再发一次」⇒ **adds 的返回不保证给出新建 item 的 id**。
+//   ② 响度归一 ChatCut **没有原语**：59 个工具里没有 loudness / normalize / LUFS 类操作，
+//      `submit_export` 也没有音频归一选项。唯一能改音量的字段是
+//      `edit_item updates[].decibelAdjustment`（`0`=不变、`-60`≈静音）。
+//      ⇒ 只能「本地 ffmpeg 把每段真实响度测出来 → 算每一条该加/减多少 dB」。
+//   ③ 剪辑节奏用**缩短镜头**而不是 `playbackRate`（变速）：变速会让源素材消耗量变成
+//      「时长 × 倍率」，加速要多耗源字节，分镜已把素材用满时就会撞
+//      `Source range exceeds video asset duration` 拒单（2026-09-17 踩过）。
+//      缩短镜头只会**减少**消耗，怎么改都不会越界。
+//
+// ★★ 铁律：这 6 项一律「失败只记 notice、绝不阻塞出片」。它们是打磨，不是出片的必要条件。
+//    用户宁可拿到一部没有转场的片子，也不要一个「因为转场报错而失败」的任务。
+//    所以下面每个动作都单独 try/catch，且**不做重试**（重试交给整个任务的 sweeper 语义）。
+
+/** 配音的响度目标（LUFS）。-16 是短视频平台常见目标：人声清楚、又不至于压到爆。 */
+const VOICE_TARGET_LUFS = -16
+
+/**
+ * 有配音时**画面原声**的响度目标（LUFS）。
+ *
+ * ★ 为什么刻意跟人声拉开 10dB：分镜素材自带的是现场/素材原声，它是**背景层**。
+ *   若把它也归到 -16，「统一音量」就变成「环境噪声和人声一样响」—— 那不是修好，是事故。
+ *   ⚠ 这一层本该由 `edit_track` 的 ducking 处理，但 ducking 只作用于 BGM 轨与被显式设为
+ *     follower 的轨，且深度由引擎按时间线响度**自推**、我们控不了绝对值；
+ *     静态增益才是我们能精确控制的那一半。
+ */
+const AMBIENCE_TARGET_LUFS = -26
+
+/** 单条补偿的上下限：加太多会削波、减太多等于静音（`-60` 就是静音）。 */
+const LOUDNESS_ADJUST_MIN_DB = -30
+const LOUDNESS_ADJUST_MAX_DB = 12
+
+/** 小于这个幅度就不动 —— 免得把「本来就对」的也改一遍，还平白多出浮点噪声。 */
+const LOUDNESS_ADJUST_DEADBAND_DB = 1
+
+/**
+ * 配音结尾留的呼吸余量（毫秒）。
+ * ★ 镜头时长刚好等于「这句话的长度」时，下一句会紧贴上一句的最后一个字，
+ *   听起来像抢拍；留 200ms 的尾巴才像人说话。
+ */
+const VOICE_TAIL_MARGIN_MS = 200
+
+/**
+ * 转场给单个镜头预留素材的**比例上限**（占该镜头时长）。
+ * ★ 为什么要有：转场余量是「首尾各扣 h 帧」，对短镜头来说这个代价占得太高
+ *   （一个 0.5s 的镜头不该为了转场再砍掉 0.3s）。按比例封顶后，短镜头自动少留一点，
+ *   那个接缝的转场时长也会跟着变短（见 addChatCutTransitions 的逐接缝取 min）。
+ */
+const TRANSITION_HANDLE_MAX_RATIO = 0.15
+
+/** BGM 生成的等待预算（毫秒）。理由同转录预算：宁可没 BGM 出片，也不要一路拖到 sweeper 退款。 */
+const BGM_WAIT_MS = Number(process.env.CHATCUT_BGM_WAIT_MS ?? 240_000)
+
+export function chatCutBgmEnabled(): boolean {
+  return (process.env.CHATCUT_BGM_ENABLED ?? '').trim().toLowerCase() === 'true'
+}
+
+/** 时间线上一个已排布的条目（`preview_timeline` 的 entries 元素） */
+export interface ChatCutTimelineEntry {
+  id: string
+  itemType: string
+  trackAlias?: string
+  trackId?: string
+  fromFrame: number
+  toFrame: number
+  assetName?: string
+}
+
+export interface ChatCutTimelineView {
+  durationFrames: number
+  entries: ChatCutTimelineEntry[]
+  tracks: Array<{ id: string; alias?: string; trackType?: string; role?: string }>
+}
+
+/**
+ * 读时间线结构（只读）。
+ *
+ * ★★ 为什么必须用它、而不是从 `edit_item adds` 的返回里抠 item id：
+ *   转场（`outgoingItemId` / `incomingItemId`）与逐条音量补偿（`updates[].id`）
+ *   **都必须有 item id**，而 adds 的返回不保证给出新建 item 的 id（见本段开头的 ①）。
+ *   这是本项目「猜远端返回形状」翻过车的地方，所以这里只认一个来源。
+ *
+ * 真实返回形状（2026-09-21 在项目 9150a917 上抓的原文，都在 structuredContent 里）：
+ *   timeline.entries[] = { id, itemType:'video'|'audio', kind:'item',
+ *                          asset:{id,name,type}, startFrame,
+ *                          timelineRange:{fromFrame,toFrame}, trackAlias, trackId }
+ *   timeline.tracks[]  = { id, alias, trackType, order, audioDucking:{role}, hidden, muted }
+ *   state.durationFrames
+ * ⚠ 人话版 text（content[0].text）**不是 JSON**（是 `- item V1 [id] type=video …` 那种），
+ *   `extractStructured()` 会在 JSON.parse 失败后自动退回 structuredContent —— 这条链是通的。
+ */
+export async function previewChatCutTimeline(projectId: string): Promise<ChatCutTimelineView> {
+  const value = await callTool('preview_timeline', { projectId, views: ['timeline'], limit: 100 })
+  const timeline = (value.timeline ?? {}) as Record<string, unknown>
+  const state = (value.state ?? {}) as Record<string, unknown>
+  const rawEntries = Array.isArray(timeline.entries) ? (timeline.entries as Record<string, unknown>[]) : []
+  const rawTracks = Array.isArray(timeline.tracks) ? (timeline.tracks as Record<string, unknown>[]) : []
+
+  const entries: ChatCutTimelineEntry[] = []
+  for (const raw of rawEntries) {
+    const id = pickString(raw, 'id')
+    if (!id) continue
+    const range = (raw.timelineRange ?? {}) as Record<string, unknown>
+    const asset = (raw.asset ?? {}) as Record<string, unknown>
+    const fromFrame = Number(range.fromFrame)
+    const toFrame = Number(range.toFrame)
+    entries.push({
+      id,
+      itemType: (pickString(raw, 'itemType', 'type') ?? '').toLowerCase(),
+      trackAlias: pickString(raw, 'trackAlias'),
+      trackId: pickString(raw, 'trackId'),
+      fromFrame: Number.isFinite(fromFrame) ? fromFrame : Number(raw.startFrame) || 0,
+      toFrame: Number.isFinite(toFrame) ? toFrame : 0,
+      assetName: pickString(asset, 'name'),
+    })
+  }
+
+  return {
+    durationFrames: Number(state.durationFrames) || 0,
+    entries,
+    tracks: rawTracks
+      .map((raw) => {
+        const ducking = (raw.audioDucking ?? {}) as Record<string, unknown>
+        return {
+          id: pickString(raw, 'id') ?? '',
+          alias: pickString(raw, 'alias', 'trackAlias'),
+          trackType: pickString(raw, 'trackType', 'type'),
+          role: pickString(ducking, 'role'),
+        }
+      })
+      .filter((track) => Boolean(track.id)),
+  }
+}
+
+/** 按素材名把 item 归到分镜序列（`shot-1.mp4` → 下标 0），并按时间线顺序排序 */
+export function orderShotItems(entries: ChatCutTimelineEntry[]): ChatCutTimelineEntry[] {
+  const shots = entries.filter((entry) => entry.itemType === 'video')
+  return shots.sort((a, b) => a.fromFrame - b.fromFrame)
+}
+
+/**
+ * 在视频轨的每个接缝上加转场。接缝 = 相邻两个视频 item 的边界。
+ *
+ * ★★ 每个接缝的转场**时长**不是直接照抄档位值，而要按两侧**实际预留的素材余量**收窄：
+ *   实测关系是「可行帧数上限 = 2 × handle − 2」（handle = 该侧预留的帧数，
+ *   见 chatcut.ts `TRANSITION_PLANS` 的注释）。相邻两个镜头的余量未必一样
+ *   （短镜头会被按比例压低），所以逐个接缝取 `min`，算出来不足 3 帧就干脆跳过这个接缝 ——
+ *   宁可这里保留硬切，也不要发一个必然被 ChatCut 拒掉的批量（整批原子回滚 = 全片没有转场）。
+ *
+ * ★ 用**显式** outgoing/incoming，不用 `trackId + fromFrame` 的边界简写：
+ *   简写只在「端点无歧义」时成立，而歧义与否取决于远端当下的轨道状态；
+ *   显式给 item id 是我们唯一能自己保证的部分（id 直接从 `preview_timeline` 来）。
+ * ★ 同一种转场在同一个接缝上重复添加是**幂等**的（文档明确说会替换/更新而不是叠加），
+ *   所以这段即使被重跑一次也不会把转场堆起来。
+ */
+async function addChatCutTransitions(
+  projectId: string,
+  shots: ChatCutTimelineEntry[],
+  plan: (typeof TRANSITION_PLANS)[keyof typeof TRANSITION_PLANS],
+  handleFrames: number[],
+  notices: string[],
+): Promise<number> {
+  if (!plan.assetId || plan.durationFrames <= 0) return 0
+
+  const buildAdds = (limit: number): Array<Record<string, unknown>> => {
+    const batch: Array<Record<string, unknown>> = []
+    for (let index = 0; index + 1 < shots.length; index += 1) {
+      const left = handleFrames[index] ?? 0
+      const right = handleFrames[index + 1] ?? 0
+      const feasible = 2 * Math.min(left, right) - 2
+      const duration = Math.min(limit, feasible)
+      if (duration < 3) continue
+      batch.push({
+        type: 'transition',
+        assetId: plan.assetId,
+        outgoingItemId: shots[index]!.id,
+        incomingItemId: shots[index + 1]!.id,
+        durationInFrames: duration,
+      })
+    }
+    return batch
+  }
+
+  /**
+   * ★★ 为什么要有这条「逐档下调」的阶梯（2026-09-21 干跑后补）：
+   *   档位值（SMOOTH 10 帧 / DYNAMIC 14 帧）是按 `可行帧数 = 2×handle − 2` 算出来的，
+   *   实测恰好**贴着上限通过**（handle 6 → 上限 10；handle 8 → 上限 14）。
+   *   但那条关系里的 handle 数是我们按 ffprobe 报的素材时长反推的，而 ChatCut 校验时用的是
+   *   它自己探到的素材时长 —— 两边差 1 帧（约 33ms）完全可能。一旦差 1 帧，
+   *   这批 adds 会被**整批原子回滚**（= 全片一个转场都没有），而打磨段是「失败只记 notice」
+   *   ⇒ 线上表现成「选了转场却没效果」，且**代码路径上看不出任何异常**。
+   *   所以宁可把每个转场缩短一点，也不要一个都加不上。
+   */
+  const ladder = [plan.durationFrames, Math.max(3, Math.round(plan.durationFrames * 0.6))]
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt < ladder.length; attempt += 1) {
+    const limit = ladder[attempt]!
+    const adds = buildAdds(limit)
+    if (adds.length === 0) return 0
+    try {
+      // 一次调用整批提交（原子）：半个片子的转场比没有转场更难理解
+      await callTool('edit_item', { projectId, adds })
+      if (adds.length < shots.length - 1) {
+        notices.push(`有 ${shots.length - 1 - adds.length} 处接缝的素材余量不足 ⇒ 那些位置保留硬切`)
+      }
+      if (limit < plan.durationFrames) {
+        notices.push(`转场按 ${limit} 帧加入（档位 ${plan.durationFrames} 帧超出了素材余量）`)
+      }
+      return adds.length
+    } catch (error) {
+      lastError = error as Error
+    }
+  }
+  notices.push(`转场添加失败（本次成片不加转场）：${(lastError?.message ?? '').slice(0, 120)}`)
+  return 0
+}
+
+/**
+ * 逐条音量归一：把「目标响度 − 实测响度」算成 `decibelAdjustment` 一次批量下发。
+ *
+ * ★ 分成两组是因为「统一音量」不等于「所有东西一样响」：人声与画面原声是两个角色，
+ *   各有各的目标（见 AMBIENCE_TARGET_LUFS）。目标值之差就是刻意保留的层次。
+ * ★ 测不出响度的条目（无音轨 / 探测失败 / 超时）**跳过而不是按 0 处理** ——
+ *   按 0 会把「不知道」当成「已经是对的」，等于悄悄放弃。
+ */
+async function normalizeChatCutLoudness(
+  projectId: string,
+  groups: Array<{ items: Array<{ id: string; lufs: number | null }>; target: number }>,
+): Promise<{ adjusted: number; skipped: number }> {
+  const updates: Array<Record<string, unknown>> = []
+  let skipped = 0
+  for (const group of groups) {
+    for (const item of group.items) {
+      if (item.lufs === null || !Number.isFinite(item.lufs)) {
+        skipped += 1
+        continue
+      }
+      const raw = Math.round((group.target - item.lufs) * 10) / 10
+      const delta = Math.max(LOUDNESS_ADJUST_MIN_DB, Math.min(LOUDNESS_ADJUST_MAX_DB, raw))
+      if (Math.abs(delta) < LOUDNESS_ADJUST_DEADBAND_DB) {
+        skipped += 1
+        continue
+      }
+      updates.push({ id: item.id, decibelAdjustment: delta })
+    }
+  }
+  if (updates.length === 0) return { adjusted: 0, skipped }
+  await callTool('edit_item', { projectId, updates })
+  return { adjusted: updates.length, skipped }
+}
+
+/** `smooth_audio`：给每个相邻音频接缝加短交叉淡化、给每个裸露的音频边缘加短淡入淡出（消爆音）。 */
+async function smoothChatCutAudio(projectId: string): Promise<Record<string, unknown>> {
+  return callTool('smooth_audio', { projectId })
+}
+
+// ────────────────────────── 打磨编排（第 4 步之后） ──────────────────────────
+
+interface ChatCutPolishArgs {
+  projectId: string
+  /** 转场档位的落地计划（assetId 为 null = 硬切，不加转场） */
+  transitionPlan: (typeof TRANSITION_PLANS)[keyof typeof TRANSITION_PLANS]
+  /** 与 `input.clips` 同序：每个镜头**已经预留**的素材余量（帧）。转场时长不能超过它推出来的上限 */
+  handleFrames: number[]
+  normalizeAudio: boolean
+  /** 与 `input.clips` 同序：每段分镜源素材的实测响度（null = 测不出） */
+  clipLufs: Array<number | null>
+  /** 与分镜下标对应：每段配音的实测响度（null = 无配音 / 测不出） */
+  voiceLufs: Map<number, number | null>
+  hasVoice: boolean
+}
+
+/**
+ * 排轨之后的所有打磨：转场 → 统一音量 → 消爆音。
+ * 每一步单独兜错并写进 notices —— 见本段开头的铁律。
+ */
+async function polishChatCutTimeline(
+  args: ChatCutPolishArgs,
+  notices: string[],
+): Promise<void> {
+  let view: ChatCutTimelineView
+  try {
+    view = await previewChatCutTimeline(args.projectId)
+  } catch (error) {
+    notices.push(`读时间线失败 ⇒ 跳过转场与音量统一：${(error as Error).message}`)
+    return
+  }
+
+  const shots = orderShotItems(view.entries)
+
+  // ── ① 转场（逐接缝）
+  try {
+    const count = await addChatCutTransitions(
+      args.projectId,
+      shots,
+      args.transitionPlan,
+      args.handleFrames,
+      notices,
+    )
+    notices.push(
+      count > 0
+        ? `已加 ${count} 处转场（${args.transitionPlan.assetId}，${args.transitionPlan.durationFrames} 帧/处）`
+        : args.transitionPlan.assetId
+          ? '接缝可用的素材余量不足 ⇒ 本片按硬切处理'
+          : '转场风格选了硬切 ⇒ 不加转场',
+    )
+  } catch (error) {
+    notices.push(`转场添加失败（本片无转场）：${(error as Error).message}`)
+  }
+
+  // ── ② 统一音量
+  if (args.normalizeAudio) {
+    try {
+      // ★ 分镜 item 按时间线顺序 = clips 顺序（排轨时就是这样加的），所以下标可以对上。
+      //   不按 assetName 反查是为了不留「远端改了命名就静默错位」的隐患。
+      const shotItems = shots.map((item, index) => ({ id: item.id, lufs: args.clipLufs[index] ?? null }))
+      const voiceItems = view.entries
+        .filter((entry) => entry.itemType === 'audio')
+        .sort((a, b) => a.fromFrame - b.fromFrame)
+        .map((item, index) => ({ id: item.id, lufs: args.voiceLufs.get(index) ?? null }))
+
+      const groups: Array<{ items: Array<{ id: string; lufs: number | null }>; target: number }> = [
+        { items: voiceItems, target: VOICE_TARGET_LUFS },
+        // 无配音 ⇒ 画面原声就是主声源，按人声目标；有配音 ⇒ 它是背景层，压低 10dB
+        { items: shotItems, target: args.hasVoice ? AMBIENCE_TARGET_LUFS : VOICE_TARGET_LUFS },
+      ]
+      const { adjusted, skipped } = await normalizeChatCutLoudness(args.projectId, groups)
+      notices.push(`音量统一：已调整 ${adjusted} 条，跳过 ${skipped} 条（测不出响度或已在容差内）`)
+    } catch (error) {
+      notices.push(`音量统一失败（保持原音量）：${(error as Error).message}`)
+    }
+  }
+
+  // ── ③ 消接缝爆音（放在音量统一之后：增益变了，接缝爆点也会跟着变）
+  try {
+    const result = await smoothChatCutAudio(args.projectId)
+    const crossfades = Number((result as { crossfades?: unknown }).crossfades)
+    notices.push(
+      Number.isFinite(crossfades)
+        ? `音频平滑完成（交叉淡化 ${crossfades} 处）`
+        : '音频平滑完成',
+    )
+  } catch (error) {
+    notices.push(`音频平滑失败（可能有轻微接缝爆音）：${(error as Error).message}`)
+  }
+}
+
 export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCutRenderResult> {
   const clips = input.clips.filter((clip) => clip.sourceUrl)
   if (clips.length === 0) throw new Error('AI 档没有可用分镜素材')
   const notices: string[] = []
+  /**
+   * 剪辑节奏档位的落地参数。
+   * ★ 只在「排轨之前」用它：`shotScale` 必须**在算镜头时长时就生效**（见 scaledShotMs），
+   *   而不是排完轨再回头改 —— 回头改会在轨道上留下空隙，而 close-gap 只能用
+   *   `edit_track tighten`，那个是**按轨**关缝、会让 A1 的配音相对 V1 整体错位。
+   */
+  const pacePlan = PACING_PLANS[input.options.pacing]
+  /**
+   * 转场档位的落地计划（含「每个镜头要预留多少素材」）。
+   * ★ 它必须在**排轨之前**就参与镜头时长的计算，理由见下面 handleMsOf 的注释 ——
+   *   这是本轮实测出来的关键约束，不是可选的优化。
+   */
+  const transitionPlan = TRANSITION_PLANS[input.options.transitions]
   safePhase(input, 0.02, '准备项目')
 
   const project = await createChatCutProject({
@@ -816,8 +1278,10 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     const sec = source.meta?.durationInSeconds
     return typeof sec === 'number' && sec > 0 ? Math.round(sec * 1000) : null
   })
-  /** 分镜在时间轴上的有效时长（毫秒）：以真实素材时长为准，并受 trim 约束（二者都要，缺一就超界） */
-  const shotMs = (index: number): number => {
+  /**
+   * 分镜的**trim 后**可用时长（毫秒，还没扣转场余量）。
+   */
+  const trimmedShotMs = (index: number): number => {
     const clip = clips[index]!
     const assetMs = clipAssetMs[index] ?? clip.durationMs ?? clip.trimEndMs ?? 0
     if (assetMs <= 0) return 0
@@ -826,33 +1290,139 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     return Math.max(0, end - start)
   }
 
+  /**
+   * 转场在每个镜头**首尾各**预留的素材帧数。
+   *
+   * ★★ 为什么要在排轨前就预留（而不是「排完轨再往接缝上贴转场」）：
+   *   转场要消耗两侧的素材余量，而我们排轨时是把每段素材**用满**的
+   *   （source [0, D)）⇒ 余量 0。实测 ChatCut 会直接拒：
+   *     `transition duration 14f exceeds feasible visual transition limit 0f`。
+   *   预留 = 让素材范围收成 `[handle, D-handle]`，时间线时长随之**变短** 2×handle 帧。
+   *   ⇒ 这必须与「镜头时长」同源，否则 A1 的配音、V1 的画面、转场三者对不上。
+   *
+   * ★ 上限 15% 是给短镜头兜底：一个 0.5s 的镜头不该为了转场再砍掉 0.3s。
+   *   算出来不足 2 帧就当 0（那个接缝最后会走硬切）。
+   * ★ 余量为 0 时**完全不改变时长**，所以默认的「硬切」档行为与本轮之前完全一致。
+   */
+  const handleFramesOf = (index: number): number => {
+    const wanted = transitionPlan.handleFrames
+    if (wanted <= 0) return 0
+    const baseFrames = framesOf(trimmedShotMs(index), fps)
+    const capped = Math.min(wanted, Math.floor(baseFrames * TRANSITION_HANDLE_MAX_RATIO))
+    return capped >= 2 ? capped : 0
+  }
+  const handleFrames: number[] = clips.map((_, index) => handleFramesOf(index))
+  const handleMsOf = (index: number): number => (handleFrames[index]! / fps) * 1000
+
+  /**
+   * 分镜的**原始**可用时长（毫秒）：真实素材时长 ∧ trim ∧ 转场余量 三重约束后的值。
+   * ⚠ 它同时也是 TTS 的合成目标时长 —— 它是「素材允许的最大值」。
+   */
+  const rawShotMs = (index: number): number => {
+    const trimmed = trimmedShotMs(index)
+    const handleMs = handleMsOf(index)
+    return Math.max(0, trimmed - 2 * handleMs)
+  }
+
+  /**
+   * 分镜在时间线上的**目标**时长（毫秒）= 原始时长套上剪辑节奏档位。
+   *
+   * ⚠ 只允许**缩短**（`shotScale <= 1`）：加速要多耗源素材字节，会撞 ChatCut 的
+   *   `Source range exceeds video asset duration` 拒单（见 PACING_PLANS 的注释）。
+   *   `minShotMs` 是下限，但最后必须再和原始时长取小 —— 否则一个本来 1.0s 的镜头
+   *   按 0.78 缩放得 0.78s、被下限顶到 1.2s，**比原来还长**，排帧又超素材时长。
+   */
+  const scaledShotMs = (index: number): number => {
+    const raw = rawShotMs(index)
+    if (raw <= 0 || pacePlan.shotScale >= 1) return raw
+    return Math.min(raw, Math.max(pacePlan.minShotMs, Math.round(raw * pacePlan.shotScale)))
+  }
+
+  /**
+   * 每个镜头**最终**排到时间线上的时长（毫秒）。
+   *
+   * ★ 为什么不直接用 scaledShotMs：缩短镜头还有一个下界是**配音**。配音是按镜头时长合成的，
+   *   把镜头缩到比「这句话本身」还短，就会把台词吃掉（见下面 TTS 段里的处理）。
+   *   所以初值是缩放值，等 TTS 合成完、量出真实语音长度之后再按需抬高。
+   */
+  const slotMs: number[] = clips.map((_, index) => scaledShotMs(index))
+
+  /**
+   * 响度探测：与下面的配音合成**并行**发起（两者都是网络 I/O，串起来白白多等一轮）。
+   * 只有用户勾了「统一音量」才做 —— 每段素材都要被 ffmpeg 完整解一遍音频，不便宜。
+   * ★ 单个失败一律 `null`（＝这一段不调整），绝不让「测不了响度」变成「出不了片」。
+   */
+  const clipLufsPromise: Promise<Array<number | null>> = input.options.normalizeAudio
+    ? Promise.all(clips.map((clip) => probeLoudnessLufs(clip.sourceUrl).catch(() => null)))
+    : Promise.resolve(clips.map(() => null))
+
   // ── 2) 配音：逐镜头合成，时长对齐该镜头（与本地管线的语义一致）
+  //    ★ 选了「不配音」就整个跳过：不加音轨 = 保留素材自带原声。
+  //      第 4 步排轨只 add 了 `type:'video'`，没有 mute 参数 ⇒ 视频条目的原声本来就在，
+  //      之前那版之所以「只剩画面」是**多了一条静音配音轨**，不是原声被抹了。
+  const voiceOff = input.options.voiceId === CHATCUT_VOICE_OFF
   const dir = await mkdtemp(join(tmpdir(), 'dashuai-chatcut-'))
   const voiceSources: ChatCutUploadSource[] = []
   const voiceSpans: Array<{ index: number; fromFrame: number; durationInFrames: number }> = []
+  /** 分镜下标 → 该段配音的实测响度（LUFS）。只填「真的合成了配音」的那些下标。 */
+  const voiceLufs = new Map<number, number | null>()
   let cursorFrame = 0
   const fps = input.output.fps
   try {
-    const provider = await activeTtsProvider(prisma).catch(() => null)
+    // voiceOff 时不去查 TTS 供应商：查了只会多打一条「未配置 TTS 供应商」的误导 notice
+    const provider = voiceOff ? null : await activeTtsProvider(prisma).catch(() => null)
     const speaker = VOICE_ENV_KEYS[input.options.voiceId]
       ? process.env[VOICE_ENV_KEYS[input.options.voiceId]!]?.trim()
       : undefined
     const voiceOverride = speaker && provider ? { ...provider, voiceId: speaker } : provider
-    if (!provider) notices.push('未配置 TTS 供应商 ⇒ 只出画面与字幕，没有配音')
-    else if (speaker && !provider.apiKey) notices.push('TTS 供应商缺 apiKey ⇒ 配音为静音轨')
+    if (voiceOff) notices.push('已选择「不配音」⇒ 使用画面原声；字幕一并关闭（字幕由配音轨转录派生）')
+    else if (!provider) notices.push('未配置 TTS 供应商 ⇒ 只出画面与字幕，没有配音')
+    // ★ 判据从「有指定音色」放宽到「有没有 apiKey」：`synthesizeNarration` 的兜底是
+    //   「provider 或 apiKey 缺失 ⇒ 本地生成**静音轨**」，与有没有指定音色无关。
+    //   漏掉这一种情况的话，线上会得到「有配音轨、但整条是静音、而且一个字幕都没有」的片子，
+    //   而日志里**一句提示都没有**（这个坑本轮就是这么发现的：上一轮干跑的 voice-*.m4a 全是静音）。
+    else if (!provider.apiKey) notices.push('TTS 供应商缺 apiKey ⇒ 配音为静音轨（字幕也会是空的）')
 
     for (let index = 0; index < clips.length; index += 1) {
       const clip = clips[index]!
-      // ★ 用**探到的真实素材时长**，不是客户端上报的取整值（见 framesOf 注释）
-      const durationMs = shotMs(index)
-      const shotFrames = framesOf(durationMs, fps)
-      if (!clip.line?.trim() || durationMs <= 0) {
-        cursorFrame += shotFrames
+      // 没有旁白（或选了不配音）的镜头：直接按节奏档位排，不需要为配音让路
+      if (voiceOff || !clip.line?.trim() || slotMs[index]! <= 0) {
+        cursorFrame += framesOf(slotMs[index]!, fps)
         continue
       }
       const outPath = join(dir, `voice-${index + 1}.m4a`)
-      await synthesizeNarration(clip.line, durationMs, outPath, voiceOverride, 90_000)
+      // ★★ 合成目标用 **rawShotMs**（原始可用时长），不是缩放后的 slot：
+      //    `synthesizeNarration` 对齐时长的做法是「apad 补静音 + -t 硬截断」，
+      //    如果直接把缩放后的短时长丢给它，台词会被**从中间切掉**（而且是静默的）。
+      //    先把这句话完整地生成出来，再按下面的规则决定镜头上到底留多长。
+      const synthMs = rawShotMs(index)
+      await synthesizeNarration(clip.line, synthMs, outPath, voiceOverride, 90_000)
       safePhase(input, 0.16 + 0.34 * ((index + 1) / clips.length), `配音 ${index + 1}/${clips.length}`)
+
+      // ── 剪辑节奏的「配音下界」：镜头可以缩，但不能缩到比这句话还短
+      if (pacePlan.shotScale < 1) {
+        // 尾部静音就是 `apad` 补出来的那段 ⇒ 它能告诉我们语音真正在哪里结束
+        const speechMs = await probeSpeechEndMs(outPath).catch(() => null)
+        if (speechMs !== null && speechMs > 0) {
+          const wanted = scaledShotMs(index)
+          const margin = VOICE_TAIL_MARGIN_MS
+          if (speechMs + margin > wanted) {
+            const tempo = speechMs / Math.max(1, wanted - margin)
+            if (tempo > MAX_SPEECH_TEMPO) {
+              // 语速提太多就不像人话了 ⇒ 宁可少缩一点，也不能把台词吃掉
+              slotMs[index] = Math.min(synthMs, speechMs + margin)
+            } else {
+              // 提到「刚好放得下」的语速（atempo 保音高），然后整段重新对齐到目标时长
+              slotMs[index] = wanted
+              await retimeAudioTo(outPath, wanted, tempo)
+            }
+          } else {
+            // 这句话本来就短 ⇒ 只把多余的尾部静音裁掉即可，语速不用动
+            await retimeAudioTo(outPath, wanted)
+          }
+        }
+      }
+
       // ★★ 必须把字节读进内存，**不能**留 `createReadStream(outPath)` 这种「延迟打开」：
       //    上面那个 `finally` 里 `dir` 在 TTS 循环一结束就整个删掉了，而真正推字节
       //    （`importAssets` → `putStream`）发生在那之后 ⇒ 延迟 open 会去读一个**已删除**的
@@ -863,7 +1433,12 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
       const bytes = await readFile(outPath)
       // 配音的**真实音频时长**：metadata 声明必须用它，占位还得跟它取小 ——
       // 占位超过音频素材，会和视频那条一样被 ChatCut 拒单（`Source range exceeds … asset duration`）
-      const voiceMs = (await probeDurationMs(outPath)) ?? durationMs
+      // ⚠ 必须在上面 retime 之后才测（retime 会改文件时长）
+      const voiceMs = (await probeDurationMs(outPath)) ?? slotMs[index]!
+      // 响度探测必须在读文件之前、`rm(dir)` 之前做完（探测要读这个本地文件）
+      if (input.options.normalizeAudio) {
+        voiceLufs.set(index, await probeLoudnessLufs(outPath).catch(() => null))
+      }
       voiceSources.push({
         filename: `voice-${index + 1}.m4a`,
         contentType: 'audio/mp4',
@@ -874,13 +1449,14 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
         // ★ 只有配音轨要 ASR：字幕就是从它的转录派生的（分镜素材开转录纯属烧额度）
         startTranscription: input.options.subtitles,
       })
+      const slotFrames = framesOf(slotMs[index]!, fps)
       voiceSpans.push({
         index,
         fromFrame: cursorFrame,
         // 取小：超过音频素材会被拒单，超过分镜时长会盖到下一个镜头的配音
-        durationInFrames: Math.max(1, Math.min(shotFrames, framesOf(voiceMs, fps))),
+        durationInFrames: Math.max(1, Math.min(slotFrames, framesOf(voiceMs, fps))),
       })
-      cursorFrame += shotFrames
+      cursorFrame += slotFrames
     }
   } finally {
     // 字节已经被推上去了（流式读完），文件可以删
@@ -905,18 +1481,29 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     const clip = clips[index]!
     const assetId = assetIdOf(`shot-${index + 1}.mp4`)
     const trimStartMs = clip.trimStartMs ?? 0
-    // ★ 统一走 shotMs：「真实素材时长 ∧ trim」双重约束后的有效时长（见 framesOf 注释）。
+    // ★ 用 `slotMs`（节奏档位 ∧ 配音下界之后的最终值）—— 它同时也是上面 cursorFrame
+    //   累加用的那个值，两处必须同源，否则 A1 的配音会与 V1 的画面整体错位。
     //   旧写法用客户端上报的 durationMs 排帧 ⇒ 90 帧 vs 2.968s，被 ChatCut 直接拒单。
-    const durationMs = shotMs(index)
+    const durationMs = slotMs[index]!
     const durationFrames = durationMs > 0 ? framesOf(durationMs, fps) : undefined
+    // ★★ 素材起点要**跳过转场预留的头部余量**：时长少算了 2×handle，起点就必须往后挪 handle，
+    //    否则 source 范围变成 [trimStart, trimStart + 短时长)，尾部多出来的那截 handle 就白留了
+    //    （转场仍然会因「尾部无余量」被拒）。
+    //    这样算出的 source 范围 = [trimStart+handle, end−handle] ⊂ 素材，天然不会越界。
+    const sourceStartMs = trimStartMs + handleMsOf(index)
     adds.push({
       type: 'video',
       assetId,
       fromFrame: timelineFrame,
       ...(durationFrames ? { durationInFrames: durationFrames } : {}),
-      ...(trimStartMs > 0 ? { sourceStartFromInSeconds: trimStartMs / 1000 } : {}),
+      ...(sourceStartMs > 0 ? { sourceStartFromInSeconds: sourceStartMs / 1000 } : {}),
       // 画布是 9:16，原始素材比例未知 ⇒ cover 裁切填满，不出现黑边
       fit: 'cover',
+      // 「舒缓」档要求镜头自身带首尾淡入淡出（`fade*` 的单位是**秒**，不是帧 ——
+      // 文档明确警告别把 0.3 秒写成 30）。0 表示不加，所以只在档位要求时才带这两个字段。
+      ...(pacePlan.clipFadeSec > 0
+        ? { fadeIn: pacePlan.clipFadeSec, fadeOut: pacePlan.clipFadeSec }
+        : {}),
       ...(videoTrackId ? { trackId: videoTrackId } : {}),
     })
     timelineFrame += durationFrames ?? 0
@@ -935,6 +1522,11 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
   safePhase(input, 0.95, '排轨完成')
 
   // ── 5) 人声轨设为 anchor（引擎据此让 follower 轨自动闪避；不设则谁都不让位）
+  //
+  // ★ `create_project` 建出来的 V1 **默认就带 `audioDucking:{role:"anchor"}`**（实测），
+  //   所以「有配音」时我们得把 anchor 挪到真正的人声轨 A1 上：
+  //   BGM 是 follower，它「让位给谁」由谁被标成 anchor 决定 —— 让位给 V1 的素材原声、
+  //   而不是让位给旁白，闪避方向就整个错了。无配音时画面原声就是人声，V1 的默认 anchor 正好。
   const audioTrackId = [...JSON.stringify(added).matchAll(/"trackId":"([0-9a-f]{8,})"/g)]
     .map((match) => match[1]!)
     .find((id) => id !== videoTrackId)
@@ -944,17 +1536,62 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     })
   }
 
-  // ── 6) BGM（默认关闭：生成类工具会花 ChatCut 额度，商务口径未核实前不默认开）
-  if (input.options.bgm !== 'NONE' && process.env.CHATCUT_BGM_ENABLED === 'true') {
-    try {
-      const prompt = BGM_PROMPTS[input.options.bgm] ?? BGM_PROMPTS.LIGHT!
-      const job = await callTool('submit_music', { generationType: 'instrumental', prompt, name: 'dashuai-bgm' })
-      notices.push(`BGM 已提交生成（jobId=${job.jobId ?? job.id ?? '?'}）；本版未自动排轨，需人工在编辑器放置`)
-    } catch (error) {
-      notices.push(`BGM 生成提交失败：${(error as Error).message}`)
+  // ── 6) 打磨：转场 → 统一音量 → 消爆音。全部「失败只记 notice」，绝不阻塞出片。
+  //    ★ 必须排在这一步（排轨之后、导出之前）：转场要引用已存在的 item id，
+  //      而 item id 只能从 `preview_timeline` 拿（见 previewChatCutTimeline 的注释）。
+  //    ★ 转场预留的素材**不会出现在片子里** ⇒ 整片会变短。这件事必须让用户知情
+  //      （不然「选了转场，片子怎么短了」是个无法解释的现象）。
+  if (transitionPlan.handleFrames > 0) {
+    const reserved = handleFrames.reduce((sum, value) => sum + value, 0)
+    if (reserved > 0) {
+      notices.push(`为转场预留了素材 ⇒ 整片约缩短 ${((reserved * 2) / fps).toFixed(1)}s（转场用它做过渡）`)
     }
-  } else if (input.options.bgm !== 'NONE') {
-    notices.push(`已选 BGM=${input.options.bgm}，但 CHATCUT_BGM_ENABLED 未开 ⇒ 本次无背景音乐`)
+  }
+  try {
+    const clipLufs = await clipLufsPromise
+    await polishChatCutTimeline(
+      {
+        projectId,
+        transitionPlan,
+        handleFrames,
+        normalizeAudio: input.options.normalizeAudio,
+        clipLufs,
+        voiceLufs,
+        hasVoice: voiceSpans.length > 0,
+      },
+      notices,
+    )
+  } catch (error) {
+    // polishChatCutTimeline 内部已逐步兜错；这里兜的是它自己没预期到的（例如 await 前抛）
+    notices.push(`打磨阶段整体失败（本片未做转场/音量统一）：${(error as Error).message}`)
+  }
+
+  // ── 7) BGM：这一步只**提交生成**；真正排轨要等生成就绪（分钟级），在 PREPARE 阶段做
+  //        （见 placeChatCutBgm / pollChatCutRender）。
+  //    默认关闭：生成音乐是**消耗 ChatCut 额度**的调用，留作运维开关 `CHATCUT_BGM_ENABLED`。
+  const bgmChoice = input.options.bgm
+  let bgmJobId: string | undefined
+  if (bgmChoice !== 'NONE') {
+    if (!chatCutBgmEnabled()) {
+      notices.push(`已选 BGM=${bgmChoice}，但 CHATCUT_BGM_ENABLED 未开 ⇒ 本次无背景音乐`)
+    } else {
+      try {
+        const job = await callTool('submit_music', {
+          generationType: 'instrumental',
+          prompt: BGM_PROMPTS[bgmChoice],
+          name: 'dashuai-bgm',
+          projectId,
+        })
+        bgmJobId = pickString(job, 'jobId', 'job_id', 'id') ?? jobIdFromText(resultText(job))
+        notices.push(
+          bgmJobId
+            ? `BGM 已提交生成（jobId=${bgmJobId}）；生成完成后自动排到人声轨下方并做闪避`
+            : 'BGM 已提交，但返回里没有 jobId ⇒ 无法自动排轨（需人工在编辑器放置）',
+        )
+      } catch (error) {
+        notices.push(`BGM 生成提交失败：${(error as Error).message}`)
+      }
+    }
   }
 
   const state: ChatCutJobState = {
@@ -965,35 +1602,54 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     transcriptionAssetIds: voiceSources.filter((source) => source.startTranscription).map((source) => assetIdOf(source.filename)),
     phase: 'PREPARE',
     prepareStartedAtMs: Date.now(),
+    subtitleStyle: input.options.subtitleStyle,
+    removeSilence: input.options.removeSilence,
     notices,
+    ...(bgmJobId ? { bgmJobId, bgmStartedAtMs: Date.now() } : {}),
   }
   safePhase(input, 1, '启动完成，转入云端渲染')
   return { status: 'RUNNING', state }
 }
 
-const BGM_PROMPTS: Record<string, string> = {
-  LIGHT: 'warm minimal acoustic guitar and soft piano, calm, under a restaurant promo voiceover, not distracting, no vocals',
-  UPBEAT: 'upbeat light electronic pop, confident energy, background bed under a short food promo, no vocals',
-  PREMIUM: 'cinematic warm strings and soft piano, elegant premium mood for a food brand film, no vocals',
-}
+/**
+ * 「还在跑」的状态词（`progressState` 的判据之一）。
+ * ★ 存在的理由：状态**词**比 `ok` 布尔可信 —— 实测 generation 的 processing 期间
+ *   `ok:true`（同一条里 status 是 'processing'），只认 ok 就会把没跑完的任务当成已就绪。
+ */
+const RUNNING_STATUSES = ['processing', 'running', 'pending', 'queued', 'in_progress', 'submitted', 'waiting']
 
 /**
  * 就绪判定。实测返回形如
  *   { entries:[{id,name,status:"ready"|"pending"|…,ok,terminal,error,progress}], success, terminal }
  * 三态：全就绪 / 有终态失败 / 还需等。
  * ★ 宁可「还需等」也不要误判就绪 —— 前置没就绪就提交导出，会得到一个慢慢跑或者直接失败的渲染。
+ *
+ * ★★ 但「还需等」也有一条硬线：**`terminal:false` 就是没就绪**（2026-09-21 实测）。
+ *   生成类任务的条目长这样：
+ *     { id, ok:true, outputAssetId:null, progress:30, status:'processing', terminal:false }
+ *   —— 注意 **`ok:true`**！它只表示「这条任务记录本身没问题」，processing 期间也是 true。
+ *   旧写法把 `entry.ok === true` 直接当成就绪 ⇒ 一个**刚提交 30 秒**的音乐任务会被判成
+ *   「已完成」，于是去取 `outputAssetId`（还是 null）⇒ 记一句「取不到素材」就收工，
+ *   BGM **永远排不上轨且不报错**。所以这里把判据按权威程度重排：
+ *     ① `terminal:false` / 状态词是运行中 ⇒ 否定
+ *     ② 状态词命中就绪集合 ⇒ 肯定
+ *     ③ 都没有时，才退回「ok:true 且**没有正在运行的迹象**」
  */
 function progressState(value: Record<string, unknown>): 'ready' | 'failed' | 'waiting' {
   const entries = resultEntries(value)
   if (entries.length === 0) return 'waiting'
+  const statusOf = (entry: Record<string, unknown>): string => (pickString(entry, 'status') ?? '').toLowerCase()
   const failed = entries.some((entry) => {
-    const status = (pickString(entry, 'status') ?? '').toLowerCase()
+    const status = statusOf(entry)
     return entry.ok === false || Boolean(entry.error) || ['failed', 'error', 'cancelled', 'canceled'].includes(status)
   })
   if (failed) return 'failed'
   const ready = entries.every((entry) => {
-    const status = (pickString(entry, 'status') ?? '').toLowerCase()
-    return entry.ok === true || ['ready', 'completed', 'complete', 'done', 'success', 'succeeded'].includes(status)
+    const status = statusOf(entry)
+    if (entry.terminal === false) return false
+    if (entry.terminal === true) return true
+    if (RUNNING_STATUSES.includes(status)) return false
+    return ['ready', 'completed', 'complete', 'done', 'success', 'succeeded'].includes(status) || (status === '' && entry.ok === true)
   })
   return ready ? 'ready' : 'waiting'
 }
@@ -1011,6 +1667,263 @@ function averageProgress(value: Record<string, unknown>): number {
   return Math.max(0, Math.min(1, ratios.reduce((sum, n) => sum + n, 0) / ratios.length))
 }
 
+/** 从「建/改轨」的返回里收集**轨道 id**。判据是「这个对象同时有 id 与轨道特征字段」—— 避免把 timelineId / itemId 也收进来。 */
+function trackIdsFromResponse(value: unknown): string[] {
+  const found: string[] = []
+  const visit = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return
+    if (Array.isArray(node)) {
+      for (const child of node) visit(child)
+      return
+    }
+    const record = node as Record<string, unknown>
+    const id = pickString(record, 'id', 'trackId')
+    if (
+      id &&
+      (record.trackType !== undefined || record.alias !== undefined || record.audioDucking !== undefined)
+    ) {
+      found.push(id)
+    }
+    for (const child of Object.values(record)) {
+      if (child && typeof child === 'object') visit(child)
+    }
+  }
+  visit(value)
+  return found
+}
+
+/**
+ * 建一条音频轨，返回它的**稳定 id**。
+ * ★ 为什么不能拿别名（A2 之类）去用：文档明确说别名在插入轨道后会移位（V1/V2 会重排），
+ *   所以建完必须立刻把稳定 id 记下来交给后续 `edit_item`。
+ * ★ `role='follower'` 必须在**建轨时**就给：follower 是「会被自动压低的那条轨」，
+ *   而 anchor（人声）此时已经是 A1 —— 两者成对才产生闪避（见 chatcut.ts 的注释）。
+ */
+/**
+ * 建一条音频轨，返回它的**稳定 id**。
+ * ★ 为什么不能拿别名（A2 之类）去用：文档明确说别名在插入轨道后会移位（V1/V2 会重排），
+ *   所以建完必须立刻把稳定 id 记下来交给后续 `edit_item`。
+ * ★ `role='follower'` 必须在**建轨时**就给：follower 是「会被自动压低的那条轨」，
+ *   而 anchor（人声）此时已经是 A1 —— 两者成对才产生闪避（见 chatcut.ts 的注释）。
+ *
+ * ★★ 取 id 的判据（2026-09-21 实测校准）：`edit_track create` 的返回**本身就是新建那条轨**：
+ *   `{"id":"45a3587ef3","name":"A3","order":3,"trackType":"audio","tracks":[ … 全部轨道 … ]}`
+ *   —— 顶层 `id` 就是要的那个（注意它是**10 位短前缀**，与 `preview_timeline` 的完整 UUID
+ *   不是同一种写法；两者都能被下游接受，实测用前缀 `trackId` 排轨成功）。
+ *   ⚠ 老的「在 tracks 里找一条不在 knownTrackIds 里的」这个启发式**是错的**：
+ *     返回里的 id 是前缀、而 knownTrackIds 是完整 UUID ⇒ 谁都不匹配 ⇒ 会挑中**第一条轨（V1）**，
+ *     把音乐排到视频轨上。所以它只留作最末的兜底，且比较时必须按前缀匹配。
+ */
+async function createChatCutAudioTrack(
+  projectId: string,
+  name: string,
+  role: 'follower',
+  knownTrackIds: string[],
+): Promise<string | undefined> {
+  const value = await callTool('edit_track', {
+    projectId,
+    action: 'create',
+    json: JSON.stringify({ trackType: 'audio', name, role }),
+  })
+  // ① 首选：返回体顶层的 id 就是新建轨
+  const created = parseEmbeddedJson(value)
+  const direct = created ? pickString(created, 'id', 'trackId') : undefined
+  if (direct) return direct
+  // ② 兜底：从返回里收集轨道 id，排除已知的那些（**按前缀**比较两侧写法不一致的情况）
+  const known = new Set(knownTrackIds.map((id) => id.slice(0, 10)))
+  return trackIdsFromResponse(value).find((id) => !known.has(id.slice(0, 10)))
+}
+
+/**
+ * 从人话文本里抠出**嵌在里面的 JSON 对象**（取第一个 `{` 到最后一个 `}`）。
+ *
+ * ★★ 为什么需要它（2026-09-21 实测 `edit_track create`）：
+ *   `content[].text` 的原文是 `<JSON 正文>\n\nCaption notice: this edit may have made …`
+ *   —— 后面**还跟了一段人话**，所以 `extractStructured()` 里的 `JSON.parse(整段)` 必然失败，
+ *   它会退回 `structuredContent`，而那里**没有轨道数据**（只有 editorUrl / browserHandoff
+ *   这类宿主上下文）。于是结构化的轨道 id 谁都看不到 ⇒ `trackIdsFromResponse` 收空集
+ *   ⇒ 建轨成功却「取不到轨道 id」，BGM 排不上轨。
+ * ⚠ 不能改成「先把 message 当 JSON 解」——这条路上两种形态都有（纯 JSON / JSON+人话）。
+ */
+function parseEmbeddedJson(value: Record<string, unknown>): Record<string, unknown> | null {
+  const text = resultText(value)
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start === -1 || end <= start) return null
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1)) as unknown
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed as Record<string, unknown>
+  } catch {
+    // 不是 JSON：交给调用方按字段名/正则兜
+  }
+  return null
+}
+
+/**
+ * 从 `track_progress {target:'generation'}` 的返回里取**生成出来的项目素材 id**。
+ *
+ * ★★ 实测形状（2026-09-21，用一个真提交的 instrumental 任务拉到的原文）：
+ *   processing 期间：`{ entries:[{ id:'75d11fa728', name:'dashuai-bgm', ok:true,
+ *                                  outputAssetId:null, progress:30, status:'processing',
+ *                                  terminal:false, error:null, target:'generation' }],
+ *                       success:true, terminal:false, checkBackAfterSeconds:30 }`
+ *   ⇒ 素材 id 的字段名是 **`outputAssetId`**，不是 `assetId` / `asset.id`。
+ *     按后者找会永远取不到 ⇒ 表现为「BGM 生成成功但排不上轨」，而且**不报错**。
+ *   ⇒ 另外 `ok:true` 在 processing 期间也是 true（它只表示任务记录本身没问题），
+ *     所以**不能**用 ok / success 判断完成（见 progressState 的注释）。
+ */
+function assetIdFromGeneration(value: Record<string, unknown>): string | undefined {
+  const top = pickString(value, 'outputAssetId', 'output_asset_id')
+  if (top) return top
+  for (const entry of resultEntries(value)) {
+    const direct = pickString(entry, 'outputAssetId', 'output_asset_id', 'assetId', 'asset_id')
+    if (direct) return direct
+    for (const key of ['asset', 'result', 'output']) {
+      const nested = entry[key]
+      if (nested && typeof nested === 'object') {
+        const id = pickString(nested as Record<string, unknown>, 'assetId', 'asset_id', 'id')
+        if (id) return id
+      }
+    }
+  }
+  // 兜底：终态把 id 写在**人话文本**里（本项目其他工具确有这种形态，见 resultText 的注释）
+  const text = resultText(value)
+  const match =
+    text.match(/"?output_?asset_?id"?\s*[:=]\s*"?([0-9a-z-]{8,})"?/i) ??
+    text.match(/\b(?:assetId|asset_id)\s*[:=]\s*"?([0-9a-f-]{8,})"?/i)
+  return match?.[1]
+}
+
+/**
+ * 片子的**内容长度**（帧）= 视频链最后一个 item 的结束帧。
+ *
+ * ★★ 为什么不能拿 `view.durationFrames`：那个值是「时间线上最长的东西」——
+ *   一旦某条轨上有超出片长的 item（比如上一轮排进来的长 BGM），它就跟着撑大。
+ *   而视频链的长度才是片子的真实长度，与别人的状态无关。
+ */
+function filmFramesOf(view: ChatCutTimelineView): number {
+  const shots = orderShotItems(view.entries)
+  const last = shots[shots.length - 1]
+  return last && last.toFrame > 0 ? last.toFrame : view.durationFrames
+}
+
+/**
+ * 把已生成好的音乐排到时间线上：从 0 帧铺到**片子结束**。
+ *
+ * ★★ 必须显式给 `durationInFrames`（2026-09-21 读回时间线才发现的坑）：
+ *   省略时长时远端按**素材自身时长**铺 —— 而生成的 BGM 通常 2~3 分钟，
+ *   于是时间线被这条音轨**撑长**（实测：984 帧的片子被一条 `dashuai-bgm.mp3`
+ *   顶成 5039 帧 = 168 秒，V1 上后面全是空档）。导出是按时间线长度渲的 ⇒
+ *   出来会是一支几百秒、后半段全黑的片子。
+ *   ⚠ 旧注释「音乐比片子长没关系，导出只取时间线长度」是**错的**：那句话预设
+ *     时间线长度由视频决定，而实测它取的是**最长 item**。
+ * ★ `audioFadeIn/Out` 单位是**秒**（不是帧）：结尾硬切会「啪」一下，2 秒淡出干净得多。
+ */
+async function placeChatCutBgm(
+  projectId: string,
+  assetId: string,
+  trackId: string,
+  durationFrames: number,
+): Promise<void> {
+  await callTool('edit_item', {
+    projectId,
+    adds: [
+      {
+        type: 'audio',
+        assetId,
+        fromFrame: 0,
+        ...(durationFrames > 0 ? { durationInFrames: durationFrames } : {}),
+        trackId,
+        audioFadeIn: 1,
+        audioFadeOut: 2,
+      },
+    ],
+  })
+}
+
+interface BgmAdvance {
+  /** true = 已处理完（成功或明确放弃），可以继续走导出；false = 还在生成，本轮先别导出 */
+  done: boolean
+  patch?: Partial<Pick<ChatCutJobState, 'bgmJobId' | 'bgmPlaced' | 'bgmTrackId'>>
+}
+
+/**
+ * PREPARE 阶段推进 BGM 生成：查进度 → 就绪则建轨并排轨。
+ *
+ * ★ 与转录一样是**带预算的软等待**（`BGM_WAIT_MS`）：超预算就放弃 BGM 直接出片。
+ *   绝不允许「音乐一直生成不出来」把片子拖到 30 分钟被 sweeper 退款 ——
+ *   那才是真正的失败（用户一分钱没花，但也没拿到片子）。
+ * ★ 任何失败都写 `bgmPlaced:true` 收尾，避免每轮 tick 都重打同一条失败。
+ */
+async function advanceChatCutBgm(state: ChatCutJobState, notices: string[]): Promise<BgmAdvance> {
+  if (!state.bgmJobId || state.bgmPlaced) return { done: true }
+
+  let value: Record<string, unknown>
+  try {
+    value = await callTool('track_progress', {
+      action: 'status',
+      target: 'generation',
+      jobIds: state.bgmJobId,
+      projectId: state.projectId,
+    })
+  } catch (error) {
+    notices.push(`查 BGM 生成进度失败 ⇒ 本片不带背景音乐：${(error as Error).message}`)
+    return { done: true, patch: { bgmPlaced: true } }
+  }
+
+  const progress = progressState(value)
+  if (progress === 'failed') {
+    notices.push('BGM 生成失败 ⇒ 本片不带背景音乐出片')
+    return { done: true, patch: { bgmPlaced: true } }
+  }
+
+  /**
+   * ★★ 就绪判据 = **拿到 asset id**，不是「状态看起来完了」（2026-09-21 实测校准）。
+   *   实测 processing 期间就有 `ok:true` / `success:true`，只有 `terminal:false` 与
+   *   `status:'processing'` 说明没跑完；而 asset id（`outputAssetId`）**只在终态出现**。
+   *   ⇒ 所以这一段完全不依赖 `progressState` 的 ready 结论，只认「有没有 id」：
+   *     没 id 就继续等（受 BGM_WAIT_MS 预算兜住），这样即使状态字段将来又变，
+   *     也不会出现「被判成已完成 → 取不到 id → 以为排过轨了」这种静默丢配乐。
+   */
+  const assetId = assetIdFromGeneration(value)
+  if (!assetId) {
+    const waited = Date.now() - (state.bgmStartedAtMs ?? Date.now())
+    if (progress !== 'ready' && waited < BGM_WAIT_MS) return { done: false }
+    notices.push(
+      progress === 'ready'
+        ? 'BGM 生成已就绪但未取到素材 id ⇒ 未自动排轨（需人工在编辑器放置）'
+        : `BGM 生成等待超过 ${Math.round(BGM_WAIT_MS / 1000)}s ⇒ 本片不带背景音乐出片`,
+    )
+    return { done: true, patch: { bgmPlaced: true } }
+  }
+
+  try {
+    // ★ 无论要不要建轨都要读一次时间线：**片长必须现算**（见 placeChatCutBgm 的注释），
+    //   而且只有在「排 BGM 之前」读到的视频链长度才是干净的片子长度。
+    const view = await previewChatCutTimeline(state.projectId)
+    let trackId = state.bgmTrackId
+    if (!trackId) {
+      trackId = await createChatCutAudioTrack(
+        state.projectId,
+        'BGM',
+        'follower',
+        view.tracks.map((track) => track.id),
+      )
+    }
+    if (!trackId) {
+      notices.push('BGM 轨已建但未取到轨道 id ⇒ 未自动排轨（需人工在编辑器放置）')
+      return { done: true, patch: { bgmPlaced: true } }
+    }
+    const durationFrames = filmFramesOf(view)
+    await placeChatCutBgm(state.projectId, assetId, trackId, durationFrames)
+    notices.push(`BGM 已排到人声轨下方（0~${durationFrames} 帧，role=follower：人声处自动闪避）`)
+    return { done: true, patch: { bgmTrackId: trackId, bgmPlaced: true } }
+  } catch (error) {
+    notices.push(`BGM 排轨失败（需人工在编辑器放置）：${(error as Error).message}`)
+    return { done: true, patch: { bgmPlaced: true } }
+  }
+}
+
 export async function pollChatCutRender(state: ChatCutJobState): Promise<ChatCutRenderResult> {
   const notices = [...(state.notices ?? [])]
 
@@ -1023,7 +1936,9 @@ export async function pollChatCutRender(state: ChatCutJobState): Promise<ChatCut
     }
 
     // ── ② 等转录就绪（字幕依赖它），预算有限，超时就放弃字幕直接出片
-    if (state.transcriptionAssetIds.length > 0) {
+    //    ★ 整段用 `captionsDone` 守着：PREPARE 可能因为 ③ 的 BGM 等待而多轮进来，
+    //      而这一段是**会写时间线**的动作（见 ChatCutJobState.captionsDone 的注释）。
+    if (state.transcriptionAssetIds.length > 0 && !state.captionsDone) {
       const transcription = await trackChatCutProgress(state.projectId, 'transcription', state.transcriptionAssetIds)
       const progress = progressState(transcription)
       if (progress === 'waiting') {
@@ -1041,13 +1956,67 @@ export async function pollChatCutRender(state: ChatCutJobState): Promise<ChatCut
         notices.push('转录失败 ⇒ 本片不烧字幕直接出片')
         state = { ...state, transcriptionAssetIds: [], notices }
       }
+
       if (state.transcriptionAssetIds.length > 0) {
+        // ── ① 先清理停顿（**必须排在开字幕之前**）
+        //    ★ 实测（2026-09-21）：`clean_script` 会把 A1 上超过 250ms 的停顿压掉，
+        //      也就是**改掉了配音轨的时间基**。而字幕是从转录派生的 —— 若先开字幕再压停顿，
+        //      已生成的 Cue 时刻会整体错位，且 `enable` 的返回只会提示
+        //      `captionReconciliation: { status: 'refresh-required' }`，**不会报错**。
+        //      顺序反过来（先压停顿 → 再开字幕）就没有这个窗口。
+        //    ⚠ 这一步没有 dry-run 参数，调用即写时间线，所以必须卡在「确认有转录」之后
+        //      （无配音/无转录时它本就无事可做）。
+        if (state.removeSilence) {
+          try {
+            await callTool('clean_script', {
+              projectId: state.projectId,
+              only: 'silence',
+              silence: 'compress:250',
+              track: 'A1',
+            })
+            notices.push('已清理停顿（超过 250ms 的静音压到 250ms）')
+          } catch (error) {
+            notices.push(`清理停顿失败：${(error as Error).message}`)
+          }
+        }
+
+        // ── ② 开字幕：档位 → 内置预设 id（`CAPTION_PRESETS`，实测取的目录）
+        //    ⚠ 只传 `preset`，**不能**同时传 `trackId` —— 文档明确说 enable 不接受 trackId。
+        let captionsOn = false
         try {
-          await enableChatCutCaptions(state.projectId)
+          const preset = CAPTION_PRESETS[state.subtitleStyle ?? 'CLEAN']
+          await enableChatCutCaptions(state.projectId, { preset })
+          captionsOn = true
+          notices.push(`字幕已开启（样式 ${state.subtitleStyle ?? 'CLEAN'} → 预设 ${preset}）`)
         } catch (error) {
           notices.push(`开字幕失败：${(error as Error).message}`)
         }
+
+        // ── ③ 收窄来源到旁白轨 + 重建字幕程序（**开了字幕才做**，且与 ② 分开容错）
+        //    分开的理由：这两步失败只说明「字幕可能读错来源 / 时刻可能偏」，
+        //    字幕本身是开着的 —— 若和 ② 共用一个 catch，会把「已开」误报成「开字幕失败」。
+        if (captionsOn) {
+          try {
+            // ★ enable 默认吃「所有可听见的轨道」，实测会把 V1（画面素材自带声）也列进来
+            //   ⇒ 素材里的环境人声会混成字幕。能走到这里就说明**有配音**
+            //   （只有配音轨才开转录，见 startTranscription 那行），所以直接限 A1。
+            await setChatCutCaptionSources(state.projectId, ['A1'])
+            // ★ 重建一次：上面压过停顿、刚改过来源，字幕程序要与当前时间线对齐。
+            await refreshChatCutCaptions(state.projectId)
+          } catch (error) {
+            notices.push(`字幕来源/重建未完成（字幕可能读到素材原声）：${(error as Error).message}`)
+          }
+        }
       }
+      state = { ...state, captionsDone: true, notices }
+    }
+
+    // ── ③ BGM：等生成就绪后建轨排轨（带预算的软等待，见 advanceChatCutBgm）
+    const bgm = await advanceChatCutBgm(state, notices)
+    state = { ...state, notices, ...(bgm.patch ?? {}) }
+    if (!bgm.done) {
+      // 还在生成：本轮先别导出（字幕/停顿已由 captionsDone 守住，不会重放）
+      return { status: 'RUNNING', state: { ...state, stageRatio: 0.95 } }
     }
 
     const [renderId] = await submitChatCutExport(state.projectId, {

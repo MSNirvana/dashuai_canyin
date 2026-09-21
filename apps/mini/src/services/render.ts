@@ -19,13 +19,24 @@ export interface RenderClip {
   line?: string | null
 }
 
+/**
+ * AI 档「配音」档位。
+ * ★ 第一项 `none` = **不配音（保留画面原声）**。它是「关闭配音」的开关值、不是音色，
+ *   但和音色共用同一个 `voiceId` 字段（后端 `CHATCUT_VOICE_OFF === 'none'`）。
+ * ★ 选它时字幕必须一起关：字幕是从配音轨转录派生的，没有配音轨就没有可转录的音频
+ *   ⇒ 后端会连 `edit_captions` 都不调（transcriptionAssetIds 为空）。
+ */
 export const CHATCUT_VOICES = [
+  { id: 'none', name: '不配音', desc: '保留画面原声' },
   { id: 'warm-female', name: '温暖女声', desc: '自然亲切，适合探店种草' },
   { id: 'bright-female', name: '活力女声', desc: '节奏明快，适合促销上新' },
   { id: 'gentle-male', name: '温和男声', desc: '沉稳自然，适合品牌介绍' },
   { id: 'magnetic-male', name: '磁性男声', desc: '质感突出，适合品质表达' },
   { id: 'energetic-youth', name: '活力青年', desc: '轻快有冲劲，适合同城引流' },
 ] as const
+
+/** 是否选了「不配音」（原声直出）。提交前用它把字幕一并关掉。 */
+export const isVoiceOff = (voiceId: ChatCutOptions['voiceId']): boolean => voiceId === 'none'
 
 export type ChatCutOptions = {
   voiceId: typeof CHATCUT_VOICES[number]['id']
@@ -123,11 +134,22 @@ export interface GradeCapability {
 }
 
 /**
+ * AI 档的**子能力**健康位（纯增量，旧客户端不读也不受影响）。
+ * `bgmEnabled` = 服务端是否开启了背景音乐生成（`CHATCUT_BGM_ENABLED`）。
+ * ★ 为什么要让客户端知道：配乐是**生成类**调用（消耗额度），服务端默认关着。
+ *   不告诉客户端的话，用户选了「轻柔」提交，成品里根本没有音乐 ——
+ *   界面说了、成片没有，比不让选更伤信任。关着时面板就把那一项标灰。
+ */
+export interface ChatCutHealthBrief {
+  bgmEnabled?: boolean
+}
+
+/**
  * 拉取档位能力。服务端说不可用就真的不要提交 —— 服务端在 freeze 之前会硬拒（4013）。
  * 失败时返回 null，调用方应保守处理（按「全部可用」放行，让服务端做最终裁决）。
  */
 export function getGradeCapabilities() {
-  return http.get<{ grades: GradeCapability[] }>('/render/capabilities')
+  return http.get<{ grades: GradeCapability[]; chatcut?: ChatCutHealthBrief }>('/render/capabilities')
 }
 
 /** 按 cos key 签播放地址（合成产物等无 media_asset 行的文件） */

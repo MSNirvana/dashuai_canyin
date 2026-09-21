@@ -3,7 +3,7 @@
 // 统一编码参数后再用 concat demuxer -c copy 拼接，最稳且最快
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { writeFile, rm } from 'node:fs/promises'
+import { writeFile, rm, rename } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ColorGrade } from '../services/render.service.js'
@@ -381,4 +381,136 @@ function conciseProbeError(e: unknown): string {
     .map((l) => l.replace(/^\[[^\]]*\]\s*/, ''))
   const last = lines[lines.length - 1] ?? '探测失败'
   return last.slice(0, 200)
+}
+
+/**
+ * 测一段素材（本地文件或 http(s) 签名 URL）的**整体响度**（EBU R128 integrated，单位 LUFS）。
+ *
+ * ★ 为什么需要它（2026-09-21）：AI 档的「统一音量」**不是 ChatCut 的能力** ——
+ *   它的 59 个工具里没有任何响度归一项，`submit_export` 也没有音频归一选项；
+ *   唯一能改音量的原语是 `edit_item` 的 `decibelAdjustment`。
+ *   所以做法只能是「先把每段素材的真实响度在本地测出来，再据此算出每个 item 该加/减多少 dB」。
+ *   这比拍一个固定增益值靠谱得多：用户的分镜来自不同手机/不同环境，电平差经常有 10dB 以上。
+ *
+ * ★ `-rw_timeout`：input 是签名 URL 时上游挂住不能陪着一起卡；外层 `timeoutMs` 再兜一层。
+ * ★ 失败一律返回 null —— 调用方按「这一段不做调整」处理。**绝不能因为测不了响度就让出片失败**。
+ */
+export async function probeLoudnessLufs(input: string, timeoutMs = 45_000): Promise<number | null> {
+  const args = [
+    '-hide_banner',
+    '-nostdin',
+    '-rw_timeout', '15000000',
+    '-i', input,
+    // 只取第一条音轨；素材没音轨时 ffmpeg 会报错 ⇒ 由 catch 归一成 null
+    '-map', '0:a:0',
+    '-af', 'ebur128=peak=none',
+    '-f', 'null', '-',
+  ]
+  try {
+    const { stderr } = await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 })
+    return parseLufs(String(stderr))
+  } catch (e) {
+    // 有些 ffmpeg 会把 summary 写进 stderr 之后仍以非 0 退出 ⇒ 再从 stderr 里捞一次
+    return parseLufs(String((e as { stderr?: string }).stderr ?? ''))
+  }
+}
+
+/**
+ * 从 ebur128 的 stderr 里取整体响度 `I: -23.4 LUFS`。
+ * ★ 必须带 `LUFS` 单位一起匹配：filter 日志里同时有 `M:`（momentary）与 `S:`（short-term），
+ *   只按 `I:` 抓容易误伤；取**最后一条**（summary 在最后）才是整段的结果。
+ */
+function parseLufs(stderr: string): number | null {
+  const matches = [...stderr.matchAll(/\bI:\s*(-?\d+(?:\.\d+)?)\s*LUFS/gi)]
+  if (matches.length === 0) return null
+  const value = Number(matches[matches.length - 1]![1])
+  return Number.isFinite(value) ? value : null
+}
+
+/**
+ * 测「语音在哪里结束」（毫秒）—— 即去掉**尾部静音**之后的实际语音长度。
+ *
+ * ★★ 为什么需要它（2026-09-21）：AI 档的「剪辑节奏」档位想把镜头缩短，
+ *   而配音是**按镜头时长合成**的 —— `synthesizeNarration` 对齐时长的做法是
+ *   `apad` 尾部补静音 + `-t` 硬截断。于是：
+ *     · 台词自然读出来比镜头短 ⇒ 结尾是一段**静音填充**，缩镜头没问题；
+ *     · 台词自然读出来比镜头长 ⇒ 旧写法会把这句**从中间截断**，而且它是静默的
+ *       （合成"成功"、时长也"对"，只有听才发现）。
+ *   缩镜头必须知道「这句话至少要多久」，否则就会撞上第二种情况。
+ *   判别尾部静音正好是免费的：`apad` 补出来的就是纯数字静音，必然是文件末尾那段静音。
+ *
+ * ★ 判据 = **最后一个 `silence_start`**。实测（ffmpeg 9）尾部静音在 EOF 处也会配一条
+ *   `silence_end: <文件时长>`，所以「未闭合的 silence_start」这条规则反而永远不触发；
+ *   而取最后一个 start 在「中间有停顿」的样本上也正确（尾部静音一定是最靠后的那段）。
+ * ★ 一个静音都没检测到 ⇒ 返回 null（调用方按「整段都是语音」处理，即不缩镜头）。
+ * ★ 失败一律 null：测得准不准只影响节奏档位的保守程度，绝不能让它把出片搞失败。
+ */
+export async function probeSpeechEndMs(input: string, timeoutMs = 45_000): Promise<number | null> {
+  const args = [
+    '-hide_banner',
+    '-nostdin',
+    '-rw_timeout', '15000000',
+    '-i', input,
+    '-map', '0:a:0',
+    '-af', 'silencedetect=noise=-40dB:d=0.25',
+    '-f', 'null', '-',
+  ]
+  let stderr = ''
+  try {
+    stderr = String((await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 })).stderr)
+  } catch (e) {
+    stderr = String((e as { stderr?: string }).stderr ?? '')
+  }
+  const starts = [...stderr.matchAll(/silence_start:\s*(-?\d+(?:\.\d+)?)/g)]
+    .map((match) => Number(match[1]))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+  if (starts.length === 0) return null
+  return Math.round(starts[starts.length - 1]! * 1000)
+}
+
+/**
+ * 「剪辑节奏」提速配音时的语速上限。`atempo` 保音高，但 1.35 倍以上开始发飘、不像人话。
+ */
+export const MAX_SPEECH_TEMPO = 1.35
+
+/**
+ * 把一段音频**重新对齐**到目标时长：太长就整句提速（`atempo`，保音高），太短补静音。
+ *
+ * ★★ 为什么不用 `-t` 直接截断：那会把台词从中间切掉，而且完全是静默的
+ *   （合成"成功"、时长也"对"，只有听才发现）—— 见 `probeSpeechEndMs` 的注释。
+ *   这里把「多出来的时长」摊到整句上（1.1~1.35 倍速听起来仍然自然），
+ *   而不是从尾巴上剁掉。
+ * ★ 原文件与输出**不能同路径**：ffmpeg 边读边写会把输入读坏。所以先写 `.retimed.m4a`
+ *   再原子替换；失败时保留原文件（宁可结尾多一截静音，也不要因为提速失败丢掉配音）。
+ * ★ `atempo` 只接受 (0.5, 100)；本函数只会用 ≥1 的值，不会碰下限。
+ */
+export async function retimeAudioTo(
+  filePath: string,
+  targetMs: number,
+  tempo = 1,
+  timeoutMs = 60_000,
+): Promise<boolean> {
+  const target = Math.max(1, Math.round(targetMs))
+  const rate = Number.isFinite(tempo) && tempo > 1.0001 ? tempo : 1
+  const tmpPath = `${filePath}.retimed.m4a`
+  const filters = [rate > 1 ? `atempo=${rate.toFixed(4)}` : null, 'apad'].filter(Boolean).join(',')
+  try {
+    await execFileP(
+      ffmpegBin(),
+      [
+        '-hide_banner', '-nostdin',
+        '-i', filePath,
+        '-af', filters,
+        '-t', (target / 1000).toFixed(3),
+        '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
+        '-y', tmpPath,
+      ],
+      { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+    )
+    await rename(tmpPath, filePath)
+    return true
+  } catch {
+    await rm(tmpPath, { force: true }).catch(() => undefined)
+    return false
+  }
 }

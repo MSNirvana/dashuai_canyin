@@ -14,7 +14,7 @@
 // 也避免了 401 带来的额外处理分支。
 import { createRouter } from '../lib/async-router.js'
 import { ok } from '../lib/result.js'
-import { chatCutConfigured } from '../render/chatcut.js'
+import { chatCutConfigured, chatCutHealth } from '../render/chatcut.js'
 
 const router = createRouter()
 
@@ -57,7 +57,13 @@ export function listGradeCapabilities(): GradeCapability[] {
 }
 
 router.get('/', (_req, res) => {
-  ok(res, { grades: listGradeCapabilities() })
+  // `chatcut` 是**给运维看**的健康位（不含凭证、不含错误原文）：
+  // 之前「refresh_token 已被 ChatCut 作废」时，能力表照样报 available=true，
+  // 商户点提交 → 冻结积分 → 等几分钟 → 才在 worker 里失败，且没有任何告警。
+  // 现在 lastRefresh.kind === 'auth' 会同时把 AI 档置灰（见 chatCutConfigured），
+  // 这里再把它摆出来，让「档位为什么灰了」一眼可见。
+  // ⚠ 小程序端只读 `grades`，这个字段是纯增量的，不影响旧客户端。
+  ok(res, { grades: listGradeCapabilities(), chatcut: chatCutHealth() })
 })
 
 export default router

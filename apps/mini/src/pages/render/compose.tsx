@@ -4,7 +4,7 @@ import Taro, { useDidShow, useDidHide } from '@tarojs/taro'
 import { getCreation, type CreationDetail } from '../../services/creation'
 import {
   submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl, getGradeCapabilities, previewColor,
-  type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions, CHATCUT_VOICES,
+  type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions, CHATCUT_VOICES, isVoiceOff,
 } from '../../services/render'
 import { useMerchantStore } from '../../store/merchant'
 import { readRouteId, isNumericId } from '../../utils/route-id'
@@ -15,9 +15,57 @@ import './compose.scss'
 
 const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
 const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3 }
+/**
+ * AI 档的 6 项选项（2026-09-21 已全部接到真实原语，面板放回）。
+ *
+ * ★ 面板文案与**服务端能力**的对应关系（改文案前先看这里，别让两边说法不一致）：
+ *   · 字幕样式  → `edit_captions enable preset`（ChatCut 内置预设，见服务端 CAPTION_PRESETS）
+ *   · 剪辑节奏  → 镜头时长系数 + 转场帧数（FAST 还会给配音让路，见下面的 PACING_HINT）
+ *   · 转场风格  → `edit_item adds:[{type:'transition'}]`（内置转场，见服务端 TRANSITION_PLANS；
+ *                 转场要占用两侧素材，所以会改整片时长 —— 「硬切」档不占用任何素材）
+ *   · 清理停顿  → `clean_script`（只处理**已转录**内容 ⇒ 依赖配音）
+ *   · 统一音量  → 本地测每段响度 + `edit_item decibelAdjustment`（ChatCut 没有响度归一项）
+ *   · 配乐      → `submit_music` + 自动排轨（**生成类**调用，受 CHATCUT_BGM_ENABLED 控制）
+ * ⚠ 依赖配音的两项（字幕样式、清理停顿）只在「有配音」时才显示 —— 没有配音轨就没有转录，
+ *   服务端不会执行它们。显示了却一定不生效，比不显示更伤信任。
+ */
 const DEFAULT_CHATCUT: ChatCutOptions = {
-  voiceId: 'warm-female', subtitles: true, subtitleStyle: 'CLEAN', bgm: 'LIGHT',
+  voiceId: 'warm-female', subtitles: true, subtitleStyle: 'CLEAN', bgm: 'NONE',
   pacing: 'NATURAL', transitions: 'CLEAN', removeSilence: true, normalizeAudio: true, note: '',
+}
+
+/** 选项标签。`Record<档位类型, string>` 而非散落的三元表达式：少写一个档位会直接编译报错 */
+const SUBTITLE_STYLE_LABEL: Record<ChatCutOptions['subtitleStyle'], string> = {
+  CLEAN: '简洁', EMPHASIS: '重点强调', SOCIAL: '社交风格',
+}
+const BGM_LABEL: Record<ChatCutOptions['bgm'], string> = {
+  NONE: '无配乐', LIGHT: '轻柔', UPBEAT: '活力', PREMIUM: '高级感',
+}
+const PACING_LABEL: Record<ChatCutOptions['pacing'], string> = {
+  NATURAL: '自然', FAST: '明快', STORY: '叙事',
+}
+/**
+ * 剪辑节奏的说明。★ 「明快」这句必须留着：它在解释一件用户会遇到的事 ——
+ *   台词放不下时镜头会自动少缩一点（服务端给配音让路），**不会把话切掉**。
+ *   不写清楚的话，用户会觉得「选了明快但没变快，是不是没生效」。
+ */
+const PACING_HINT: Record<ChatCutOptions['pacing'], string> = {
+  NATURAL: '镜头按分镜建议时长，节奏平稳。',
+  FAST: '镜头切得更短更密；台词放不下时会自动少缩一点，不会把话截断。',
+  STORY: '镜头之间用更长的转场与首尾淡入淡出，节奏舒缓。',
+}
+const TRANSITION_LABEL: Record<ChatCutOptions['transitions'], string> = {
+  CLEAN: '硬切', SMOOTH: '平滑融合', DYNAMIC: '动感切换',
+}
+/**
+ * 转场的说明。★ 后两句必须留着：转场**要占用画面素材**，所以整片会变短
+ *   （服务端实测：每个镜头首尾各让出几帧给转场做过渡）。
+ *   不写清楚的话，「选了转场，片子怎么短了」是个用户无法解释的现象。
+ */
+const TRANSITION_HINT: Record<ChatCutOptions['transitions'], string> = {
+  CLEAN: '镜头之间直接切换，不占用画面时长。',
+  SMOOTH: '柔和的溶解过渡。要用到少量画面素材，整片会略短一点。',
+  DYNAMIC: '推拉式动感切换。占用素材更多，整片缩短更明显。',
 }
 const GRADE_OPTIONS = [
   { key: 'BASIC' as const, title: '基础生成', desc: '粗剪拼接 + 调色' },
@@ -191,6 +239,12 @@ export default function RenderCompose() {
   const [refreshingHistory, setRefreshingHistory] = useState(false)
   // P0-5：不可用档位 → 原因文案。空对象表示「都可用」（含能力接口拉取失败时的保守放行）
   const [gradeIssues, setGradeIssues] = useState<Partial<Record<RenderGrade, string>>>({})
+  /**
+   * 服务端是否开启了配乐生成（`CHATCUT_BGM_ENABLED`）。
+   * ★ 默认 false 而不是 true：配乐是生成类调用、服务端默认关着；拉取失败时按「不可选」处理，
+   *   宁可少给一个选项，也不要让用户选了「轻柔」却拿到一部没有音乐的成片。
+   */
+  const [bgmEnabled, setBgmEnabled] = useState(false)
   // 整片调色预览：拖动中显示静帧近似，松手后才请求服务端的整片精确预览
   const [draggingAxis, setDraggingAxis] = useState<keyof ColorGrade | null>(null)
   const [colorPreviewUrl, setColorPreviewUrl] = useState<string | null>(null)
@@ -343,10 +397,13 @@ export default function RenderCompose() {
       const issues: Partial<Record<RenderGrade, string>> = {}
       for (const g of r.grades) if (!g.available) issues[g.key] = g.reason || '该档位暂不可用'
       setGradeIssues(issues)
+      // 配乐开关是**纯增量**字段：老服务端不返回它 ⇒ 保持 false（不选即可，不会误导）
+      setBgmEnabled(!!r.chatcut?.bgmEnabled)
       // 当前选中的档位如果已不可用，回退到 BASIC，避免用户点了提交才发现
       setGrade((cur) => (issues[cur] ? 'BASIC' : cur))
     } catch {
       setGradeIssues({})
+      setBgmEnabled(false)
     }
   }, [])
 
@@ -687,7 +744,18 @@ export default function RenderCompose() {
       if (!confirmed.confirm) return
       const { task } = await submitRender(id, {
         mode, grade, color,
-        chatcut: grade === 'AI' ? chatcut : undefined,
+        // ★ 让「提交载荷」和「界面说法」逐项对齐，别出现「选了但其实没做」的状态：
+        //   · 不配音 ⇒ 字幕与「清理停顿」都没有可转录的音频（服务端会跳过），
+        //     这里显式置 false，而不是靠后端静默忽略；
+        //   · 配乐开关没开 ⇒ 强制 NONE —— 面板那时不给选项，正常选不到，
+        //     但默认值/历史状态可能带着旧值，强制归零最稳。
+        chatcut: grade === 'AI'
+          ? {
+              ...chatcut,
+              ...(isVoiceOff(chatcut.voiceId) ? { subtitles: false, removeSilence: false } : {}),
+              ...(bgmEnabled ? {} : { bgm: 'NONE' as const }),
+            }
+          : undefined,
         requestId: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
       })
       setRenders((tasks) => [task, ...tasks.filter((item) => item.id !== task.id)])
@@ -992,16 +1060,95 @@ export default function RenderCompose() {
               </View>
             ))}
           </View>
-          <View className='rcompose__optionrow'>
-            <View><Text className='rcompose__optiontitle'>显示字幕</Text><Text className='rcompose__optiondesc'>将分镜口播同步到画面</Text></View>
-            <Switch checked={chatcut.subtitles} onChange={(event) => setChatcut((value) => ({ ...value, subtitles: event.detail.value }))} color='#e1251b' />
+          {isVoiceOff(chatcut.voiceId) ? (
+            <Text className='rcompose__optiondesc'>已选「不配音」：直接使用画面原声，不生成配音；字幕与「清理停顿」一并关闭（它们都依赖配音的转录结果）。</Text>
+          ) : (
+            <>
+              <View className='rcompose__optionrow'>
+                <View><Text className='rcompose__optiontitle'>显示字幕</Text><Text className='rcompose__optiondesc'>按配音内容自动上字幕</Text></View>
+                <Switch checked={chatcut.subtitles} onChange={(event) => setChatcut((value) => ({ ...value, subtitles: event.detail.value }))} color='#e1251b' />
+              </View>
+              {chatcut.subtitles && (
+                <View className='rcompose__choice'>
+                  <Text className='rcompose__fieldlabel'>字幕样式</Text>
+                  <View className='rcompose__choices'>
+                    {(['CLEAN', 'EMPHASIS', 'SOCIAL'] as const).map((value) => (
+                      <Text
+                        key={value}
+                        className={`rcompose__choiceitem ${chatcut.subtitleStyle === value ? 'rcompose__choiceitem--on' : ''}`}
+                        onClick={() => setChatcut((item) => ({ ...item, subtitleStyle: value }))}
+                      >
+                        {SUBTITLE_STYLE_LABEL[value]}
+                      </Text>
+                    ))}
+                  </View>
+                </View>
+              )}
+              <View className='rcompose__optionrow'>
+                <View><Text className='rcompose__optiontitle'>清理停顿</Text><Text className='rcompose__optiondesc'>自动剪掉口播之间的空白</Text></View>
+                <Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' />
+              </View>
+            </>
+          )}
+
+          <View className='rcompose__choice'>
+            <Text className='rcompose__fieldlabel'>剪辑节奏</Text>
+            <View className='rcompose__choices'>
+              {(['NATURAL', 'FAST', 'STORY'] as const).map((value) => (
+                <Text
+                  key={value}
+                  className={`rcompose__choiceitem ${chatcut.pacing === value ? 'rcompose__choiceitem--on' : ''}`}
+                  onClick={() => setChatcut((item) => ({ ...item, pacing: value }))}
+                >
+                  {PACING_LABEL[value]}
+                </Text>
+              ))}
+            </View>
+            <Text className='rcompose__optiondesc'>{PACING_HINT[chatcut.pacing]}</Text>
           </View>
-          {chatcut.subtitles && <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>字幕样式</Text><View className='rcompose__choices'>{(['CLEAN', 'EMPHASIS', 'SOCIAL'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.subtitleStyle === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, subtitleStyle: value }))}>{value === 'CLEAN' ? '简洁' : value === 'EMPHASIS' ? '重点强调' : '社交风格'}</Text>)}</View></View>}
-          <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>配乐</Text><View className='rcompose__choices'>{(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.bgm === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, bgm: value }))}>{value === 'NONE' ? '无配乐' : value === 'LIGHT' ? '轻柔' : value === 'UPBEAT' ? '活力' : '高级感'}</Text>)}</View></View>
-          <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>剪辑节奏</Text><View className='rcompose__choices'>{(['NATURAL', 'FAST', 'STORY'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.pacing === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, pacing: value }))}>{value === 'NATURAL' ? '自然' : value === 'FAST' ? '明快' : '叙事'}</Text>)}</View></View>
-          <View className='rcompose__choice'><Text className='rcompose__fieldlabel'>转场风格</Text><View className='rcompose__choices'>{(['CLEAN', 'SMOOTH', 'DYNAMIC'] as const).map((value) => <Text key={value} className={`rcompose__choiceitem ${chatcut.transitions === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, transitions: value }))}>{value === 'CLEAN' ? '干净利落' : value === 'SMOOTH' ? '平滑自然' : '动感切换'}</Text>)}</View></View>
-          <View className='rcompose__optionrow'><View><Text className='rcompose__optiontitle'>清理停顿</Text><Text className='rcompose__optiondesc'>自动剪掉口播之间的空白</Text></View><Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' /></View>
-          <View className='rcompose__optionrow'><View><Text className='rcompose__optiontitle'>统一音量</Text><Text className='rcompose__optiondesc'>平衡配音、原声与配乐响度</Text></View><Switch checked={chatcut.normalizeAudio} onChange={(event) => setChatcut((value) => ({ ...value, normalizeAudio: event.detail.value }))} color='#e1251b' /></View>
+
+          <View className='rcompose__choice'>
+            <Text className='rcompose__fieldlabel'>转场风格</Text>
+            <View className='rcompose__choices'>
+              {(['CLEAN', 'SMOOTH', 'DYNAMIC'] as const).map((value) => (
+                <Text
+                  key={value}
+                  className={`rcompose__choiceitem ${chatcut.transitions === value ? 'rcompose__choiceitem--on' : ''}`}
+                  onClick={() => setChatcut((item) => ({ ...item, transitions: value }))}
+                >
+                  {TRANSITION_LABEL[value]}
+                </Text>
+              ))}
+            </View>
+            <Text className='rcompose__optiondesc'>{TRANSITION_HINT[chatcut.transitions]}</Text>
+          </View>
+
+          {/* 配乐是**生成类**调用（消耗额度），服务端用 CHATCUT_BGM_ENABLED 控制开关。
+              关着时不给选项而是明说「暂未开放」—— 选了却出不来音乐，比不让选更伤人。 */}
+          <View className='rcompose__choice'>
+            <Text className='rcompose__fieldlabel'>配乐</Text>
+            {bgmEnabled ? (
+              <View className='rcompose__choices'>
+                {(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM'] as const).map((value) => (
+                  <Text
+                    key={value}
+                    className={`rcompose__choiceitem ${chatcut.bgm === value ? 'rcompose__choiceitem--on' : ''}`}
+                    onClick={() => setChatcut((item) => ({ ...item, bgm: value }))}
+                  >
+                    {BGM_LABEL[value]}
+                  </Text>
+                ))}
+              </View>
+            ) : (
+              <Text className='rcompose__optiondesc'>配乐暂未开放，本次成片不带背景音乐。</Text>
+            )}
+          </View>
+
+          <View className='rcompose__optionrow'>
+            <View><Text className='rcompose__optiontitle'>统一音量</Text><Text className='rcompose__optiondesc'>平衡各镜头的响度，避免忽大忽小</Text></View>
+            <Switch checked={chatcut.normalizeAudio} onChange={(event) => setChatcut((value) => ({ ...value, normalizeAudio: event.detail.value }))} color='#e1251b' />
+          </View>
+
           <Text className='rcompose__fieldlabel'>备注与关键字</Text>
           <Textarea className='rcompose__note' maxlength={300} placeholder='例如：突出招牌菜、适合小红书种草' value={chatcut.note} onInput={(event) => setChatcut((value) => ({ ...value, note: event.detail.value }))} />
         </View>
