@@ -56,7 +56,10 @@
     "chatcut:call": "tsx scripts/chatcut-call.ts",
     "chatcut:smoke": "tsx scripts/chatcut-smoke.ts",
     "shot-skip:verify": "tsx scripts/verify-shot-skip.ts",
-    "dish-combo:verify": "tsx scripts/verify-dish-combo.ts"
+    "dish-combo:verify": "tsx scripts/verify-dish-combo.ts",
+    "tts:probe-speakers": "tsx scripts/probe-volcano-speakers.ts",
+    "tts:setup-volcano": "tsx scripts/setup-volcano-tts.ts",
+    "tts:verify-voices": "tsx scripts/verify-tts-voices.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
