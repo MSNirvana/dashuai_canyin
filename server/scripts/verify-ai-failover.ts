@@ -80,6 +80,7 @@ const gateway = new AiGateway(prisma, redis, circuit)
 
 let pass = 0
 let fail = 0
+let skipped = 0
 function check(ok: boolean, label: string, extra = '') {
   if (ok) {
     pass++
@@ -88,6 +89,34 @@ function check(ok: boolean, label: string, extra = '') {
     fail++
     console.log(`  ✗ ${label}${extra ? `  ${extra}` : ''}`)
   }
+}
+
+/**
+ * ★★ 合成故障转移段（③④⑤：坏通道 / 熔断 / 到期切回）需要把请求**真的打到一个本机
+ *   模拟通道**上，而这条手段在服务器上不成立 —— 所以这里显式跳过，而不是留 6 个假红灯。
+ *
+ * 为什么在服务器上不成立：临时通道的 baseUrl 是 `http://127.0.0.1:<随机端口>/v1`，
+ * 而 `safeFetch` 的两条闸门都拦它（src/lib/outbound-url.ts）：
+ *   · `isBlockedIp()` 无条件拒 127.0.0.0/8（**没有任何环境开关能放行**）
+ *   · `NODE_ENV=production` 下不允许 http（这条有 OUTBOUND_ALLOW_INSECURE 能放，但第一条没有）
+ * ⇒ 实际抛的是 `UNSAFE_URL`。而 UNSAFE_URL 按设计**不是**通道级故障（见 isChannelLevelFailure），
+ *   于是：坏通道不会立即熔断、按 maxRetries 重试到 4 次、熔断 key 压根没建（ttl=-2s）。
+ *
+ * 实测（2026-09-22 在服务器上跑本脚本）：③④⑤ 共 6 项红，且**全是**这个原因；
+ * 同一份代码在本机跑是 71 通过 / 0 失败。
+ *
+ * 留着红比不测更糟：本仓的纪律是「守护脚本红灯先判归属」，一个永远红的灯会把真正的红灯
+ * 拖成噪声。所以这里改成显式 SKIP 并把原因打出来 —— 谁在服务器上跑都能一眼看懂。
+ */
+const SYNTHETIC_ENV_OK = process.env.NODE_ENV !== 'production'
+function skipSynthetic(section: string, cases: number) {
+  skipped += cases
+  console.log(
+    `  ⏭ 跳过 ${cases} 项：${section}\n` +
+      `     原因：合成通道要打到 http://127.0.0.1:<port>，生产环境的 safeFetch 无条件拒本机地址\n` +
+      `     （NODE_ENV=${process.env.NODE_ENV ?? '(未设)'}）⇒ 发出去的是 UNSAFE_URL，测不出熔断行为。\n` +
+      `     这几项请在**本机**验证（本机跑应为本脚本全绿）。`,
+  )
 }
 
 async function cleanup() {
@@ -332,7 +361,8 @@ await cleanup()
 
 let primaryId = 0n
 let backupId = 0n
-{
+if (!SYNTHETIC_ENV_OK) skipSynthetic('③ 主通道不可用 → 落到备用（含调用日志）', 3)
+else {
   const enc = encryptSecret('sk-verify-not-a-real-key')
   // priority 故意「反向」：坏通道 999、好通道 1。
   // 若候选顺序由 priority 决定，就会先去好的备用通道、坏通道一次都不试；
@@ -427,7 +457,8 @@ let backupId = 0n
 
 // ────────────────────────────────────────────────────────────────
 console.log('\n=== ④ 熔断期内再请求 → 直接跳过主通道 ===')
-{
+if (!SYNTHETIC_ENV_OK) skipSynthetic('④ 熔断期内再请求 → 直接跳过主通道', 3)
+else {
   const r2 = await gateway.runScene({
     sceneCode: SCENE,
     variables: { store: '验证小馆', dish: '红烧肉' },
@@ -442,7 +473,8 @@ console.log('\n=== ④ 熔断期内再请求 → 直接跳过主通道 ===')
 
 // ────────────────────────────────────────────────────────────────
 console.log('\n=== ⑤ 熔断到期 → 自动切回主通道（无粘性）===')
-{
+if (!SYNTHETIC_ENV_OK) skipSynthetic('⑤ 熔断到期 → 自动切回主通道（无粘性）', 2)
+else {
   // 删 key 等价于 openSeconds 到期：网关每次都重新读 isOpen()，不缓存结论
   await circuit.reset(primaryId)
 
@@ -460,7 +492,8 @@ console.log('\n=== ⑤ 熔断到期 → 自动切回主通道（无粘性）==='
 
 // ────────────────────────────────────────────────────────────────
 console.log('\n=== ⑥ 候选顺序与 ai_provider.priority 无关 ===')
-{
+if (!SYNTHETIC_ENV_OK) skipSynthetic('⑥ 候选顺序与 ai_provider.priority 无关', 2)
+else {
   const p = await prisma.aiProvider.findUniqueOrThrow({ where: { id: primaryId } })
   const b = await prisma.aiProvider.findUniqueOrThrow({ where: { id: backupId } })
   check(
@@ -476,7 +509,8 @@ console.log('\n=== ⑥ 候选顺序与 ai_provider.priority 无关 ===')
 
 // ────────────────────────────────────────────────────────────────
 console.log('\n=== ⑦ 空正文必须算失败 → 触发故障转移（否则会「成功」返回空文案并扣积分）===')
-{
+if (!SYNTHETIC_ENV_OK) skipSynthetic('⑦ 空正文必须算失败 → 触发故障转移', 4)
+else {
   // 起一个本地 HTTP 服务，模拟「HTTP 200 + 合法报文 + content 为空」的通道。
   // 这正是 tokenbox 上推理模型把 max_tokens 全花在思考上时的返回：
   //   {"choices":[{"message":{"content":""},"finish_reason":"length"}]}
@@ -604,7 +638,9 @@ check(
 )
 check((await prisma.aiScene.count({ where: { code: SCENE } })) === 0, '临时场景已删除')
 
-console.log(`\n结果：${pass} 通过 / ${fail} 失败`)
+console.log(
+  `\n结果：${pass} 通过 / ${fail} 失败` + (skipped > 0 ? ` / ${skipped} 跳过（生产环境跑不出合成段，见上文原因）` : ''),
+)
 if (fail > 0) process.exitCode = 1
 
 await redis.quit()
