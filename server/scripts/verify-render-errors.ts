@@ -1,6 +1,8 @@
 import { userFacingRenderError } from '../src/render/user-errors.js'
 
 const WANT = '云端合成服务暂不可用，请稍后重试，或改用「基础生成」'
+/** 合成服务**内部**出错（JS 运行时错误）的对外说法，见 user-errors.ts 规则 ⑧ */
+const INTERNAL_ERROR = '云端合成服务内部出错，请稍后重试；若反复失败请联系客服'
 
 const cases: Array<[string, string | null, string]> = [
   // ── 本次新增：额度 / 计费类，不许把英文原文漏给商户 ──
@@ -22,7 +24,14 @@ const cases: Array<[string, string | null, string]> = [
   //   注意：不能拿 "ENOENT /Users/..." 当样本 —— 它会先命中一条**更具体**的业务规则
   //   （「分镜素材文件缺失…请重新上传」），那条才是对的。这里要的是一条纯技术噪音、
   //   任何规则都不命中的输入，用来验证**兜底**分支。
-  ['技术指纹·兜底', 'TypeError: fetch failed at RemoteSource (/home/ubuntu/app.js:12)', '合成失败，本次预留的积分已自动退回，可稍后重试'],
+  //   ⚠ 样本**不能含** `TypeError` / `is not defined` / `before initialization` 这类
+  //     运行时错误关键词 —— 2026-09-22 起它们有自己的规则（⑧），会被更精确地截获。
+  ['技术指纹·兜底', 'stack: at RemoteSource (/home/ubuntu/app.js:12)', '合成失败，本次预留的积分已自动退回，可稍后重试'],
+  // ── 回归（2026-09-22 新增）：**合成服务内部的 JS 运行时错误**不许把英文原文漏给商户 ──
+  //   第一条样本就是本轮线上事故的原文：它不含产品名 / 路径 / 堆栈（没有 `Error:` 前缀）、
+  //   又短，于是落进「够短就原样保留」的兜底分支 ⇒ 商户直接看到一句英文报错。
+  ['运行时错误·TDZ（本轮事故原文）', "Cannot access 'fps' before initialization", INTERNAL_ERROR],
+  ['运行时错误·TypeError', 'Cannot read properties of undefined (reading map)', INTERNAL_ERROR],
 ]
 
 let pass = 0

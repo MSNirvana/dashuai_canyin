@@ -28,7 +28,7 @@ const MAX_USER_TEXT = 120
  * 命中它又没被下面任何一条规则解释掉的原文，一律降级成通用话术 —— 宁可少说，不可乱说。
  */
 const TECH_FINGERPRINT =
-  /ChatCut|Chatcut|GPT|MCP|OpenAI|tokenbox|volcano|火山|ffmpeg|ffprobe|ENOENT|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up|HTTP \d{3}|stack|at \w+ \(|Error:|[A-Za-z]:\\|\/(?:Users|home|var|tmp|opt)\//i
+  /ChatCut|Chatcut|GPT|MCP|OpenAI|tokenbox|volcano|火山|ffmpeg|ffprobe|ENOENT|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up|HTTP \d{3}|stack|at \w+ \(|Error:|before initialization|is not a function|is not defined|Cannot read propert|Cannot convert|Maximum call stack|[A-Za-z]:\\|\/(?:Users|home|var|tmp|opt)\//i
 
 /**
  * 规则表：**顺序敏感，先匹配先返回**，所以「素材」类要排在通用「HTTP 403 / 未配置」之前 ——
@@ -89,6 +89,22 @@ const RULES: [RegExp, string][] = [
   [
     /配音|语音合成|TTS|voiceId|音色/i,
     '配音生成失败，请稍后重试，或换一个配音音色',
+  ],
+  // ⑧ 合成服务内部的 **JS 运行时错误**（2026-09-22 补，本轮线上故障暴露的第二处缺陷）。
+  //   背景：那次故障的原文是 `Cannot access 'fps' before initialization` —— 它
+  //     · 不命中上面任何一条规则，
+  //     · 也不含产品名 / 路径 / 堆栈（没有 `Error:` 前缀），
+  //     · 又短（46 字 ≤ MAX_USER_TEXT）
+  //   ⇒ 落到末尾那条「够短且不像技术噪音就原样保留」的分支，**一句英文报错直接展示给了商户**
+  //     （这就是用户截图里看到的东西）。
+  //   TDZ / TypeError 这类文本对用户零信息量，且明显是**我们自己的**代码缺陷
+  //   ⇒ 统一说「服务内部出错」，真实原文照旧留在 render_task.error_msg 与日志里给运维看。
+  //   ⚠ 必须排在**最后**：前面的素材 / 额度 / 提交 / 授权 / 超时 / 配音规则都比它具体，
+  //     先命中它们文案才准（例如带 `Cannot read properties of undefined` 的素材失败
+  //     应该先说「素材」而不是「内部出错」）。
+  [
+    /before initialization|is not a function|is not defined|Cannot read propert|Cannot convert|Maximum call stack|ReferenceError|TypeError|SyntaxError|Unexpected token/i,
+    '云端合成服务内部出错，请稍后重试；若反复失败请联系客服',
   ],
 ]
 
