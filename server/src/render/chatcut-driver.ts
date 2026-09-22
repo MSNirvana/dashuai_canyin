@@ -42,6 +42,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { withTransientRetry } from '../lib/transient-retry.js'
+import { generateEditPlan } from './edit-plan.service.js'
+import { toEdlShotMs } from './edl.js'
 import {
   callTool,
   CHATCUT_VOICE_OFF,
@@ -1282,19 +1284,9 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
    */
   const fps = input.output.fps
   const notices: string[] = []
-  /**
-   * 剪辑节奏档位的落地参数。
-   * ★ 只在「排轨之前」用它：`shotScale` 必须**在算镜头时长时就生效**（见 scaledShotMs），
-   *   而不是排完轨再回头改 —— 回头改会在轨道上留下空隙，而 close-gap 只能用
-   *   `edit_track tighten`，那个是**按轨**关缝、会让 A1 的配音相对 V1 整体错位。
-   */
-  const pacePlan = PACING_PLANS[input.options.pacing]
-  /**
-   * 转场档位的落地计划（含「每个镜头要预留多少素材」）。
-   * ★ 它必须在**排轨之前**就参与镜头时长的计算，理由见 chatcut-timing.ts 里 handleFramesOf 的注释 ——
-   *   这是本轮实测出来的关键约束，不是可选的优化。
-   */
-  const transitionPlan = TRANSITION_PLANS[input.options.transitions]
+  // ★★ pacePlan / transitionPlan 已**下移**到下面「AI 剪辑决策（EDL）」之后 —— 见「有效选项」那段。
+  //   原因：这两个值由档位映射而来，而档位现在可能被 AI 的决策覆盖 ⇒ 必须先拿到决策再映射。
+  //   ⚠ 下移是安全的：在 EDL 之前**没有任何地方读它们**（第一次读是 planShotTiming）。
   safePhase(input, 0.02, '准备项目')
 
   const project = await createChatCutProject({
@@ -1341,6 +1333,63 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
    *
    * ★ 传进去的是**值**（handleFrames / shotScale / minShotMs），档位表仍然只有 chatcut.ts 一份。
    */
+  // ────────────────────── AI 剪辑决策（EDL）──────────────────────
+  // 位置是**唯一可行**的：必须在**素材探测之后**（要把每段的真实时长喂给模型，
+  // 它才知道每个镜头物理上最多能留多长），且必须在**排轨之前**
+  // （决策决定档位 ⇒ 档位决定镜头时长与转场余量 ⇒ 余量决定排帧）。
+  const plan = await generateEditPlan({
+    merchantId: input.merchantId,
+    taskId: input.taskId,
+    shots: clips.map((clip, index) => ({
+      line: clip.line ?? null,
+      assetMs: clipAssetMs[index] ?? null,
+      durationMs: clip.durationMs ?? null,
+    })),
+    prefer: {
+      pacing: input.options.pacing,
+      transitions: input.options.transitions,
+      subtitleStyle: input.options.subtitleStyle,
+      bgm: input.options.bgm,
+    },
+    note: input.options.note,
+  })
+  // ★ notice 只进日志与进度文案：`generateEditPlan` 从不抛错，最坏就是「按面板档位剪」。
+  if (plan.notice) notices.push(plan.notice)
+  safePhase(input, 0.18, plan.edl ? 'AI 剪辑决策完成' : '按面板档位剪')
+
+  /**
+   * ★★ 有效选项：AI 决策成功时覆盖整片的四个档位；否则**就是 `input.options` 本身**。
+   *
+   * ⚠ 下面读档位的地方一律读 `options` —— 别再写 `input.options`。
+   *   混读会产生「节奏用了 AI 的、字幕还在用面板的」这种**半覆盖**状态，且不会报错。
+   * ★ `plan.edl` 为 null 的三条路径（开关关 / 调用失败 / 解析不出 JSON）都落到
+   *   `input.options`，于是行为与引入本功能之前**逐字段一致** ⇒
+   *   「不改变原有 AI 生成路线」这条约束在代码层面成立，而不是靠约定。
+   */
+  const options: ChatCutOptions = plan.edl
+    ? {
+        ...input.options,
+        pacing: plan.edl.pacing,
+        transitions: plan.edl.transitions,
+        subtitleStyle: plan.edl.subtitleStyle,
+        bgm: plan.edl.bgm,
+      }
+    : input.options
+
+  /**
+   * 剪辑节奏档位的落地参数。
+   * ★ 只在「排轨之前」用它：`shotScale` 必须**在算镜头时长时就生效**（见 scaledShotMs），
+   *   而不是排完轨再回头改 —— 回头改会在轨道上留下空隙，而 close-gap 只能用
+   *   `edit_track tighten`，那个是**按轨**关缝、会让 A1 的配音相对 V1 整体错位。
+   */
+  const pacePlan = PACING_PLANS[options.pacing]
+  /**
+   * 转场档位的落地计划（含「每个镜头要预留多少素材」）。
+   * ★ 它必须在**排轨之前**就参与镜头时长的计算，理由见 chatcut-timing.ts 里 handleFramesOf 的注释 ——
+   *   这是实测出来的关键约束，不是可选的优化。
+   */
+  const transitionPlan = TRANSITION_PLANS[options.transitions]
+
   const timing = planShotTiming({
     clips,
     clipAssetMs,
@@ -1348,6 +1397,10 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     transitionHandleFrames: transitionPlan.handleFrames,
     pacingShotScale: pacePlan.shotScale,
     pacingMinShotMs: pacePlan.minShotMs ?? 0,
+    // ★ 逐镜头目标时长：null = 该镜头没有 AI 指令 ⇒ 仍按上面的节奏档位缩放。
+    //   ⚠ 这里传的是 `plan.edl`（AI 的原始决策），**不是**夹取后的值 —— 严夹在
+    //     chatcut-timing.ts 的 scaledShotMs 里做（只有那里知道每段素材的可用时长）。
+    edlShotMs: toEdlShotMs(plan.edl, clips.length),
   })
   const handleFrames = timing.handleFrames
   const handleMsOf = timing.handleMsOf

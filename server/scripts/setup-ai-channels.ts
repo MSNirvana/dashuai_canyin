@@ -116,7 +116,7 @@ import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 import Redis from 'ioredis'
 import { encryptSecret, maskSecret } from '../src/lib/secret.js'
-import { CREATION_SCENE_PROMPTS, PUBLISH_SCENES } from '../prisma/prompts.js'
+import { CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, PUBLISH_SCENES } from '../prisma/prompts.js'
 
 const BASE_URL = 'https://tokenbox.you/v1'
 
@@ -383,6 +383,15 @@ const SCENE_CAPS: Record<string, number> = {
    *     PUBLISH_SCENES.publish_cover 上，要改价去那里改。
    */
   ...Object.fromEntries(PUBLISH_SCENES.map((s) => [s.code as string, s.beanPrice as number])),
+  /**
+   * AI 剪辑决策（2026-09-22）。★ 同样**不写第二遍** —— 取 `prompts.ts` 的值。
+   *
+   * ⚠ 它的价目前是**估算**（输入只有逐镜头清单，远小于 publish_material 的 5510 token），
+   *   真跑一次后应回来校准；定价依据写在 prompts.ts 的 `EDIT_PLAN_SCENE` 上。
+   * ★ 这个场景与前两者的一个关键差别：它在**每次 AI 档合成时都会被调用一次**，
+   *   所以 150 是「每出一条片子多扣 150 积分」，而不是「用户点一次才扣一次」。
+   */
+  [EDIT_PLAN_SCENE.code]: EDIT_PLAN_SCENE.beanPrice,
 }
 
 /** 是否把 SCENE_CAPS 写库。默认 false —— 会改变用户实付，属商业决策。 */

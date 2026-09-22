@@ -16,7 +16,7 @@
 //
 // 用法：npm run ai-prompts:sync
 import { PrismaClient } from '@prisma/client'
-import { CREATION_SCENE_PROMPTS, STORYBOARD_SCENE, PUBLISH_SCENES } from '../prisma/prompts.js'
+import { CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, STORYBOARD_SCENE, PUBLISH_SCENES } from '../prisma/prompts.js'
 import { validateTemplate } from '../src/ai/prompt-vars.js'
 
 const prisma = new PrismaClient()
@@ -43,6 +43,10 @@ const scenes: SceneSpec[] = [
   ...CREATION_SCENE_PROMPTS.map((s) => ({ ...s, kind: 'TEXT' as SceneKind })),
   { ...STORYBOARD_SCENE, kind: 'TEXT' as SceneKind },
   ...PUBLISH_SCENES.map((s) => ({ ...s, kind: s.kind as SceneKind })),
+  // AI 剪辑决策（2026-09-22）—— 本项目第一个「模型直接出剪辑参数」的场景。
+  // ★ 它自带 kind，但仍显式覆盖成 'TEXT'：与 STORYBOARD_SCENE 同一种写法，
+  //   避免 `EDIT_PLAN_SCENE.kind` 被推断成宽泛的 `string` 而与 SceneSpec 的联合类型不兼容。
+  { ...EDIT_PLAN_SCENE, kind: 'TEXT' as SceneKind },
 ]
 
 /**

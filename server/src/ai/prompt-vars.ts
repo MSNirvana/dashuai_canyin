@@ -71,6 +71,19 @@ const STORYBOARD_VARS = [
 const SYNTH_VARS = [...COPY_VARS, 'copyText', 'shotCountRule'] as const
 
 /**
+ * AI 剪辑决策场景（`edit_plan`）：拿到**逐镜头的台词与素材时长**，输出剪辑决策 JSON。
+ *
+ * ★ 为什么只有 `copyText` 不够、必须有 `shotPlanInput`（逐镜头清单）：
+ *   `copyText` 是整段口播文案，模型看不出「哪一句对应哪个镜头、那一段素材有多长」，
+ *   而剪辑决策的核心恰恰是**逐镜头**的时长分配。
+ * ★ 为什么不拆成 `shot1Sec` / `shot2Sec` 这类下标变量：镜头数由用户决定、不固定，
+ *   下标变量必须预先知道数量 ⇒ 镜头一多必然漏掉后面的。一个整段文本变量支持任意镜头数。
+ * ★ `preferPlan` = 用户在面板上选的档位，写进提示词是为了让它当**倾向**（参考），
+ *   最终仍由模型决定；只有在解析失败时它才作为兜底值使用（见 edit-plan.service.ts）。
+ */
+const EDIT_PLAN_VARS = [...COPY_VARS, 'copyText', 'note', 'shotPlanInput', 'preferPlan'] as const
+
+/**
  * 发布素材 · 文本场景：门店/菜品上下文 + **口播文案正文**。
  *
  * ★ 为什么必须有 `copyText` 而没有别的：这条链路的验收标准是
@@ -110,6 +123,7 @@ export const SCENE_VARIABLES: Record<string, readonly string[]> = {
   rhythm_detect: SYNTH_VARS,
   publish_material: PUBLISH_VARS,
   publish_cover: PUBLISH_COVER_VARS,
+  edit_plan: EDIT_PLAN_VARS,
 }
 
 /**

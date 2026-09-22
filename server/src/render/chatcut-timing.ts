@@ -68,6 +68,19 @@ export interface ShotTimingParams {
   pacingShotScale: number
   /** 节奏档位的镜头时长下限（ms）；档位不带这个字段时传 0 */
   pacingMinShotMs: number
+  /**
+   * ★★ EDL（AI 剪辑决策表）的逐镜头目标时长（ms）。`null` / 下标越界 = 该镜头没有指令，
+   *    仍按 `pacingShotScale` 缩放（见 scaledShotMs）。
+   *
+   * ★ 为什么走**入参**，而不是「算完再让调用方回头改写 slotMs」：
+   *   转场余量 `handleFramesOf` 是按「该镜头修剪后的帧数」算的 —— 如果排轨前才回头改时长，
+   *   余量与实际时长就对不上，转场仍会被判「余量不足」而拒单。
+   *   放在入参里，`slotMs` 的初值天生就是 EDL 的值，两者必然同源。
+   *
+   * ⚠ 传进来的值只需保证「有限正数」；粗夹在 `edl.ts::clampShotMs`，
+   *   而「不超素材可用时长」的严夹在下面 `scaledShotMs` 里（只有这里知道 rawShotMs）。
+   */
+  edlShotMs?: readonly (number | null)[] | null
 }
 
 export interface ShotTimingResult {
@@ -84,9 +97,9 @@ export interface ShotTimingResult {
 }
 
 export function planShotTiming(params: ShotTimingParams): ShotTimingResult {
-  // ★★ fps 在这里（函数体第一行）就绑定：下面所有闭包捕获的都是**已绑定**的变量。
+  // ★★ fps 与 edlShotMs 都在这里（函数体第一行）绑定：下面所有闭包捕获的都是**已绑定**的变量。
   //    改这个文件时请保持「入参先解构、再定义闭包」的顺序 —— 否则又会退化成 TDZ。
-  const { clips, clipAssetMs, fps } = params
+  const { clips, clipAssetMs, fps, edlShotMs } = params
   const wanted = params.transitionHandleFrames
   const shotScale = params.pacingShotScale
   const minShotMs = params.pacingMinShotMs
@@ -144,7 +157,20 @@ export function planShotTiming(params: ShotTimingParams): ShotTimingResult {
    */
   const scaledShotMs = (index: number): number => {
     const raw = rawShotMs(index)
-    if (raw <= 0 || shotScale >= 1) return raw
+    if (raw <= 0) return raw
+    /**
+     * ★★ EDL 优先：AI 给了这个镜头的目标时长就用它，**但两道夹取一道都不能省** ——
+     *   · 上限 `raw`：超过素材可用时长会被 ChatCut 判
+     *     `Source range exceeds video asset duration`（整单失败，不是降级）；
+     *   · 下限 `minShotMs`：模型看到的提示词里是**素材总时长**，不是扣掉转场余量后的可用时长，
+     *     所以它完全可能给出一个比可用时长还短的值。
+     *   粗夹（800~15000ms）已在 `edl.ts::clampShotMs` 做过，这里是严夹。
+     */
+    const edl = edlShotMs?.[index]
+    if (typeof edl === 'number' && Number.isFinite(edl) && edl > 0) {
+      return Math.min(raw, Math.max(minShotMs, Math.round(edl)))
+    }
+    if (shotScale >= 1) return raw
     return Math.min(raw, Math.max(minShotMs, Math.round(raw * shotScale)))
   }
 

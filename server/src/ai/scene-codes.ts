@@ -34,6 +34,11 @@ export const SCENE = {
   //   把文本模型配进它的候选链，网关会在调用前就跳过并给出明确原因，不会「拿一段文字当图片」。
   publish_material: 'publish_material',
   publish_cover: 'publish_cover',
+  // AI 剪辑决策（EDL）—— 让模型决定「每个镜头各自留多长」以及整片的节奏/转场/字幕/配乐。
+  // ★ 它在链路里的位置：AI 档开始合成、素材探测完之后、排轨之前（见 chatcut-driver.ts）。
+  // ★ 输出是**结构化 JSON**（结构定义在 render/edl.ts），不是给人读的文案 ——
+  //   所以解析器只认 JSON，失败就退回用户在面板选的档位（绝不阻塞出片）。
+  edit_plan: 'edit_plan',
 
   // ── 待接入：提示词已配好，业务方尚未引用 ──
   script_polish: 'script_polish',
@@ -56,6 +61,7 @@ export const LIVE_SCENE_CODES: readonly SceneCode[] = [
   SCENE.storyboard_generate,
   SCENE.publish_material,
   SCENE.publish_cover,
+  SCENE.edit_plan,
 ]
 
 /**
