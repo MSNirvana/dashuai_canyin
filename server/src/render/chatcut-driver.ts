@@ -47,6 +47,7 @@ import {
   type ChatCutJobInput,
   type ChatCutOptions,
 } from './chatcut.js'
+import { framesOf, planShotTiming } from './chatcut-timing.js'
 import { prisma } from '../db.js'
 import { activeTtsProvider } from '../services/tts-provider.service.js'
 import { synthesizeNarration } from './tts.js'
@@ -833,19 +834,8 @@ async function remoteSource(
   }
 }
 
-/**
- * 时间轴帧数。★ **必须向下取整，不能四舍五入。**
- *
- * ChatCut 会拿源素材的**真实**时长校验 `fromFrame + durationInFrames ≤ 素材时长`，超出**直接拒单**：
- *   `Source range exceeds video asset duration: … plus 90 frame(s) … ends at 3s,
- *    but asset … is 2.968s. Use durationInFrames <= 89`
- * 而客户端上报的分镜时长是**取整值**（实测 3000ms，真实只有 2968ms）⇒ 用 round 算出 90 帧就注定越界。
- * 所以时间轴一律按「探到的真实时长 + 向下取整」排帧（真实时长由 `remoteSource` 探测得到）。
- * `+1e-6` 是防浮点边界：本该整除时算出 89.999999 会白掉一帧。
- */
-function framesOf(ms: number, fps: number): number {
-  return Math.max(1, Math.floor((ms / 1000) * fps + 1e-6))
-}
+// ★ framesOf 已搬到 chatcut-timing.ts —— 与 planShotTiming 同源，避免「两份实现漂移」。
+//   import 见文件顶部。那边还带一条硬约束：**必须向下取整**（否则会被 ChatCut 拒单）。
 
 /**
  * 把探测到的宽高回填 `media_asset`（**只在原本为空时写**）。
@@ -926,13 +916,8 @@ const LOUDNESS_ADJUST_DEADBAND_DB = 1
  */
 const VOICE_TAIL_MARGIN_MS = 200
 
-/**
- * 转场给单个镜头预留素材的**比例上限**（占该镜头时长）。
- * ★ 为什么要有：转场余量是「首尾各扣 h 帧」，对短镜头来说这个代价占得太高
- *   （一个 0.5s 的镜头不该为了转场再砍掉 0.3s）。按比例封顶后，短镜头自动少留一点，
- *   那个接缝的转场时长也会跟着变短（见 addChatCutTransitions 的逐接缝取 min）。
- */
-const TRANSITION_HANDLE_MAX_RATIO = 0.15
+// ★ TRANSITION_HANDLE_MAX_RATIO 已搬到 chatcut-timing.ts（只被 handleFramesOf 用）。
+//   它仍是「转场给单个镜头预留素材的比例上限」= 0.15，理由见那边的注释。
 
 /** BGM 生成的等待预算（毫秒）。理由同转录预算：宁可没 BGM 出片，也不要一路拖到 sweeper 退款。 */
 const BGM_WAIT_MS = Number(process.env.CHATCUT_BGM_WAIT_MS ?? 240_000)
@@ -1234,6 +1219,16 @@ async function polishChatCutTimeline(
 export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCutRenderResult> {
   const clips = input.clips.filter((clip) => clip.sourceUrl)
   if (clips.length === 0) throw new Error('AI 档没有可用分镜素材')
+  /**
+   * 输出帧率。★★ 声明位置必须在**所有读取点之前**（2026-09-22 线上事故的教训）。
+   *
+   * 本函数体有 700+ 行，它原先躺在 1300 行开外，而更早处的 `clips.map(...)` 闭包
+   * 就已经在算镜头时长、间接读到它 ⇒ 抛 `Cannot access 'fps' before initialization`（TDZ），
+   * 线上每次 AI 档合成都失败。
+   * 时长计算那段已整段搬到 `chatcut-timing.ts`（fps 变入参），但本函数体内**仍有**
+   * `framesOf(…, fps)` 散布在 TTS / 排轨 / 转场通知里 ⇒ 保留「一进函数就声明」这条纪律。
+   */
+  const fps = input.output.fps
   const notices: string[] = []
   /**
    * 剪辑节奏档位的落地参数。
@@ -1244,7 +1239,7 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
   const pacePlan = PACING_PLANS[input.options.pacing]
   /**
    * 转场档位的落地计划（含「每个镜头要预留多少素材」）。
-   * ★ 它必须在**排轨之前**就参与镜头时长的计算，理由见下面 handleMsOf 的注释 ——
+   * ★ 它必须在**排轨之前**就参与镜头时长的计算，理由见 chatcut-timing.ts 里 handleFramesOf 的注释 ——
    *   这是本轮实测出来的关键约束，不是可选的优化。
    */
   const transitionPlan = TRANSITION_PLANS[input.options.transitions]
@@ -1279,73 +1274,35 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     return typeof sec === 'number' && sec > 0 ? Math.round(sec * 1000) : null
   })
   /**
-   * 分镜的**trim 后**可用时长（毫秒，还没扣转场余量）。
-   */
-  const trimmedShotMs = (index: number): number => {
-    const clip = clips[index]!
-    const assetMs = clipAssetMs[index] ?? clip.durationMs ?? clip.trimEndMs ?? 0
-    if (assetMs <= 0) return 0
-    const start = Math.max(0, clip.trimStartMs ?? 0)
-    const end = clip.trimEndMs && clip.trimEndMs > start ? Math.min(clip.trimEndMs, assetMs) : assetMs
-    return Math.max(0, end - start)
-  }
-
-  /**
-   * 转场在每个镜头**首尾各**预留的素材帧数。
+   * 镜头时长规划整段（真实时长 ∧ trim ∧ 转场余量 ∧ 节奏档位）—— 已搬到 `chatcut-timing.ts`。
    *
-   * ★★ 为什么要在排轨前就预留（而不是「排完轨再往接缝上贴转场」）：
-   *   转场要消耗两侧的素材余量，而我们排轨时是把每段素材**用满**的
-   *   （source [0, D)）⇒ 余量 0。实测 ChatCut 会直接拒：
-   *     `transition duration 14f exceeds feasible visual transition limit 0f`。
-   *   预留 = 让素材范围收成 `[handle, D-handle]`，时间线时长随之**变短** 2×handle 帧。
-   *   ⇒ 这必须与「镜头时长」同源，否则 A1 的配音、V1 的画面、转场三者对不上。
+   * ★★ 为什么它不能再写在本函数体内（2026-09-22 线上事故）：
+   *   这一串闭包互相引用，而 `slotMs` 在 `const fps = input.output.fps` **之前**就被
+   *   `clips.map()` 求值：slotMs → scaledShotMs → rawShotMs → handleMsOf → `… / fps`。
+   *   于是每一次 AI 档合成都抛 `Cannot access 'fps' before initialization`（TDZ）。
+   *   ⇒ 搬成纯函数后 `fps` 是**入参**、且在函数体第一行绑定，结构上不可能再「先用后声明」。
    *
-   * ★ 上限 15% 是给短镜头兜底：一个 0.5s 的镜头不该为了转场再砍掉 0.3s。
-   *   算出来不足 2 帧就当 0（那个接缝最后会走硬切）。
-   * ★ 余量为 0 时**完全不改变时长**，所以默认的「硬切」档行为与本轮之前完全一致。
-   */
-  const handleFramesOf = (index: number): number => {
-    const wanted = transitionPlan.handleFrames
-    if (wanted <= 0) return 0
-    const baseFrames = framesOf(trimmedShotMs(index), fps)
-    const capped = Math.min(wanted, Math.floor(baseFrames * TRANSITION_HANDLE_MAX_RATIO))
-    return capped >= 2 ? capped : 0
-  }
-  const handleFrames: number[] = clips.map((_, index) => handleFramesOf(index))
-  const handleMsOf = (index: number): number => (handleFrames[index]! / fps) * 1000
-
-  /**
-   * 分镜的**原始**可用时长（毫秒）：真实素材时长 ∧ trim ∧ 转场余量 三重约束后的值。
-   * ⚠ 它同时也是 TTS 的合成目标时长 —— 它是「素材允许的最大值」。
-   */
-  const rawShotMs = (index: number): number => {
-    const trimmed = trimmedShotMs(index)
-    const handleMs = handleMsOf(index)
-    return Math.max(0, trimmed - 2 * handleMs)
-  }
-
-  /**
-   * 分镜在时间线上的**目标**时长（毫秒）= 原始时长套上剪辑节奏档位。
+   * ★★ 别把这段挪回来。本函数体有 700+ 行，闭包跨几百行引用外层 `const` 时：
+   *   · typecheck **不报**（那个函数可能永远不在声明前被调用，静态无法判定）；
+   *   · 构建成功、部署也成功；**只有真实跑一次任务才炸**。
+   *   这类缺陷只能靠 `scripts/verify-chatcut-timing.ts` 那种「真的算一遍」的闸门守住。
    *
-   * ⚠ 只允许**缩短**（`shotScale <= 1`）：加速要多耗源素材字节，会撞 ChatCut 的
-   *   `Source range exceeds video asset duration` 拒单（见 PACING_PLANS 的注释）。
-   *   `minShotMs` 是下限，但最后必须再和原始时长取小 —— 否则一个本来 1.0s 的镜头
-   *   按 0.78 缩放得 0.78s、被下限顶到 1.2s，**比原来还长**，排帧又超素材时长。
+   * ★ 传进去的是**值**（handleFrames / shotScale / minShotMs），档位表仍然只有 chatcut.ts 一份。
    */
-  const scaledShotMs = (index: number): number => {
-    const raw = rawShotMs(index)
-    if (raw <= 0 || pacePlan.shotScale >= 1) return raw
-    return Math.min(raw, Math.max(pacePlan.minShotMs, Math.round(raw * pacePlan.shotScale)))
-  }
-
-  /**
-   * 每个镜头**最终**排到时间线上的时长（毫秒）。
-   *
-   * ★ 为什么不直接用 scaledShotMs：缩短镜头还有一个下界是**配音**。配音是按镜头时长合成的，
-   *   把镜头缩到比「这句话本身」还短，就会把台词吃掉（见下面 TTS 段里的处理）。
-   *   所以初值是缩放值，等 TTS 合成完、量出真实语音长度之后再按需抬高。
-   */
-  const slotMs: number[] = clips.map((_, index) => scaledShotMs(index))
+  const timing = planShotTiming({
+    clips,
+    clipAssetMs,
+    fps: input.output.fps,
+    transitionHandleFrames: transitionPlan.handleFrames,
+    pacingShotScale: pacePlan.shotScale,
+    pacingMinShotMs: pacePlan.minShotMs ?? 0,
+  })
+  const handleFrames = timing.handleFrames
+  const handleMsOf = timing.handleMsOf
+  const rawShotMs = timing.rawShotMs
+  const scaledShotMs = timing.scaledShotMs
+  // ★ 下面 TTS 段会按下标改写它（配音比目标时长更长时抬高镜头）⇒ 必须保持**同一个数组引用**
+  const slotMs = timing.slotMs
 
   /**
    * 响度探测：与下面的配音合成**并行**发起（两者都是网络 I/O，串起来白白多等一轮）。
@@ -1367,7 +1324,6 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
   /** 分镜下标 → 该段配音的实测响度（LUFS）。只填「真的合成了配音」的那些下标。 */
   const voiceLufs = new Map<number, number | null>()
   let cursorFrame = 0
-  const fps = input.output.fps
   try {
     // voiceOff 时不去查 TTS 供应商：查了只会多打一条「未配置 TTS 供应商」的误导 notice
     const provider = voiceOff ? null : await activeTtsProvider(prisma).catch(() => null)
