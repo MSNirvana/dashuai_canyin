@@ -45,7 +45,22 @@ export const DEFAULT_CHATCUT_OPTIONS: ChatCutOptions = {
   //   默认选 LIGHT 会让每次渲染都白跑一次生成。用户主动选了才做。
   bgm: 'NONE',
   pacing: 'NATURAL',
-  transitions: 'CLEAN',
+  /**
+   * ★★ 默认档位 = **有转场**（2026-09-22 改，此前是 `CLEAN`）。
+   *
+   *   改的理由是一条真实投诉：用户跑完 AI 档说「**画面比例不对、也没有转场和剪辑**」。
+   *   查证发现「没有转场」不是缺陷、是**默认值本身**：`CLEAN` 就是「不加转场」，
+   *   而用户从没动过这个选择 ⇒ **每一条默认出片都必然是 6 段硬拼**。
+   *   对一个卖点是「AI 全自动出片」的产品，「默认看起来没剪过」比「默认略短」严重得多。
+   *
+   *   `TRANSITION_PLANS` 的注释写着「默认档位不能悄悄把片子缩短」—— 那条顾虑仍然成立，
+   *   但**已经被 UI 覆盖**：客户端 `TRANSITION_HINT.SMOOTH` 原文就是
+   *   「要用到少量画面素材，整片会略短一点」⇒ 代价在选项里写着，不是悄悄发生的。
+   *
+   *   代价（6 镜头 / 30fps）：整片约短 2.4s。★ **不会截断台词** —— 服务端给配音留了
+   *   时间下界（`chatcut-timing.ts` 的 `slotMs`），镜头再短也短不过那一段配音。
+   */
+  transitions: 'SMOOTH',
   removeSilence: true,
   normalizeAudio: true,
   note: '',
