@@ -51,6 +51,28 @@ export function normalizedClipKey(
 }
 
 /**
+ * 「**整段**素材」归一化产物的完整对象键 —— **AI 档『本地打底』路线专用**（2026-09-22）。
+ *
+ * ★★ 为什么必须与 `normalizedClipKey` 分开实现，而不是直接复用它：
+ *   `normalizedClipKey` 的键里含 `trimStartMs/trimEndMs`，产出的是**已经剪好的片段**。
+ *   而 AI 档要的是**整段**：裁切由云端驱动自己按 trim + 转场余量算
+ *   （见 `chatcut-driver.ts` 的 `sourceStartMs = trimStart + handleMsOf(index)`）。
+ *   若把剪好的片段递给它，`handle` 会直接越界（ChatCut 会拒单：transition exceeds feasible limit）。
+ *   所以这里把 trim 固定成 `0, 0` —— 与 worker 里 `endMs = 0 ⇒ 不带 -to`（直到素材结尾）同口径。
+ *
+ * ★ 与本地管线**不冲突、可共用缓存**：本地管线在 trim 恰为 0/0 时算出的键与这里**完全相同**，
+ *   而产物语义也完全相同（同一 assetId、同一输出尺寸、同样保留原声 v2）
+ *   ⇒ 命中即复用，两条路线不会互相覆盖，也不会算出「同键不同内容」。
+ */
+export function normalizedFullClipKey(
+  merchantId: bigint,
+  clip: RenderClip,
+  output: { width: number; height: number },
+): string {
+  return `${INTERMEDIATE_CACHE_PREFIX}${merchantId.toString()}/${intermediateKey(clip, 0, 0, output)}.mp4`
+}
+
+/**
  * 调色预览的缓存键：**内容寻址** —— 由「全部分镜的归一化缓存键 + 输出尺寸 + 调色参数」
  * 共同决定。同一组参数反复请求只会算出同一个键，天然去重；
  * 换了任一参数（哪怕只动一个滑块）就是另一个键，互不覆盖。

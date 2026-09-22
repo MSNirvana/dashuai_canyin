@@ -8,7 +8,7 @@ import { pipeline } from 'node:stream/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { prisma } from '../db.js'
-import { normalizedClipKey } from './cache-keys.js'
+import { normalizedClipKey, normalizedFullClipKey } from './cache-keys.js'
 import {
   completeRender,
   failRender,
@@ -505,6 +505,60 @@ async function processTask(
 }
 
 /**
+ * 「本地打底」路线（AI 档可选，2026-09-22）：把**整段**素材先在本机转成成片画布，再交给云端。
+ *
+ * 目的：把「素材几何」这件事在本地一次性定死。
+ *   · ffmpeg 的 `scale`/`crop` **默认 autorotate** ⇒ 手机拍摄的旋转信息在这里就被转正，
+ *     送上去的文件**本身就是 1080×1920** ⇒ 云端 `fit:"cover"` 只会 1:1 落位、不可能再算错
+ *     （2026-09-22 事故：容器 960×540 + `rotation=-90` 被当横屏，云端多放大 1.78 倍）。
+ *   · 代价：多一道本地转码 ⇒ 出片更慢 + 多一次编解码、画质略降。所以**不是默认**。
+ *
+ * ★★ 为什么传的是**整段**（trim 固定 0/0）而不是像本地管线那样传剪好的片段：
+ *    AI 档的裁切由云端驱动自己算（`sourceStartMs = trimStart + handleMsOf(index)`，
+ *    转场还要两侧各留 handle）⇒ 递剪好的片段会让 handle 直接越界、被 ChatCut 拒单。
+ *    见 `cache-keys.ts` 的 `normalizedFullClipKey`。
+ *
+ * ★★ 失败**绝不外抛**：打底只是「让几何更确定」的增强，不是出片的前提。
+ *    转码失败就退回原文件（B0 之后云端已有 rotation 兜底）——
+ *    绝不能因为「增强没做成」把一条本来能出的片子搞失败。
+ */
+async function prepClipLocally(
+  merchantId: bigint,
+  taskId: bigint,
+  clip: RenderClip,
+  output: { width: number; height: number },
+): Promise<string> {
+  const key = normalizedFullClipKey(merchantId, clip, output)
+  try {
+    if (await objectExists(key)) return key // 缓存命中：同一段素材重合成/重试时不重转
+    const dir = await mkdtemp(join(tmpdir(), 'dashuai-prep-'))
+    try {
+      const raw = join(dir, 'in.mp4')
+      const out = join(dir, 'out.mp4')
+      await downloadToFile(clip.cosKey, raw)
+      // startMs=0 / endMs=0 ⇒ 不带 -ss/-to = 整段（裁切留给云端驱动）
+      await ffmpegNormalize(raw, out, {
+        width: output.width,
+        height: output.height,
+        startMs: 0,
+        endMs: 0,
+        timeoutMs: TASK_TIMEOUT_MS,
+      })
+      await uploadFile(out, key, 'video/mp4')
+      return key
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  } catch (error) {
+    console.warn(
+      `[render-worker] task ${taskId} 素材本地打底失败，已退回原文件（${clip.cosKey}）：`,
+      (error as Error).message,
+    )
+    return clip.cosKey
+  }
+}
+
+/**
  * AI 档（外部剪辑）—— 走 ChatCut 多步驱动。
  *
  * ★ 这里只负责「启动」：建项目、推素材、排轨、设角色，返回一个待轮询的状态。
@@ -524,10 +578,35 @@ async function processChatCutTask(
   fence?: RenderFence,
 ): Promise<void> {
   const clips = params.clips ?? []
-  const sourceClips = await Promise.all(clips.map(async (clip) => ({
+  const output = params.output ?? { width: 1080, height: 1920, fps: 30 }
+  /**
+   * 素材路线：`ORIGINAL`（默认，原路线，原文直传）／`NORMALIZED`（先本地打底再传）。
+   * ★ 老任务 / 老客户端的 `params.chatcut` 里没有这个字段 ⇒ 必须落到默认值，
+   *   行为与改动前**完全一致**（这就是「不覆盖原来 AI 生成路线」的落点）。
+   */
+  const clipPrep = params.chatcut?.clipPrep ?? DEFAULT_CHATCUT_OPTIONS.clipPrep
+  /**
+   * ★★ 阶段上报器**只建一个**，打底阶段与驱动阶段共用。
+   *    不能各建一个：`makePhaseReporter` 的单调性靠它自己的闭包变量 `last`，
+   *    两个实例各记各的 ⇒ 驱动阶段报 5% 而打底阶段已报 15%，**进度会倒退**，
+   *    而下面的注释写得很清楚「进度倒退比停在原地更让人以为出了故障」。
+   */
+  const phase = makePhaseReporter(task.id, fence)
+  const sourceCosKeys = clips.map((clip) => clip.cosKey)
+  if (clipPrep === 'NORMALIZED') {
+    // ★ 串行而不是并发：6 路 ffmpeg 同时抢 CPU 会把更吃时间的编码阶段拖慢，
+    //   而这里每一步都要占满一个核。打底阶段占启动阶段的前四成（5%→15%），
+    //   余量留给驱动自己的阶段（它最高会报到 29%）。
+    for (let index = 0; index < clips.length; index += 1) {
+      const clip = clips[index]!
+      sourceCosKeys[index] = await prepClipLocally(task.merchantId, task.id, clip, output)
+      phase({ ratio: 0.4 * ((index + 1) / clips.length), label: `素材本地打底 ${index + 1}/${clips.length}` })
+    }
+  }
+  const sourceClips = await Promise.all(clips.map(async (clip, index) => ({
     shotId: clip.shotId,
     assetId: clip.assetId,
-    sourceUrl: await signedObjectUrl(clip.cosKey, 6 * 3600),
+    sourceUrl: await signedObjectUrl(sourceCosKeys[index]!, 6 * 3600),
     trimStartMs: clip.trimStartMs,
     trimEndMs: clip.trimEndMs,
     durationMs: clip.durationMs,
@@ -540,10 +619,10 @@ async function processChatCutTask(
     title: params.title?.trim() || `大帅餐饮成片-${task.id.toString()}`,
     clips: sourceClips,
     options: params.chatcut ?? DEFAULT_CHATCUT_OPTIONS,
-    output: params.output ?? { width: 1080, height: 1920, fps: 30 },
+    output,
     // ★ 启动阶段本身就是分钟级（建项目 → 探素材 → 逐镜头 TTS → 上传全部字节 → 排轨），
     //   不报阶段的话这整段时间进度都停在 tick() 写的 5%，就是用户看到的「一直卡在 5%」
-    onPhase: makePhaseReporter(task.id, fence),
+    onPhase: phase,
   })
   await storeChatCutState(task.id, result.state, result.status, fence)
   for (const notice of result.state.notices ?? []) {

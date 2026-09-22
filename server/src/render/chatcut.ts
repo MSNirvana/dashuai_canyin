@@ -17,6 +17,23 @@ export const CHATCUT_VOICES = [
  */
 export const CHATCUT_VOICE_OFF = 'none'
 
+/**
+ * 「素材送云端之前要不要先在本机归一化」—— 2026-09-22 新增的用户可选路线。
+ *
+ * - `ORIGINAL`（**默认，也是原来的唯一路线**）：素材原文件直接推 COS 原始字节，
+ *   画布适配全交给云端的 `fit:"cover"`。**不经二次压缩，画质最好**；
+ *   代价是「云端只能看到我们声明的宽高」⇒ 一旦元数据探测出错，就会按错比例裁切
+ *   （2026-09-22 的 `rotation` 事故就是这一类）。
+ * - `NORMALIZED`（本地打底）：先用本机 ffmpeg 把整段素材转成成片画布（1080×1920）再上传。
+ *   ffmpeg 的 `scale`/`crop` **默认 autorotate**，手机拍的旋转信息在本地就被转正
+ *   ⇒ 送上去的素材**几何是确定的**，云端 `cover` 只会 1:1 落位、不可能再算错。
+ *   代价：多一道本地转码（出片变慢、且多一次编解码 ⇒ 画质略降）。
+ *
+ * ★ 为什么做成「用户可选」而不是二选一：两者是**画质 ↔ 稳健**的取舍，没有绝对优解
+ *   —— 素材规整时 ORIGINAL 更好，素材来源杂时 NORMALIZED 更稳。让用户按自己的素材选。
+ */
+export const CHATCUT_CLIP_PREPS = ['ORIGINAL', 'NORMALIZED'] as const
+
 export const ChatCutOptionsSchema = z.object({
   voiceId: z.enum([CHATCUT_VOICE_OFF, ...CHATCUT_VOICES.map((voice) => voice.id)] as [string, ...string[]]),
   subtitles: z.boolean(),
@@ -32,6 +49,7 @@ export const ChatCutOptionsSchema = z.object({
   removeSilence: z.boolean(),
   normalizeAudio: z.boolean(),
   bgm: z.enum(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM']),
+  clipPrep: z.enum(CHATCUT_CLIP_PREPS),
   note: z.string().trim().max(300),
 })
 
@@ -63,6 +81,9 @@ export const DEFAULT_CHATCUT_OPTIONS: ChatCutOptions = {
   transitions: 'SMOOTH',
   removeSilence: true,
   normalizeAudio: true,
+  // ★★ 默认 = **原路线**（原文直传），**不覆盖/不改变原有 AI 生成行为**。
+  //   用户主动选 `NORMALIZED` 才走本地打底 —— 理由（画质 ↔ 稳健的取舍）见 CHATCUT_CLIP_PREPS。
+  clipPrep: 'ORIGINAL',
   note: '',
 }
 

@@ -17,6 +17,7 @@ import {
 } from '../render/preview.js'
 import { BeanNotEnoughError } from '../bean/bean.service.js'
 import { RequestConflictError } from '../domain/request.js'
+import { CHATCUT_CLIP_PREPS } from '../render/chatcut.js'
 
 const router = createRouter()
 router.use(auth)
@@ -43,6 +44,9 @@ const submitInput = z.object({
     transitions: z.enum(['CLEAN', 'SMOOTH', 'DYNAMIC']).optional(),
     removeSilence: z.boolean().optional(),
     normalizeAudio: z.boolean().optional(),
+    // 素材送云端前的处理路线（2026-09-22）。★ 取值来自 chatcut.ts，**不要在这里手抄一份**
+    // —— 抄一份就会出现「schema 收下了、DEFAULT/类型里没有」这类静默不一致。
+    clipPrep: z.enum(CHATCUT_CLIP_PREPS).optional(),
     note: z.string().trim().max(300).optional(),
   }).optional(),
 })
