@@ -15,19 +15,28 @@ import { PrismaClient } from '@prisma/client'
 
 const prisma = new PrismaClient()
 
-/** 2026-09-15 全场景实测（各 1 次真实调用，真实提示词）—— 只作「参照量级」，不是承诺值 */
-const MEASURED: Record<string, { beans: number; note: string }> = {
+/**
+ * 2026-09-15 全场景实测（各 1 次真实调用，真实提示词）—— 只作「参照量级」，不是承诺值。
+ *
+ * ★ 2026-09-21 四款改型：`copy_intro` / `copy_quality` 两个场景已删除，条目一并删掉
+ *   （留着只会让「无实测参照」的判断再也走不到，掩盖新场景没测过这件事）。
+ *   新的 `copy_persona` / `copy_knowledge` / `copy_product` **故意不给 beans** ——
+ *   它们还没实测过，填一个"照抄旧款"的数字会让人以为测过了。
+ *   缺 beans 时脚本会显示「未实测」，提示该去真打一次。
+ */
+const MEASURED: Record<string, { beans?: number; note: string }> = {
   copy_generate: { beans: 36, note: '324/454 tok' },
   storyboard_generate: { beans: 123, note: '1106/1594 tok' },
   copy_traffic: { beans: 38, note: '676/426 tok' },
-  copy_intro: { beans: 41, note: '630/488 tok' },
-  copy_quality: { beans: 31, note: '628/332 tok' },
+  copy_persona: { note: '未实测（2026-09-21 新模板）' },
+  copy_knowledge: { note: '未实测（2026-09-21 新模板）' },
+  copy_product: { note: '未实测（2026-09-21 新模板）' },
   script_polish: { beans: 91, note: '626/1204 tok' },
   review_guard: { beans: 20, note: '552/196 tok' },
   title_overlay: { beans: 36, note: '598/410 tok' },
   bgm_select: { beans: 28, note: '514/312 tok' },
   rhythm_detect: { beans: 94, note: '534/1262 tok' },
-  copy_recommend: { beans: 28, note: '696/280 tok' },
+  copy_recommend: { beans: 28, note: '696/280 tok（模板已于 2026-09-21 重写，该数值偏旧）' },
 }
 
 async function main() {
@@ -74,13 +83,17 @@ async function main() {
     const cap = Number(s.beanPrice)
     const m = MEASURED[s.code]
     let note = '（无实测参照）'
-    if (m) {
+    if (m && m.beans !== undefined) {
       if (cap < m.beans) {
         note = `会被截断（平台承担 ${m.beans - cap} 积分）`
         truncated++
       } else {
         note = '不截断 ✓'
       }
+    } else if (m) {
+      // 新场景：条目在表里但还没实测过 —— 必须区别于「表里根本没这个场景」，否则
+      // 「改型后新模板忘了测」和「场景还没接入」会长得一模一样
+      note = '未实测（先跑一次真实调用再填）'
     }
     console.log(
       `  ${s.code.padEnd(22)}${String(cap).padEnd(10)}${(m ? `${m.beans}（${m.note}）` : '-').padEnd(16)}${note}`,

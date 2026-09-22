@@ -24,13 +24,35 @@ function mediaBaseUrl(req: import('express').Request): string {
 }
 
 /**
- * 菜品稿可选的文案款式。
+ * 菜品稿可选的文案款式（入参用的全集）。
  * ★ 流量款**不在其中** —— 它已从「四款文案」拆成独立功能（话题稿 `mode='TOPIC'`），
  *   只走 `copy_traffic` 那份不喂门店/菜品的模板。放进这个枚举，后台手填或旧客户端传
  *   `track='TRAFFIC'` 就会创建出一条「菜品稿却挂着流量款」的创作，而它生成时会用话题模板
  *   —— 文案里既没门店也没菜品，且不报错。旧客户端若传 TRAFFIC 会拿到 400 而不是静默变味。
+ *
+ * ★★ 2026-09-21 四款改型：这里**刻意同时收下老值** INTRO / QUALITY。
+ *   改型前发出去的小程序包还装在用户手机里，它们传的就是这两个值。把老值从枚举里剔掉，
+ *   这批用户点「创建」会直接拿到 400 —— 而他们什么错都没犯。
+ *   所以入参收下老值，再**立刻**映射成新款（见 dishTrackField）：
+ *   与存量创作读出来时的映射走的是同一张表（`normalizeCopyTrack`），不会出现两套规则。
+ *   ⚠ 更早的 `NORMAL` 不收：它从来只是**服务端默认值**，没有任何一版客户端会主动传它。
  */
-const DISH_TRACKS = ['INTRO', 'QUALITY', 'RECOMMEND'] as const
+const DISH_TRACK_INPUT = [
+  'PERSONA', 'KNOWLEDGE', 'PRODUCT', 'RECOMMEND',
+  'INTRO', 'QUALITY',
+] as const
+
+/**
+ * 款式字段：入参可以是新款或老值，**输出永远是新款**（认不出的值退化成"不传款式"）。
+ *
+ * ★ 用 `.transform()` 而不是在两个 handler 里各写一次映射：这张 schema 被
+ *   POST / 与 PATCH /:id 共用，写两遍就一定会漏一处 —— 而漏掉的那一处表现为
+ *   「保存后款式没变」（静默），不是报错。
+ */
+const dishTrackField = z
+  .enum(DISH_TRACK_INPUT)
+  .optional()
+  .transform((v) => (v === undefined ? undefined : creationSvc.normalizeCopyTrack(v) ?? undefined))
 
 const createInput = z.object({
   /**
@@ -55,7 +77,7 @@ const createInput = z.object({
    *   旧包用户**完全用不了话题稿**；而丢掉它恰好等于新语义（位置由门店档案决定）。
    */
   title: requiredText(255).optional(),
-  track: z.enum(DISH_TRACKS).optional(),
+  track: dishTrackField,
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
   // 同款作品的分镜骨架（来自 excellent_work.recipe_json）：有值时在创建的同时**落成初始分镜**，
   // 前端随即跳过 AI 分镜那一步（省一次真实扣费），用户不满意再点「重新生成」整批换成 AI 版。
@@ -79,7 +101,7 @@ const creationPatch = z.object({
   // 口播文案会作为 {{copyText}} 喂给分镜提示词，纯空白值同样要 trim
   copyText: optionalText(20000),
   // 同 createInput：菜品稿三款；流量款属话题稿，不在枚举里（传了会 400）
-  track: z.enum(DISH_TRACKS).optional(),
+  track: dishTrackField,
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
   // ⚠ 同上：`topicCity` 也**不在**这个 patch 里（2026-09-21 移除）。
   //   地域钩子只在创建时从门店档案取一次快照，之后不接受任何来源的改动 ——

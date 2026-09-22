@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { View, Text, Image, Video, Button } from '@tarojs/components'
 import Taro, { useRouter } from '@tarojs/taro'
 import { getWork, markWorkClone, markWorkView, type WorkDetail } from '../../services/work'
-import { COMPLEXITY_OPTIONS, COPY_TRACK_OPTIONS } from '../../services/creation'
+import { COMPLEXITY_OPTIONS, COPY_TRACK_OPTIONS, normalizeTrack } from '../../services/creation'
 import { useMerchantStore } from '../../store/merchant'
 import { guideLogin } from '../../utils/login-guide'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
@@ -113,7 +113,10 @@ export default function WorkDetailPage() {
   }
 
   const recipe = work.recipeJson ?? {}
-  const trackLabel = COPY_TRACK_OPTIONS.find((o) => o.value === recipe.track)?.label
+  // ★ 走 normalizeTrack：配方的 track 可能是改型前的老值（INTRO/QUALITY/NORMAL），
+  //   直接 find 会得到 undefined ⇒ 这一行**整行空白**，看着像这条作品缺配方。
+  const normalizedTrack = normalizeTrack(recipe.track)
+  const trackLabel = COPY_TRACK_OPTIONS.find((o) => o.value === normalizedTrack)?.label
   const complexityLabel = COMPLEXITY_OPTIONS.find((o) => o.value === recipe.complexity)?.label
   const skeleton = recipe.shotSkeleton ?? []
 

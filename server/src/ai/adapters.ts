@@ -21,6 +21,19 @@ export interface AiCallParams {
   user: string
   temperature?: number
   maxOutputTokens?: number
+  /**
+   * 推理预算（OpenAI 兼容参数 `reasoning_effort`）。不给则**完全不发这个字段**，
+   * 走上游默认值 —— 对推理模型来说默认值等于「想多久随它」。
+   *
+   * ★ 为什么需要它：推理模型会把 `max_tokens` 同时当作「思考预算 + 正文预算」，
+   *   而短输出场景（文案 80~190 字）根本不需要思考。实测同一提示词：
+   *   gpt-5.5 默认 83.9s（另一次 126s 直接 524）、加 `low` 后 **7.6s**；
+   *   deepseek 默认 50.2s、加 `low` 后 **7.2s**。输出质量不变。
+   * ★ **不是所有通道都认**：claude-sonnet-5 对 `reasoning_effort` 与
+   *   `thinking:{type:'disabled'}` 均无视（实测），所以它必须移出这类场景的候选链。
+   *   哪些场景该带、为什么，见 `ai/scene-codes.ts` 的 LOW_REASONING_SCENES。
+   */
+  reasoningEffort?: 'low' | 'medium' | 'high'
   timeoutMs: number
   /** 场景码：MOCK 协议据此返回不同形态的样例文本（文案 vs 分镜 JSON） */
   sceneCode?: string
@@ -92,6 +105,9 @@ export const openaiCompatible: AiAdapter = async (p) => {
       ],
       temperature: p.temperature ?? 0.7,
       max_tokens: p.maxOutputTokens ?? 2048,
+      // ★ 只在显式指定时带上：不指定就不发这个字段（各通道对它的默认值不一样，
+      //   统一写一个值会把「本来不思考的通道」也带上参数，属无谓的耦合）。
+      ...(p.reasoningEffort ? { reasoning_effort: p.reasoningEffort } : {}),
       stream: false,
     }),
     timeoutMs: p.timeoutMs,
@@ -171,7 +187,7 @@ export const anthropicNative: AiAdapter = async (p) => {
 
 /**
  * 本地联调用 MOCK 协议：不发起任何网络请求，直接返回可解析的样例文本。
- * - copy_generate / copy_traffic / copy_intro / copy_quality / copy_recommend → 对应款式的营销文案
+ * - copy_generate / copy_traffic / copy_persona / copy_knowledge / copy_product / copy_recommend → 对应款式的营销文案
  * - storyboard_generate → 按复杂度（SIMPLE/COMPLEX/FINE）返回 3/6/8 个分镜 JSON
  * 真实环境请改用 OPENAI_COMPATIBLE（如 DeepSeek）并填入 apiKey。
  */
@@ -264,20 +280,25 @@ export const mockAdapter: AiAdapter = async (p) => {
       `别再问我哪家好吃了，这一口下去你就知道什么叫值。`,
       `${city || ''}的朋友，评论区扣个 1，我给你留个位置。`,
     ].join('\n'),
-    copy_intro: [
-      `${store}的招牌${dish || '菜品'}，${pick(p.user, '卖点') || '用料实在、分量足'}。`,
-      `做法不复杂但每一步都讲究，端上桌就能闻到香味。`,
-      `价格透明，到店点一份试试，不好吃你来找我。`,
+    copy_persona: [
+      `我开这家店之前，压根没想过会干这么久。`,
+      `${store}就这么大，能站住脚就靠一件事：${pick(p.user, '卖点') || '每天的东西当天用完'}。`,
+      `你们那儿的老板，也这么干吗？`,
     ].join('\n'),
-    copy_quality: [
-      `${store}做了这么多年，就认一个理：食材不新鲜，宁可不做。`,
-      `${dish || '招牌菜'}从选料到出锅，每一道工序都不将就。`,
-      `懂吃的人，值得专程来一趟。`,
+    copy_knowledge: [
+      `为什么在家做菜总没有饭店香？油温不到位是一个，料下得太早也是一个。`,
+      `油要烧到冒青烟再下料，盐得看什么菜什么肉。`,
+      `这两样对了，味道自然就上来了。`,
+    ].join('\n'),
+    copy_product: [
+      `${store}的${dish || '招牌菜'}，${pick(p.user, '卖点') || '现做现卖、分量实在'}。`,
+      `配菜、蘸料都给你备齐了，端上桌直接吃。`,
+      `到店点一份试试，不满意你说话。`,
     ].join('\n'),
     copy_recommend: [
-      `这家店是朋友吃过后一直推荐给我的，今天终于来试试${dish || '招牌菜'}。`,
-      `第一口是${pick(p.user, '卖点') || '新鲜和实在'}，不是夸张宣传，确实值得专程来一趟。`,
-      `如果你也在找${city || '附近'}值得吃的一家，可以先把${store}收藏起来。`,
+      `朋友带我去的${store}，点了${dish || '招牌菜'}。`,
+      `第一口就能尝出来的${pick(p.user, '卖点') || '新鲜'}，软烂入味，一点不腻。`,
+      `你要是路过${city || '附近'}，可以去试试。`,
     ].join('\n'),
   }
   const copy =

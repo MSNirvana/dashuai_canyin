@@ -116,7 +116,7 @@ import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 import Redis from 'ioredis'
 import { encryptSecret, maskSecret } from '../src/lib/secret.js'
-import { PUBLISH_SCENES } from '../prisma/prompts.js'
+import { CREATION_SCENE_PROMPTS, PUBLISH_SCENES } from '../prisma/prompts.js'
 
 const BASE_URL = 'https://tokenbox.you/v1'
 
@@ -267,6 +267,49 @@ const SCENE_OVERRIDES: Record<
     timeoutMs: 90_000,
     maxRetries: 0,
   },
+  /**
+   * 五个菜品文案款（流量 / 人设 / 干货 / 产品 / 种草）—— 2026-09-22 实测重定。
+   *
+   * ★★ 两块实质改动：**主候选换 DeepSeek** + **把 Claude 移出候选链**。
+   *   起因：四款文案改型上线后，新场景**一次都没成功**（`ALL_FAILED（90.0s）attempts=3`）。
+   *   排查过程与判据（同一提示词、max_tokens=4000、temperature=0.7、
+   *   带 `reasoning_effort:'low'`、直连各通道、超时给足 150s）：
+   *
+   *     通道                 人设型 prompt 上各打 3 次        product/knowledge 上
+   *     deepseek-v4-flash    **7.7 / 12.5 / 8.5s**（中位 8.5s）  7.0~9.0s ✅
+   *     gpt-5.5              40.4 / 52.1 / 43.7s（中位 43.7s）   7.0~7.6s（但另有一次 30s 超时）
+   *     claude-sonnet-5      46~50s 且**正文为空**
+   *
+   *   ① **主候选必须是 DeepSeek**：它的延迟**稳定**在 8~13s（最坏 12.5s），
+   *      在 45s 预算下有 3.5 倍余量；而 GPT 是**双峰**的 —— 短提示词上 7s、
+   *      长提示词（人设型 2824 字）上稳定 40s+，30s 预算下必然白白超时。
+   *      顺带它是三个通道里最便宜的（$1.2/$4.8 per Mtok vs GPT 的 $4/$24）。
+   *   ② **Claude 必须移出**：它对 `reasoning_effort` 与 `thinking:{type:'disabled'}`
+   *      **两个参数都无视**，4000 预算必然被思考吃光 → `finish_reason='length'`、
+   *      `content=''`。而空正文是 BAD_RESPONSE（**非**通道级故障 ⇒ 会按 max_retries
+   *      **反复重试同一通道**），留在链上就是每次白等 46~50 秒 × (maxRetries+1) 次。
+   *   ③ `timeoutMs: 45_000`：DeepSeek 最坏 12.5s 的 3.5 倍余量；也给 GPT 这个备用
+   *      一次机会（它在短提示词上 7s 就能答完）。
+   *   ④ `maxRetries: 0`：两候选各 45s ⇒ 最坏 90s，稳稳落在前端 120s
+   *      （`COPY_TIMEOUT_MS`）内。普通重试价值也低 —— 这两个通道的失败是**系统性**的
+   *      （限流 / 上游故障），换通道比原地重试有效。
+   *
+   *   ⚠ 改这里的候选数 / timeout / maxRetries 时**必须同步重算** `COPY_TIMEOUT_MS`
+   *     （apps/mini/src/services/creation.ts，算法写在该常量上）。
+   *   ⚠ 「压掉思考预算」那一半在**代码侧**（`ai/scene-codes.ts` 的 LOW_REASONING_SCENES
+   *     + 网关透传 `reasoning_effort`）—— 不压的话 DeepSeek 也要 50s、GPT 要 84s。
+   */
+  ...Object.fromEntries(
+    ['copy_traffic', 'copy_persona', 'copy_knowledge', 'copy_product', 'copy_recommend'].map((code) => [
+      code,
+      {
+        primary: 'tokenbox-deepseek',
+        fallbacks: ['tokenbox-gpt'],
+        timeoutMs: 45_000,
+        maxRetries: 0,
+      },
+    ]),
+  ),
 }
 
 /**
@@ -283,8 +326,8 @@ const SCENE_OVERRIDES: Record<
  *   copy_generate          36  >    5    ← 平台承担 31
  *   storyboard_generate   123  >   10    ← 平台承担 113
  *   copy_traffic           38  >    5
- *   copy_intro             41  >    5
- *   copy_quality           31  >    5
+ *   copy_intro             41  >    5   ← 已被 2026-09-21 改型删除，语义由 copy_product 承接
+ *   copy_quality           31  >    5   ← 同上，语义由 copy_persona 承接
  *   script_polish          91  >    5
  *   review_guard           20  >    3
  *   title_overlay          36  >    5
@@ -300,21 +343,34 @@ const SCENE_OVERRIDES: Record<
  *   单次成本 5 / 31 / 2 分（差 15 倍，全看思考 token 花多少），上限一定会周期性被击穿；
  *   被击穿的那部分记 `absorbedBeans`（平台承担）。这是设计如此，不是 bug。
  * ⚠ 注意副作用：上限同时是**预冻结额**，抬上去后「账户可用积分不足」的门槛也一起抬高
- *   （新用户注册赠积分目前 30，copy_intro 需 80 冻结 ⇒ 新用户一上来用不了）。
+ *   （新用户注册赠积分目前 30，copy_persona / copy_knowledge / copy_product 需 80 冻结 ⇒ 新用户一上来用不了）。
  *   所以调上限必须连带调 `TB_REGISTER_GRANT`，否则新用户注册即「一个 AI 功能都用不了」。
  */
 const SCENE_CAPS: Record<string, number> = {
-  copy_generate: 70,
   storyboard_generate: 250,
-  copy_traffic: 80,
-  copy_intro: 80,
-  copy_quality: 60,
-  copy_recommend: 60,
   script_polish: 180,
   review_guard: 40,
   title_overlay: 70,
   bgm_select: 60,
   rhythm_detect: 190,
+  /**
+   * 文案各款（含流量款）的价**不在这里写第二遍** —— 直接取 prompts.ts 的 CREATION_SCENE_PROMPTS。
+   *
+   * ★ 与下面 PUBLISH_SCENES 同一个理由，而且这里**踩过一次真实的坑**：
+   *   2026-09-21 四款改型新建了 3 个文案场景，`ai-prompts:sync` 建行时取的是
+   *   prompts.ts 里的值 —— 当时那张清单没给 `beanPrice`，于是建出来 `bean_price = 0`
+   *   （= 每次生成免费，且不报错）。两个源各写一份，就一定会有一边漏。
+   *
+   * ⚠ 但**数值本身仍是估算**：旧款实测 41（介绍）/ 31（质量）/ 28（种草）分是
+   *   2026-09-15 全场景真打一次测出来的；新款模板还没测过，只是**输出长度档位**
+   *   与旧款相同（人设 100~180 字 / 干货 110~190 / 产品 80~150 / 种草 90~170），
+   *   所以先按同档给。改价前必须先按旧款那套口径真跑一次（每场景 1 次真实调用，
+   *   记 absorbedBeans），否则就是拍脑袋。
+   * ★ 上限同时是**预冻结额**：抬上去会连带抬高「可用积分不足」的门槛
+   *   （新用户注册赠积分目前 30 ⇒ 80 的冻结额一上来就用不了），
+   *   所以改这里必须连带看 `TB_REGISTER_GRANT`。
+   */
+  ...Object.fromEntries(CREATION_SCENE_PROMPTS.map((s) => [s.code as string, s.beanPrice as number])),
   /**
    * 发布素材的两个场景（P2 新增）。
    *

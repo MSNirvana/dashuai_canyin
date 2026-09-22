@@ -9,6 +9,7 @@ import { decryptSecret } from '../lib/secret.js'
 import { ceilDiv } from '../lib/decimal.js'
 import { HEALTH_PROBE_PROMPT, HEALTH_PROBE_IMAGE_PROMPT, HEALTH_PROBE_MAX_OUTPUT_TOKENS } from './health-probe.js'
 import { normalizeModelCapability } from './model-capabilities.js'
+import { LOW_REASONING_SCENES } from './scene-codes.js'
 
 export type SceneRunResult =
   | {
@@ -217,6 +218,10 @@ export class AiGateway {
             user: prompt,
             temperature: scene.temperature ? Number(scene.temperature) : undefined,
             maxOutputTokens: scene.maxOutputTokens ?? undefined,
+            // ★ 低推理预算场景（五个文案款）显式压掉思考——不压的话推理模型会在
+            //   80~190 字的稿子上花掉几千个思考 token，把 30s 场景超时全耗光。
+            //   清单与实测依据见 ai/scene-codes.ts 的 LOW_REASONING_SCENES。
+            reasoningEffort: LOW_REASONING_SCENES.has(scene.code) ? 'low' : undefined,
             timeoutMs: scene.timeoutMs,
             sceneCode: scene.code,
           })

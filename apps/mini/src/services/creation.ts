@@ -3,10 +3,13 @@ import { http } from './request'
 
 /**
  * 文案款式。
- * ★ 保留 `TRAFFIC`：**存量数据里有它**（含 20 条更早的 `track='NORMAL'`）。
- *   `trackLabel` 之类的展示仍要认得出这些老值，否则老创作在界面上会显示成空标签。
+ * ★ 2026-09-21 四款改型：删 `INTRO`（介绍款）/ `QUALITY`（质量款），
+ *   换成 `PERSONA`（人设型）/ `KNOWLEDGE`（干货型）/ `PRODUCT`（产品型），
+ *   `RECOMMEND`（种草型）保留。
+ * ★ 仍要认得出老值：**存量数据里有**（`INTRO`/`QUALITY`，以及更早的 `track='NORMAL'`）。
+ *   展示与收敛都必须走下面的 `normalizeTrack`，否则老创作在界面上会显示成空标签。
  */
-export type CopyTrack = 'TRAFFIC' | 'INTRO' | 'QUALITY' | 'RECOMMEND'
+export type CopyTrack = 'TRAFFIC' | 'PERSONA' | 'KNOWLEDGE' | 'PRODUCT' | 'RECOMMEND'
 /** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜 */
 export type Complexity = 'SIMPLE' | 'COMPLEX' | 'FINE'
 /**
@@ -15,13 +18,45 @@ export type Complexity = 'SIMPLE' | 'COMPLEX' | 'FINE'
  */
 export type ContentMode = 'DISH' | 'TOPIC'
 
-/** 四款的中文名（含流量款）—— **只作展示与兜底**，不要拿它做款式选择器 */
+/** 各款的中文名（含流量款）—— **只作展示与兜底**，不要拿它做款式选择器 */
 export const COPY_TRACK_OPTIONS: { value: CopyTrack; label: string; desc: string }[] = [
   { value: 'TRAFFIC', label: '流量款', desc: '跟热点 / 话题共鸣' },
-  { value: 'INTRO', label: '介绍款', desc: '菜品讲解 / 套餐推广' },
-  { value: 'QUALITY', label: '质量款', desc: '食材品质 / 匠心人设' },
-  { value: 'RECOMMEND', label: '种草型', desc: '真实体验 / 消费决策' },
+  { value: 'PERSONA', label: '人设型', desc: '讲人：立场 / 经历 / 情绪' },
+  { value: 'KNOWLEDGE', label: '干货型', desc: '这行的知识：怎么做 / 怎么挑' },
+  { value: 'PRODUCT', label: '产品型', desc: '有什么 / 多少钱 / 值不值' },
+  { value: 'RECOMMEND', label: '种草型', desc: '真顾客视角 / 我尝到了什么' },
 ]
+
+/**
+ * 创作页「文案款式」选择器的**默认款式**。
+ * ★ 必须与服务端 `DEFAULT_COPY_TRACK` 指向同一款（那边是 PRODUCT），
+ *   两端不一致会出现「用户没动过选择器，服务端却按另一款生成」这种无从排查的错配。
+ */
+export const DEFAULT_DISH_TRACK: CopyTrack = 'PRODUCT'
+
+/**
+ * ★★ 存量 `track` 的映射（2026-09-21 四款改型）。**读出来的老值必须在客户端先归一**。
+ *
+ * 与服务端 `LEGACY_TRACK_ALIASES` 一一对应，映射规则也必须一致：
+ *   · `INTRO`（介绍款：菜品讲解/套餐推广）→ **产品型**（同样是「有什么、多少钱」）
+ *   · `QUALITY`（质量款：食材品质/匠心人设）→ **人设型**（同样是「我们是怎么做事的」）
+ *   · `NORMAL`（更早的旧值）→ **产品型**
+ * ★ 客户端这份**不能省**：服务端返回的 `track` 是库里的原值（`trackLabel` 是另一列），
+ *   而前端直接拿它去 `COPY_TRACK_OPTIONS.find(...)` 会得到 undefined
+ *   ⇒ 款式那一栏**空白**、选择器**一项都不选中**，用户以为没选款式。
+ */
+const LEGACY_TRACK_ALIASES: Record<string, CopyTrack> = {
+  INTRO: 'PRODUCT',
+  QUALITY: 'PERSONA',
+  NORMAL: 'PRODUCT',
+}
+
+/** 把服务端 / 同款配方给来的任意 track 归一到当前款式；认不出返回 null */
+export function normalizeTrack(v: unknown): CopyTrack | null {
+  if (typeof v !== 'string') return null
+  if (COPY_TRACK_OPTIONS.some((o) => o.value === v)) return v as CopyTrack
+  return LEGACY_TRACK_ALIASES[v] ?? null
+}
 
 /**
  * ★ 创作页「文案款式」选择器用这一份：**不含流量款**。
@@ -34,16 +69,18 @@ export const COPY_TRACK_OPTIONS: { value: CopyTrack; label: string; desc: string
 export const DISH_TRACK_OPTIONS = COPY_TRACK_OPTIONS.filter((o) => o.value !== 'TRAFFIC')
 
 /**
- * 把「服务端 / 同款配方给来的 track」收敛成**菜品稿可用的三款**；不是这三款就返回 null。
+ * 把「服务端 / 同款配方给来的 track」收敛成**菜品稿可用的四款**；不是这四款（含流量款、认不出的值）就返回 null。
  *
- * 用途：创作页的款式选择器已经不含流量款，但下面两个来源仍可能给出 `'TRAFFIC'`（甚至是更早的 `'NORMAL'`）：
- *   · 存量创作的 `track`（库里 25 条 TRAFFIC + 20 条 NORMAL）
+ * 用途：创作页的款式选择器已经不含流量款，但下面两个来源仍可能给出 `'TRAFFIC'`
+ * （甚至是更早的 `'NORMAL'`，以及改型前的 `'INTRO'` / `'QUALITY'`）：
+ *   · 存量创作的 `track`
  *   · `excellent_work.recipe_json.track`（优秀作品的款式会被原样带到创作页）
  * 直接 `setTrack(r.track)` 会让选择器**一项都不选中**（用户以为没选款式）；
- * 返回 null 则保持「介绍款」默认态 —— 这也正是服务端对菜品稿的收敛结果，两端一致。
+ * 返回 null 则保持默认款式态（见 `DEFAULT_DISH_TRACK`）—— 这也正是服务端对菜品稿的收敛结果，两端一致。
  */
 export function toDishTrack(v: unknown): CopyTrack | null {
-  return v === 'INTRO' || v === 'QUALITY' || v === 'RECOMMEND' ? v : null
+  const t = normalizeTrack(v)
+  return t && t !== 'TRAFFIC' ? t : null
 }
 
 export const COMPLEXITY_OPTIONS: { value: Complexity; label: string; desc: string }[] = [
@@ -222,7 +259,11 @@ export function updateCreation(
  *
  * 取值算法 = 该场景「候选数 × 单候选超时 × (maxRetries+1)」，取最坏情况：
  *   · 分镜：候选 [deepseek, claude] 各 150s、不重试 ⇒ 最坏 300s ⇒ 取 340s
- *   · 文案：候选 [gpt, claude, deepseek] 各 30s、各重试 1 次 ⇒ 最坏 180s ⇒ 取 120s（实测够用）
+ *   · 文案：候选 [deepseek, gpt] 各 45s、不重试 ⇒ 最坏 90s ⇒ 取 120s
+ *     ★ 2026-09-22 重算：五个文案款的主候选换成 deepseek、Claude 移出、
+ *       timeout 抬到 45s、maxRetries 归 0（依据见 setup-ai-channels.ts 的
+ *       SCENE_OVERRIDES 与 ai/scene-codes.ts 的 LOW_REASONING_SCENES）。
+ *       正常路径实测 **8~13 秒**出稿，90s 只是「两个候选都病着」时的上限。
  * ⚠ 上限而已，正常 60~100 秒就回来；改服务端 `ai_scene.timeout_ms` / 候选数组 /
  *   `max_retries` 时**必须同步重算**，否则前端会比服务端先放弃：
  *   服务端最坏耗时一旦超过本值，用户等到的就是「前端超时」，而服务端其实成功落库了。

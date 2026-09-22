@@ -90,10 +90,30 @@ const CATEGORY_OPTIONS = ['餐饮', '教培', '美业', '生活服务', '休闲�
 
 const TRACK_OPTIONS = [
   { label: '流量款', value: 'TRAFFIC' },
-  { label: '介绍款', value: 'INTRO' },
-  { label: '质量款', value: 'QUALITY' },
+  { label: '人设型', value: 'PERSONA' },
+  { label: '干货型', value: 'KNOWLEDGE' },
+  { label: '产品型', value: 'PRODUCT' },
   { label: '种草型', value: 'RECOMMEND' },
 ]
+
+/**
+ * ★ 存量配方的 track 老值 → 新款（2026-09-21 四款改型）。
+ * 与小程序 `services/creation.ts` 的 `LEGACY_TRACK_ALIASES`、服务端
+ * `creation.service.ts` 的同名常量必须**保持一致的三条映射**。
+ * ★ 不映射的后果是这一栏显示成空白 / 「待补全」——后台会以为这条配方坏了，
+ *   其实是款式改过名（看起来像数据缺失，而不是像版本问题）。
+ */
+const LEGACY_TRACK_LABELS: Record<string, string> = {
+  INTRO: '产品型',
+  QUALITY: '人设型',
+  NORMAL: '产品型',
+}
+
+/** 取配方的款式中文名：先查新款，再查老值映射，都不中才返回 undefined */
+function trackLabelOf(v: unknown): string | undefined {
+  if (typeof v !== 'string') return undefined
+  return TRACK_OPTIONS.find((o) => o.value === v)?.label ?? LEGACY_TRACK_LABELS[v]
+}
 
 const COMPLEXITY_OPTIONS = [
   { label: '简单（2~3 镜）', value: 'SIMPLE' },
@@ -516,7 +536,7 @@ export default function WorksPage() {
             width: 170,
             render: ({ row }: any) => {
               const r = (row.recipeJson ?? {}) as RecipeJson
-              const track = TRACK_OPTIONS.find((o) => o.value === r.track)?.label
+              const track = trackLabelOf(r.track)
               const cx = COMPLEXITY_OPTIONS.find((o) => o.value === r.complexity)?.label
               if (!track && !cx && !(r.shotSkeleton ?? []).length) {
                 return <span style={{ color: '#d54941' }}>待补全</span>

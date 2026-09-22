@@ -10,6 +10,7 @@ import {
   updateShotContent,
   COPY_TRACK_OPTIONS,
   DISH_TRACK_OPTIONS,
+  DEFAULT_DISH_TRACK,
   COMPLEXITY_OPTIONS,
   toDishTrack,
   type CreationDetail,
@@ -243,10 +244,12 @@ export default function CreationEdit() {
   )
 
   // 菜品稿三款 + 分镜复杂度（新建时先本地选，创建后落库）。
-  // ★ 默认从「流量款」改成「介绍款」：流量款已拆成独立功能（pages/creation/traffic），
-  //   不在这个选择器里了；这里的默认值同时要和**服务端**的 DEFAULT_COPY_TRACK 一致，
+  // ★ 默认款式取常量，不再写字面量：2026-09-21 四款改型时这里写的是 'INTRO'（介绍款），
+  //   而 'INTRO' 已经不存在于 CopyTrack 里了。写死一个款式名，改型时**必然漏改这一处**，
+  //   而漏改的表现是「选择器一项都不选中」——不报错、只是看着像没选款式。
+  //   这里的默认值同时要和**服务端**的 DEFAULT_COPY_TRACK 一致，
   //   否则「没选款式」时前端显示一款、实际生成的是另一款。
-  const [track, setTrack] = useState<CopyTrack>('INTRO')
+  const [track, setTrack] = useState<CopyTrack>(DEFAULT_DISH_TRACK)
   const [complexity, setComplexity] = useState<Complexity>('COMPLEX')
   // 文案编辑态
   const [editingCopy, setEditingCopy] = useState(false)

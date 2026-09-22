@@ -98,8 +98,9 @@ export const SCENE_VARIABLES: Record<string, readonly string[]> = {
   copy_generate: COPY_VARS,
   // ★ 流量款走话题白名单，与四款菜品文案**刻意不同**（理由见 TOPIC_VARS 的声明处）
   copy_traffic: TOPIC_VARS,
-  copy_intro: COPY_VARS,
-  copy_quality: COPY_VARS,
+  copy_persona: COPY_VARS,
+  copy_knowledge: COPY_VARS,
+  copy_product: COPY_VARS,
   copy_recommend: COPY_VARS,
   storyboard_generate: STORYBOARD_VARS,
   script_polish: SYNTH_VARS,

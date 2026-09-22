@@ -15,12 +15,12 @@
  *   本脚本原本钉住它的正向断言，现改成**反向**断言（模板与白名单里都不许再出现）。
  *
  * ★ 2026-09-20：菜单资产新增**套餐**（`dish.kind='COMBO'`）⇒ 新增变量 {{comboInfo}}。
- *   它与上面的字段不同，是**正向**断言（6 个模板都必须引用、恰好一次），
+ *   它与上面的字段不同，是**正向**断言（7 个模板都必须引用、恰好一次），
  *   并且单菜那一侧要反向断言「comboInfo 必须是空串」—— 否则每道炒菜都会被写成套餐。
  *
  * ★ 2026-09-20 同日：流量款从「四款文案」拆成独立功能（`creation.mode='TOPIC'`）⇒
  *   `copy_traffic` 的模板与白名单**都不再包含门店/菜品**（改用 {{topicInfo}}）。
- *   所以本脚本里所有「6 个模板都引用 X」的断言都按「菜品稿 / 话题稿」两组拆开：
+ *   所以本脚本里所有「7 个模板都引用 X」的断言都按「菜品稿 / 话题稿」两组拆开：
  *   菜品组正向、话题组**反向**（引用了就渲染成一排空标题，模型会自己编一个店名补上）。
  *   新增 ⑥ 段专测话题方向库（同一天稳定、隔天轮换、节点只抢 14 天内的头条）。
  *
@@ -33,14 +33,16 @@ import { PrismaClient } from '@prisma/client'
 import {
   COPY_PROMPT,
   COPY_TRAFFIC_PROMPT,
-  COPY_INTRO_PROMPT,
-  COPY_QUALITY_PROMPT,
+  COPY_PERSONA_PROMPT,
+  COPY_KNOWLEDGE_PROMPT,
+  COPY_PRODUCT_PROMPT,
   COPY_RECOMMEND_PROMPT,
   STORY_PROMPT,
   COPY_FALLBACK,
   COPY_TRAFFIC_FALLBACK,
-  COPY_INTRO_FALLBACK,
-  COPY_QUALITY_FALLBACK,
+  COPY_PERSONA_FALLBACK,
+  COPY_KNOWLEDGE_FALLBACK,
+  COPY_PRODUCT_FALLBACK,
   COPY_RECOMMEND_FALLBACK,
   STORY_FALLBACK,
   CREATION_SCENE_PROMPTS,
@@ -87,12 +89,13 @@ function section(t: string) {
   console.log(`\n── ${t} ──`)
 }
 
-/** 6 个创作场景的「模板 + 兜底」清单 */
+/** 7 个创作场景的「模板 + 兜底」清单（2026-09-21 四款改型：删介绍款/质量款，换人设型/干货型/产品型） */
 const TEMPLATES: Array<{ code: string; label: string; tpl: string; fallback: string }> = [
   { code: 'copy_generate', label: '文案·通用（兼容旧客户端）', tpl: COPY_PROMPT, fallback: COPY_FALLBACK },
   { code: 'copy_traffic', label: '文案·流量款', tpl: COPY_TRAFFIC_PROMPT, fallback: COPY_TRAFFIC_FALLBACK },
-  { code: 'copy_intro', label: '文案·介绍款', tpl: COPY_INTRO_PROMPT, fallback: COPY_INTRO_FALLBACK },
-  { code: 'copy_quality', label: '文案·质量款', tpl: COPY_QUALITY_PROMPT, fallback: COPY_QUALITY_FALLBACK },
+  { code: 'copy_persona', label: '文案·人设型', tpl: COPY_PERSONA_PROMPT, fallback: COPY_PERSONA_FALLBACK },
+  { code: 'copy_knowledge', label: '文案·干货型', tpl: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK },
+  { code: 'copy_product', label: '文案·产品型', tpl: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK },
   { code: 'copy_recommend', label: '文案·种草型', tpl: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK },
   { code: 'storyboard_generate', label: '分镜', tpl: STORY_PROMPT, fallback: STORY_FALLBACK },
 ]
@@ -103,7 +106,7 @@ const TEMPLATES: Array<{ code: string; label: string; tpl: string; fallback: str
  * 流量款已拆成独立功能：输入里**没有门店、也没有菜品**，那几个变量在话题稿里全是空串。
  * 模板一旦引用它们，渲染出来就是一排空标题（「【门店】｜品类：｜城市：」），
  * 模型会以为信息漏了并**自己编一个店名补上** —— 而且不报错。
- * 所以下面凡「6 个模板都要引用 X」的断言都按这两组分开，话题组另补**反向**断言。
+ * 所以下面凡「7 个模板都要引用 X」的断言都按这两组分开，话题组另补**反向**断言。
  */
 const TOPIC_CODES = new Set(['copy_traffic'])
 const dishTemplates = TEMPLATES.filter((t) => !TOPIC_CODES.has(t.code))
@@ -149,7 +152,7 @@ for (const t of topicTemplates) {
   )
 }
 
-// ★ 套餐信息（{{comboInfo}}）与上面两个字段不同，它**必须**在 6 个模板里都被引用：
+// ★ 套餐信息（{{comboInfo}}）与上面两个字段不同，它**必须**在 7 个模板里都被引用：
 //   套餐与单菜在库里是同一张表，「菜名/简介/卖点」表达不出「含哪些菜、多少钱」，
 //   而这两件事正是套餐推广的全部卖点 —— 模板少引用一个场景，那个场景的套餐文案就退回编造。
 //   所以这里逐个钉「引用」而不是「可以引用」。
@@ -172,7 +175,7 @@ check(
 )
 // 文案与分镜都要认这个变量：一个场景漏登记白名单，后台一保存就报「未支持的变量」
 check(
-  findUnknownPlaceholders('copy_intro', '{{comboInfo}}').length === 0 &&
+  findUnknownPlaceholders('copy_product', '{{comboInfo}}').length === 0 &&
     findUnknownPlaceholders('storyboard_generate', '{{comboInfo}}').length === 0,
   'comboInfo 已在文案与分镜两个场景的白名单里',
 )
@@ -213,9 +216,10 @@ for (const t of TEMPLATES) {
 }
 
 // 同步脚本与 seed 共用同一份清单，别出现「代码里 6 个、清单里 5 个」
+// ★ 2026-09-21 四款改型后文案场景由 5 个变 6 个（删介绍/质量，增人设/干货/产品）
 check(
-  CREATION_SCENE_PROMPTS.length === 5 && STORYBOARD_SCENE.code === 'storyboard_generate',
-  '场景清单完整（文案 5 + 分镜 1）',
+  CREATION_SCENE_PROMPTS.length === 6 && STORYBOARD_SCENE.code === 'storyboard_generate',
+  '场景清单完整（文案 6 + 分镜 1）',
 )
 
 // ──────────────────────── ② 判据一致性（离线） ────────────────────────
@@ -240,7 +244,7 @@ check(
 // ★ 用菜品场景（copy_intro）验：话题场景现在连 storeName 都不在白名单里，
 //   拿它测「只多出一个 dishname」会变成多出两个，断言本身失去意义。
 check(
-  findUnknownPlaceholders('copy_intro', lowerCase).join(',') === 'dishname',
+  findUnknownPlaceholders('copy_product', lowerCase).join(',') === 'dishname',
   '能拦住未支持的变量 {{dishname}}',
 )
 check(
@@ -257,7 +261,7 @@ check(
 )
 check(
   findMalformedPlaceholders('{{ dishName }}').length === 0 &&
-    findUnknownPlaceholders('copy_intro', '{{ dishName }}').length === 0,
+    findUnknownPlaceholders('copy_product', '{{ dishName }}').length === 0,
   '带空格的 {{ dishName }} 属于合法写法，两边都放行',
 )
 // 白名单里没有的场景宽松放行，避免新场景一上线就被拦
@@ -364,7 +368,7 @@ async function makeStore(
     storeId: store.id,
     dishId: dish.id,
     // 菜品稿三款之一：流量款已拆成话题稿（mode='TOPIC'），不再是菜品稿的款式
-    track: 'INTRO',
+    track: 'PRODUCT',
     complexity: 'COMPLEX',
   })
   await prisma.creation.update({ where: { id: creation.id }, data: { copyText: '测试用口播文案正文' } })
@@ -390,7 +394,7 @@ if (dbReady) {
 
     // 4.1 信息填全的门店
     const full = await makeStore(merchantId, 'full', INTRO, { bossTags: BOSS_TAGS, activity: ACTIVITY })
-    const v = await buildVariables(prisma, full.creationId, { track: 'INTRO' })
+    const v = await buildVariables(prisma, full.creationId, { track: 'PRODUCT' })
     check(v.storeIntro === INTRO, 'buildVariables 产出了门店介绍', `storeIntro=${JSON.stringify(v.storeIntro).slice(0, 40)}`)
     check(
       v.persona === `老板人设标签：${BOSS_TAGS}；最近想重点告诉顾客：${ACTIVITY}`,
@@ -401,7 +405,7 @@ if (dbReady) {
     check(v.sellingPoints === '分量实在 / 价格透明', '菜品卖点仍在变量里')
 
     // 渲染一次真模板，确认值真的落到了提示词里（而不只是变量对象里有）
-    const rendered = renderTemplate(COPY_INTRO_PROMPT, v as unknown as Record<string, string>)
+    const rendered = renderTemplate(COPY_PRODUCT_PROMPT, v as unknown as Record<string, string>)
     check(rendered.includes(INTRO), '渲染后提示词含门店介绍正文')
     check(rendered.includes(BOSS_TAGS) && rendered.includes(ACTIVITY), '渲染后提示词含门店人设两字段')
     check(!rendered.includes('{{'), '渲染后提示词已无残留占位符', rendered.match(/\{\{[^}]*\}\}/g)?.join('、') ?? '')
@@ -427,10 +431,10 @@ if (dbReady) {
     const comboCreation = await createCreation(prisma, merchantId, {
       storeId: comboStore.id,
       dishId: combo.id,
-      track: 'INTRO',
+      track: 'PRODUCT',
       complexity: 'COMPLEX',
     })
-    const vCombo = await buildVariables(prisma, comboCreation.id, { track: 'INTRO' })
+    const vCombo = await buildVariables(prisma, comboCreation.id, { track: 'PRODUCT' })
     check(vCombo.dishName === '契约测试套餐', '选套餐时 dishName 就是套餐名（复用同一张表的直接收益）')
     check(
       vCombo.comboInfo.includes('套餐里的辣子鸡') && vCombo.comboInfo.includes('套餐里的米饭×2'),
@@ -438,7 +442,7 @@ if (dbReady) {
       vCombo.comboInfo,
     )
     check(vCombo.comboInfo.includes('¥88') && vCombo.comboInfo.includes('省 ¥32'), '套餐价与优惠额进了变量')
-    const renderedComboCopy = renderTemplate(COPY_INTRO_PROMPT, vCombo as unknown as Record<string, string>)
+    const renderedComboCopy = renderTemplate(COPY_PRODUCT_PROMPT, vCombo as unknown as Record<string, string>)
     const renderedComboStory = renderTemplate(STORY_PROMPT, vCombo as unknown as Record<string, string>)
     check(
       renderedComboCopy.includes('套餐里的辣子鸡') && renderedComboCopy.includes('¥88'),
@@ -456,10 +460,10 @@ if (dbReady) {
 
     // 4.2 什么都没有的门店：介绍为空串、人设为空串（模板会留下一行空标题，这是可接受的）
     const bare = await makeStore(merchantId, 'bare', null, null)
-    const v2 = await buildVariables(prisma, bare.creationId, { track: 'INTRO' })
+    const v2 = await buildVariables(prisma, bare.creationId, { track: 'PRODUCT' })
     check(v2.storeIntro === '', '未填门店介绍 → storeIntro 为空串（不会变成 undefined）')
     check(v2.persona === '', '未填人设 → persona 为空串（不留空标签）')
-    const rendered2 = renderTemplate(COPY_INTRO_PROMPT, v2 as unknown as Record<string, string>)
+    const rendered2 = renderTemplate(COPY_PRODUCT_PROMPT, v2 as unknown as Record<string, string>)
     check(!rendered2.includes('老板人设标签：') && !rendered2.includes('最近想重点告诉顾客：'), '渲染后不出现空的人设标签')
     check(!rendered2.includes('{{'), '未填内容的门店渲染后同样无残留占位符')
 
@@ -804,13 +808,13 @@ for (const t of TEMPLATES) {
   )
 }
 check(
-  findUnknownPlaceholders('copy_intro', '{{dateInfo}}').length === 0 &&
+  findUnknownPlaceholders('copy_product', '{{dateInfo}}').length === 0 &&
     findUnknownPlaceholders('storyboard_generate', '{{dateInfo}}').length === 0,
   'dateInfo 已在菜品文案与分镜两个场景的白名单里',
 )
 check(
   findUnknownPlaceholders('copy_traffic', '{{topicInfo}}').length === 0 &&
-    findUnknownPlaceholders('copy_intro', '{{topicInfo}}').length === 1,
+    findUnknownPlaceholders('copy_product', '{{topicInfo}}').length === 1,
   'topicInfo 只在话题场景的白名单里（菜品稿引用不到它）',
 )
 

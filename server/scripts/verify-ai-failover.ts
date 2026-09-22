@@ -4,7 +4,7 @@
  * 背景（本轮改动）：
  *   failover 机制本来就有（AiGateway.runScene 按 [defaultModelId, ...fallbackModelIds]
  *   依次尝试），但**只靠失败率熔断**跳过坏通道 —— 而失败率熔断要求滑动窗口内至少
- *   minSamples(20) 个样本。低频场景（如 copy_intro，一天几次）几小时都攒不满 20 个，
+ *   minSamples(20) 个样本。低频场景（如 copy_persona，一天几次）几小时都攒不满 20 个，
  *   于是「自动切换」名义上有、体验上没有：每个请求都要先在坏通道上干等一次
  *   ai_scene.timeout_ms（默认 30s）才轮到备用。
  *
@@ -53,6 +53,7 @@ import { AiGateway, isChannelLevelFailure } from '../src/ai/gateway.js'
 import { AiCallError } from '../src/ai/adapters.js'
 import { encryptSecret } from '../src/lib/secret.js'
 import { normalizeModelCapability } from '../src/ai/model-capabilities.js'
+import { LOW_REASONING_SCENES } from '../src/ai/scene-codes.js'
 
 const SCENE = 'verify_failover_tmp'
 const PROV_PRIMARY = 'verify-fo-primary'
@@ -150,8 +151,17 @@ let deepseekModelId = 0n
     [s.defaultModelId, ...(Array.isArray(s.fallbackModelIds) ? (s.fallbackModelIds as unknown[]) : []).map((v) => BigInt(v as number))]
 
   // 默认链：其余场景都是 主GPT → 备Claude → 备DeepSeek
-  // 已知例外：storyboard_generate（**大输出**场景，候选链完全不同）→ 见下单独断言
+  // 已知例外（两者都在下面单独断言，理由各自写在那一块里）：
+  //   · storyboard_generate —— 大输出场景
+  //   · 五个文案款 copy_* —— 2026-09-22 改型后重定：主 DeepSeek、备 GPT、**移出 Claude**
   const SPECIAL = new Set(['storyboard_generate'])
+  const COPY_SCENES = new Set([
+    'copy_traffic',
+    'copy_persona',
+    'copy_knowledge',
+    'copy_product',
+    'copy_recommend',
+  ])
 
   /**
    * ★★ 候选链断言必须**按场景能力分开**，不能一律要求 [GPT → Claude → DeepSeek]。
@@ -178,12 +188,13 @@ let deepseekModelId = 0n
       // 图像场景：至少 1 个候选，且每个候选都必须是 IMAGE 模型
       return c.length === 0 || c.some((id) => capOfModel.get(id.toString()) !== 'IMAGE')
     }
-    if (SPECIAL.has(s.code)) return false
+    if (SPECIAL.has(s.code) || COPY_SCENES.has(s.code)) return false
     return c.length !== 3 || c[0] !== gptModelId || c[1] !== claudeModelId || c[2] !== deepseekModelId
   })
   check(
     scenes.length > 0 && bad.length === 0,
-    `${scenes.length} 个场景候选链符合各自能力要求（文本 = GPT→Claude→DeepSeek；图像 = 全 IMAGE）`,
+    `${scenes.length} 个场景候选链符合各自能力要求` +
+      `（默认文本 = GPT→Claude→DeepSeek；图像 = 全 IMAGE；例外见下单独断言）`,
   )
   if (bad.length) {
     for (const s of bad.slice(0, 5)) {
@@ -248,6 +259,57 @@ let deepseekModelId = 0n
     )
   } else {
     check(false, 'storyboard_generate 场景存在')
+  }
+
+  /**
+   * 五个文案款（流量 / 人设 / 干货 / 产品 / 种草）的例外必须成立。
+   *
+   * ★ 2026-09-22 重定：主候选换 DeepSeek、**把 Claude 移出链**。
+   *   依据（带 `reasoning_effort:'low'`、max_tokens=4000、直连各通道、同一真 prompt）：
+   *     · deepseek-v4-flash：**7.7 / 12.5 / 8.5s**（人设型 2.8k 字提示词上打 3 次）⇒ 稳定
+   *     · gpt-5.5：短提示词 7.0~7.6s，但长提示词上 **40.4 / 52.1 / 43.7s** ⇒ 双峰，
+   *       30s 预算下长提示词**必然**白等一次超时（所以降为备用，且 timeout 抬到 45s）
+   *     · claude-sonnet-5：46~50s 且**正文为空**（对 reasoning_effort 与
+   *       thinking:{type:'disabled'} 两个参数都无视，4000 预算被思考吃光）⇒ 必须移出
+   */
+  for (const code of COPY_SCENES) {
+    const s = scenes.find((x) => x.code === code)
+    if (!s) {
+      check(false, `文案场景 ${code} 存在`)
+      continue
+    }
+    const c = chainOf(s)
+    check(
+      c.length === 2 && c[0] === deepseekModelId && c[1] === gptModelId,
+      `${code} 候选链 = [DeepSeek → GPT]`,
+      `实际 ${JSON.stringify(c.map((v) => String(v)))}`,
+    )
+    check(
+      !c.includes(claudeModelId),
+      `★ ${code} 候选链里没有 Claude（空正文且会按 maxRetries 反复重试同一通道）`,
+    )
+    /**
+     * ★★ 这条是本脚本最该存在的一条：**服务端最坏耗时必须 ≤ 前端兜底**。
+     *   算法 = 候选数 × 单候选超时 × (maxRetries+1)，必须 ≤ COPY_TIMEOUT_MS（120s）。
+     *   本仓被这个形状坑过不止一次：服务端其实成功落库了、前端先放弃，
+     *   用户看到的是「点了生成却像没生效」。
+     *   ⚠ 改任一参数都要**同时改前端那个常量**（apps/mini/src/services/creation.ts）。
+     */
+    const worstMs = c.length * s.timeoutMs * (s.maxRetries + 1)
+    check(
+      worstMs <= 120_000,
+      `★ ${code} 最坏耗时 ${worstMs}ms ≤ 前端兜底 120s`,
+      `候选${c.length} × ${s.timeoutMs}ms × (${s.maxRetries}+1)`,
+    )
+  }
+
+  /**
+   * ★ 压思考预算那一半在代码侧（`ai/scene-codes.ts` 的 LOW_REASONING_SCENES）：
+   *   不压的话每个候选都要 50s+（DeepSeek 50.2s / GPT 84s，还撞过一次 126s→524），
+   *   45s 预算照样全灭。漏一个场景 = 那一款文案随机失败，而这一条能在跑测试时就抓到。
+   */
+  for (const code of COPY_SCENES) {
+    check(LOW_REASONING_SCENES.has(code), `★ ${code} 在 LOW_REASONING_SCENES 里（压掉思考预算）`)
   }
 
   // 三个候选通道都是推理模型，max_tokens 要同时容纳「思考 + 正文」。

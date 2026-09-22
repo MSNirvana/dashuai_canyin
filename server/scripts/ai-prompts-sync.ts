@@ -46,6 +46,26 @@ const scenes: SceneSpec[] = [
 ]
 
 /**
+ * ★★ 已退役的场景码 —— 这些行要被**删除**，而不是留在库里（2026-09-21 加）。
+ *
+ * 为什么必须有这一步：本脚本上面用的是 `updateMany`，它**只会更新、不会删**。
+ * 而「删一个场景」在只跑 sync 的情况下表现是**什么都没发生**：
+ * 后台「AI 场景」页照旧列着那两行，运营照旧能编辑它们，前端那边却已经选不到了
+ * —— 三处状态不一致，而且**没有任何地方会报错**，看起来像"改型没生效"。
+ *
+ * ★ 这里刻意用**显式清单**而不是「把不在 scenes 里的全删掉」：
+ *   后者会把运营自己建的任何场景一起清掉，而 ai_scene 表并不记录"这行是谁建的"。
+ *   要删一个场景，就把它写进这个数组 —— 这也让"退役"成为一个需要走代码评审的动作。
+ * ⚠ 与 scenes 冲突（同一个码既在退役清单又在当前清单）时直接报错：那一定是写错了。
+ */
+const RETIRED_SCENE_CODES: string[] = [
+  // 2026-09-21 四款改型：介绍款 / 质量款被删，语义分别由 copy_product / copy_persona 承接。
+  // 库里那两行不删掉的话，后台会一直列着两个已经选不到的款式。
+  'copy_intro',
+  'copy_quality',
+]
+
+/**
  * 缺行时用来填 `default_model_id` 的模型：按「提供商优先级 → 模型 id」取第一个
  * **能力匹配且启用**的模型。
  *
@@ -126,6 +146,23 @@ async function main() {
     console.log(
       '⚠ 新建的场景只挂了单个候选：跑 npm run ai-channels:setup 才会得到完整候选链与正式定价。',
     )
+  }
+
+  // ── 退役场景清理 ──
+  // ★ 用一个「重复」当哨兵：同一个码既在退役清单、又在当前清单里，多半是改型时漏删了一边
+  const dup = RETIRED_SCENE_CODES.filter((c) => scenes.some((s) => s.code === c))
+  if (dup.length) {
+    problems.push(`场景码 ${dup.join('、')} 同时在「当前」与「退役」两份清单里 ⇒ 请先决定去留`)
+  } else if (RETIRED_SCENE_CODES.length) {
+    const gone = await prisma.aiScene.deleteMany({ where: { code: { in: RETIRED_SCENE_CODES } } })
+    if (gone.count) {
+      console.log(`\n－ 删除退役场景 ${gone.count} 个：${RETIRED_SCENE_CODES.join('、')}`)
+      // ★ 提示这件事，是因为「删了行」本身不会让任何人察觉：
+      //   后台不再列出它们，历史 ai_call_log 仍然按 code 查得到（它存的是字符串，不是外键）。
+      console.log('  ℹ 历史调用日志不受影响（ai_call_log 存 sceneCode 字符串，无外键）')
+    } else {
+      console.log(`\nℹ 退役场景（${RETIRED_SCENE_CODES.join('、')}）在库里本来就不存在，无需删除`)
+    }
   }
   if (problems.length) {
     for (const p of problems) console.error(`✗ ${p}`)

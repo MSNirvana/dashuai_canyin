@@ -19,25 +19,71 @@ import { DISH_KIND_COMBO } from './dish.service.js'
 export const SCENE_COPY = SCENE.copy_generate
 export const SCENE_STORYBOARD = SCENE.storyboard_generate
 
-/** 文案四款：流量款 / 介绍款 / 质量款 / 种草型，各自对应一个可在后台配置提示词的 AI 场景 */
+/**
+ * 文案五款：流量款 + 四款菜品文案（人设型 / 干货型 / 产品型 / 种草型），
+ * 各对应一个可在后台配置提示词的 AI 场景。
+ *
+ * ★ 2026-09-21 四款改型：删掉「介绍款（INTRO）」与「质量款（QUALITY）」，
+ *   换成「人设型（PERSONA）/ 干货型（KNOWLEDGE）/ 产品型（PRODUCT）」，
+ *   并把「种草型（RECOMMEND）」保留槽位、模板整份重写。
+ *   四型的分界线是**视角**：人设=讲我这个人（不报价不荐菜）／干货=讲这行的知识
+ *   （不出现自家店名）／产品=**店家**视角讲有什么多少钱／种草=**顾客**视角讲我尝到了什么。
+ */
 export const COPY_TRACKS = {
   TRAFFIC: { label: '流量款', scene: SCENE.copy_traffic, desc: '同城引流 / 话题热度' },
-  INTRO: { label: '介绍款', scene: SCENE.copy_intro, desc: '菜品讲解 / 套餐推广' },
-  QUALITY: { label: '质量款', scene: SCENE.copy_quality, desc: '食材品质 / 匠心人设' },
-  RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '真实体验 / 消费决策' },
+  PERSONA: { label: '人设型', scene: SCENE.copy_persona, desc: '讲人：立场 / 经历 / 情绪' },
+  KNOWLEDGE: { label: '干货型', scene: SCENE.copy_knowledge, desc: '这行的知识：怎么做 / 怎么挑' },
+  PRODUCT: { label: '产品型', scene: SCENE.copy_product, desc: '有什么 / 多少钱 / 值不值' },
+  RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '真顾客视角 / 我尝到了什么' },
 } as const
 export type CopyTrack = keyof typeof COPY_TRACKS
 
 /**
- * ★ 2026-09-20 从 `TRAFFIC` 改成 `INTRO`。
+ * ★★ 存量 `track` 的**读取侧**映射（2026-09-21 四款改型）。
  *
- * 原因：流量款已拆成**独立功能**（`mode='TOPIC'`），它的提示词也改成了纯话题版
- * —— 不再引用门店/菜品，而且明确要求「不要报店名、不要请人到店」。
- * 如果默认值还留在 TRAFFIC，那么任何「没传 track」的创建（含库里 20 条历史
- * `track='NORMAL'` 的存量数据 —— 那个值不在 COPY_TRACKS 里，`isCopyTrack` 判否后会落到默认值）
- * 都会去走话题模板，生成的稿子里既没有门店也没有菜品。那对一条菜品稿是纯损失。
+ * 为什么必须有这张表：`Creation.track` 是 `String @db.VarChar(24)`，不是数据库枚举
+ * —— 改型**不需要迁移**，但库里那些老值会永远留着。它们不在 COPY_TRACKS 里，
+ * `isCopyTrack()` 判否之后又会回落到默认值，于是**两条不同的老稿子会被塞进同一个新款式**，
+ * 而且不会报错。所以老值必须在**读出来的那一刻**映射到最接近的新款：
+ *   · `INTRO`（介绍款：菜品讲解/套餐推广）→ **产品型**（同样是「有什么、多少钱」）
+ *   · `QUALITY`（质量款：食材品质/匠心人设）→ **人设型**（同样是「我们是怎么做事的」）
+ *   · `NORMAL`（更早的旧值，库里存量 20 条）→ **产品型**（那批都是菜品稿）
+ *   · `RECOMMEND` → 不映射，新款沿用同一个键
+ * ★ 这是**只读兼容**：绝不回写库里的老值 —— 回写会在「同款配方」二次创作时
+ *   把老稿子的款式串到新稿子上，而那条路径本来就允许带任意 track 过来。
  */
-export const DEFAULT_COPY_TRACK: CopyTrack = 'INTRO'
+export const LEGACY_TRACK_ALIASES: Record<string, CopyTrack> = {
+  INTRO: 'PRODUCT',
+  QUALITY: 'PERSONA',
+  NORMAL: 'PRODUCT',
+}
+
+/** 把库里读到的任意 track 值归一到当前款式；归一不了返回 null（调用方决定兜底） */
+export function normalizeCopyTrack(v: unknown): CopyTrack | null {
+  if (typeof v !== 'string') return null
+  if (Object.prototype.hasOwnProperty.call(COPY_TRACKS, v)) return v as CopyTrack
+  return LEGACY_TRACK_ALIASES[v] ?? null
+}
+
+/**
+ * 读出侧统一用的款式中文名。
+ * ★ 必须走 normalize：老稿子的 track 是 INTRO/QUALITY/NORMAL，直接查 COPY_TRACKS 会得到 null，
+ *   界面上那一栏会**空白**（看起来像"这条稿子没有款式"），而不是显示映射后的新款名。
+ */
+export function copyTrackLabel(v: unknown): string | null {
+  const t = normalizeCopyTrack(v)
+  return t ? COPY_TRACKS[t].label : null
+}
+
+/**
+ * ★ 2026-09-21 从 `INTRO` 改成 `PRODUCT`。
+ *
+ * 那个默认值原来指向「介绍款」（菜品讲解/套餐推广）—— 改型后它的语义由「产品型」承接，
+ * 所以默认值跟着挪到 PRODUCT，语义不变：**没传 track 的创建，仍然出一条菜品稿**。
+ * 保留这段注释的原因：这个默认值是**唯一一个既有语义、又必须跟着改型改名**的常量，
+ * 忘了改就会让「没传 track」的请求落到一个已经不存在的场景上。
+ */
+export const DEFAULT_COPY_TRACK: CopyTrack = 'PRODUCT'
 
 /**
  * 内容模式：这条创作是**菜品驱动**还是**话题驱动**。
@@ -378,7 +424,7 @@ export async function listCreations(
       renderStatus: renderTasks[0]?.status ?? null,
       // 卡片缩略图：第一个已上传视频的封面（没有则为 null，前端退回默认图标）
       coverUrl: pickCover(r.storeId, shots),
-      trackLabel: isCopyTrack(r.track) ? COPY_TRACKS[r.track].label : null,
+      trackLabel: copyTrackLabel(r.track),
       modeLabel: isContentMode(r.mode) ? CONTENT_MODES[r.mode].label : null,
       complexityLabel: isComplexity(r.complexity) ? COMPLEXITIES[r.complexity].label : null,
     }
@@ -577,7 +623,7 @@ export async function getCreation(
   const libMap = new Map(libs.map((l) => [l.id, l]))
   return {
     ...withoutUserIdea(c),
-    trackLabel: isCopyTrack(c.track) ? COPY_TRACKS[c.track].label : null,
+    trackLabel: copyTrackLabel(c.track),
     modeLabel: isContentMode(c.mode) ? CONTENT_MODES[c.mode].label : null,
     complexityLabel: isComplexity(c.complexity) ? COMPLEXITIES[c.complexity].label : null,
     shots: c.shots.map((s) => ({
@@ -773,7 +819,7 @@ export async function buildVariables(
     },
   })
   if (!c) throw new CreationNotFoundError()
-  const track = opts.track ?? (isCopyTrack(c.track) ? c.track : DEFAULT_COPY_TRACK)
+  const track = opts.track ?? normalizeCopyTrack(c.track) ?? DEFAULT_COPY_TRACK
   const complexity = opts.complexity ?? (isComplexity(c.complexity) ? c.complexity : DEFAULT_COMPLEXITY)
   const mode: ContentMode = isContentMode(c.mode) ? c.mode : DEFAULT_CONTENT_MODE
 
@@ -850,14 +896,17 @@ export async function generateCopy(
   await requireSubscription(prisma, merchantId, '文案生成')
   await getCreation(prisma, merchantId, creationId) // 校验归属
 
-  // 未指定款式时沿用创作上已保存的款式（默认介绍款）
+  // 未指定款式时沿用创作上已保存的款式（默认产品型）
+  // ★ 走 normalizeCopyTrack 而不是 isCopyTrack：库里的老值（INTRO/QUALITY/NORMAL）
+  //   必须映射到最接近的新款，否则它们会绕过"沿用已保存款式"直接掉到默认值，
+  //   把一条质量款老稿重新生成成产品型 —— 而且不报错。
   const current = await prisma.creation.findUnique({
     where: { id: creationId },
     select: { track: true, mode: true },
   })
   /**
    * ★ 话题稿的款式**不可协商**：它只有一份不喂门店/菜品的模板（copy_traffic）。
-   *   允许调用方传 track，就会出现「话题稿却按介绍款模板生成」——介绍款要求讲清菜名与卖点，
+   *   允许调用方传 track，就会出现「话题稿却按产品型模板生成」——产品型要求讲清菜名与卖点，
    *   而话题稿手里一个字都没有，模型只能编；而且这个组合不报错，只是文案悄悄变了味。
    *   所以这里直接覆盖掉入参，而不是"以入参为准再兜底"。
    */
@@ -866,7 +915,7 @@ export async function generateCopy(
     mode === 'TOPIC'
       ? TOPIC_TRACK
       : (() => {
-          const want = track ?? (isCopyTrack(current?.track) ? current!.track : DEFAULT_COPY_TRACK)
+          const want = track ?? normalizeCopyTrack(current?.track) ?? DEFAULT_COPY_TRACK
           /**
            * ★★ 菜品稿**永远不许**走流量款。
            *

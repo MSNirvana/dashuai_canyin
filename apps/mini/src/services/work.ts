@@ -18,9 +18,18 @@ export interface WorkItem {
   coverUrl?: string | null
 }
 
-/** 同款配方：与 creation 的 track / complexity 取值一一对应 */
+/**
+ * 同款配方：与 creation 的 track / complexity 取值一一对应。
+ * ★ 这里的 track 是**服务端存下来的原值**，历史上出现过四代：
+ *   新五款（TRAFFIC/PERSONA/KNOWLEDGE/PRODUCT/RECOMMEND）、改型前的 INTRO/QUALITY、
+ *   以及更早的 NORMAL。所以类型里**显式留着老值**，而不是只写新款 ——
+ *   只写新款等于对 TypeScript 撒谎，调用方会以为拿到的永远是新值而省略归一。
+ *   用之前必须过 `creation.ts` 的 `toDishTrack()`。
+ */
 export interface WorkRecipe {
-  track?: 'TRAFFIC' | 'INTRO' | 'QUALITY' | 'RECOMMEND'
+  track?:
+    | 'TRAFFIC' | 'PERSONA' | 'KNOWLEDGE' | 'PRODUCT' | 'RECOMMEND'
+    | 'INTRO' | 'QUALITY' | 'NORMAL'
   complexity?: 'SIMPLE' | 'COMPLEX' | 'FINE'
   titleHint?: string
   voiceId?: string

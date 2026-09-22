@@ -6,11 +6,7 @@ import { createCipheriv, randomBytes } from 'node:crypto'
 import { PrismaClient } from '@prisma/client'
 import { hashPassword } from '../src/lib/password.js'
 import {
-  COPY_PROMPT, COPY_FALLBACK,
-  COPY_TRAFFIC_PROMPT, COPY_TRAFFIC_FALLBACK,
-  COPY_INTRO_PROMPT, COPY_INTRO_FALLBACK,
-  COPY_QUALITY_PROMPT, COPY_QUALITY_FALLBACK,
-  COPY_RECOMMEND_PROMPT, COPY_RECOMMEND_FALLBACK,
+  CREATION_SCENE_PROMPTS,
   STORY_PROMPT, STORY_FALLBACK,
   PUBLISH_SCENES,
 } from './prompts.js'
@@ -238,14 +234,12 @@ async function seedAi() {
     `[seed] AI 场景候选链 = ${realModels.map((m) => m.modelCode).join(' → ')}（无 MOCK 兜底）`,
   )
 
-  // 文案四款与小程序端「流量款 / 介绍款 / 质量款 / 种草型」一一对应，提示词均可在后台「AI 场景」页修改
-  const copyScenes = [
-    { code: 'copy_generate', name: '短视频文案生成（通用·兼容旧客户端）', prompt: COPY_PROMPT, fallback: COPY_FALLBACK, temperature: 0.8 },
-    { code: 'copy_traffic', name: '文案 · 流量款（同城引流/话题热度）', prompt: COPY_TRAFFIC_PROMPT, fallback: COPY_TRAFFIC_FALLBACK, temperature: 0.9 },
-    { code: 'copy_intro', name: '文案 · 介绍款（菜品讲解/套餐推广）', prompt: COPY_INTRO_PROMPT, fallback: COPY_INTRO_FALLBACK, temperature: 0.8 },
-    { code: 'copy_quality', name: '文案 · 质量款（食材品质/匠心人设）', prompt: COPY_QUALITY_PROMPT, fallback: COPY_QUALITY_FALLBACK, temperature: 0.75 },
-    { code: 'copy_recommend', name: '文案 · 种草型（真实体验/消费决策）', prompt: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK, temperature: 0.85 },
-  ]
+  // 文案各款与小程序端「流量款 / 人设型 / 干货型 / 产品型 / 种草型」一一对应，
+  // 提示词均可在后台「AI 场景」页修改。
+  // ★ 直接复用 prisma/prompts.ts 的同一份清单 —— 这里**原来抄了一份**，
+  //   四款改型时抄漏一处，就会变成「seed 建的场景」和「ai-prompts:sync 洗的场景」不是同一批，
+  //   而两边**都不会报错**。清单只留一个源。
+  const copyScenes = CREATION_SCENE_PROMPTS
   for (const s of copyScenes) {
     const data = {
       name: s.name,
@@ -253,7 +247,9 @@ async function seedAi() {
       fallbackTemplate: s.fallback,
       defaultModelId,
       fallbackModelIds,
-      beanPrice: 5n,
+      // ★ 取清单里的价，不再写死 5n：写死会让「seed 建的环境」和「sync 建的环境」
+      //   价格不同，而这个差异不会报错、只会在对账时出现（同 prompts.ts 里那段说明）。
+      beanPrice: BigInt(s.beanPrice),
       timeoutMs: 30000,
       maxRetries: 1,
       temperature: s.temperature,
