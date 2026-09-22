@@ -304,11 +304,53 @@ function probeCaFile(): string | null {
 
 export interface ClipProbe {
   ok: boolean
+  /** **显示**宽高（已按旋转角折算，见 rotateToDisplay）—— 不是容器宽高 */
   width: number | null
   height: number | null
+  /** 原始旋转角（度），没有旋转信息时为 null。仅用于排查与日志。 */
+  rotationDegrees: number | null
   durationMs: number | null
   hasAudioTrack: boolean
   reason?: string
+}
+
+/**
+ * 把「容器宽高 + 旋转角」折算成**真实显示宽高**。
+ *
+ * ★★ 为什么必须折算（2026-09-22 线上事故，AI 档成片构图被毁）：
+ *
+ *   手机竖拍经部分 App / 微信导出后，落地像素是**躺着**的 —— 容器写 `960×540`，
+ *   另配一个 `rotation=-90` 的 side data 告诉播放器「转 90° 再显示」。
+ *   ⇒ **真实显示尺寸是 `540×960`**，`960×540` 只是它躺着的尺寸。
+ *
+ *   `ffprobe` 默认只报**容器宽高**，不看旋转 ⇒ 所有按宽高做算术的地方都会算错：
+ *     · 素材表 `width/height` 存成 960×540（封面/预览跟着错）；
+ *     · 上报给云端合成器的也是 960×540 ⇒ 云端据此算 `fit:"cover"` 的缩放系数
+ *       `max(1080/960, 1920/540) = 3.556`，而按真实尺寸只要 `max(1080/540, 1920/960) = 2.0`
+ *       ⇒ **多放大 1.78 倍**再居中裁切 ⇒ 成片只剩脸部特写。
+ *
+ *   ★ 本地 ffmpeg 管线没有这个缺陷，因为 `scale`/`crop` 滤镜**默认自动应用旋转**
+ *     （autorotate 打开），它拿到的本来就是 540×960。**两边口径必须一致**，
+ *     否则同一条素材「本地档正常、云端档被裁坏」——这正是当时最迷惑人的现象。
+ *
+ * 判据（两分钟验完）：
+ *   ffprobe -v error -select_streams v:0 \
+ *     -show_entries stream=width,height:stream_side_data=rotation -of csv=p=0 input.mp4
+ *   ⇒ `960,540,-90` 表示显示尺寸是 `540×960`。
+ *
+ * @param sideDataList ffprobe JSON 里 `streams[i].side_data_list`
+ */
+export function rotateToDisplay(
+  width: number,
+  height: number,
+  sideDataList?: ReadonlyArray<{ rotation?: number }> | null,
+): { width: number; height: number; rotationDegrees: number | null } {
+  const raw = sideDataList?.map((item) => Number(item?.rotation)).find((value) => Number.isFinite(value))
+  if (raw === undefined) return { width, height, rotationDegrees: null }
+  // 归一化到 [0,360)：-90、270、450 都是「竖过来」那一族；180 只上下颠倒，宽高不变
+  const normalized = ((raw % 360) + 360) % 360
+  const swapped = normalized === 90 || normalized === 270
+  return swapped ? { width: height, height: width, rotationDegrees: raw } : { width, height, rotationDegrees: raw }
 }
 
 /**
@@ -330,14 +372,20 @@ export async function probeClipMeta(input: string, timeoutMs = 30_000): Promise<
       // 网络输入读取超时（微秒）：上游挂住时不要陪着一起卡
       '-rw_timeout', '15000000',
       ...(caFile ? ['-ca_file', caFile] : []),
-      '-show_entries', 'stream=codec_type,width,height:format=duration',
+      // ★ `stream_side_data=rotation` 必须带上：不带就只能拿到容器宽高，见 rotateToDisplay
+      '-show_entries', 'stream=codec_type,width,height:stream_side_data=rotation:format=duration',
       '-of', 'json',
       input,
     ], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 })
 
     const parsed = JSON.parse(String(stdout)) as {
       format?: { duration?: string }
-      streams?: Array<{ codec_type?: string; width?: number; height?: number }>
+      streams?: Array<{
+        codec_type?: string
+        width?: number
+        height?: number
+        side_data_list?: Array<{ rotation?: number }>
+      }>
     }
     const streams = parsed.streams ?? []
     const video = streams.find((s) => s.codec_type === 'video')
@@ -346,16 +394,21 @@ export async function probeClipMeta(input: string, timeoutMs = 30_000): Promise<
         ok: false,
         width: null,
         height: null,
+        rotationDegrees: null,
         durationMs: null,
         hasAudioTrack: false,
         reason: '未能从素材中解析出视频宽高（可能不是视频文件）',
       }
     }
     const sec = Number(parsed.format?.duration)
+    // ★★ 在这里就把旋转折算掉：返回的 width/height 一律是**显示尺寸**。
+    //    调用方（素材表回填、云端 import 元数据）都不需要、也不应该自己再处理旋转。
+    const display = rotateToDisplay(video.width, video.height, video.side_data_list)
     return {
       ok: true,
-      width: video.width,
-      height: video.height,
+      width: display.width,
+      height: display.height,
+      rotationDegrees: display.rotationDegrees,
       durationMs: Number.isFinite(sec) && sec > 0 ? Math.round(sec * 1000) : null,
       hasAudioTrack: streams.some((s) => s.codec_type === 'audio'),
     }
@@ -364,6 +417,7 @@ export async function probeClipMeta(input: string, timeoutMs = 30_000): Promise<
       ok: false,
       width: null,
       height: null,
+      rotationDegrees: null,
       durationMs: null,
       hasAudioTrack: false,
       reason: `元数据探测失败：${conciseProbeError(e)}`,
