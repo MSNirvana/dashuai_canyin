@@ -310,6 +310,43 @@ const SCENE_OVERRIDES: Record<
       },
     ]),
   ),
+  /**
+   * AI 剪辑决策（EDL）—— 2026-09-22 上线当天**实测之后**才补的。
+   *
+   * ★★ 为什么这个场景必须显式覆盖：`ai-prompts:sync` 建新场景时用
+   *   `firstModelOfKind('TEXT')` —— 取的是**按 `provider.priority` 排序的第一个
+   *   文本模型** ⇒ 新场景默认落在 `tokenbox-gpt`（priority 10）上，且
+   *   `fallback_model_ids` 是**空数组**（见该脚本的 create 分支）。
+   *   对多数场景这没问题，但本场景实测正好踩上 GPT 的**双峰**：
+   *
+   *     2026-09-22 线上首跑（任务 15，6 个镜头、真实素材、prompt 5097 token）：
+   *       gpt-5.5 ｜ 入 5097 · 出 436 token ｜ **latency 46.6s** ｜ SUCCESS
+   *
+   *   46.6s 对 60s 预算只剩 29% 余量 ⇒ **镜头一多必然超时**。而超时的后果是
+   *   `generateEditPlan` 退化成「按面板档位剪」：不报错、只是这次剪辑决策静默消失。
+   *   这与 `copy_*` 五款当初「三候选全超时」是同一类问题（实测表见本节上方）。
+   *
+   * ★ 处置是**保守版**：不动主候选，只补备用 + 放宽超时 + 关掉原地重试。
+   *   · `primary` 仍留 GPT —— 它在本次实测里给出的逐镜头决策质量是好的
+   *     （1.8 / 4.4 / 3.0 / 1.9 / 1.5 / 4.5s，起伏明显）。换主候选属**未验证的质量变更**，
+   *     要做也应该先按上面那张表的口径拿同一批素材 A/B 一轮，而不是顺手换掉。
+   *   · `fallbacks: ['tokenbox-deepseek']` —— DeepSeek 在短输出文本场景延迟稳定
+   *     8~12.5s（同上表）⇒ GPT 超时后仍能拿到决策，而不是整条退化成档位。
+   *     ⚠ **别把 `tokenbox-claude` 放进来**：它无视 `reasoning_effort`，4000 预算会被
+   *       思考吃光并返回空正文；空正文是**非通道级**故障 ⇒ 会按 maxRetries 反复重试它。
+   *   · `timeoutMs: 90_000` —— 实测 46.6s 的约 1.9 倍余量，给镜头更多的长视频留空间。
+   *     ★ 本场景在 **worker 里**跑，**不参与前端超时计算**（见 prompts.ts 的同名说明），
+   *       所以放宽它不会牵动小程序侧的等待预算。
+   *   · `maxRetries: 0` —— 有真备用之后，在**同一个慢通道**上原地重试纯属浪费：
+   *     GPT 的超时是系统性的（双峰），换通道比原地重试有效。最坏 90s + ~10s ≈ 100s。
+   */
+  edit_plan: {
+    primary: 'tokenbox-gpt',
+    fallbacks: ['tokenbox-deepseek'],
+    timeoutMs: 90_000,
+    maxRetries: 0,
+    maxOutputTokens: 4_000,
+  },
 }
 
 /**

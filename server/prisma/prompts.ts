@@ -842,9 +842,20 @@ export const EDIT_PLAN_SCENE = {
    *   超出本上限的部分由平台承担 —— 这正是「安全网」的语义，与其它文本场景一致。
    */
   beanPrice: 150,
-  // 输入短、输出是结构化 JSON：给 60s（比文案场景的 45s 宽），不参与前端超时计算（它在 worker 里跑）
-  timeoutMs: 60000,
-  maxRetries: 1,
+  /**
+   * ★★ `timeoutMs` / `maxRetries` / `maxOutputTokens` 与
+   *   `scripts/setup-ai-channels.ts` 的 `SCENE_OVERRIDES.edit_plan` **必须同值**。
+   *
+   *   分工：`ai-prompts:sync` 只在**建行时**写这三个字段，update 分支一概不碰；
+   *   `ai-channels:setup` 用 SCENE_OVERRIDES 覆盖它们。两处不一致的后果是
+   *   「手工重建一次场景，配置就悄悄退回另一套」—— 没有任何地方会报错。
+   *
+   * ★ 90s / 0 重试是**实测口径**（2026-09-22 上线首跑，任务 15）：gpt-5.5 单次 46.6s
+   *   （prompt 5097 token），60s 预算只剩 29% 余量 ⇒ 镜头一多必然超时。
+   *   完整依据与「为什么还要补一个 DeepSeek 备用」写在 SCENE_OVERRIDES 那一段。
+   */
+  timeoutMs: 90_000,
+  maxRetries: 0,
   /**
    * ★★ 必须 ≥ `SCENE_MIN_OUTPUT_TOKENS`（默认 4000），**不是**「JSON 只要 400 token 就给 1200」。
    *

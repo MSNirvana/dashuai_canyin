@@ -476,6 +476,23 @@ console.log('\n⑧ 跨文件契约与结构约束（单改一边就静默退化�
     typeof EDIT_PLAN_SCENE.fallback === 'string' && EDIT_PLAN_SCENE.fallback.length > 0,
   )
 
+  // ── ⑧-5b 候选链必须在 SCENE_OVERRIDES 里显式给备用 ──
+  // ★★ 不加这条，新场景的候选链就由 `firstModelOfKind` 决定 = **GPT 单候选、无备用**
+  //   （sync 建行时 `fallbackModelIds: []`）。本场景实测单次 46.6s / 60s 预算
+  //   ⇒ 上游一超时就没有第二个候选可退，「剪辑决策」会静默消失、只按面板档位剪。
+  const setupSrc = await src('scripts/setup-ai-channels.ts')
+  const overrideBlock = /edit_plan:\s*\{([\s\S]*?)\n {2}\}/.exec(setupSrc)?.[1] ?? ''
+  ok('★★ SCENE_OVERRIDES 里有 edit_plan 条目（否则候选链落到 GPT 单候选、无备用）', overrideBlock.length > 0)
+  ok(
+    '  └ 且 fallbacks 非空 —— 单候选一旦上游超时，这次剪辑决策就静默消失',
+    /fallbacks:\s*\[\s*'tokenbox-/.test(overrideBlock),
+    overrideBlock || '(没匹配到 edit_plan 条目)',
+  )
+  ok(
+    '  └ 且备用里没有 claude（它无视 reasoning_effort，4000 预算会被思考吃光并返回空正文）',
+    overrideBlock.length > 0 && !overrideBlock.includes('claude'),
+  )
+
   // ── ⑧-5 edl.ts 必须零 import（否则守护脚本要连库、这条闸门很快会被跳过）──
   const edlSrc = await src('src/render/edl.ts')
   ok('★★ edl.ts 零 import（一旦引入 chatcut.ts 就会拉进 redis，守护得连库才能跑）', !/^\s*import\s/m.test(edlSrc))
