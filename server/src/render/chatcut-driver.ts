@@ -29,12 +29,19 @@
  *     `helper import registration for video requires complete metadata so the backend
  *      does not process large files locally` —— 声明错的尺寸比不声明更糟，
  *     拿画布尺寸凑数会让云端按错误比例处理（见 remoteSource）。
+ *
+ * ★★ 上面这段「推的是原始素材」自 2026-09-22 起**分成了两条路线**（AI 档的「素材处理」选项）：
+ *   · `clipPrep: 'ORIGINAL'`（**默认**）：就是本段描述的情形 —— 原子节直传、宽高真去探；
+ *   · `clipPrep: 'NORMALIZED'`：worker 已先本地归一化，推上来的**本身就是 1080×1920**，
+ *     宽高探出来必然等于画布尺寸（这正是那条路线要的效果，不是「拿画布尺寸凑数」的旧毛病）。
+ *   ⇒ 读到这里时别把两种情形混起来判：判断依据看 `worker.ts::prepClipLocally` 是否被走过。
  */
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
+import { withTransientRetry } from '../lib/transient-retry.js'
 import {
   callTool,
   CHATCUT_VOICE_OFF,
@@ -57,6 +64,24 @@ import { probeClipMeta, probeDurationMs, probeLoudnessLufs, probeSpeechEndMs, re
 const SESSION_BATCH_SIZE = 4
 const MULTIPART_SIGN_BATCH_SIZE = 100
 const IMPORT_ATTEMPT_TIMEOUT_MS = Number(process.env.CHATCUT_IMPORT_TIMEOUT_MS ?? 120_000)
+
+/**
+ * ★★ 启动阶段（建项目 → 探素材 → TTS → 上传全部字节 → 排轨）里每一次网络往返都要带瞬断重试。
+ *
+ * 为什么这里必须有、而别处没有（2026-09-22 任务 12 的实证）：
+ *   链路会偶发 `TypeError: terminated`（对端把连接掐了）。它在**轮询**阶段不致命 ——
+ *   worker 那边有 `查询失败（第 1/40 次）` 兜着（任务 11 就是靠它活下来的）。
+ *   但**启动阶段是一次性调用、外面没有任何重试** ⇒ 上传 12 个素材的路上
+ *   任何一次瞬断都会让整条任务 FAILED、用户白等 4 分钟并损失积分。
+ *   任务 12 就是这么死的：`素材 shot-6.mp4 导入失败：fetch failed（TypeError: terminated）`。
+ *
+ * ★ 重试是**幂等**的，这一点由三处独立事实保证（不是这里新加的前提）：
+ *   ① `requestIdFor()` —— 同一请求体算出同一 requestId，服务端按它去重；
+ *   ② `ChatCutUploadSource.open()` —— 接口注释写明「每次调用都要返回一个**新**流：PUT 重试会重读」；
+ *   ③ 预签名 PUT 本身按 key 覆盖写，重复推同一份字节无害。
+ *
+ * 具体策略（次数 / 退避 / 什么算瞬断）见 `src/lib/transient-retry.ts`。
+ */
 
 export type ChatCutAssetType = 'video' | 'audio' | 'image'
 
@@ -122,6 +147,7 @@ function requestIdFor(body: unknown): string {
   return `dashuai-${createHash('sha256').update(stableJson(body)).digest('hex')}`
 }
 
+
 function pickString(source: Record<string, unknown>, ...keys: string[]): string | undefined {
   for (const key of keys) {
     const value = source[key]
@@ -156,7 +182,12 @@ function extractSession(value: Record<string, unknown>, raw: unknown): ChatCutIm
   throw new Error(`ChatCut import_media 未返回可用的上传会话：${JSON.stringify(raw).slice(0, 500)}`)
 }
 
-async function postImport(
+/**
+ * 上传会话的一次 POST（不重试）。★ 重试版是下面那个 `postImport`，调用方只用它。
+ * 之所以拆成两个函数而不是在调用点包一层：这里有 5 个调用点，
+ * 漏包一个就会留下「大部分步骤会重试、唯独某一步不会」的暗坑 —— 而那一步恰恰可能是最常失败的。
+ */
+async function postImportOnce(
   session: ChatCutImportSession,
   request: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
@@ -182,6 +213,19 @@ async function postImport(
   }
 }
 
+/**
+ * 上传会话 POST（带瞬断重试）。
+ * ★ 幂等由 `requestIdFor` 保证：重试发的是**逐字节相同**的请求体 ⇒ 同一 requestId ⇒ 服务端去重。
+ *   （所以这里重试是安全的，不是在赌「大不了重复建一次」——那会真的建出两个 asset 占位。）
+ */
+async function postImport(
+  session: ChatCutImportSession,
+  request: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const action = String((request as { action?: unknown }).action ?? requestIdFor(request).slice(0, 16))
+  return withTransientRetry(`上传会话 ${action}`, () => postImportOnce(session, request))
+}
+
 function assetUploadSlot(value: Record<string, unknown>): Record<string, unknown> {
   const slot = value.assetUpload ?? value.upload ?? value
   if (!slot || typeof slot !== 'object') {
@@ -200,20 +244,25 @@ async function putStream(
   size: number,
   contentType: string,
 ): Promise<string | undefined> {
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: { 'content-length': String(size), 'content-type': contentType },
-    body: Readable.toWeb(await open()),
-    // Node 的 fetch 需要 duplex:'half' 才允许流式请求体
-    duplex: 'half',
-    // 整个 init 一起断言：本项目的 tsconfig 没引 DOM lib，
-    // 单独引用 BodyInit 会 TS2304（`duplex` 本来也不在 RequestInit 里）
-  } as unknown as RequestInit)
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`ChatCut 素材上传失败（HTTP ${response.status}）：${text.slice(0, 300)}`)
-  }
-  return response.headers.get('etag')?.replace(/^"|"$/g, '') || undefined
+  // ★ `open()` 必须在**每次尝试内部**调用：重试要拿一条新流
+  //   （`ChatCutUploadSource.open` 的接口注释就是这么要求的：「PUT 重试会重读」）。
+  //   写成 `body: Readable.toWeb(await open())` 然后整体重试会复用**已消费**的流 ⇒ 第二次必失败。
+  return withTransientRetry(`素材上传 PUT（${size} 字节）`, async () => {
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: { 'content-length': String(size), 'content-type': contentType },
+      body: Readable.toWeb(await open()),
+      // Node 的 fetch 需要 duplex:'half' 才允许流式请求体
+      duplex: 'half',
+      // 整个 init 一起断言：本项目的 tsconfig 没引 DOM lib，
+      // 单独引用 BodyInit 会 TS2304（`duplex` 本来也不在 RequestInit 里）
+    } as unknown as RequestInit)
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`ChatCut 素材上传失败（HTTP ${response.status}）：${text.slice(0, 300)}`)
+    }
+    return response.headers.get('etag')?.replace(/^"|"$/g, '') || undefined
+  })
 }
 
 async function putRange(
@@ -223,19 +272,22 @@ async function putRange(
   endInclusive: number,
 ): Promise<string> {
   const length = endInclusive - start + 1
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: { 'content-length': String(length) },
-    body: Readable.toWeb(await open({ start, endInclusive })),
-    duplex: 'half',
-  } as unknown as RequestInit)
-  if (!response.ok) {
-    const text = await response.text().catch(() => '')
-    throw new Error(`ChatCut 分片上传失败（HTTP ${response.status}）：${text.slice(0, 300)}`)
-  }
-  const etag = response.headers.get('etag')?.replace(/^"|"$/g, '')
-  if (!etag) throw new Error('ChatCut 分片上传未返回 ETag，无法完成分片合并')
-  return etag
+  // ★ 同上：每次尝试都要重新 open 这一段
+  return withTransientRetry(`分片上传 PUT（第 ${start}~${endInclusive} 字节）`, async () => {
+    const response = await fetch(url, {
+      method: 'PUT',
+      headers: { 'content-length': String(length) },
+      body: Readable.toWeb(await open({ start, endInclusive })),
+      duplex: 'half',
+    } as unknown as RequestInit)
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      throw new Error(`ChatCut 分片上传失败（HTTP ${response.status}）：${text.slice(0, 300)}`)
+    }
+    const etag = response.headers.get('etag')?.replace(/^"|"$/g, '')
+    if (!etag) throw new Error('ChatCut 分片上传未返回 ETag，无法完成分片合并')
+    return etag
+  })
 }
 
 /** 大文件走分片：申请签名 → 逐片 PUT → 收集 ETag，交给 finalize 的 multipart 字段合并 */

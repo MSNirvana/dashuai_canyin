@@ -60,6 +60,7 @@
     "chatcut-timing:verify": "tsx scripts/verify-chatcut-timing.ts",
     "clip-rotation:verify": "tsx scripts/verify-clip-rotation.ts",
     "clip-prep:verify": "tsx scripts/verify-clip-prep.ts",
+    "transient-retry:verify": "tsx scripts/verify-transient-retry.ts",
     "shot-skip:verify": "tsx scripts/verify-shot-skip.ts",
     "dish-combo:verify": "tsx scripts/verify-dish-combo.ts",
     "render-errors:verify": "tsx scripts/verify-render-errors.ts",
