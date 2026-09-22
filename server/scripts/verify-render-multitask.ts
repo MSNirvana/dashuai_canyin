@@ -99,7 +99,12 @@ section('① 失败文案映射：技术原文 → 用户话术')
     ['授权/工具映射', 'AI 档需要先完成 ChatCut MCP 授权和工具映射', /暂不可用|稍后/],
     ['结算补偿原文', '积分释放失败：Connection pool timeout', /结算/],
     ['ffmpeg 命令行', 'ffmpeg exited with code 1: Conversion failed', /视频处理/],
-    ['配音', 'volcano TTS 合成失败：quota exceeded', /配音/],
+    // ★ 这一条原本是 `'volcano TTS 合成失败：quota exceeded'` 期望 /配音/ —— **已过期**：
+    //   规则②½（云端额度/计费）排在 ⑦（配音）**之前**，带 `quota` 的样本会先被额度规则截获。
+    //   而那个优先级是**有意的**（额度是平台成本，既不该透给商户、也不该引导他换音色去绕开）。
+    //   所以拆成两条：纯 TTS 故障走配音话术；带 quota 的走额度话术 —— 两条规则都被覆盖到。
+    ['配音', 'volcano TTS 合成失败：音色不可用', /配音/],
+    ['配音额度耗尽（额度规则优先于配音，有意为之）', 'volcano TTS 合成失败：quota exceeded', /暂不可用|稍后/],
     ['未分类的技术噪音', 'tokenbox-gpt: upstream returned 502', /合成失败|稍后/],
   ]
   for (const [label, raw, expect] of cases) {
