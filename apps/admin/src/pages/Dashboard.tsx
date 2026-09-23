@@ -46,26 +46,38 @@ export default function DashboardPage() {
   if (!data) return <div className="danger-text">暂无数据</div>
 
   return (
-    <div>
-      <div className="page-header"><h2>仪表盘 · {fmtDay(new Date())}</h2></div>
+    <div className="dashboard-page">
+      <div className="dashboard-intro">
+        <div>
+          <span className="page-kicker">运营总览</span>
+          <div className="page-header"><h2>今天，后台运行得怎么样</h2></div>
+          <p>数据更新至 {fmtDay(new Date())}，优先处理异常任务和 AI 通道状态。</p>
+        </div>
+        <div className="dashboard-intro__mark">DS</div>
+      </div>
 
-      <h3 style={{ marginTop: 0, marginBottom: 12 }}>商家与内容</h3>
+      <section className="dashboard-section">
+        <div className="section-heading"><div><span className="section-kicker">BUSINESS</span><h3>商家与内容</h3></div><span className="section-note">核心业务规模</span></div>
       <Row gutter={16}>
         <Col span={6}><Stat label="商家总数" value={data.merchants.total} hint={`活跃 ${data.merchants.active} · 今日新增 ${data.merchants.todayNew}`} /></Col>
         <Col span={6}><Stat label="门店总数" value={data.stores} /></Col>
         <Col span={6}><Stat label="创作数" value={data.creations.total} hint={`今日 ${data.creations.today}`} /></Col>
         <Col span={6}><Stat label="合成任务" value={data.renderTasks.total} hint={`今日 ${data.renderTasks.today} · 进行中 ${data.renderTasks.running}`} /></Col>
       </Row>
+      </section>
 
-      <h3 style={{ marginTop: 24, marginBottom: 12 }}>财务</h3>
+      <section className="dashboard-section">
+        <div className="section-heading"><div><span className="section-kicker">FINANCE</span><h3>财务</h3></div><span className="section-note">收入与成本</span></div>
       <Row gutter={16}>
         <Col span={6}><Stat label="今日实收（加油包）" value={`¥ ${fen2yuan(data.finance.todayRechargeFen)}`} hint={`本月 ¥ ${fen2yuan(data.finance.monthRechargeFen)}`} /></Col>
         <Col span={6}><Stat label="今日实收（订阅）" value={`¥ ${fen2yuan(data.finance.todayMemberFen)}`} /></Col>
         <Col span={6}><Stat label="今日 AI 真实成本" value={`¥ ${fen2yuan(data.finance.todayAiCostFen)}`} hint={`毛利 ¥ ${fen2yuan(data.finance.marginFen)}`} /></Col>
         <Col span={6}><Stat label="今日消耗积分" value={data.finance.todayBeanConsumed} /></Col>
       </Row>
+      </section>
 
-      <h3 style={{ marginTop: 24, marginBottom: 12 }}>AI</h3>
+      <section className="dashboard-section">
+        <div className="section-heading"><div><span className="section-kicker">AI OPERATIONS</span><h3>AI 通道</h3></div><span className="section-note">通道健康与调用</span></div>
       <Row gutter={16}>
         <Col span={6}><Stat label="AI 通道" value={data.ai.providers} hint={`启用 ${data.ai.enabledProviders}`} /></Col>
         <Col span={6}><Stat label="DOWN 通道" value={data.ai.downProviders} /></Col>
@@ -84,10 +96,12 @@ export default function DashboardPage() {
           />
         </Col>
       </Row>
+      </section>
 
       {data.renderTasks.failed24h > 0 && (
-        <div className="danger-text" style={{ marginTop: 24 }}>
-          ⚠ 最近 24 小时失败合成任务 {data.renderTasks.failed24h} 条，请到「合成任务」排查
+        <div className="dashboard-alert">
+          <Tag theme="danger">需要处理</Tag>
+          <span>最近 24 小时失败合成任务 {data.renderTasks.failed24h} 条，请到「合成任务」排查</span>
         </div>
       )}
     </div>

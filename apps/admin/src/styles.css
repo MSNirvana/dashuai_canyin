@@ -1,116 +1,285 @@
+:root {
+  --ds-red: #c92a21;
+  --ds-red-strong: #a91f18;
+  --ds-red-soft: #fff0ee;
+  --ds-red-border: #f1c6c1;
+  --ds-ink: #171717;
+  --ds-body: #3f3f46;
+  --ds-muted: #71717a;
+  --ds-subtle: #a1a1aa;
+  --ds-page: #f5f6f8;
+  --ds-surface: #ffffff;
+  --ds-fill: #f7f7f8;
+  --ds-line: #e5e7eb;
+  --ds-line-light: #eef0f2;
+  --ds-radius: 10px;
+  --ds-sidebar: 232px;
+}
+
 html, body, #root { height: 100%; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif; background: #f5f6fa; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: var(--ds-body);
+  background: var(--ds-page);
+  -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+button, input, textarea { font-family: inherit; }
 
-.app-layout { display: flex; min-height: 100vh; }
-/* ★ 让内容区能「缩得比内容更窄」再靠自身 overflow:auto 滚动。
-   flex 子项默认 min-width:auto = 内容的最小宽度 ⇒ 一张宽表格（如运维告警页 7 列合计 1100px）
-   会把内容区顶到 1148px，超过视口可用宽度时整页出现横向滚动条，顶栏的「管理员 / 退出登录」
-   被推出屏幕外。加 min-width:0 之后由 .app-layout__content 自己滚，外壳不再被撑开。 */
-.app-layout > .t-layout__content { min-width: 0; }
-.app-layout__sider { width: 220px; background: #001529; color: #fff; flex-shrink: 0; }
-.app-layout__sider .logo { padding: 24px 16px; font-size: 18px; font-weight: 600; text-align: center; border-bottom: 1px solid #1f2d3d; }
-.app-layout__main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.app-layout__header { background: #fff; padding: 0 24px; height: 56px; line-height: 56px; box-shadow: 0 1px 4px rgba(0,21,41,.08); display: flex; justify-content: space-between; align-items: center; }
-.app-layout__content { padding: 24px; flex: 1; overflow: auto; background: #f5f6fa; }
+/* App shell */
+.app-layout { display: flex; min-height: 100vh; background: var(--ds-page); }
+.app-layout > .t-layout__content { min-width: 0; min-height: 100vh; background: var(--ds-page); }
+.app-layout__sider {
+  width: var(--ds-sidebar) !important;
+  flex: 0 0 var(--ds-sidebar);
+  display: flex;
+  flex-direction: column;
+  background: var(--ds-surface) !important;
+  border-right: 1px solid var(--ds-line);
+  color: var(--ds-ink);
+}
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 76px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--ds-line-light);
+}
+.logo__mark, .login-card__brand-mark, .login-side__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 8px;
+  background: var(--ds-red);
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1;
+}
+.logo__text { display: flex; flex-direction: column; gap: 2px; line-height: 1.2; }
+.logo__text strong { color: var(--ds-ink); font-size: 15px; letter-spacing: .03em; }
+.logo__text small { color: var(--ds-subtle); font-size: 11px; }
+.app-layout__nav { flex: 1; min-height: 0; overflow: auto; padding: 17px 12px 20px; }
+.nav-group + .nav-group { margin-top: 18px; }
+.nav-group__label {
+  padding: 0 11px 7px;
+  color: var(--ds-subtle);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .1em;
+}
+.app-layout__sider .t-menu { border: 0; background: transparent; }
+.app-layout__sider .t-menu__item {
+  position: relative;
+  min-height: 38px;
+  margin: 2px 0;
+  padding: 0 11px;
+  border-radius: 8px;
+  color: #5f636b;
+  font-size: 13px;
+  transition: background .16s ease, color .16s ease;
+}
+.app-layout__sider .t-menu__item:hover { color: var(--ds-ink); background: #f6f7f8; }
+.app-layout__sider .t-menu__item--active {
+  color: var(--ds-red-strong);
+  background: var(--ds-red-soft);
+  font-weight: 650;
+}
+.app-layout__sider .t-menu__item--active::before {
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--ds-red);
+  content: "";
+}
+.app-layout__sider .t-menu__item .t-icon { color: currentColor; font-size: 17px; }
+.menu-label-with-badge { display: inline-flex; align-items: center; gap: 7px; }
+.sider-footer {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 70px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--ds-line-light);
+}
+.sider-footer__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border-radius: 50%;
+  color: var(--ds-red-strong);
+  background: var(--ds-red-soft);
+  font-size: 13px;
+  font-weight: 700;
+}
+.sider-footer__meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sider-footer__meta strong { color: var(--ds-body); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+.sider-footer__meta span { color: var(--ds-subtle); font-size: 11px; }
+.app-layout__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 64px;
+  padding: 0 30px;
+  background: var(--ds-surface);
+  border-bottom: 1px solid var(--ds-line);
+}
+.app-layout__header-title { display: flex; align-items: center; gap: 9px; min-width: 0; color: var(--ds-ink); font-size: 14px; }
+.header-kicker { color: var(--ds-subtle); font-size: 12px; }
+.header-divider { color: #d4d4d8; }
+.app-layout__header-title strong { font-weight: 650; }
+.app-layout__header-actions { display: flex; align-items: center; gap: 14px; }
+.header-admin { color: var(--ds-muted); font-size: 12px; }
+.app-layout__content { min-height: calc(100vh - 64px); padding: 28px 32px 52px; overflow: auto; }
 
-.stat-card { background: #fff; border-radius: 8px; padding: 20px 24px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); }
-.stat-card__label { color: #888; font-size: 14px; }
-.stat-card__value { font-size: 28px; font-weight: 600; color: #222; margin-top: 8px; }
-.stat-card__hint { color: #999; font-size: 12px; margin-top: 4px; }
+/* Shared page rhythm */
+.page-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
+.page-header h2 { margin: 0; color: var(--ds-ink); font-size: 23px; font-weight: 700; letter-spacing: -.02em; }
+.page-kicker, .section-kicker {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--ds-red);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+.page-tip {
+  margin: 0 0 18px;
+  padding: 12px 15px;
+  color: var(--ds-muted);
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-line);
+  border-left: 3px solid var(--ds-red);
+  border-radius: var(--ds-radius);
+  font-size: 13px;
+  line-height: 1.7;
+}
+.page-tip code { padding: 2px 5px; color: var(--ds-red-strong); background: var(--ds-red-soft); border-radius: 4px; word-break: break-all; }
+.muted { color: var(--ds-muted); font-size: 12px; }
+.danger-text { color: var(--ds-red-strong); }
+.success-text { color: #237c57; }
 
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.page-header h2 { font-size: 20px; font-weight: 600; margin: 0; }
-.page-tip { margin: 0 0 16px; padding: 10px 14px; font-size: 13px; line-height: 1.8; color: #666; background: #f7f8fa; border: 1px solid #e7e7e7; border-radius: 6px; }
-.page-tip code { padding: 1px 5px; font-size: 12px; color: #0052d9; background: #eef4ff; border-radius: 4px; word-break: break-all; }
+/* Dashboard */
+.dashboard-intro {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  min-height: 112px;
+  margin: -4px 0 28px;
+  padding: 4px 0 25px;
+  border-bottom: 1px solid var(--ds-line);
+}
+.dashboard-intro .page-header { margin: 0; }
+.dashboard-intro p { margin: 8px 0 0; color: var(--ds-muted); font-size: 13px; }
+.dashboard-intro__mark { display: flex; align-items: center; justify-content: center; width: 54px; height: 54px; border: 1px solid var(--ds-red-border); border-radius: 50%; color: var(--ds-red); font-size: 14px; font-weight: 750; letter-spacing: .08em; }
+.dashboard-section { margin-bottom: 29px; }
+.section-heading { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; }
+.section-heading h3 { margin: 0; color: var(--ds-ink); font-size: 15px; font-weight: 700; }
+.section-heading .section-kicker { margin-bottom: 4px; }
+.section-note { color: var(--ds-subtle); font-size: 12px; }
+.stat-card { min-height: 116px; padding: 18px 19px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); box-shadow: 0 1px 2px rgb(15 23 42 / 2%); }
+.stat-card__label { color: var(--ds-muted); font-size: 12px; }
+.stat-card__value { margin-top: 12px; color: var(--ds-ink); font-size: 26px; font-weight: 700; letter-spacing: -.025em; font-variant-numeric: tabular-nums; }
+.stat-card__hint { margin-top: 7px; color: var(--ds-subtle); font-size: 11px; }
+.dashboard-alert { display: flex; align-items: center; gap: 10px; margin-top: 6px; padding: 11px 13px; color: var(--ds-red-strong); background: var(--ds-red-soft); border: 1px solid var(--ds-red-border); border-radius: var(--ds-radius); font-size: 13px; }
 
-.kv { display: grid; grid-template-columns: 140px 1fr; gap: 12px 16px; font-size: 14px; }
-.kv__label { color: #888; }
-.kv__value { color: #222; word-break: break-word; }
-
-.login-wrap { display: flex; align-items: center; justify-content: center; height: 100vh; background: linear-gradient(135deg, #001529 0%, #003a8c 100%); }
-.login-card { width: 380px; padding: 32px; background: #fff; border-radius: 12px; box-shadow: 0 12px 32px rgba(0,0,0,0.2); }
-.login-card__title { font-size: 22px; font-weight: 600; margin-bottom: 24px; text-align: center; color: #222; }
+/* Login */
+.login-wrap { display: grid; grid-template-columns: minmax(320px, 42%) minmax(420px, 58%); min-height: 100dvh; background: #fff; }
+.login-side { display: flex; flex-direction: column; justify-content: space-between; min-height: 100dvh; padding: 42px 52px 34px; color: #fff; background: var(--ds-red); }
+.login-side__brand { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 650; letter-spacing: .04em; }
+.login-side__mark { width: 34px; height: 34px; background: #fff; color: var(--ds-red); }
+.login-side__copy { max-width: 360px; margin: auto 0; }
+.login-side__eyebrow { display: block; margin-bottom: 17px; color: rgb(255 255 255 / 70%); font-size: 10px; font-weight: 700; letter-spacing: .18em; }
+.login-side h1 { margin: 0; font-size: clamp(32px, 3.4vw, 48px); font-weight: 750; line-height: 1.18; letter-spacing: -.045em; }
+.login-side p { max-width: 300px; margin: 20px 0 0; color: rgb(255 255 255 / 78%); font-size: 14px; line-height: 1.75; }
+.login-side__footer { color: rgb(255 255 255 / 65%); font-size: 11px; }
+.login-card { align-self: center; width: min(420px, calc(100% - 72px)); margin: auto; padding: 8px 0; }
+.login-card__brand { display: flex; align-items: center; gap: 10px; margin-bottom: 32px; color: var(--ds-ink); font-size: 15px; font-weight: 650; }
+.login-card__brand-mark { width: 30px; height: 30px; flex-basis: 30px; font-size: 17px; }
+.login-card__title { margin-bottom: 8px; color: var(--ds-ink); font-size: 28px; font-weight: 750; letter-spacing: -.035em; }
+.login-card__subtitle { margin: 0 0 30px; color: var(--ds-muted); font-size: 13px; }
 .login-card__form { display: flex; flex-direction: column; gap: 18px; }
-.login-card__field { display: flex; flex-direction: column; gap: 8px; color: #333; font-size: 14px; }
-.login-card__hint { margin-top: 12px; color: #999; font-size: 12px; text-align: center; }
+.login-card__field { display: flex; flex-direction: column; gap: 8px; color: var(--ds-body); font-size: 13px; font-weight: 600; }
+.login-card__hint { margin-top: 19px; color: var(--ds-subtle); font-size: 11px; line-height: 1.6; }
 
-.muted { color: #888; font-size: 12px; }
-.danger-text { color: #e1251b; }
-.success-text { color: #2ba471; }
-
-/* ── 表单布局（替代 tdesign Form/FormItem，见 components/Field.tsx 顶部说明） ── */
+/* Forms, uploads, alerts and key TDesign primitives */
 .form-group { display: flex; flex-direction: column; }
 .form-row { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; }
 .form-row:last-child { margin-bottom: 0; }
-.form-row__label {
-  flex: 0 0 var(--field-label-width, 120px);
-  width: var(--field-label-width, 120px);
-  padding-top: 7px;
-  text-align: right;
-  color: #333;
-  font-size: 14px;
-  line-height: 20px;
-}
-.form-row__required { color: #e1251b; margin-right: 2px; }
+.form-row__label { flex: 0 0 var(--field-label-width, 120px); width: var(--field-label-width, 120px); padding-top: 7px; color: var(--ds-body); font-size: 13px; line-height: 20px; text-align: right; }
+.form-row__required { margin-right: 2px; color: var(--ds-red); }
 .form-row__control { flex: 1; min-width: 0; }
-.form-row__help { margin-top: 6px; color: #999; font-size: 12px; line-height: 1.6; }
-.form-row--error .form-row__control .t-input,
-.form-row--error .form-row__control .t-textarea__inner,
-.form-row--error .form-row__control .t-input-number {
-  box-shadow: inset 0 0 0 1px #e1251b;
-  border-radius: 6px;
-}
-
-/* 图片上传字段（运营公开图，如首页轮播的「图片」一行）
-   预览框固定 300×112 —— 与轮播卡片 3:1.68 的横向比例接近，运营一眼能判断是否会被裁切 */
+.form-row__help { margin-top: 6px; color: var(--ds-muted); font-size: 12px; line-height: 1.6; }
+.form-row--error .form-row__control .t-input, .form-row--error .form-row__control .t-textarea__inner, .form-row--error .form-row__control .t-input-number { box-shadow: inset 0 0 0 1px var(--ds-red); }
 .upload-field { display: flex; align-items: flex-start; gap: 16px; }
-.upload-field__preview {
-  width: 300px; height: 112px; flex: 0 0 auto;
-  object-fit: cover; border-radius: 6px; background: #eee;
-}
-.upload-field__empty {
-  width: 300px; height: 112px; flex: 0 0 auto;
-  display: flex; align-items: center; justify-content: center;
-  border: 1px dashed #d5d5d5; border-radius: 6px; background: #fafafa;
-}
+.upload-field__preview, .upload-field__empty { width: 300px; height: 112px; flex: 0 0 auto; border-radius: 8px; }
+.upload-field__preview { object-fit: cover; background: #eee; }
+.upload-field__empty { display: flex; align-items: center; justify-content: center; border: 1px dashed #cfd2d6; background: #fafafa; }
 .upload-field__actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
-
-/* ── 运维告警（后台页 + 顶栏横幅 + 菜单角标） ──────────────────────────────
-   配色沿用项目里已有的语义色：危险 #e1251b（.danger-text）、成功 #2ba471。
-   告警是「必须有人处理」的东西，所以顶栏横幅刻意做成实心红底而不是淡色描边 ——
-   淡色提示在密集的后台界面里会被当成装饰忽略掉。 */
-.ops-alert-count {
-  margin-left: 10px; padding: 2px 10px; font-size: 13px; font-weight: 500;
-  color: #fff; background: #e1251b; border-radius: 10px;
-  display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
-}
-.ops-alert-pill {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 4px 12px; font-size: 13px; line-height: 1.5; cursor: pointer;
-  border: 1px solid #f5c2c0; border-radius: 14px;
-  color: #b3261e; background: #fdeceb; font-family: inherit;
-}
-.ops-alert-pill:hover { background: #fbdcd9; }
-/* 有 CRITICAL 时整块转成实心红：一眼能分出「有钱卡住了」与「只是通道抖动」 */
-.ops-alert-pill--critical { color: #fff; background: #e1251b; border-color: #c81f16; }
-.ops-alert-pill--critical:hover { background: #c81f16; }
-.ops-alert-banner {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
-  padding: 10px 14px; font-size: 13px; line-height: 1.8; color: #b3261e;
-  background: #fdeceb; border: 1px solid #f5c2c0; border-left: 3px solid #e1251b; border-radius: 6px;
-}
-.menu-label-with-badge { display: inline-flex; align-items: center; gap: 6px; }
-.ops-alert-code {
-  padding: 1px 5px; font-size: 12px; color: #0052d9;
-  background: #eef4ff; border-radius: 4px; word-break: break-all;
-}
+.ops-alert-count { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 2px 8px; color: #fff; background: var(--ds-red); border-radius: 10px; font-size: 11px; font-weight: 600; vertical-align: middle; }
+.ops-alert-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; color: var(--ds-red-strong); background: var(--ds-red-soft); border: 1px solid var(--ds-red-border); border-radius: 7px; font-family: inherit; font-size: 12px; line-height: 1.5; cursor: pointer; }
+.ops-alert-pill:hover { background: #ffe3df; }
+.ops-alert-pill--critical { color: #fff; background: var(--ds-red); border-color: var(--ds-red); }
+.ops-alert-pill--critical:hover { background: var(--ds-red-strong); }
+.ops-alert-banner { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; padding: 10px 13px; color: var(--ds-red-strong); background: var(--ds-red-soft); border: 1px solid var(--ds-red-border); border-left: 3px solid var(--ds-red); border-radius: var(--ds-radius); font-size: 13px; line-height: 1.7; }
+.ops-alert-code { padding: 1px 5px; color: var(--ds-red-strong); background: var(--ds-red-soft); border-radius: 4px; font-size: 12px; word-break: break-all; }
 .ops-alert-ref { font-size: 12px; word-break: break-all; }
-/* 告警码 + 关联单号那一行：挂在标题/详情下面，替代两个独立列（列一多每列都窄到没法读） */
-.ops-alert-meta {
-  margin-top: 4px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+.ops-alert-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.ops-alert-detail { margin-top: 4px; color: var(--ds-muted); font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; }
+
+.t-button { border-radius: 7px; box-shadow: none !important; font-weight: 600; }
+.t-button.t-button--theme-primary, .t-button--variant-base.t-button--theme-primary { background: var(--ds-red) !important; border-color: var(--ds-red) !important; color: #fff !important; }
+.t-button.t-button--theme-primary:hover, .t-button--variant-base.t-button--theme-primary:hover { background: var(--ds-red-strong) !important; border-color: var(--ds-red-strong) !important; }
+.t-button--theme-danger { color: var(--ds-red-strong); }
+.t-input, .t-textarea__inner, .t-input-number, .t-select-input, .t-date-picker__input { border-color: #dfe2e6; border-radius: 7px; }
+.t-input:focus, .t-input--focused, .t-textarea__inner:focus, .t-input-number--focused, .t-select-input--focused { border-color: var(--ds-red); box-shadow: 0 0 0 2px rgb(201 42 33 / 12%); }
+.t-table { overflow: hidden; border: 1px solid var(--ds-line); border-radius: var(--ds-radius); background: var(--ds-surface); }
+.t-table th { color: #52525b; background: #fafafa; font-size: 12px; font-weight: 650; }
+.t-table td { color: var(--ds-body); font-size: 13px; }
+.t-table tbody tr:hover td { background: #fffafa; }
+.t-tag { border-radius: 5px; font-size: 11px; }
+.t-dialog { border-radius: 12px; }
+.t-dialog__header { color: var(--ds-ink); font-weight: 700; }
+.t-pagination { margin-top: 16px; }
+
+@media (max-width: 1080px) {
+  :root { --ds-sidebar: 204px; }
+  .app-layout__content { padding-left: 24px; padding-right: 24px; }
+  .login-side { padding-left: 38px; padding-right: 38px; }
 }
-/* 告警详情经常带换行（后端拼的多行事实），必须保留换行且能断长串（订单号 / 路径） */
-.ops-alert-detail {
-  margin-top: 4px; font-size: 12px; line-height: 1.7; color: #888;
-  white-space: pre-wrap; word-break: break-all;
+@media (max-width: 820px) {
+  :root { --ds-sidebar: 72px; }
+  .logo { justify-content: center; padding: 0; }
+  .logo__text, .nav-group__label, .app-layout__sider .t-menu__content, .sider-footer__meta { display: none; }
+  .app-layout__nav { padding-left: 10px; padding-right: 10px; }
+  .app-layout__sider .t-menu__item { justify-content: center; padding: 0; }
+  .app-layout__sider .t-menu__item .t-icon { margin-right: 0; }
+  .sider-footer { justify-content: center; padding: 12px 0; }
+  .header-admin { display: none; }
+  .app-layout__header { padding: 0 20px; }
+  .app-layout__content { padding: 22px 20px 42px; }
+  .login-wrap { grid-template-columns: 1fr; }
+  .login-side { display: none; }
+  .login-card { width: min(420px, calc(100% - 48px)); }
+}
+@media (max-width: 640px) {
+  .page-header { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .dashboard-intro { min-height: 0; }
+  .dashboard-intro__mark { display: none; }
+  .section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
+  .form-row { flex-direction: column; gap: 5px; }
+  .form-row__label { width: auto; padding-top: 0; text-align: left; }
+  .upload-field { flex-direction: column; }
+  .upload-field__preview, .upload-field__empty { width: min(100%, 300px); }
 }

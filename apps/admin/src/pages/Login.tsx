@@ -47,8 +47,19 @@ export default function LoginPage() {
 
   return (
     <div className="login-wrap">
+      <aside className="login-side" aria-label="后台介绍">
+        <div className="login-side__brand"><span className="login-side__mark">大</span><span>大帅餐饮</span></div>
+        <div className="login-side__copy">
+          <span className="login-side__eyebrow">OPERATIONS CONSOLE</span>
+          <h1>把门店内容，<br />做成能用的视频。</h1>
+          <p>从商家资料、口播文案到成片交付，统一在一个后台处理。</p>
+        </div>
+        <div className="login-side__footer">内容运营工作台 · 内部使用</div>
+      </aside>
       <form className="login-card" onSubmit={submit}>
-        <div className="login-card__title">大帅餐饮 · 管理后台</div>
+        <div className="login-card__brand"><span className="login-card__brand-mark">大</span><span>大帅餐饮</span></div>
+        <div className="login-card__title">登录管理后台</div>
+        <p className="login-card__subtitle">使用管理员账号继续</p>
         <div className="login-card__form">
           <label className="login-card__field">
             <span>用户名</span>
