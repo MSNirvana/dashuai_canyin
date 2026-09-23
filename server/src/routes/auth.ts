@@ -54,8 +54,16 @@ router.post('/wechat-login', async (req, res) => {
     const result = await loginByWechat(prisma, redis, { phoneCode, wxLoginCode })
     ok(res, result)
   } catch (e) {
-    if (e instanceof WxLoginFailedError) fail(res, 5001, `微信登录失败：${e.message}`, 502)
-    else fail(res, 5001, '微信登录失败', 500)
+    if (e instanceof WxLoginFailedError) {
+      // ★ 必须落服务端日志。这段错误原先只回客户端、不进日志 ⇒ 线上只剩一个 502，
+      //   排查微信一键登录时会完全失去第一现场（2026-09-23 实测：err.log 一片空白，
+      //   最后只能手工复现微信接口，才挖到 secsvcs/verifysession 的 40066 invalid url）。
+      console.error(`[auth] 微信一键登录失败：${e.message}`)
+      fail(res, 5001, `微信登录失败：${e.message}`, 502)
+    } else {
+      console.error(`[auth] 微信一键登录异常：${(e as Error).message}`)
+      fail(res, 5001, '微信登录失败', 500)
+    }
   }
 })
 

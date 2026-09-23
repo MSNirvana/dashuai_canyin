@@ -120,7 +120,13 @@ export async function getWxAccessToken(redis: Redis): Promise<string> {
 /** getPhoneNumber 返回的 code → 真实手机号（按次付费，需已申请「手机号快速验证」） */
 export async function verifyPhoneNumber(redis: Redis, code: string): Promise<VerifysessionResult> {
   const accessToken = await getWxAccessToken(redis)
-  const url = `${WX_HOST}/wxa/secsvcs/verifysession?access_token=${accessToken}`
+  // ★ 接口名必须是 business/getuserphonenumber。曾误写成 secsvcs/verifysession，
+  //   微信对该路径稳定返回 errcode 40066「invalid url」⇒ 微信一键登录**永远失败**，
+  //   且这里抛的是 WxLoginFailedError、路由又没打日志，线上只看得到 502、日志一片空白。
+  //   实测对照（同一 access_token、同一假 code，2026-09-23）：
+  //     /wxa/secsvcs/verifysession      → 40066 invalid url
+  //     /wxa/business/getuserphonenumber → 40029 invalid code（接口正确，只是 code 无效）
+  const url = `${WX_HOST}/wxa/business/getuserphonenumber?access_token=${accessToken}`
   const r = await postJson<{
     errcode?: number
     errmsg?: string
