@@ -4,7 +4,7 @@
 import type { PrismaClient } from '@prisma/client'
 import type { Redis } from 'ioredis'
 import { AiCallError, getAdapter, openaiImage, type AiUsage } from './adapters.js'
-import { CircuitBreaker } from './circuit-breaker.js'
+import { CircuitBreaker, DEFAULT_CIRCUIT } from './circuit-breaker.js'
 import { decryptSecret } from '../lib/secret.js'
 import { ceilDiv } from '../lib/decimal.js'
 import { HEALTH_PROBE_PROMPT, HEALTH_PROBE_IMAGE_PROMPT, HEALTH_PROBE_MAX_OUTPUT_TOKENS } from './health-probe.js'
@@ -238,7 +238,16 @@ export class AiGateway {
           await this.prisma.$transaction([
             this.prisma.aiProvider.update({
               where: { id: provider.id },
-              data: { usedBudgetFen: { increment: costFen }, healthStatus: 'HEALTHY' },
+              data: {
+                usedBudgetFen: { increment: costFen },
+                healthStatus: 'HEALTHY',
+                // ★ 成功即清零「连续失败」——「连续」这个词的唯一正确读法：
+                //   通道自己把活干完了，就说明它现在没有在坏。
+                consecutiveFailures: 0,
+                // 熔断标记的**数据库镜像**（写侧见 noteChannelFailure）：
+                //   能干活就顺手清掉，否则后台会一直挂着一个早该过期的熔断时间。
+                circuitOpenUntil: null,
+              },
             }),
             this.prisma.aiCallLog.create({
               data: {
@@ -284,6 +293,9 @@ export class AiGateway {
           if (isChannelLevelFailure(err)) {
             await this.circuit.open(provider.id)
             await this.circuit.record(provider.id, false)
+            // ★ Redis 的熔断只有 5 分钟记忆，必须同时落一份**持久**证据，
+            //   否则「这个通道在连续干不了活」这件事出了这个进程就没人知道。
+            await this.noteChannelFailure(provider.id, err)
             break
           }
 
@@ -306,6 +318,48 @@ export class AiGateway {
           ? `没有可用的候选通道：${skipped.join('；')}`
           : 'no available provider'),
       attempts,
+    }
+  }
+
+  /**
+   * 把一次「通道级硬故障」记到通道行上 —— Redis 熔断之外的**持久**证据。
+   *
+   * ★ 为什么不能只依赖 `CircuitBreaker`：那个标记只活在 Redis 里且带 `EX 300`，
+   *   5 分钟后自动遗忘。而本项目的 AI 调用是**低频**的（几分钟才几次），
+   *   于是「这个通道刚刚坏掉」这件事在下一次请求到来前就已经不存在了 ——
+   *   每个请求都要重新白等一次完整超时。
+   *   2026-09-23 实测：deepseek 在 `storyboard_generate` 上思考跑飞 108~147 秒，
+   *   越过 150s 场景超时才降级到 claude（41s）⇒ 用户实等 **191 秒**；
+   *   而健康体检全程把它判成 HEALTHY（因为它在别的场景成功过），从来不会降级它。
+   *
+   * ★ 判据与熔断器**严格一致**：只统计 `isChannelLevelFailure` 认定的错误
+   *   （TIMEOUT / NETWORK / 401 / 403 / 429 / 5xx）—— 这类才意味着「换条通道可能成功」。
+   *   `BAD_RESPONSE`（报文异常）与其余 4xx 多半是请求或配置本身的问题，
+   *   计进通道健康会让我们去停一条其实没坏的通道。
+   *
+   * ★ 本方法**绝不抛错**：它跑在故障转移的关键路径上。一次写库失败如果冒泡出去，
+   *   会把「换下一个候选」这件事本身也打断 —— 那比不计数严重得多。
+   */
+  private async noteChannelFailure(providerId: bigint, err: AiCallError): Promise<void> {
+    try {
+      await this.prisma.aiProvider.update({
+        where: { id: providerId },
+        data: {
+          consecutiveFailures: { increment: 1 },
+          lastFailureAt: new Date(),
+          lastFailureCode: (err.code ?? `HTTP_${err.status ?? '?'}`).slice(0, 64),
+          lastFailureMsg: err.message.slice(0, 500),
+          // `circuit_open_until` 此前**全代码只有读、没有任何写入点**（恒为 NULL，
+          // 于是后台「AI 通道」页永远显示不出「刚才熔断过」）。这里把 Redis 的
+          // 冷藏期镜像进库，运营才看得见发生了什么；成功分支在同一事务里清回 NULL。
+          circuitOpenUntil: new Date(Date.now() + DEFAULT_CIRCUIT.openSeconds * 1000),
+        },
+      })
+    } catch (e) {
+      console.error(
+        `[ai] 记录通道 ${providerId} 连续失败次数失败（不影响故障转移）:`,
+        (e as Error).message,
+      )
     }
   }
 

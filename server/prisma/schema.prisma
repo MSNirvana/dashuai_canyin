@@ -746,6 +746,23 @@ model AiProvider {
   ///     都会把它清回 false（运营意图优先，sweeper 从此不再碰它的开/关）。
   autoDisabled      Boolean   @default(false) @map("auto_disabled")
   circuitOpenUntil  DateTime? @map("circuit_open_until") @db.DateTime(3)
+  /// 请求路径上**连续**的「通道级硬故障」次数（TIMEOUT / NETWORK / 401 / 403 / 429 / 5xx）。
+  /// 任何一次成功（含备用通道顶上来之后它自己的成功）立刻清零。
+  ///
+  /// ★★ 为什么必须存在这一列（2026-09-23）：
+  ///   在这之前，「这个通道最近是不是在连续失败」在整个系统里**无法回答**——
+  ///   · `ai_call_log` **只在成功时写**（gateway 的 create 在 try 内），失败/超时不留痕；
+  ///   · Redis 里的熔断只有一个 `EX 300` 的一次性标记，5 分钟后就遗忘；
+  ///   · 健康体检的判据是「24h 内有过一次真实成功 ⇒ 免检」，**通道级**而非场景级
+  ///     ⇒ 一个通道在某场景上跑飞超时，只要它在别的场景成功过一次，就永远判「可用」。
+  ///   实测后果：deepseek 在 storyboard 上思考跑飞 108~147s，越过 150s 超时才降级到
+  ///   claude（41s），用户实等 191 秒；而体检全程判它 HEALTHY。
+  ///   ⇒ 失败必须变成**信号**，而且这个信号要能比「某处成功过一次」更强。
+  consecutiveFailures Int      @default(0) @map("consecutive_failures") @db.UnsignedInt()
+  lastFailureAt     DateTime? @map("last_failure_at") @db.DateTime(3)
+  /// `AiCallError.code`（TIMEOUT / NETWORK / HTTP_429 / …）—— 让后台能显示「为什么」而不只是「失败了」
+  lastFailureCode   String?   @map("last_failure_code") @db.VarChar(64)
+  lastFailureMsg    String?   @map("last_failure_msg") @db.VarChar(500)
   lastTestAt        DateTime? @map("last_test_at") @db.DateTime(3)
   lastTestLatencyMs Int?      @map("last_test_latency_ms")
   lastTestStatus    String?   @map("last_test_status") @db.VarChar(16)

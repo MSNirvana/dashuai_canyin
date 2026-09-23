@@ -221,11 +221,52 @@ interface ModelSpec {
  *      是思考 token（正文只有 ~1500 字符）。给 4000 时「严格截断」的通道（Claude）
  *      会返回空正文；DeepSeek 只是变慢。所以本场景覆盖成 12000。
  *
- *   ⇒ timeout 150s（覆盖 ② 的 130+s 尾巴）、maxRetries 0（单次尝试约 100s，
- *     重试的代价大于换通道；同时保证最坏 2×150s=300s 不超过前端的 340s 兜底）、
+ *   ⇒ maxRetries 0（单次尝试约 40~50s，重试的代价大于换通道）、
  *     primary=DeepSeek、备用=Claude。
+ *
+ * ─────────────── ★★ 2026-09-23 修正：问题的根因不是「DeepSeek 慢」，是「思考预算没人管」 ───────────────
+ *
+ * 上面 ② 那条「DeepSeek 对思考很慷慨、耗时 60~130+ 秒」被当成了**通道的固有属性**，
+ * 于是用「timeout 给到 150s」去容忍它。这个取舍在生产上会周期性崩掉：
+ *
+ *   线上实测（`ai_call_log`）：同一场景同一通道，completion_tokens 从 3,165 到 17,650 都出现过，
+ *   而可见 JSON 只有 1,300~1,600 字符 —— **差额全是隐藏思考**。
+ *   2026-09-23 一次真实请求：DeepSeek 思考跑飞越过 150s 超时 → 降级 Claude（41s）
+ *   ⇒ **用户实等 191 秒**（150s 纯浪费），而且 nginx 记录到 499（用户早就切走页面了）。
+ *   ⚠ `max_output_tokens=12000` **管不住思考**：实测 `completion_tokens=17650 > 12000`
+ *     （上游没按它裁）⇒「把 max_output_tokens 调小」是无效动作。
+ *
+ * 有效杠杆是 `reasoning_effort:'low'`（五个文案场景 09-22 已验证过：DeepSeek 50s→7~9s）。
+ * 分镜当时**不在** `LOW_REASONING_SCENES` 里，所以从来没享受过这个参数。
+ *
+ * ★ 本次按 09-22 的口径对分镜真打了一轮（`scripts/probe-storyboard-timing.ts`，
+ *   同一条真实渲染后的 prompt、直连适配器、每组 4 次样本）：
+ *
+ *   变体                  耗时样本（s）              中位    可见字数        镜头数
+ *   deepseek 不压思考     108.3 / 63.1 / 100.4 / 104.3   ~102   1159~1237      6/6/6/6
+ *   deepseek 压 low       35.5 / 51.5 / 29.1 / 43.0     ~39    985~1576       5/6/6/6
+ *   claude   不压思考     54.2（线上另一次 41.3）        ~54    1079           6
+ *   claude   压 low       50.3                          ~50    1077           6
+ *
+ *   ⇒ ① 压思考对 DeepSeek 有效：中位 **102s → 39s**，且 4/4 全部 ≤ 51.5s
+ *      （不压时 3/4 都在 100s 以上，最坏 108s）。
+ *      ⚠ 只有 2.6 倍、不是文案那种 7 倍 —— 因为分镜的**正文本身**就要 ~1000 字，
+ *        压掉的是思考（约 9,000 → 约 1,500 token）。
+ *      ⇒「可见字数/镜头数」与不压时同档、全部落在 COMPLEX 的 5~6 镜规则内，质量未降。
+ *  ② Claude 对 `reasoning_effort` **完全无视**（54.2 → 50.3s，噪声），与
+ *     `scene-codes.ts` 里那条实测一致；压思考后 **DeepSeek(39s) 仍快于 Claude(54s)**，
+ *     所以**主候选仍然是 DeepSeek，不需要换**。
+ *  ③ ⇒ 配合 `LOW_REASONING_SCENES` 加上 storyboard，**timeout 可以从 150s 收到 90s**：
+ *     中位实测 39s，最坏样本 51.5s，90s 留了 1.75 倍余量（收紧太多会把「只是慢」误判成
+ *     超时 —— 那次超时会计入 `consecutive_failures`，连败 3 次会把一条本来能用的通道自动停用）。
+ *     最坏总耗时 = 90s + Claude(~54s) = 144s，仍比修复前的 191s 好，典型值更是 5 倍改善。
+ *  ④ `maxOutputTokens` **保持 12000 不动**：它是上限不是目标，压思考后 DeepSeek 只用
+ *     2,602~5,561，而 Claude 会因为无视 reasoning_effort 继续把思考花在预算里
+ *     （给 4000 会返回空正文）⇒ 收它只会把 Claude 这条备用打废。
+ *
  *   ⚠ 改这里的 timeout / 候选数 / maxRetries 时，**必须同步前端**
  *     `apps/mini/src/services/creation.ts` 的 `STORYBOARD_TIMEOUT_MS`（算法写在那个常量上）。
+ *     本次是**收紧**（90s → 服务端最坏 2×90=180s ≤ 前端 340s），所以**不需要重出小程序包**。
  */
 /** 出图通道的 code。★ 必须在 SCENE_OVERRIDES 之前声明（那个对象字面量在模块加载时求值） */
 const IMAGE_CHANNEL = 'tokenbox-image'
@@ -244,7 +285,8 @@ const SCENE_OVERRIDES: Record<
   storyboard_generate: {
     primary: 'tokenbox-deepseek',
     fallbacks: ['tokenbox-claude'],
-    timeoutMs: 150_000,
+    // ★ 2026-09-23：150_000 → 90_000，依据见上方「思考预算没人管」那段实测表
+    timeoutMs: 90_000,
     maxRetries: 0,
     maxOutputTokens: 12_000,
   },

@@ -107,6 +107,43 @@ export const IMAGE_SCENE_CODES: readonly SceneCode[] = [SCENE.publish_cover]
  *   取决于**上游通道**（这里两个通道都实测过、claude 不认），不是运营可调的商业参数；
  *   写成运营可改反而会让「给不支持的模型配上它」变成静默 400。
  *   要扩到别的场景时，**必须先按上表的口径真打一轮**再往这里加。
+ *
+ * ────────────────── ★★ 2026-09-23 增补：分镜场景（storyboard_generate） ──────────────────
+ *
+ * 它**最初不在这个集合里**（当时的判断是「大输出场景更需要思考」），代价是生产上
+ * 反复出现的 191 秒白等：
+ *   `ai_call_log` 实测同一场景同一通道 `completion_tokens` 从 3,165 到 17,650 都出现过，
+ *   而可见 JSON 只有 1,300~1,600 字符 ⇒ **差额全是隐藏思考**。
+ *   一次真实请求：思考跑飞越过 150s 场景超时 → 降级 Claude（41s）⇒ **用户实等 191 秒**，
+ *   nginx 记到 499（用户早切走页面了）；而 30 分钟一轮的健康体检**全程判该通道 HEALTHY**，
+ *   从来不会降级它 —— 因为证据是「通道级」的，它在别的场景成功过。
+ *   ⚠ `max_output_tokens=12000` **管不住思考**（实测 `completion_tokens=17650 > 12000`，
+ *   上游没按它裁）⇒「把 max_output_tokens 调小」是**无效动作**，有效杠杆只有压思考。
+ *
+ * ★ 已按上表同样的口径真打一轮（`scripts/probe-storyboard-timing.ts`，
+ *   同一条真实渲染后的 prompt、直连适配器、每组 4 次样本）：
+ *
+ *   变体                  耗时样本（s）                   中位    完成 token    可见字数     镜头数
+ *   deepseek 不压思考      108.3 / 63.1 / 100.4 / 104.3   ~102   6080~10151   1159~1237   6/6/6/6
+ *   deepseek 压 low        35.5 / 51.5 / 29.1 / 43.0      ~39    2602~5561    985~1576    5/6/6/6
+ *   claude   不压思考      54.2（线上另一次 41.3）         ~54    4511         1079        6
+ *   claude   压 low        50.3                           ~50    4316         1077        6
+ *
+ *   三条结论，缺一条都会配错：
+ *   ① 压思考对 DeepSeek 有效：中位 **102s → 39s**，4/4 全部 ≤ 51.5s
+ *      （不压时 3/4 都在 100s 以上）。只有 2.6 倍、不是文案那种 7 倍 —— 因为分镜的
+ *      **正文本身**就要 ~1000 字，被压掉的是思考（约 9,000 → 约 1,500 token）。
+ *   ② **质量未降**：可见字数与镜头数同档，且 4/4 全部落在 `COMPLEX`（5~6 镜）规则内。
+ *   ③ Claude 仍然无视 `reasoning_effort`（54.2 → 50.3s，属噪声）；而压思考之后
+ *      **DeepSeek(39s) 仍快于 Claude(54s)** ⇒ 主候选**不需要**从 DeepSeek 换走。
+ *
+ * ★ 配套改动（必须一起看）：
+ *   · `scripts/setup-ai-channels.ts` 的 `SCENE_OVERRIDES.storyboard_generate.timeoutMs`
+ *     150_000 → 90_000（中位 39s、最坏样本 51.5s，90s 留 1.75 倍余量）；
+ *   · 前端 `apps/mini/src/services/creation.ts` 的 `STORYBOARD_TIMEOUT_MS` **不用动** ——
+ *     本次是**收紧**（服务端最坏 2×90=180s ≤ 前端 340s），所以也不需要重出小程序包。
+ * ★ 加场景时**不要**顺手调 `max_output_tokens`：它跟压思考无关，而且是 Claude 这条
+ *   备用通道的活路（给 4000 时它会因 `finish_reason=length` 返回空正文）。
  */
 export const LOW_REASONING_SCENES: ReadonlySet<string> = new Set<string>([
   SCENE.copy_traffic,
@@ -114,4 +151,10 @@ export const LOW_REASONING_SCENES: ReadonlySet<string> = new Set<string>([
   SCENE.copy_knowledge,
   SCENE.copy_product,
   SCENE.copy_recommend,
+  /**
+   * 分镜：本集合里**唯一**一个「压思考之后仍然比备用通道快」的场景
+   * （39s vs Claude 54s）。★ 别用「分镜更复杂、所以要更多思考」的直觉把它删掉 ——
+   * 实测那 9,000 个 token 是与正文无关的**跑飞**，不是推理深度。
+   */
+  SCENE.storyboard_generate,
 ])

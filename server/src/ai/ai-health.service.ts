@@ -54,6 +54,7 @@
 // 全部被停用之后，每轮只剩「恢复探测」（每条 1 轮）= 3 × 90s = 4.5 分钟，稳态开销可接受。
 import type { PrismaClient } from '@prisma/client'
 import { normalizeModelCapability } from './model-capabilities.js'
+import { raiseOpsAlert } from '../services/ops-alert.service.js'
 
 /** 扫描周期：默认 30 分钟（需求原话）。下限 60s 防止误配置把上游打爆。 */
 const SWEEP_INTERVAL_MS = Math.max(60_000, Number(process.env.AI_HEALTH_SWEEP_MS ?? 1_800_000))
@@ -81,6 +82,26 @@ const FIRST_RUN_DELAY_MS = Math.max(0, Number(process.env.AI_HEALTH_FIRST_DELAY_
  * 于是判据自然交回给探活；而偶发使用的通道不会因为「今天恰好没人用 + 探测恰好慢」被误停。
  */
 const EVIDENCE_MS = Math.max(60_000, Number(process.env.AI_HEALTH_EVIDENCE_MS ?? 86_400_000))
+/**
+ * 「连续 N 次通道级硬故障 ⇒ 构成真实故障证据」的阈值。
+ *
+ * ★★ 这条补的是本文件「真实证据优先」那套判据**唯一的漏洞**（2026-09-23 生产问题）：
+ *   合成探活测不出「慢」是**刻意的**（见文件头），而 `hasRecentRealSuccess` 是
+ *   **通道级**证据 —— 一个通道在别的场景成功过一次，就能把「它在某个场景上反复
+ *   超时干不了活」这件事一直盖住。实测：deepseek 03:08 在 `copy_product` 成功 8.6s
+ *   ⇒ 03:11 在 `storyboard_generate` 上思考跑飞、越过 150s 超时、用户白等 191 秒，
+ *   而体检**全程判它 HEALTHY、从来不会降级它**。
+ *   ⇒ 需要一个**比「某处成功过一次」更强的真实证据**：请求路径上的连续失败。
+ *   `consecutive_failures` 由 `gateway.ts::noteChannelFailure`（通道级硬故障时 +1）
+ *   与成功分支（清零）共同维护，见迁移 `20260923120000_add_ai_provider_failure_counter`。
+ *
+ * 为什么是 3：阈值 1 会被一次网络抖动做掉（把可用通道误停用 ⇒ 流量全压到更贵的备用，
+ *   这正是文件头里 09-22 那次「宁可放过慢」的同一个取舍）；3 意味着「连续三个业务请求
+ *   都没干成活」，已经不是抖动。
+ *   ⚠ 攒到阈值的代价 = 每次白等一次场景超时，所以它必须与 `ai_scene.timeout_ms` 一起看：
+ *   分镜已在 2026-09-23 由 150s 收到 60s，否则「连败 3 次」的代价大得离谱。
+ */
+const FAIL_THRESHOLD = Math.max(1, Number(process.env.AI_HEALTH_FAIL_THRESHOLD ?? 3))
 /**
  * 图像通道的探活节流间隔（默认 6 小时）。
  *
@@ -141,16 +162,32 @@ export function decideHealthAction(a: {
   otherEnabledProviderCount: number
   /** 最近 EVIDENCE_MS 内有没有真实调用成功（真实证据压过合成探测） */
   hasRecentRealSuccess: boolean
+  /**
+   * 请求路径上的**连续通道级硬故障**次数（`ai_provider.consecutive_failures`，任何一次成功清零）。
+   *
+   * ★ 它存在的唯一理由：`hasRecentRealSuccess` 是**通道级**证据，盖不住「同一条通道
+   *   在某个场景上反复干不了活」。计数 ≥ 阈值时它是**更新、更具体**的真实证据，
+   *   必须压过 24h 窗口里那次「某处成功过」。
+   */
+  consecutiveFailures: number
+  /** 连续失败阈值（`AI_HEALTH_FAIL_THRESHOLD`，默认 3） */
+  failThreshold: number
 }): HealthAction {
-  // ★ 两种证据合并成一个「健康」判断，但**谁是主判据要能追溯**：
-  //   探测成功 → KEEP；只有真实证据 → KEEP_EVIDENCE（后台据此显示「因真实调用成功而免检」）。
-  const evidenceHealthy = a.anySuccess || a.hasRecentRealSuccess
+  const realFailure = a.consecutiveFailures >= a.failThreshold
+  // ★ 真实**故障**证据（连续失败计数）压过「某处成功过」，但**压不过本轮探测成功**：
+  //   探测是刚刚发生的直接测量，计数是历史 —— 一条刚被探通的通道，不该因为历史计数
+  //   继续被停用（否则会出现「刚修好又被旧计数关掉」的死循环）。
+  const evidenceHealthy = a.anySuccess || (a.hasRecentRealSuccess && !realFailure)
+  // 谁是主判据要能追溯：探测成功 → KEEP；只有真实证据 → KEEP_EVIDENCE（后台据此显示「免检」）。
   if (evidenceHealthy) {
     // 我们自己之前关掉的 → 现在有证据说它能干活，打开。
     // ⚠ 这条**必须**排在「wasAutoDisabled 且没探通 → KEEP」之前：否则会出现一个死结 ——
     //   通道在 T 时刻被停用，而它在 [T-24h, T] 里本来有过一次真实成功，
     //   于是之后每轮体检都被「有真实证据 ⇒ 免探测」跳过，同时又因「已停用且没探通 ⇒ KEEP」
     //   而永远不打开 —— 白白停用最多 24 小时。
+    //   ★ 2026-09-23 补充：调用方现在只在 `hasRecentRealSuccess && !realFailure` 时免探测。
+    //     连续失败计数达阈值的通道**一定会被真探一次**，所以这条死结在最坏情况下
+    //     也不会拖到 24 小时（见 sweep 里 skipProbe 的注释）。
     if (a.wasAutoDisabled) return 'ENABLE'
     return a.anySuccess ? 'KEEP' : 'KEEP_EVIDENCE'
   }
@@ -179,6 +216,12 @@ export interface ProviderHealthOutcome {
   /** 每轮是否成功 */
   results: boolean[]
   action: HealthAction
+  /**
+   * 本轮看到的「连续通道级硬故障次数」（`ai_provider.consecutive_failures`）。
+   * ★ 它让「为什么本轮不免探测 / 为什么判它真实故障」这条链路可追溯 ——
+   *   没有它，`KEEP_EVIDENCE` 与「有计数但没到阈值」在返回值里长得一模一样。
+   */
+  consecutiveFailures: number
   /** 最后一次探测的错误（成功/未探测时为 undefined） */
   lastError?: string
   /** action 为 KEEP_EVIDENCE / REFUSE_LAST / 未写库时的原因说明 */
@@ -234,6 +277,8 @@ export async function sweepAiProviderHealth(
     retryDelayMs?: number
     gapMs?: number
     evidenceMs?: number
+    /** 连续失败阈值（测试可注入 1 表示「失败一次就算真实故障」） */
+    failThreshold?: number
     /** 图像通道探活节流间隔（测试可注入 0 表示不节流） */
     imageProbeIntervalMs?: number
     /** 图像通道探活超时 */
@@ -248,6 +293,7 @@ export async function sweepAiProviderHealth(
   const retryDelayMs = deps.retryDelayMs ?? RETRY_DELAY_MS
   const gapMs = deps.gapMs ?? GAP_MS
   const evidenceMs = deps.evidenceMs ?? EVIDENCE_MS
+  const failThreshold = deps.failThreshold ?? FAIL_THRESHOLD
   const imageProbeIntervalMs = deps.imageProbeIntervalMs ?? IMAGE_PROBE_INTERVAL_MS
   const imageProbeTimeoutMs = deps.imageProbeTimeoutMs ?? IMAGE_PROBE_TIMEOUT_MS
   const now = deps.now ?? new Date()
@@ -320,6 +366,7 @@ export async function sweepAiProviderHealth(
         rounds: 0,
         results: [],
         action: 'KEEP',
+        consecutiveFailures: p.consecutiveFailures,
         note: '没有启用中的模型，跳过（属配置缺失，不算不健康）',
       })
       continue
@@ -329,6 +376,17 @@ export async function sweepAiProviderHealth(
     const isImageProbe = normalizeModelCapability(model.capability) === 'IMAGE'
 
     const hasRecentRealSuccess = withEvidence.has(providerId)
+    /**
+     * 请求路径上的连续失败已达阈值 ⇒ 这是一条**比「某处成功过」更强**的真实故障证据。
+     *
+     * ★ 为什么它会**取消免探测**：`hasRecentRealSuccess` 是通道级证据，而这里的故障是
+     *   场景级的（同一个通道在别的场景好好的、在这一个场景上反复跑飞）。
+     *   若仍然免探测，`decideHealthAction` 拿到的 `anySuccess=false` 也无法区分
+     *   「没探」与「探了失败」，这条通道就会一直卡在「有真实成功 ⇒ 免检」的豁免里，
+     *   永远得不到一次真正的读数。⇒ 有真实故障时就一定要真探一次。
+     */
+    const realFailure = p.consecutiveFailures >= failThreshold
+    const skipProbe = hasRecentRealSuccess && !realFailure
 
     /**
      * 图像通道的探活节流：距上次探活不足 IMAGE_PROBE_INTERVAL_MS 就本轮免探。
@@ -366,6 +424,7 @@ export async function sweepAiProviderHealth(
         rounds: 0,
         results: [],
         action: 'KEEP',
+        consecutiveFailures: p.consecutiveFailures,
         note:
           `图像通道探活节流：距上次探活不足 ${Math.round(imageProbeIntervalMs / 3_600_000)} 小时，` +
           '本轮免探（出图探活一张约 $0.1，只有它能代表可用性）',
@@ -382,7 +441,7 @@ export async function sweepAiProviderHealth(
     let lastError: string | undefined
     let latencyMs = 0
 
-    if (hasRecentRealSuccess) {
+    if (skipProbe) {
       result.skipByEvidence += 1
     } else {
       if (!first && gapMs > 0) await sleep(gapMs)
@@ -437,16 +496,19 @@ export async function sweepAiProviderHealth(
       anySuccess,
       otherEnabledProviderCount,
       hasRecentRealSuccess,
+      consecutiveFailures: p.consecutiveFailures,
+      failThreshold,
     })
 
     const outcome: ProviderHealthOutcome = {
       providerId,
       code: p.code,
       name: p.name,
-      skippedByEvidence: hasRecentRealSuccess,
+      skippedByEvidence: skipProbe,
       rounds: results.length,
       results,
       action,
+      consecutiveFailures: p.consecutiveFailures,
       ...(lastError ? { lastError } : {}),
     }
     const evidenceHours = Math.round(evidenceMs / 3_600_000)
@@ -459,10 +521,39 @@ export async function sweepAiProviderHealth(
         })
         enabledIds.delete(providerId)
         result.disabled += 1
+        // ★ 自动降级是**必须让人知道**的事件：在此之前这个动作只写一行 pm2 日志，
+        //   而「没有人会去看 pm2 控制台」（见 ops-alert.service.ts 文件头）。
+        //   告警**绝不抛错**，且同键在窗口内合并 —— 不会每 30 分钟刷一次手机。
+        await raiseOpsAlert(prisma, {
+          code: 'AI_CHANNEL_AUTO_DISABLED',
+          severity: 'CRITICAL',
+          title: realFailure
+            ? `AI 通道 ${p.code} 连续失败 ${p.consecutiveFailures} 次，已被自动停用`
+            : `AI 通道 ${p.code} 探活连续失败，已被自动停用`,
+          detail:
+            `依据：${realFailure ? `请求路径连续通道级硬故障 ${p.consecutiveFailures} 次（阈值 ${failThreshold}）` : '合成探活多轮全部失败'}` +
+            `${p.lastFailureCode ? `，最后一次是 ${p.lastFailureCode}` : ''}` +
+            `${p.lastFailureMsg ? `：${p.lastFailureMsg.slice(0, 200)}` : ''}。` +
+            `已改用同能力的其它通道；探活通过后会自动恢复。`,
+          refType: 'AI_PROVIDER',
+          refId: providerId,
+        })
+        console.warn(
+          realFailure
+            ? `[ai-health] 通道 ${p.code} 因连续失败 ${p.consecutiveFailures} 次被自动停用`
+            : `[ai-health] 通道 ${p.code} 探活连续失败，已被自动停用`,
+        )
       } else if (action === 'ENABLE') {
         await prisma.aiProvider.update({
           where: { id: p.id },
-          data: { enabled: true, autoDisabled: false, healthStatus: 'HEALTHY' },
+          data: {
+            enabled: true,
+            autoDisabled: false,
+            healthStatus: 'HEALTHY',
+            // ★ 恢复即清零：不清的话它在下一轮体检里会因为同一个计数继续被判成
+            //   realFailure —— 于是「刚探通就被这个数字再关一次」。
+            consecutiveFailures: 0,
+          },
         })
         enabledIds.add(providerId)
         result.enabled += 1
@@ -472,6 +563,14 @@ export async function sweepAiProviderHealth(
         console.warn(
           `[ai-health] 通道 ${p.code} 已自动重新启用（曾连续失败被自动停用）`,
         )
+        await raiseOpsAlert(prisma, {
+          code: 'AI_CHANNEL_AUTO_ENABLED',
+          severity: 'WARN',
+          title: `AI 通道 ${p.code} 已自动恢复启用`,
+          detail: `健康体检探活通过（或最近 ${evidenceHours} 小时内有真实调用成功），已重新接入候选链。`,
+          refType: 'AI_PROVIDER',
+          refId: providerId,
+        })
       } else if (action === 'REFUSE_LAST') {
         result.refused += 1
         outcome.note =
@@ -481,13 +580,30 @@ export async function sweepAiProviderHealth(
           `[ai-health] 通道 ${p.code} 探测失败（能力 ${probeCapability}），但它是最后一条能顶上的通道` +
             ' —— 保留并继续告警（本分支**故意不写** healthStatus=DOWN：那在 gateway 的候选跳过里等同于停用）',
         )
-      } else if (!p.autoDisabled && anySuccess && p.healthStatus !== 'HEALTHY') {
+        // 最后一条通道顶着故障继续提供服务，是最需要人介入的一种局面：没有可替代者，
+        // 且每一次请求都在白等超时。必须推到手机上，而不是只留一行 console.error。
+        await raiseOpsAlert(prisma, {
+          code: 'AI_LAST_CHANNEL_UNHEALTHY',
+          severity: 'CRITICAL',
+          title: `AI 通道 ${p.code} 不健康，但它该能力的最后一条通道`,
+          detail:
+            `探活失败或连续失败 ${p.consecutiveFailures} 次，但它能提供 ${probeCapability} 能力` +
+            '且没有替代通道，因此**不能**停用（停用会让依赖它的场景静默落到兜底模板）。' +
+            '需要人工处理：补一条同能力通道，或排查上游。',
+          refType: 'AI_PROVIDER',
+          refId: providerId,
+        })
+      } else if (!p.autoDisabled && anySuccess && (p.healthStatus !== 'HEALTHY' || p.consecutiveFailures > 0)) {
         // 探测通了但标记还是非健康（例如被别的机制写成 DEGRADED/DOWN）→ 把标记纠正回来。
+        // ★ 顺手清掉连续失败计数：刚探通就是「它现在能干这活」的直接测量，
+        //   比历史计数更新 —— 不清的话它会在下一轮体检里继续被判成 realFailure。
         await prisma.aiProvider.update({
           where: { id: p.id },
-          data: { healthStatus: 'HEALTHY' },
+          data: { healthStatus: 'HEALTHY', consecutiveFailures: 0 },
         })
-        outcome.note = `探测通过，healthStatus ${p.healthStatus} → HEALTHY`
+        outcome.note =
+          `探测通过，healthStatus ${p.healthStatus} → HEALTHY` +
+          (p.consecutiveFailures > 0 ? `，连续失败计数 ${p.consecutiveFailures} → 0` : '')
       }
     } catch (e) {
       outcome.note = `写库失败：${(e as Error).message}`
@@ -495,7 +611,10 @@ export async function sweepAiProviderHealth(
     }
 
     if (hasRecentRealSuccess && !outcome.note) {
-      outcome.note = `最近 ${evidenceHours} 小时内有真实调用成功，免探测、不停用`
+      outcome.note = realFailure
+        ? `最近 ${evidenceHours} 小时内有真实调用成功，但连续失败 ${p.consecutiveFailures} 次` +
+          `（≥ 阈值 ${failThreshold}）属于更强的故障证据 ⇒ 仍按真实故障处理`
+        : `最近 ${evidenceHours} 小时内有真实调用成功，免探测、不停用`
     }
     if (anySuccess && !outcome.note) outcome.note = `探测通过（${latencyMs}ms）`
     result.outcomes.push(outcome)

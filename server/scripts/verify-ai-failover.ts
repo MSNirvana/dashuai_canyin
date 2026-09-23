@@ -271,20 +271,45 @@ let deepseekModelId = 0n
       !c.includes(gptModelId),
       'storyboard_generate 候选链里没有 GPT（长输出必被上游 524 掐断，留着只是白等一个超时）',
     )
+    /**
+     * ★★ 2026-09-23 修正：这条断言原来是 `timeoutMs >= 150_000`，理由是
+     *   「DeepSeek 实测 60~130+ 秒，130s 会误杀它」。那个理由把「60~130+ 秒」
+     *   当成了**通道的固有属性**，而实测根因是**思考预算没人管**：
+     *   同一场景同一通道 `completion_tokens` 在 3,165~17,650 之间波动，可见正文只有
+     *   1,300~1,600 字符 ⇒ 差额全是隐藏思考。压上 `reasoning_effort:'low'` 之后
+     *   中位 **102s → 39s**、4/4 样本全部 ≤ 51.5s（详见 scene-codes.ts 的实测表）。
+     *   ⇒ 现在的要求反过来了：**要给够，但不许给太宽**。给太宽的代价不是「等一下」，
+     *     而是每次跑飞都要白等一个完整超时、并给该通道记一次 `consecutive_failures`
+     *     —— 连败 3 次体检就会把它自动停用（`AI_HEALTH_FAIL_THRESHOLD`）。
+     *   下限 60s 保的是「别把只是慢的正常调用误杀」（最坏样本 51.5s）。
+     */
     check(
-      sb.timeoutMs >= 150_000,
-      'storyboard_generate 超时 ≥ 150s（DeepSeek 实测 60~130+ 秒，130s 会误杀它）',
+      sb.timeoutMs >= 60_000 && sb.timeoutMs <= 120_000,
+      'storyboard_generate 超时落在 60~120s（压思考后中位 39s / 最坏样本 51.5s）',
       `实际 ${sb.timeoutMs}ms`,
     )
     check(
       (sb.maxOutputTokens ?? 0) >= 10_000,
-      'storyboard_generate 输出预算 ≥ 10000（实测思考+正文需 ~10500；4000 会让严格截断的通道返回空正文）',
+      'storyboard_generate 输出预算 ≥ 10000（Claude 无视 reasoning_effort，预算会同时装思考+正文；给 4000 它返回空正文）',
       `实际 ${sb.maxOutputTokens}`,
     )
     check(
       sb.maxRetries === 0,
-      'storyboard_generate 不重试（单次尝试 ~100s，重试代价大于换通道；并保证最坏 2×150s=300s 不超过前端 340s）',
+      'storyboard_generate 不重试（单次尝试 ~40s，重试代价大于换通道）',
       `实际 ${sb.maxRetries}`,
+    )
+    /**
+     * ★ 与文案场景同一条不变量：**服务端最坏耗时必须 ≤ 前端兜底**。
+     *   算法 = 候选数 × 单候选超时 × (maxRetries+1)。
+     *   2026-09-23 由 2×150s=300s 收到 2×90s=180s ⇒ `STORYBOARD_TIMEOUT_MS`（340s）
+     *   **不需要**跟着改（收紧方向总是安全的，前端提前放弃才会出问题）。
+     *   但这条断言必须留着 —— 防止将来有人把超时又抬上去而忘了同步前端。
+     */
+    const sbWorstMs = c.length * sb.timeoutMs * (sb.maxRetries + 1)
+    check(
+      sbWorstMs <= 340_000,
+      `★ storyboard_generate 最坏耗时 ${sbWorstMs}ms ≤ 前端兜底 340s`,
+      `候选${c.length} × ${sb.timeoutMs}ms × (${sb.maxRetries}+1)`,
     )
   } else {
     check(false, 'storyboard_generate 场景存在')
@@ -340,6 +365,16 @@ let deepseekModelId = 0n
   for (const code of COPY_SCENES) {
     check(LOW_REASONING_SCENES.has(code), `★ ${code} 在 LOW_REASONING_SCENES 里（压掉思考预算）`)
   }
+  /**
+   * ★★ 2026-09-23 新增：分镜同样必须压思考 —— 它是这个集合里**唯一**
+   *   「压思考之后仍然比备用通道快」的场景（39s vs Claude 54s）。
+   *   漏了它的代价是每次请求白等一个完整超时：线上实测 108~147 秒越过 150s 才降级，
+   *   用户实等 191 秒、nginx 记到 499。这条断言能在跑测试时就把「有人把它删了」抓到。
+   */
+  check(
+    LOW_REASONING_SCENES.has('storyboard_generate'),
+    '★ storyboard_generate 在 LOW_REASONING_SCENES 里（压掉思考预算；实测中位 102s → 39s）',
+  )
 
   // 三个候选通道都是推理模型，max_tokens 要同时容纳「思考 + 正文」。
   // 原先 300~800 的预算（按 mock/非推理模型定的）会让输出被思考吃光、正文返回空。

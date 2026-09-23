@@ -77,6 +77,8 @@ interface StubRow {
   models: { modelCode: string; capability: string; enabled: boolean }[]
   /** 上次探活时间（图像通道的节流判据） */
   lastTestAt?: Date
+  /** 请求路径上的连续通道级硬故障次数（2026-09-23 新增的「真实故障证据」） */
+  consecutiveFailures?: number
 }
 
 /** 一条 ai_call_log 的「证据」行 */
@@ -114,6 +116,15 @@ function makeFakePrisma(rows: StubRow[], logs: StubLog[] = []) {
     evidenceArgs?: Record<string, unknown>
     updates: UpdateCall[]
   } = { updates: [] }
+  /**
+   * 收到的 ops_alert（2026-09-23 新增）。
+   *
+   * ★ 为什么要在桩里实现它：`raiseOpsAlert` 的契约是「**绝不抛错**」——
+   *   所以在没有 `opsAlert` 桩的假 prisma 上，它会静默走进 catch 分支、
+   *   只打一行「记录失败」的日志，**用例照样全绿**。那等于自动降级这条
+   *   最该被验证的出口完全没有被覆盖。这里补上桩，把它变成可断言的事实。
+   */
+  const alerts: { code: string; severity?: string; title: string }[] = []
   const db = {
     aiProvider: {
       async findMany(args: { where?: Record<string, unknown> }) {
@@ -155,8 +166,24 @@ function makeFakePrisma(rows: StubRow[], logs: StubLog[] = []) {
         return out
       },
     },
+    /**
+     * 极简 ops_alert 桩：`findFirst` 一律返回 null ⇒ 每条告警都新开一行，
+     * 于是「发生了几次自动降级」可以直接数出来（真实实现里的合并去重不是本脚本的目标）。
+     */
+    opsAlert: {
+      async findFirst() {
+        return null
+      },
+      async create(args: { data: Record<string, unknown> }) {
+        alerts.push(args.data as { code: string; severity?: string; title: string })
+        return { id: BigInt(alerts.length), ...args.data }
+      },
+      async update() {
+        return {}
+      },
+    },
   }
-  return { prisma: db as unknown as PrismaClient, state, calls }
+  return { prisma: db as unknown as PrismaClient, state, calls, alerts }
 }
 
 /** 固定返回同一个结果的 probe，并按 provider 记录被调用次数 */
@@ -215,6 +242,8 @@ const ROW = (
   autoDisabled: false,
   healthStatus: 'HEALTHY',
   priority: id * 10,
+  // 默认「零连续失败」——与线上迁移后的存量数据一致（`DEFAULT 0`）
+  consecutiveFailures: 0,
   models: [MODEL()],
   ...extra,
 })
@@ -223,25 +252,45 @@ const HOUR = 3_600_000
 // ──────────────────────── ① 纯决策真值表 ────────────────────────
 console.log('\n=== ① decideHealthAction 真值表 ===')
 {
-  const cases: Array<[boolean, boolean, number, boolean, string]> = [
-    // wasAutoDisabled, anySuccess, otherEnabled, hasRecentRealSuccess, 期望
-    [false, true, 2, false, 'KEEP'],
-    [false, true, 0, true, 'KEEP'],
-    [false, false, 2, false, 'DISABLE'],
-    [false, false, 1, false, 'DISABLE'],
-    [false, false, 0, false, 'REFUSE_LAST'], // ★ 唯一通道全失败 → 拒绝自锁
-    [false, false, 2, true, 'KEEP_EVIDENCE'], // ★ 有真实证据 → 不停用
-    [false, false, 0, true, 'KEEP_EVIDENCE'],
-    [true, true, 2, false, 'ENABLE'], // ★ 自动停用的通道探测恢复 → 自动启用
-    [true, true, 0, false, 'ENABLE'],
-    [true, false, 2, false, 'KEEP'], // 自动停用且仍失败 → 保持停用（不重复写库）
-    [true, false, 2, true, 'ENABLE'], // ★ 免探测 + 有证据 ⇒ 必须打开（否则死锁 24h）
+  /**
+   * 真值表。列序：wasAutoDisabled, anySuccess, otherEnabled, hasRecentRealSuccess,
+   *             consecutiveFailures, failThreshold, 期望。
+   *
+   * ★ 2026-09-23 新增后三列的理由（「连续失败也是一种真实证据」）：
+   *   在此之前「24h 内有过一次真实成功 ⇒ 免探测、不停用」是**通道级**判据，
+   *   于是一个通道只要在别的场景成功过一次，就能把「它在某个场景上反复超时干不了活」
+   *   一直盖住（线上实例：deepseek 在 copy_product 成功 8.6s，同时在 storyboard_generate
+   *   上反复跑飞 108~147s，体检全程判它 HEALTHY）。连续失败计数 ≥ 阈值就是用来压过它的。
+   */
+  const cases: Array<[boolean, boolean, number, boolean, number, number, string]> = [
+    // wasAutoDisabled, anySuccess, otherEnabled, hasRecentRealSuccess, 连续失败, 阈值, 期望
+    [false, true, 2, false, 0, 3, 'KEEP'],
+    [false, true, 0, true, 0, 3, 'KEEP'],
+    [false, false, 2, false, 0, 3, 'DISABLE'],
+    [false, false, 1, false, 0, 3, 'DISABLE'],
+    [false, false, 0, false, 0, 3, 'REFUSE_LAST'], // ★ 唯一通道全失败 → 拒绝自锁
+    [false, false, 2, true, 0, 3, 'KEEP_EVIDENCE'], // ★ 有真实证据 → 不停用
+    [false, false, 0, true, 0, 3, 'KEEP_EVIDENCE'],
+    [true, true, 2, false, 0, 3, 'ENABLE'], // ★ 自动停用的通道探测恢复 → 自动启用
+    [true, true, 0, false, 0, 3, 'ENABLE'],
+    [true, false, 2, false, 0, 3, 'KEEP'], // 自动停用且仍失败 → 保持停用（不重复写库）
+    [true, false, 2, true, 0, 3, 'ENABLE'], // ★ 免探测 + 有证据 ⇒ 必须打开（否则死锁 24h）
+    // ── 2026-09-23：连续失败计数压过「某处成功过」 ──
+    [false, false, 2, true, 3, 3, 'DISABLE'], // ★★ 核心用例：有真实成功，但连续失败 3 次 ⇒ 停用
+    [false, false, 0, true, 3, 3, 'REFUSE_LAST'], // ★ 唯一通道 ⇒ 仍拒绝停用（护栏优先）
+    [false, true, 2, true, 3, 3, 'KEEP'], // ★ 本轮探通了 ⇒ 压过历史计数（否则刚修好又被旧计数关掉）
+    [false, false, 2, true, 2, 3, 'KEEP_EVIDENCE'], // 未达阈值 ⇒ 仍是「有证据」那一档
+    [true, false, 2, true, 3, 3, 'KEEP'], // 已停用 + 计数未清 ⇒ 保持停用（等真探通）
+    [true, true, 2, true, 3, 3, 'ENABLE'], // ★ 真探通了 ⇒ 恢复（恢复分支会清零计数）
+    [false, false, 2, false, 5, 3, 'DISABLE'], // 超过阈值同样停用
   ]
   for (const [
     wasAutoDisabled,
     anySuccess,
     otherEnabledProviderCount,
     hasRecentRealSuccess,
+    consecutiveFailures,
+    failThreshold,
     want,
   ] of cases) {
     const got = decideHealthAction({
@@ -249,10 +298,13 @@ console.log('\n=== ① decideHealthAction 真值表 ===')
       anySuccess,
       otherEnabledProviderCount,
       hasRecentRealSuccess,
+      consecutiveFailures,
+      failThreshold,
     })
     check(
       got === want,
-      `autoOff=${wasAutoDisabled} 探通=${anySuccess} 其它在用=${otherEnabledProviderCount} 有证据=${hasRecentRealSuccess} → ${want}`,
+      `autoOff=${wasAutoDisabled} 探通=${anySuccess} 其它在用=${otherEnabledProviderCount} ` +
+        `有证据=${hasRecentRealSuccess} 连败=${consecutiveFailures}/${failThreshold} → ${want}`,
       got === want ? '' : `实际 ${got}`,
     )
   }
@@ -545,7 +597,7 @@ console.log('\n=== ⑮ 图像通道必须用图像适配器探活（2026-09-21 �
 
 console.log('\n=== ⑯ 拒绝自锁按能力算：唯一的图像通道失败也不停用 ===')
 {
-  const { prisma, calls } = makeFakePrisma([
+  const { prisma, calls, alerts } = makeFakePrisma([
     ROW(1, 'img-only', { models: [IMAGE_MODEL('gpt-image-2')] }),
     ROW(2, 'txt-a'),
     ROW(3, 'txt-b'),
@@ -574,6 +626,29 @@ console.log('\n=== ⑯ 拒绝自锁按能力算：唯一的图像通道失败也
   // 对照组：文本通道之间仍然互为顶替关系 ⇒ 照常停用（护栏没有扩大成"谁都不能停"）
   const txtA = r.outcomes.find((o) => o.code === 'txt-a')!
   check(txtA.action === 'DISABLE', '文本通道有同能力顶替者 → 照常 DISABLE', `实际 ${txtA.action}`)
+
+  /**
+   * ★★ 2026-09-23：自动降级必须**同时**落一条 ops_alert。
+   *
+   * 在这之前「通道被自动停用」只写一行 pm2 日志 —— 而 `ops-alert.service.ts` 的文件头
+   * 就写着「没有任何告警…没有人会去看 pm2 控制台」。这条断言守的是那个出口：
+   * 它一旦被删掉，用例仍然全绿（告警失败是**静默降级**的），而运营再也不会知道
+   * 「某个模型刚刚被自动降级了」—— 正是用户抱怨的那个场景。
+   */
+  check(
+    alerts.some((a) => a.code === 'AI_CHANNEL_AUTO_DISABLED'),
+    '★ 自动停用落了一条 ops_alert（AI_CHANNEL_AUTO_DISABLED）',
+    alerts.length ? alerts.map((a) => a.code).join(',') : '一条都没有',
+  )
+  check(
+    alerts.find((a) => a.code === 'AI_CHANNEL_AUTO_DISABLED')?.severity === 'CRITICAL',
+    '★ 该告警是 CRITICAL（会推到手机，不被当普通提示淹没）',
+  )
+  check(
+    alerts.some((a) => a.code === 'AI_LAST_CHANNEL_UNHEALTHY'),
+    '★ 「最后一条同能力通道不健康」也告警（这时没有任何替代者，只能人工介入）',
+    alerts.length ? alerts.map((a) => a.code).join(',') : '一条都没有',
+  )
 }
 
 console.log('\n=== ⑰ 图像通道探活节流 + 只探 1 轮（探一次要花一张图的真钱） ===')
@@ -661,6 +736,99 @@ console.log('\n=== ⑱ 已自动停用的图像通道不受节流（否则它永
   check(
     calls.updates.some((u) => u.id === '1' && u.data.enabled === true),
     '写回 enabled=true',
+  )
+}
+
+console.log('\n=== ⑲ 连续失败计数压过「某处成功过」（2026-09-23 的核心新增）===')
+{
+  /**
+   * 复刻线上那次真实故障的形状：
+   *   · 通道 A（deepseek 的角色）：**24h 内有真实成功**（它在别的场景干得很好），
+   *     但 `consecutive_failures = 3`（在这个场景上连续被超时掐断）；
+   *   · 通道 B（claude 的角色）：健康，能顶同能力。
+   *   ⇒ 期望：A **不再免探测**（有真实故障就必须真探一次），探测失败后被 DISABLE。
+   *
+   * ★ 这条用例的价值在于它复现的是一个**曾经的必然**：旧的 `evidenceHealthy` 只看
+   *   `hasRecentRealSuccess`，A 会得到 KEEP_EVIDENCE —— 连探都不探，永远降不了级。
+   *   线上症状就是「deepseek 在分镜上反复跑飞 108~147s，体检全程判它 HEALTHY」。
+   */
+  const now = new Date()
+  const { prisma, calls, alerts } = makeFakePrisma(
+    [ROW(1, 'txt-runaway', { consecutiveFailures: 3 }), ROW(2, 'txt-healthy')],
+    // A 在 1 小时前有过一次**真实成功**（对应 copy_product 那次 8.6s）
+    [{ providerId: 1n, status: 'SUCCESS', createdAt: new Date(now.getTime() - HOUR) }],
+  )
+  const { probe, calls: probeCalls } = probeAlways(false, 'request timeout after 90000ms')
+  const r = await sweepAiProviderHealth(prisma, {
+    probe,
+    sleep: noSleep,
+    retryRounds: 0,
+    now,
+    failThreshold: 3,
+  })
+
+  const bad = r.outcomes.find((o) => o.code === 'txt-runaway')!
+  check(
+    probeCalls.some((c) => c.providerId === '1'),
+    '★ 有真实故障证据 ⇒ 即使 24h 内成功过也必须真探一次（不再免探测）',
+    probeCalls.map((c) => c.providerId).join(',') || '一次都没探',
+  )
+  check(bad.skippedByEvidence === false, '★ 没有被判成「因真实证据免检」')
+  check(
+    bad.action === 'DISABLE',
+    '★★ 连续失败 3 次 ⇒ 停用（旧的判据会给出 KEEP_EVIDENCE）',
+    `实际 ${bad.action}`,
+  )
+  check(
+    calls.updates.some((u) => u.id === '1' && u.data.enabled === false),
+    '写回 enabled=false',
+  )
+  check(r.disabled === 1, '本轮停用 1 条', `实际 ${r.disabled}`)
+  check(
+    alerts.some((a) => a.code === 'AI_CHANNEL_AUTO_DISABLED' && a.title.includes('连续失败')),
+    '★ 告警标题点明「连续失败 N 次」，运营一眼看出是降级而不是抖动',
+    alerts.map((a) => a.title).join(' | ') || '一条都没有',
+  )
+}
+
+console.log('\n=== ⑳ 恢复时清零计数（否则「刚探通又被旧数字关掉」）===')
+{
+  const now = new Date()
+  const { prisma, calls } = makeFakePrisma([
+    ROW(1, 'txt-recover', {
+      enabled: false,
+      autoDisabled: true,
+      healthStatus: 'DOWN',
+      consecutiveFailures: 3,
+    }),
+    ROW(2, 'txt-other'),
+  ])
+  const { probe } = probeAlways(true)
+  const r = await sweepAiProviderHealth(prisma, { probe, sleep: noSleep, retryRounds: 0, now, failThreshold: 3 })
+
+  const row = r.outcomes.find((o) => o.code === 'txt-recover')!
+  check(row.action === 'ENABLE', '★ 探通了 ⇒ 重新启用', `实际 ${row.action}`)
+  check(
+    calls.updates.some((u) => u.id === '1' && u.data.consecutiveFailures === 0),
+    '★★ 同时把 consecutiveFailures 清 0（不清的话下一轮体检会拿同一个数字再关它一次）',
+  )
+}
+
+console.log('\n=== ㉑ 探通但残留计数未达阈值 ⇒ 顺手清零 ===')
+{
+  const now = new Date()
+  const { prisma, calls } = makeFakePrisma([
+    ROW(1, 'txt-stale-count', { consecutiveFailures: 2 }),
+    ROW(2, 'txt-other'),
+  ])
+  const { probe } = probeAlways(true)
+  const r = await sweepAiProviderHealth(prisma, { probe, sleep: noSleep, retryRounds: 0, now, failThreshold: 3 })
+
+  const row = r.outcomes.find((o) => o.code === 'txt-stale-count')!
+  check(row.action === 'KEEP', '未达阈值 + 探通 ⇒ KEEP', `实际 ${row.action}`)
+  check(
+    calls.updates.some((u) => u.id === '1' && u.data.consecutiveFailures === 0),
+    '★ 探通即把残留计数清零（「刚探通就是它现在能干活的直接测量」）',
   )
 }
 
