@@ -103,27 +103,14 @@ async function pickStore() {
   console.log(`✓ ${sceneArg} 用时 ${secs}s｜通道 ${r.modelCode}${r.usedFallback ? '（降级）' : ''}｜attempts=${r.attempts}`)
   console.log(`\n${text}\n`)
   console.log('─── 自动核对 ───')
-  /**
-   * ★ 语速**按场景分别给**（2026-09-21 实测，不是沿用 4.3）。
-   *   四类各取 16~19 条真人爆款逐字稿量出来的中位语速：
-   *     人设 5.15 / 干货 5.11 / 产品 5.12 / 种草 4.49（字/秒）。
-   *   菜品类三型基本齐平在 5.1，而**种草型明显更慢** —— 它天然带停顿与咂摸的节奏。
-   *   统一按一个数字估算，会让「这条稿子多长」这个判断在某一型上系统性偏掉。
-   */
-  const SPEED: Record<string, number> = {
-    copy_persona: 5.15,
-    copy_knowledge: 5.11,
-    copy_product: 5.12,
-    copy_recommend: 4.49,
-  }
-  const speed = SPEED[sceneArg] ?? 4.3
-  console.log(`字数 ${chars}（本型实测语速 ${speed} 字/秒 ⇒ 约 ${Math.round(chars / speed)} 秒）`)
+  const speed = 4.5
+  console.log(`字数 ${chars}（按约 ${speed} 字/秒粗估 ${Math.round(chars / speed)} 秒；实际以本人试读为准）`)
   const banned = ['匠心', '甄选', '唇齿留香', '口感丰富', '层次分明', '极致', '邂逅', '不容错过']
   const hit = banned.filter((w) => text.includes(w))
   console.log(`禁词命中：${hit.length ? hit.join('、') : '无'}`)
 
   /**
-   * 按型核对 —— 四型的**分界线是视角**（见 prisma/prompts.ts 第四版说明），
+   * 按型核对 —— 各款的内容边界见 prisma/prompts.ts，
    * 所以「不该出现什么」每型都不同。这里逐型列出可自动判定的那几条：
    * 只打印结果，不在这里断言失败 —— 探针的定位是「拿一条真输出看一眼」，
    * 让人来做最终判断，而不是让一个正则去决定提示词合不合格。
@@ -150,19 +137,18 @@ async function pickStore() {
     const comboEmpty = !(variables.comboInfo ?? '').trim()
     console.log(`菜名是否报出：${has(dishName) ? '是（产品型应该报菜）' : '否'}`)
     if (comboEmpty) {
-      console.log(`★ 本次套餐信息为空 ⇒ 报价类词：${priceRe.test(text) ? '有  ← 不允许，改用不报价的骨架二' : '无'}`)
+      console.log(`★ 套餐信息为空 ⇒ 报价类词：${priceRe.test(text) ? '有  ← 人工确认是否来自菜品简介或卖点' : '无'}`)
     } else {
       console.log('本次有套餐信息（价格来自入参，属允许）')
     }
   } else if (sceneArg === 'copy_recommend') {
-    // 种草型是顾客视角：不该出现店家口吻的「我这儿 / 我们店」
-    const leak = ['我这儿', '我们店', '我们家'].filter(has)
-    console.log(`★ 店家口吻泄漏：${leak.length ? leak.join('、') + '  ← 种草型要装成食客' : '无'}`)
-    // ★ 与产品型同一个理由：套餐信息为空时，价格只能靠编。实测踩过一次
-    //   （模型自己写了「这一大盘才几十块」）—— 编价格的后果是客人拿着视频来店里。
+    // 真诚推荐型由老板本人介绍；拦截明显的虚构探店叙述。
+    const inventedVisit = ['朋友带我去', '我前天去吃', '跟朋友来打卡', '路过这家店'].filter(has)
+    console.log(`★ 虚构探店口吻：${inventedVisit.length ? inventedVisit.join('、') + '  ← 应改为老板真实介绍' : '未发现常见模板句'}`)
+    // 套餐变量为空时，检测到价格只作人工核对提示；价格也可能合法地来自菜品简介或卖点。
     const comboEmpty = !(variables.comboInfo ?? '').trim()
     if (comboEmpty) {
-      console.log(`★ 本次套餐信息为空 ⇒ 报价类词：${priceRe.test(text) ? '有  ← 不允许，一个数字都不许出现' : '无'}`)
+      console.log(`★ 本次套餐信息为空 ⇒ 报价类词：${priceRe.test(text) ? '有  ← 检查是否来自输入' : '无'}`)
     } else {
       console.log('本次有套餐信息（价格来自入参，属允许）')
     }

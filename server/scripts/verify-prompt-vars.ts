@@ -96,7 +96,7 @@ const TEMPLATES: Array<{ code: string; label: string; tpl: string; fallback: str
   { code: 'copy_persona', label: '文案·人设型', tpl: COPY_PERSONA_PROMPT, fallback: COPY_PERSONA_FALLBACK },
   { code: 'copy_knowledge', label: '文案·干货型', tpl: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK },
   { code: 'copy_product', label: '文案·产品型', tpl: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK },
-  { code: 'copy_recommend', label: '文案·种草型', tpl: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK },
+  { code: 'copy_recommend', label: '文案·真诚推荐型', tpl: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK },
   { code: 'storyboard_generate', label: '分镜', tpl: STORY_PROMPT, fallback: STORY_FALLBACK },
 ]
 
@@ -828,16 +828,42 @@ check(
   !TEMPLATES.find((t) => t.code === 'storyboard_generate')!.tpl.includes('【口语化铁律'),
   '分镜**不**挂口语化铁律（与「逐字照抄」冲突）',
 )
+for (const t of TEMPLATES.filter((x) => x.code.startsWith('copy_'))) {
+  check(t.tpl.includes('只能来自输入资料'), `${t.label} 明确要求业务事实来自输入资料`)
+  check(t.tpl.includes('资料不足') && t.tpl.includes('短'), `${t.label} 资料不足时允许短稿，不为字数补内容`)
+}
+const recommendTpl = TEMPLATES.find((t) => t.code === 'copy_recommend')!.tpl
+check(
+  recommendTpl.includes('不要假扮消费者') && recommendTpl.includes('编试吃反应'),
+  '真诚推荐型由老板说明有依据的推荐理由，不虚构消费经历或试吃反应',
+)
+const knowledgeTpl = TEMPLATES.find((t) => t.code === 'copy_knowledge')!.tpl
+check(
+  knowledgeTpl.includes('通用知识要明确说成普遍做法') && knowledgeTpl.includes('不能说成这家店的秘方'),
+  '干货型区分可靠通用知识与本店事实，不虚构本店工艺',
+)
+const personaTpl = TEMPLATES.find((t) => t.code === 'copy_persona')!.tpl
+check(
+  personaTpl.includes('不是替老板编一段人生故事') && personaTpl.includes('不制造苦难或反转'),
+  '人设型不补造老板经历、苦难或反转',
+)
+check(
+  !recommendTpl.includes('顾客视角') && !recommendTpl.includes('朋友带我去') && !recommendTpl.includes('装成食客'),
+  '真诚推荐型模板不含旧版顾客视角定位或示例',
+)
+check(
+  TEMPLATES.every((t) => !/朋友带我去|我前天去吃|人均不过几十|今天到店还有专属福利/.test(t.fallback)),
+  '所有静态兜底都不含虚构探店、价格或优惠承诺',
+)
 
 // 5.10 流量款（话题稿）这一版的核心改动：靠 topicInfo 起头、不再提门店与菜品、不许编新闻
 const traffic = TEMPLATES.find((t) => t.code === 'copy_traffic')!
 const trafficTpl = traffic.tpl
 check(trafficTpl.includes('{{topicInfo}}'), '流量款靠 {{topicInfo}} 拿「今天」与起头方向')
-check(trafficTpl.includes('挑一条'), '流量款要求「只挑一条」起头方向（不许写成排比）')
-check(trafficTpl.includes('不要几条都用上'), '流量款写明「不要几条都用上」')
+check(trafficTpl.includes('挑一个切口'), '流量款从话题方向选一个自然切口')
 check(
-  trafficTpl.includes('不要报店名') && trafficTpl.includes('不要请人到店'),
-  '流量款不收在到店邀请上（话题稿不涉及门店）',
+  trafficTpl.includes('不介绍或推销某家店') && trafficTpl.includes('不强制提问'),
+  '流量款不编店铺信息，结尾互动自然且可选',
 )
 check(
   trafficTpl.includes('不许') && trafficTpl.includes('热搜') && trafficTpl.includes('政策'),
@@ -853,56 +879,19 @@ check(
   '内容模式注册表含 DISH / TOPIC 两种',
 )
 
-// 5.10.1 ★★ 第三轮（2026-09-21）：**口播骨架**落进流量款模板。
-//   在这一版之前，「挑一条方向」只解决了**往哪个方向写**；至于**具体怎么起承转合**，
-//   模板里只有一句笼统的「三段」。骨架是从 39 条对标视频里**下载 + 本地 ASR**
-//   拿到 35 条逐句口播之后拆出来的 —— 标题/标签层无论如何推不出来。
-check(trafficTpl.includes('【口播骨架'), '流量款含【口播骨架】段（第三轮新增，方向层给不出的那一层）')
-check(
-  ['骨架一', '骨架二', '骨架三', '骨架四'].every((s) => trafficTpl.includes(s)),
-  '流量款落了四副骨架（前三副按方向族分，第四副是时令/节点线兼兜底）',
-)
-check(
-  trafficTpl.includes('老乡线') && trafficTpl.includes('方言验证') && trafficTpl.includes('本地悬念'),
-  '四副骨架各自有名字（老乡线 / 方言验证 / 本地悬念 / 时令节点）',
-)
-check(trafficTpl.includes('城市点名'), '骨架一含「城市点名」这一步（一口气报 5~8 个地名 = 多开同城入口）')
-check(
-  trafficTpl.includes('公开常识') && trafficTpl.includes('编街道'),
-  '★ 城市点名划了边界：公开常识里的地级市/县名可以写，街道/小区/店名不许编',
-)
-check(trafficTpl.includes('区号'), '骨架二的出题优先用电话区号（如固安 0316，天然无歧义）')
-check(
-  trafficTpl.includes('口播里一个字都不要提你的生意') && trafficTpl.includes('账号名'),
-  '★ 流量款明写「口播里不提生意，卖货交给账号名和标签」（真实样本里 4/6 条就是这么做的）',
-)
-check(
-  trafficTpl.includes('4.3 字/秒') && trafficTpl.includes('砍到一半'),
-  '★ 流量款按语速给篇幅（普通话 4.3 字/秒；方言口播只有约一半语速 ⇒ 字数砍半）',
-)
-// ★ 反向断言：骨架里的示例占位只能写成 XX / A、B、C 这种纯文本。
-//   写成单花括号（`{省}`）本身不会被网关替换、也不会被 findMalformedPlaceholders 抓到
-//   （那条正则要求 `{{…}}`），但会原样出现在提示词里 —— 与「禁用清单」同一个道理，
-//   要钉的是**不许出现**，不是「应该出现」。
-check(
-  (trafficTpl.replace(/\{\{\s*\w+\s*\}\}/g, '').match(/[{}]/g) ?? []).length === 0,
-  '★ 骨架示例占位用 XX / A、B、C，不出现单花括号（不会被替换、只会原样进提示词）',
-)
+// 5.10.1 流量款不复制身份、区号或地名，而是让观众自然参与话题。
+check(trafficTpl.includes('不冒充本地人或老乡'), '流量款不假扮本地身份')
+check(trafficTpl.includes('未经输入证实的方言、暗号或区号'), '流量款不编方言、暗号或区号')
 
-// 5.10.2 门店线（通用款）也补了两副「像真人」的写法。
-//   依据同一批逐字稿：门店线的真实爆款里有相当一部分**口播就是现场原话、根本不用写文案**
-//   （最短的一条 9 秒 / 23 字：「诶哥，好久没来啦，老规矩，等等等等，一样啊，两桌 18 个人」）；
-//   另一部分走「排比递进 + 落到自己店」（「饭太淡了可以加盐，感情淡了可以加钱，那生意淡了呢」）。
 const generic = TEMPLATES.find((t) => t.code === 'copy_generate')!
 check(
-  generic.tpl.includes('现场对白式') && generic.tpl.includes('段子落店式'),
-  '★ 通用款补了门店线的两副写法（现场对白式 / 段子落店式）',
+  generic.tpl.includes('没有真实对白就不写对白') && generic.tpl.includes('短稿优先'),
+  '★ 通用款只用真实素材，资料不足时允许短稿',
 )
 check(
-  generic.tpl.includes('发布文案可以比口播长得多'),
-  '★ 通用款写明现场对白式的发布文案可以比口播长（真实样本里有一条口播 0 字、文案 100+ 字）',
+  generic.tpl.includes('长度只是目标') && generic.tpl.includes('短稿优先'),
+  '通用款把时长设为目标，资料不足时允许短稿',
 )
-check(generic.tpl.includes('4.3 字/秒'), '通用款按同一套语速参数给篇幅（80~150 字）')
 
 // 5.11 分镜这一版的核心改动：台词逐字照抄 + 一个人能拍完 + 对空值稳健
 const story = TEMPLATES.find((t) => t.code === 'storyboard_generate')!
@@ -913,6 +902,15 @@ check(storyTpl.includes('一个人') && storyTpl.includes('航拍'), '分镜写�
 check(
   storyTpl.includes('不要替它编造'),
   '★ 分镜写明「某项为空 = 这条视频不涉及它，不要替它编造」（话题稿的常态）',
+)
+check(
+  storyTpl.includes('没有资料或现成素材支持') &&
+    storyTpl.includes('不假定另有素材'),
+  '分镜画面必须匹配输入素材，不机械凑齐餐饮镜头类型',
+)
+check(
+  storyTpl.includes('若口播太短或可用画面不足，不重复镜头') && storyTpl.includes('长句应给足时间'),
+  '分镜避免为凑数量重复或拆碎台词，并为长句留出可说完的时长',
 )
 check(
   storyTpl.includes('纯话题视频'),

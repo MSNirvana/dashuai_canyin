@@ -26,7 +26,7 @@
 
 ---
 
-## 1. 已上线 Skill（7 个）
+## 1. 已接入 AI 场景（核心创作场景）
 
 > ★ 2026-09-21 新增第 1.3 组「发布素材」2 个场景（`publish_material` / `publish_cover`），
 > 均由「合成成片」页驱动。§1.1 / §1.2 为原有 5 个。
@@ -35,11 +35,12 @@
 
 | Skill（sceneCode） | 中文名 | 定位 | 触发入口 |
 |---|---|---|---|
-| `copy_traffic` | 文案 · 流量款 | 同城引流 / 话题热度：强钩子、本地梗、低门槛行动指令 | 编辑页「流量款」卡片 |
-| `copy_intro` | 文案 · 介绍款 | 菜品讲解 / 套餐推广：讲清是什么、怎么吃、性价比 | 编辑页「介绍款」卡片 |
-| `copy_quality` | 文案 · 质量款 | 食材品质 / 匠心人设：讲来源、工艺、老板的坚持 | 编辑页「质量款」卡片 |
-| `copy_recommend` | 文案 · 种草型 | 真实体验 / 消费决策：自然分享、细节体验、收藏到店 | 编辑页「种草型」卡片 |
-| `copy_generate` | 文案 · 通用版 | 兼容旧客户端；新款式的场景缺失/停用时的回退目标 | 旧客户端 / 容错回退 |
+| `copy_traffic` | 文案 · 流量款 | 餐饮账号话题；基于输入方向自然表达，不编本地身份、经历或热点 | 编辑页「流量款」卡片 |
+| `copy_persona` | 文案 · 人设型 | 老板真实的做事方式与立场，不补编人生故事 | 编辑页「人设型」卡片 |
+| `copy_knowledge` | 文案 · 干货型 | 一个有依据、讲得明白的餐饮常识，不冒充本店工艺 | 编辑页「干货型」卡片 |
+| `copy_product` | 文案 · 产品型 | 讲清实际在售内容；价格、份量和套餐信息只按输入 | 编辑页「产品型」卡片 |
+| `copy_recommend` | 文案 · 真诚推荐型 | 老板本人讲一个有依据的推荐理由，不伪装成顾客 | 编辑页「真诚推荐型」卡片 |
+| `copy_generate` | 文案 · 通用版 | 兼容旧客户端；款式场景缺失/停用时的回退目标 | 旧客户端 / 容错回退 |
 
 - 接口：`POST /creations/:id/copy`（入参 `track`，返回 `track` / `trackLabel`）
 - 变量：`{{storeName}} {{category}} {{city}} {{dishName}} {{dishIntro}} {{sellingPoints}} {{persona}} {{copyText}} {{track}} {{trackLabel}}`
@@ -50,7 +51,7 @@
 
 | Skill（sceneCode） | 中文名 | 定位 | 触发入口 |
 |---|---|---|---|
-| `storyboard_generate` | 分镜脚本生成 | 按复杂度产出 2~9 个分镜，标注景别/时长/台词/画面要求，并匹配镜头库手法 | 编辑页「生成分镜」 |
+| `storyboard_generate` | 分镜脚本生成 | 以复杂度镜头数为目标，台词逐字对齐，优先匹配单人、手机可拍的真实画面 | 编辑页「生成分镜」 |
 
 - 接口：`POST /creations/:id/storyboard`（入参 `complexity`）
 - 变量：在文案变量基础上增加 `{{complexity}} {{complexityLabel}} {{shotCountRule}} {{shotLibrary}}`

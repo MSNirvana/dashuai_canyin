@@ -187,7 +187,7 @@ export const anthropicNative: AiAdapter = async (p) => {
 
 /**
  * 本地联调用 MOCK 协议：不发起任何网络请求，直接返回可解析的样例文本。
- * - copy_generate / copy_traffic / copy_persona / copy_knowledge / copy_product / copy_recommend → 对应款式的营销文案
+ * - copy_generate / copy_traffic / copy_persona / copy_knowledge / copy_product / copy_recommend → 对应款式的样例文案
  * - storyboard_generate → 按复杂度（SIMPLE/COMPLEX/FINE）返回 3/6/8 个分镜 JSON
  * 真实环境请改用 OPENAI_COMPATIBLE（如 DeepSeek）并填入 apiKey。
  */
@@ -207,19 +207,19 @@ interface MockShot {
 
 // 基础拍摄手法池（与 seed 的镜头库 code 对齐）
 const MOCK_POOL: Record<string, MockShot> = {
-  open_storefront: { shotType: '开场', shotSize: '全景', libraryCode: 'open_storefront', visualReq: '门店门头，从马路对面缓推，清晨柔光' },
-  boss_talk: { shotType: '口播', shotSize: '近景', libraryCode: 'boss_talk', visualReq: '老板对镜头口播，机位与眼齐平，背景留出门店环境' },
-  closeup_food: { shotType: '特写', shotSize: '特写', libraryCode: 'closeup_food', visualReq: '菜品出锅特写，怼近 20cm，蒸汽升腾，侧逆光' },
-  make_ingredient: { shotType: '原料', shotSize: '特写', libraryCode: 'make_ingredient', visualReq: '当天采购的新鲜原料俯拍 + 手拿展示纹理' },
-  make_process: { shotType: '制作', shotSize: '中景', libraryCode: 'make_process', visualReq: '备料—下锅—翻炒完整动作线，一镜到底' },
-  make_serve: { shotType: '制作', shotSize: '近景', libraryCode: 'make_serve', visualReq: '出锅装盘瞬间，热气正对镜头，一次到位' },
-  scene_ambience: { shotType: '环境', shotSize: '全景', libraryCode: 'scene_ambience', visualReq: '堂食区/明档横移，烟火气但不乱，停 2 秒' },
-  taste_reaction: { shotType: '试吃', shotSize: '近景', libraryCode: 'taste_reaction', visualReq: '夹起—入口—点头，第一口自然反应' },
-  selling_combo: { shotType: '卖点', shotSize: '中景', libraryCode: 'selling_combo', visualReq: '套餐菜品摆好俯拍 + 价格字幕' },
-  ending_location: { shotType: '收尾', shotSize: '全景', libraryCode: 'ending_location', visualReq: '门店环境 + 定位字幕，淡出' },
+  open_storefront: { shotType: '开场', shotSize: '全景', libraryCode: 'open_storefront', visualReq: '有门头素材时，把手机靠稳拍下门店入口；没有就用口播开场' },
+  boss_talk: { shotType: '口播', shotSize: '近景', libraryCode: 'boss_talk', visualReq: '老板用手机前置镜头自拍口播，画面保持稳定' },
+  closeup_food: { shotType: '特写', shotSize: '特写', libraryCode: 'closeup_food', visualReq: '菜品已上桌时用手机靠近拍一段细节，不补蒸汽或食材效果' },
+  make_ingredient: { shotType: '原料', shotSize: '特写', libraryCode: 'make_ingredient', visualReq: '只拍资料提到且现场有的食材，手机近距离记录真实状态' },
+  make_process: { shotType: '制作', shotSize: '中景', libraryCode: 'make_process', visualReq: '将手机靠稳，只拍一段实际发生且与口播有关的制作动作' },
+  make_serve: { shotType: '制作', shotSize: '近景', libraryCode: 'make_serve', visualReq: '实际出餐时把手机靠稳，拍下真实装盘过程，不补热气效果' },
+  scene_ambience: { shotType: '环境', shotSize: '全景', libraryCode: 'scene_ambience', visualReq: '选一个真实可见的店内角落，用手机固定机位拍摄；避开无关顾客' },
+  taste_reaction: { shotType: '试吃', shotSize: '近景', libraryCode: 'taste_reaction', visualReq: '只有老板确实要现场试吃时才自拍记录真实反应，不安排演员' },
+  selling_combo: { shotType: '卖点', shotSize: '中景', libraryCode: 'selling_combo', visualReq: '套餐与价格资料齐全时拍下菜单或实际套餐内容，不补字幕信息' },
+  ending_location: { shotType: '收尾', shotSize: '全景', libraryCode: 'ending_location', visualReq: '口播提到门店位置时拍摄真实门头或店内标识，不添加未提供的地址' },
 }
 
-// 复杂度 → 分镜序列（覆盖美食特写/老板口播/出锅/环境/原料/制作过程）
+// 本地测试样例，不代表每条真实创作都必须覆盖这些镜头类型。
 const MOCK_SEQUENCES: Record<string, string[]> = {
   SIMPLE: ['boss_talk', 'closeup_food', 'scene_ambience'],
   COMPLEX: ['boss_talk', 'make_ingredient', 'make_process', 'make_serve', 'closeup_food', 'scene_ambience'],
@@ -262,7 +262,7 @@ export const mockAdapter: AiAdapter = async (p) => {
         shotType: s.shotType,
         shotSize: s.shotSize,
         durationSuggest: MOCK_DURATIONS[i % MOCK_DURATIONS.length]!,
-        line: lines[i] || (i === 0 ? `${store}严选好食材` : dish ? `${dish}现做现卖` : ''),
+        line: lines[i] || '',
         visualReq: s.visualReq,
         libraryCode: s.libraryCode,
       }
@@ -276,37 +276,28 @@ export const mockAdapter: AiAdapter = async (p) => {
   const head = dish ? `${dish}，` : ''
   const byScene: Record<string, string> = {
     copy_traffic: [
-      `就在${city || '你家楼下'}！${store}的${head}本地人排着队来吃。`,
-      `别再问我哪家好吃了，这一口下去你就知道什么叫值。`,
-      `${city || ''}的朋友，评论区扣个 1，我给你留个位置。`,
+      `平时忙起来，吃饭这件事很容易就凑合过去了。`,
+      `你最近有没有好好坐下来吃顿饭？`,
     ].join('\n'),
     copy_persona: [
-      `我开这家店之前，压根没想过会干这么久。`,
-      `${store}就这么大，能站住脚就靠一件事：${pick(p.user, '卖点') || '每天的东西当天用完'}。`,
-      `你们那儿的老板，也这么干吗？`,
+      `做餐饮每天都有不少琐碎事，能把手上的事一件件做好，比说漂亮话重要。`,
     ].join('\n'),
     copy_knowledge: [
-      `为什么在家做菜总没有饭店香？油温不到位是一个，料下得太早也是一个。`,
-      `油要烧到冒青烟再下料，盐得看什么菜什么肉。`,
-      `这两样对了，味道自然就上来了。`,
+      `做菜前先把食材和调料备齐，再开火会从容很多，也不容易忙中出错。`,
     ].join('\n'),
     copy_product: [
-      `${store}的${dish || '招牌菜'}，${pick(p.user, '卖点') || '现做现卖、分量实在'}。`,
-      `配菜、蘸料都给你备齐了，端上桌直接吃。`,
-      `到店点一份试试，不满意你说话。`,
+      `${store}的${dish || '这道菜'}，${pick(p.user, '卖点') || '具体做法和价格可以看门店当前介绍'}。`,
     ].join('\n'),
     copy_recommend: [
-      `朋友带我去的${store}，点了${dish || '招牌菜'}。`,
-      `第一口就能尝出来的${pick(p.user, '卖点') || '新鲜'}，软烂入味，一点不腻。`,
-      `你要是路过${city || '附近'}，可以去试试。`,
+      `${store}的${dish || '这道菜'}，${pick(p.user, '卖点') || '具体特点以门店介绍为准'}。`,
+      `老板把这道菜的实际做法和特点说清楚，顾客再按自己的口味决定。`,
     ].join('\n'),
   }
   const copy =
     byScene[p.sceneCode ?? ''] ??
     [
       `【${store}】${head}街坊邻居都爱来的味道。`,
-      `新鲜现做、分量实在，人均不过几十块，吃的是安心，尝的是人情味。`,
-      `今天到店还有专属福利，扫码进群先领券——好味道，等你来。`,
+      `具体做法、价格和包含内容，以门店当前介绍为准。`,
     ].join('\n')
   return { text: copy, usage: { promptTokens: 120, completionTokens: 180 } }
 }

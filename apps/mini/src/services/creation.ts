@@ -5,7 +5,7 @@ import { http } from './request'
  * 文案款式。
  * ★ 2026-09-21 四款改型：删 `INTRO`（介绍款）/ `QUALITY`（质量款），
  *   换成 `PERSONA`（人设型）/ `KNOWLEDGE`（干货型）/ `PRODUCT`（产品型），
- *   `RECOMMEND`（种草型）保留。
+ *   `RECOMMEND`（真诚推荐型）保留。
  * ★ 仍要认得出老值：**存量数据里有**（`INTRO`/`QUALITY`，以及更早的 `track='NORMAL'`）。
  *   展示与收敛都必须走下面的 `normalizeTrack`，否则老创作在界面上会显示成空标签。
  */
@@ -24,7 +24,7 @@ export const COPY_TRACK_OPTIONS: { value: CopyTrack; label: string; desc: string
   { value: 'PERSONA', label: '人设型', desc: '讲人：立场 / 经历 / 情绪' },
   { value: 'KNOWLEDGE', label: '干货型', desc: '这行的知识：怎么做 / 怎么挑' },
   { value: 'PRODUCT', label: '产品型', desc: '有什么 / 多少钱 / 值不值' },
-  { value: 'RECOMMEND', label: '种草型', desc: '真顾客视角 / 我尝到了什么' },
+  { value: 'RECOMMEND', label: '真诚推荐型', desc: '老板视角 / 讲一个真实推荐理由' },
 ]
 
 /**
