@@ -170,6 +170,56 @@ button, input, textarea { font-family: inherit; }
 .danger-text { color: var(--ds-red-strong); }
 .success-text { color: #237c57; }
 
+/* Page guides: closed by default so regular operators can get straight to work. */
+.page-guide {
+  margin: -4px 0 22px;
+  background: var(--ds-surface);
+  border: 1px solid var(--ds-line);
+  border-radius: var(--ds-radius);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 2%);
+}
+.page-guide[open] { border-color: var(--ds-red-border); }
+.page-guide__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+  padding: 0 15px;
+  color: var(--ds-body);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+.page-guide__summary::-webkit-details-marker { display: none; }
+.page-guide__summary::after {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  margin-left: auto;
+  border-right: 1.5px solid var(--ds-muted);
+  border-bottom: 1.5px solid var(--ds-muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform .16s ease;
+  content: "";
+}
+.page-guide[open] .page-guide__summary::after { transform: rotate(225deg) translate(-1px, -1px); }
+.page-guide__summary-main { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.page-guide__summary-main .t-icon { color: var(--ds-red); font-size: 16px; }
+.page-guide__summary-action { color: var(--ds-muted); font-size: 12px; font-weight: 500; }
+.page-guide__body {
+  padding: 0 15px 15px 39px;
+  color: var(--ds-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+.page-guide__body p { margin: 0 0 10px; }
+.page-guide__items { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 18px; }
+.page-guide__item { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.page-guide__item strong { color: var(--ds-body); font-size: 12px; }
+.page-guide__item span { color: var(--ds-muted); }
+
 /* Dashboard */
 .dashboard-intro {
   display: flex;
@@ -282,4 +332,8 @@ button, input, textarea { font-family: inherit; }
   .form-row__label { width: auto; padding-top: 0; text-align: left; }
   .upload-field { flex-direction: column; }
   .upload-field__preview, .upload-field__empty { width: min(100%, 300px); }
+  .page-guide__summary { min-height: 48px; padding-left: 12px; padding-right: 12px; }
+  .page-guide__summary-action { display: none; }
+  .page-guide__body { padding-left: 36px; padding-right: 12px; }
+  .page-guide__items { grid-template-columns: 1fr; gap: 9px; }
 }

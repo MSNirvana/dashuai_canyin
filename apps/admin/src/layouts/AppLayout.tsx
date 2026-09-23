@@ -18,6 +18,7 @@ import {
 } from 'tdesign-icons-react'
 import { useAuth } from '../context/AuthContext'
 import RouteFallback from '../components/RouteFallback'
+import PageGuide from '../components/PageGuide'
 import { useOpsAlertSummary } from '../lib/ops-alert'
 
 /** 告警页路径。顶栏横幅与菜单角标都指它，抽出来免得两处写岔 */
@@ -158,6 +159,7 @@ export default function AppLayout() {
           </div>
         </div>
         <div className="app-layout__content">
+          <PageGuide />
           {/*
             Suspense 包在 Outlet 这一层（而不是整个 App）：页面已按路由懒加载，
             切换菜单时页面 chunk 需要先下载。包在这里，菜单与顶栏在下载期间保持可见且可点，
