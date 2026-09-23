@@ -9,6 +9,7 @@
 | AI 协议适配器 | `src/ai/adapters.ts` | OpenAI 兼容（DeepSeek / 通义 / 豆包 / 混元）+ Anthropic 原生（Claude） |
 | 熔断器 | `src/ai/circuit-breaker.ts` | Redis 滑动窗口，通道挂掉时直接跳过，不等超时 |
 | AI 网关 | `src/ai/gateway.ts` | 场景化调用、故障转移、成本计算、后台通道测试 |
+| 自动剪辑引擎 | `src/render/auto-edit.ts` + `src/render/worker.ts` | 素材评分、类型识别、EDL 规划、本地 FFmpeg 渲染与成片质检 |
 | 计费编排 | `src/ai/ai.service.ts` | 先冻后扣 / 失败全额退 / 幂等 / 标价硬上限 |
 | 积分账务 | `src/bean/bean.service.ts` | FREEZE → CONSUME / UNFREEZE 两阶段，赠积分优先 |
 | 密钥加解密 | `src/lib/secret.ts` | AES-256-GCM，主密钥走环境变量 |
@@ -33,11 +34,17 @@ npm run dev
 
 ## ChatCut MCP 配置
 
-AI 成片使用 ChatCut MCP 时，服务端读取 `CHATCUT_MCP_URL`、`CHATCUT_MCP_SUBMIT_TOOL` 和 `CHATCUT_MCP_STATUS_TOOL`。工具名必须以授权后的 `tools/list` 实际返回为准，不能根据公开资料猜测。
+AI 成片默认使用本地自动剪辑引擎：素材探测、镜头规划、FFmpeg 渲染和输出质检都在服务器完成，不依赖 ChatCut。通过 `RENDER_ENGINE=CHATCUT` 才会显式启用外部通道；未完成授权时会自动回退本地引擎，不会让用户的 AI 档不可用。
+
+本地引擎的核心实现位于 `src/render/auto-edit.ts` 与 `src/render/worker.ts`，会自动识别菜品、口播、门店环境和混合内容，并把选择结果写入任务快照，便于后台排查。AI 档支持多音色 TTS、自定义配音、独立字幕来源、xfade 转场、节奏控制、静音清理和响度均衡。
+
+原声字幕使用 OpenAI-compatible Whisper 接口。配置 `ASR_API_URL`、`ASR_API_KEY`、`ASR_MODEL` 和 `ASR_LANGUAGE` 后，用户选择“原声识别”或“旁白+原声”即可识别视频中的语音；未配置时会回退到分镜文案，不会让渲染任务失败。
+
+ChatCut MCP 仍可用于对照实验或特殊风格。启用时服务端读取 `CHATCUT_MCP_URL`、`CHATCUT_MCP_SUBMIT_TOOL` 和 `CHATCUT_MCP_STATUS_TOOL`。工具名必须以授权后的 `tools/list` 实际返回为准，不能根据公开资料猜测。
 
 生产环境建议同时配置 `CHATCUT_OAUTH_TOKEN_URL` 与 `CHATCUT_OAUTH_REFRESH_TOKEN`。服务端会在 access token 进入刷新窗口时自动续期，支持 refresh token 轮换，并使用 Redis 分布式锁 + 进程内 single-flight 防止并发刷新。access token 和 refresh token 只放服务端环境或密钥管理系统，不要写入小程序、日志或 Git。
 
-首次 OAuth 授权和 ChatCut 商业/额度确认仍需在 ChatCut 侧完成；在未配置有效 token 或工具映射时，AI Worker 会拒绝假成功并按失败流程释放冻结积分。未配置 OAuth 刷新端点时仍兼容固定 `CHATCUT_MCP_ACCESS_TOKEN`，可用 `CHATCUT_MCP_ACCESS_TOKEN_EXPIRES_AT` 标记过期时间。
+首次 OAuth 授权和 ChatCut 商业/额度确认仍需在 ChatCut 侧完成；显式启用外部通道时，未配置有效 token 会按失败流程释放冻结积分。未配置 OAuth 刷新端点时仍兼容固定 `CHATCUT_MCP_ACCESS_TOKEN`，可用 `CHATCUT_MCP_ACCESS_TOKEN_EXPIRES_AT` 标记过期时间。
 
 ## 账务两阶段模型
 

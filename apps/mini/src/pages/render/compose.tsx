@@ -8,8 +8,10 @@ import {
 } from '../../services/publish-material'
 import {
   submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl, getGradeCapabilities, previewColor,
-  type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions, CHATCUT_VOICES, isVoiceOff,
+  type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions,
+  isVoiceOff, type AutoEditProfile, type SubtitleMode, CHATCUT_VOICES,
 } from '../../services/render'
+import { uploadAudioFile } from '../../services/upload'
 import { useMerchantStore } from '../../store/merchant'
 import { readRouteId, isNumericId } from '../../utils/route-id'
 // 时间一律走这里：接口给的是 UTC 的 ISO 串（…T…Z），直接渲染/截串都会露 T、Z 且差 8 小时
@@ -43,47 +45,39 @@ const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3
  *   服务端不会执行它们。显示了却一定不生效，比不显示更伤信任。
  */
 const DEFAULT_CHATCUT: ChatCutOptions = {
-  voiceId: 'warm-female', subtitles: true, subtitleStyle: 'CLEAN', bgm: 'NONE',
-  pacing: 'NATURAL', transitions: 'CLEAN', removeSilence: true, normalizeAudio: true, note: '',
+  voiceId: 'warm-female', subtitles: true, subtitleMode: 'VOICE', subtitleStyle: 'CLEAN', bgm: 'NONE',
+  // ★ 默认有转场（2026-09-22 由 'CLEAN' 改来）：`CLEAN` 就是「不加转场」，而用户从不主动改
+  //   这个选项 ⇒ 每条默认出片都必然是硬拼，线上真实投诉正是「没有转场和剪辑」。
+  //   代价（整片略短）不在这里解释 —— `TRANSITION_HINT.SMOOTH` 已经把话说给用户了。
+  pacing: 'NATURAL', transitions: 'SMOOTH', removeSilence: true, normalizeAudio: true,
+  // ★★ 默认 = **原路线**（原文直传）：**不改变原来 AI 生成的行为**，用户主动选才走本地打底。
+  clipPrep: 'ORIGINAL', note: '',
 }
 
-/** 选项标签。`Record<档位类型, string>` 而非散落的三元表达式：少写一个档位会直接编译报错 */
+/** 字幕样式标签，保持服务端枚举与界面文案一一对应。 */
 const SUBTITLE_STYLE_LABEL: Record<ChatCutOptions['subtitleStyle'], string> = {
   CLEAN: '简洁', EMPHASIS: '重点强调', SOCIAL: '社交风格',
 }
-const BGM_LABEL: Record<ChatCutOptions['bgm'], string> = {
-  NONE: '无配乐', LIGHT: '轻柔', UPBEAT: '活力', PREMIUM: '高级感',
-}
-const PACING_LABEL: Record<ChatCutOptions['pacing'], string> = {
-  NATURAL: '自然', FAST: '明快', STORY: '叙事',
+const SUBTITLE_MODE_LABEL: Record<SubtitleMode, string> = {
+  OFF: '关闭字幕', VOICE: '旁白字幕', SOURCE_AUDIO: '原声识别', VOICE_AND_SOURCE: '旁白+原声',
 }
 /**
- * 剪辑节奏的说明。★ 「明快」这句必须留着：它在解释一件用户会遇到的事 ——
- *   台词放不下时镜头会自动少缩一点（服务端给配音让路），**不会把话切掉**。
- *   不写清楚的话，用户会觉得「选了明快但没变快，是不是没生效」。
+ * 成片记录里给「本地打底」加的后缀。
+ * ★ 只在走过该路线时才加：默认路线不加任何字样，**不改变原有记录的观感**。
  */
-const PACING_HINT: Record<ChatCutOptions['pacing'], string> = {
-  NATURAL: '镜头按分镜建议时长，节奏平稳。',
-  FAST: '镜头切得更短更密；台词放不下时会自动少缩一点，不会把话截断。',
-  STORY: '镜头之间用更长的转场与首尾淡入淡出，节奏舒缓。',
-}
-const TRANSITION_LABEL: Record<ChatCutOptions['transitions'], string> = {
-  CLEAN: '硬切', SMOOTH: '平滑融合', DYNAMIC: '动感切换',
-}
-/**
- * 转场的说明。★ 后两句必须留着：转场**要占用画面素材**，所以整片会变短
- *   （服务端实测：每个镜头首尾各让出几帧给转场做过渡）。
- *   不写清楚的话，「选了转场，片子怎么短了」是个用户无法解释的现象。
- */
-const TRANSITION_HINT: Record<ChatCutOptions['transitions'], string> = {
-  CLEAN: '镜头之间直接切换，不占用画面时长。',
-  SMOOTH: '柔和的溶解过渡。要用到少量画面素材，整片会略短一点。',
-  DYNAMIC: '推拉式动感切换。占用素材更多，整片缩短更明显。',
-}
+const clipPrepSuffix = (task: { chatcut?: Partial<ChatCutOptions> } | null | undefined): string =>
+  task?.chatcut?.clipPrep === 'NORMALIZED' ? ' · 本地打底' : ''
 const GRADE_OPTIONS = [
   { key: 'BASIC' as const, title: '基础生成', desc: '粗剪拼接 + 调色' },
-  { key: 'AI' as const, title: 'AI 生成', desc: 'AI 配音 + 字幕' },
+  { key: 'AI' as const, title: 'AI 生成', desc: '自动识别 + 智能剪辑' },
   { key: 'PREMIUM' as const, title: '精品生成', desc: '剪辑师人工精剪' },
+]
+const AUTO_EDIT_PROFILE_OPTIONS: Array<{ value: AutoEditProfile | undefined; label: string }> = [
+  { value: undefined, label: '自动识别' },
+  { value: 'DISH', label: '菜品展示' },
+  { value: 'TALKING_HEAD', label: '口播人设' },
+  { value: 'VENUE', label: '门店环境' },
+  { value: 'MIXED', label: '综合探店' },
 ]
 const ACTIVE_STATUS = ['QUEUED', 'RUNNING', 'MANUAL_PENDING', 'MANUAL_DOING']
 const STATUS_LABEL: Record<string, string> = {
@@ -227,6 +221,12 @@ export default function RenderCompose() {
   const [color, setColor] = useState<ColorGrade>(boot.snap?.color ?? DEFAULT_COLOR)
   const [grade, setGrade] = useState<RenderGrade>(boot.snap?.grade ?? 'BASIC')
   const [chatcut, setChatcut] = useState<ChatCutOptions>(DEFAULT_CHATCUT)
+  const [autoEditProfile, setAutoEditProfile] = useState<AutoEditProfile | undefined>(undefined)
+  const [customVoice, setCustomVoice] = useState<{ cosKey: string; durationMs?: number; name: string } | null>(null)
+  const [customVoiceUploading, setCustomVoiceUploading] = useState(false)
+  const [recording, setRecording] = useState(false)
+  /** 是否「不配音」（原声直出）。本地 TTS 音色由服务器后台配置。 */
+  const voiceOff = isVoiceOff(chatcut.voiceId)
   const [renders, setRenders] = useState<RenderTask[]>([])
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [selectedResult, setSelectedResult] = useState<RenderTask | null>(null)
@@ -319,6 +319,9 @@ export default function RenderCompose() {
    *   用集合按档位去重，才既防了同档双击、又不吞掉异档提交。
    */
   const submitLock = useRef<Set<RenderGrade>>(new Set())
+  const recorderRef = useRef<ReturnType<typeof Taro.getRecorderManager> | null>(null)
+  const recordingRef = useRef(false)
+  const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previewVersion = useRef(0)
   const colorPreviewVersion = useRef(0)
   const colorPreviewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -335,7 +338,7 @@ export default function RenderCompose() {
   const pendingTask = activeTasks.find((task) => task.grade === grade) ?? null
   const lastSuccess = renders.find((task) => task.status === 'SUCCESS') ?? null
   /**
-   * 「保存到相册 / 复制链接」该下载哪条成片。
+   * 「保存到相册」该下载哪条成片。
    *
    * ★ 判据必须落在**产物自身的调色值**上，而不是「参数脏没脏」这类标志位。
    *   标志位有「改参数时置脏、出片后洗净」两处要同步，漏一处就是静默存错片；
@@ -791,6 +794,74 @@ export default function RenderCompose() {
     }
   }
 
+  const uploadCustomVoice = async (filePath: string, sizeBytes?: number, name = '自定义配音') => {
+    if (!detail?.storeId || customVoiceUploading) return
+    setCustomVoiceUploading(true)
+    try {
+      const asset = await uploadAudioFile({ filePath, storeId: detail.storeId, sizeBytes })
+      setCustomVoice({ cosKey: asset.cosKey, durationMs: asset.durationMs ?? undefined, name })
+      setChatcut((value) => ({ ...value, voiceId: 'custom' }))
+      Taro.showToast({ title: '自定义配音已添加', icon: 'success' })
+    } catch (error) {
+      Taro.showToast({ title: (error as Error).message || '配音上传失败', icon: 'none' })
+    } finally {
+      setCustomVoiceUploading(false)
+    }
+  }
+
+  const chooseCustomVoice = async () => {
+    try {
+      const result = await Taro.chooseMessageFile({ count: 1, type: 'file', extension: ['mp3', 'm4a', 'wav', 'aac'] })
+      const file = result.tempFiles[0]
+      if (file) await uploadCustomVoice(file.path, file.size, file.name)
+    } catch {
+      // 用户取消选择不提示错误
+    }
+  }
+
+  const recordCustomVoice = async () => {
+    if (customVoiceUploading) return
+    const recorder = recorderRef.current ?? Taro.getRecorderManager()
+    recorderRef.current = recorder
+    if (recordingRef.current) {
+      try { recorder.stop() } catch { /* 录音已经结束 */ }
+      return
+    }
+    try {
+      await Taro.authorize({ scope: 'scope.record' })
+    } catch {
+      Taro.showToast({ title: '请允许使用麦克风后再录音', icon: 'none' })
+      return
+    }
+    await new Promise<void>((resolve) => {
+      recorder.onStop((result) => {
+        if (!recordingRef.current) { resolve(); return }
+        recordingRef.current = false
+        setRecording(false)
+        if (recordingTimerRef.current) clearTimeout(recordingTimerRef.current)
+        recordingTimerRef.current = null
+        void uploadCustomVoice(result.tempFilePath, undefined, '我的录音')
+        resolve()
+      })
+      recordingRef.current = true
+      setRecording(true)
+      recorder.start({ duration: 60_000, format: 'aac', sampleRate: 44100, numberOfChannels: 1 })
+      Taro.showToast({ title: '正在录音，再点停止', icon: 'none', duration: 1500 })
+      recordingTimerRef.current = setTimeout(() => {
+        try { recorder.stop() } catch { /* 录音已停止 */ }
+      }, 60_000)
+    })
+  }
+
+  const stopCustomVoice = () => {
+    if (!recordingRef.current) return
+    recordingRef.current = false
+    setRecording(false)
+    if (recordingTimerRef.current) clearTimeout(recordingTimerRef.current)
+    recordingTimerRef.current = null
+    try { recorderRef.current?.stop() } catch { /* 录音已经结束 */ }
+  }
+
   /**
    * 底部「?」：把结算口径一次说清。
    * 档位系数直接从 GRADE_RATIO 生成，**不在文案里另写一份数字** —— 费率改了这里跟着变，
@@ -824,6 +895,10 @@ export default function RenderCompose() {
           ? '至少要有 1 个分镜的素材才能出片，请先回拍摄页拍一条'
           : `还有 ${missingShots.length} 个分镜没上传素材，请先补齐（不需要的可以在拍摄页跳过它）`,
       )
+      return
+    }
+    if (grade === 'AI' && chatcut.voiceId === 'custom' && !customVoice) {
+      setLoadError('请先上传或录制自定义配音，再生成成片')
       return
     }
     // P0-5 纵深防御：UI 已把不可用档位标灰，但状态可能过期（例如页面停留期间服务端改了配置），
@@ -867,10 +942,15 @@ export default function RenderCompose() {
         chatcut: grade === 'AI'
           ? {
               ...chatcut,
-              ...(isVoiceOff(chatcut.voiceId) ? { subtitles: false, removeSilence: false } : {}),
+              subtitles: chatcut.subtitleMode !== 'OFF',
               ...(bgmEnabled ? {} : { bgm: 'NONE' as const }),
             }
           : undefined,
+        engine: grade === 'AI' ? 'LOCAL' : undefined,
+        profile: grade === 'AI' ? autoEditProfile : undefined,
+        ...(grade === 'AI' && chatcut.voiceId === 'custom' && customVoice
+          ? { customVoiceKey: customVoice.cosKey, customVoiceDurationMs: customVoice.durationMs }
+          : {}),
         requestId: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
       })
       setRenders((tasks) => [task, ...tasks.filter((item) => item.id !== task.id)])
@@ -928,14 +1008,6 @@ export default function RenderCompose() {
     }
   }
 
-  const copyDownload = async () => {
-    setResultError('')
-    const url = await resolveSaveUrl()
-    if (!url) return
-    try { await Taro.setClipboardData({ data: url }) }
-    catch (error) { setResultError((error as Error).message || '复制下载链接失败') }
-  }
-
   const saveResult = async () => {
     if (saving) return
     setSaving(true)
@@ -944,13 +1016,46 @@ export default function RenderCompose() {
       const url = await resolveSaveUrl()
       if (!url) return
       const file = await Taro.downloadFile({ url })
-      if (file.statusCode !== 200) { setResultError('下载失败，请重试或改用「复制链接」'); return }
+      if (file.statusCode !== 200) { setResultError('下载失败，请重试'); return }
       await Taro.saveVideoToPhotosAlbum({ filePath: file.tempFilePath })
       void Taro.showToast({ title: '已保存到相册', icon: 'success' })
     } catch {
       // 能走到这里的都是小程序原生失败（绝大多数是相册权限被拒），原文案对用户没有意义
-      setResultError('保存失败，请检查相册权限，或改用「复制链接」自行下载。')
+      setResultError('保存失败：请在小程序设置里允许「保存到相册」。')
     } finally { setSaving(false) }
+  }
+
+  /**
+   * 复制一段文本（标题 / 文案）。
+   * ★ 交不出内容时也要说句话：静默什么也不做，会被当成「这个按钮是坏的」。
+   */
+  const copyText = async (text: string, label: string) => {
+    if (!text) { void Taro.showToast({ title: `还没有${label}`, icon: 'none' }); return }
+    try {
+      await Taro.setClipboardData({ data: text })
+      void Taro.showToast({ title: `${label}已复制`, icon: 'success' })
+    } catch {
+      void Taro.showToast({ title: '复制失败，请重试', icon: 'none' })
+    }
+  }
+
+  /**
+   * 长按封面 → 保存到相册。
+   * ★ 与保存视频同理：`saveImageToPhotosAlbum` 只吃**本地临时文件**，必须先 `downloadFile`；
+   *   直接喂 https 地址会失败，而报错是原生的一句英文，对用户毫无指导意义。
+   * ★ 失败绝大多数是「相册权限被拒」，且**只有第一次**会弹授权框 —— 所以给一句能照着做的指引。
+   */
+  const saveCover = async () => {
+    const url = publishMat?.coverUrl
+    if (!url) return
+    try {
+      const file = await Taro.downloadFile({ url })
+      if (file.statusCode !== 200) { void Taro.showToast({ title: '下载失败，请重试', icon: 'none' }); return }
+      await Taro.saveImageToPhotosAlbum({ filePath: file.tempFilePath })
+      void Taro.showToast({ title: '已保存到相册', icon: 'success' })
+    } catch {
+      void Taro.showToast({ title: '保存失败：请允许「保存到相册」', icon: 'none', duration: 2500 })
+    }
   }
 
   // 出错时的按钮要**分情况**：编号丢了的话「重新加载」只会再错一次，
@@ -983,20 +1088,16 @@ export default function RenderCompose() {
    *   少一项就会在这 ≤0.8s 里闪回上一版旧预览 —— 看着像操作失败。
    * materialsReady 也是必要条件：素材不齐时预览不会发起（服务端 4003），
    *   否则静帧会一直停在「正在生成…」上不动。
-   * ⚠ AI 档必须排除：该档不渲染调色滑块，带着基础档的非 0 参数切过来时 previewedSignature
-   *   已被清空 ⇒ colorDirty 恒为 true，而没有任何请求会再回来洗净它，画面就永久停在静帧上
-   *   （角标还写着「正在生成整片精确预览…」，等于骗人）。
+   * 本地 AI 引擎与基础引擎共用同一套调色管线，因此 AI 档也可以生成精确调色预览。
    */
   const showingStill =
-    grade !== 'AI' && materialsReady && !!stillCover && (draggingAxis !== null || colorDirty || previewing || !!previewError)
+    materialsReady && !!stillCover && (draggingAxis !== null || colorDirty || previewing || !!previewError)
   const showingColorPreview = !showingStill && !!colorPreviewUrl
   const playUrl = colorPreviewUrl ?? videoUrl
-  const previewBadge = showingStill ? '调色近似' : showingColorPreview ? '调色预览' : previewedGrade
+  const previewBadge = showingStill ? '调色近似' : showingColorPreview ? '调色预览' : `${previewedGrade}${clipPrepSuffix(selectedResult)}`
   const stillLabel = draggingAxis !== null ? '松手后生成整片精确预览' : '正在生成整片精确预览…'
-  // AI 档的调色参数**不会被应用**：worker 在 aiMode 下直接把成片交给 ChatCut 出片然后 return
-  // （server/src/render/worker.ts 的 processTask），调色只作用于「基础生成」。
-  // 所以这里不摆一组按了也不起作用的滑块 —— 有反应但没效果，比干脆说明更糟。
-  const colorUnsupported = grade === 'AI'
+  // 本地自动剪辑与基础生成共用归一化、拼接和调色管线；ChatCut 仅作为显式外部实验通道。
+  const colorUnsupported = false
   return (
     <View className='rcompose'>
       <View className='rcompose__stage'>
@@ -1040,13 +1141,11 @@ export default function RenderCompose() {
             <Text>{clipsOpen ? '收起 ▴' : '展开 ▾'}</Text>
           </View>
         </View>
-        {/* 收起时给一句"这里有什么"，否则只剩一行数字，用户不知道该不该点开 */}
-        {!clipsOpen && (
-          <Text className='rcompose__clipshint'>
-            {readyShots.length > 0
-              ? '展开可以逐个看画面：点任意一格就地放大播放，不用跳走。'
-              : '还没有可用素材，先去把分镜拍完。'}
-          </Text>
+        {/* 只在「没有素材」时给一句该去干什么。
+            ★ 有素材时**不写**「展开可以逐个看画面…」：那是在向用户解释他点开就会看到的事，
+              属于噪音；「有没有素材」才是他此刻真正需要知道的信息。 */}
+        {!clipsOpen && readyShots.length === 0 && (
+          <Text className='rcompose__clipshint'>还没有可用素材，先去把分镜拍完。</Text>
         )}
         {clipsOpen && (
         <View className='rcompose__clips'>
@@ -1128,9 +1227,11 @@ export default function RenderCompose() {
 
       {selectedResult && (
         <View className='rcompose__actions'>
-          <Button className='rcompose__action' size='mini' onClick={() => void showResult(selectedResult)}>重新播放</Button>
+          {/* ★ 只留「保存到相册」。删掉的两个各有原因：
+              · 「重新播放」——视频播放器自带 controls，重播不需要第二个入口；
+              · 「复制链接」——它复制的是**现签的临时地址**（getResultPlayUrl），
+                过一会儿就失效，用户拿它去别处下载只会得到一个打不开的链接。 */}
           <Button className='rcompose__action' size='mini' loading={saving} disabled={saving} onClick={saveResult}>保存到相册</Button>
-          <Button className='rcompose__action' size='mini' onClick={copyDownload}>复制链接</Button>
         </View>
       )}
 
@@ -1184,43 +1285,87 @@ export default function RenderCompose() {
 
       {grade === 'AI' && (
         <View className='rcompose__card'>
-          <Text className='rcompose__sectitle'>AI 成片选项</Text>
-          <Text className='rcompose__fieldlabel'>选择配音</Text>
+          <Text className='rcompose__sectitle'>AI 自动剪辑</Text>
+          <Text className='rcompose__optiondesc'>服务器会分析素材内容、画面质量和口播关系，自动选择镜头与节奏。</Text>
+          <View className='rcompose__choice'>
+            <Text className='rcompose__fieldlabel'>剪辑内容类型</Text>
+            <View className='rcompose__choices'>
+              {AUTO_EDIT_PROFILE_OPTIONS.map((option) => (
+                <Text
+                  key={option.label}
+                  className={`rcompose__choiceitem ${autoEditProfile === option.value ? 'rcompose__choiceitem--on' : ''}`}
+                  onClick={() => setAutoEditProfile(option.value)}
+                >
+                  {option.label}
+                </Text>
+              ))}
+            </View>
+            <Text className='rcompose__optiondesc'>不确定时选择自动识别，系统会根据整组素材判断。</Text>
+          </View>
+          <Text className='rcompose__fieldlabel'>配音音色</Text>
           <View className='rcompose__voicegrid'>
             {CHATCUT_VOICES.map((voice) => (
-              <View key={voice.id} className={`rcompose__voice ${chatcut.voiceId === voice.id ? 'rcompose__voice--on' : ''}`} onClick={() => setChatcut((value) => ({ ...value, voiceId: voice.id }))}>
+              <View
+                key={voice.id}
+                className={`rcompose__voice ${chatcut.voiceId === voice.id ? 'rcompose__voice--on' : ''}`}
+                onClick={() => setChatcut((value) => ({
+                  ...value,
+                  voiceId: voice.id,
+                  subtitleMode: voice.id === 'none' && value.subtitleMode === 'VOICE' ? 'SOURCE_AUDIO' : value.subtitleMode,
+                }))}
+              >
                 <Text className='rcompose__voicename'>{voice.name}</Text>
                 <Text className='rcompose__voicedesc'>{voice.desc}</Text>
               </View>
             ))}
           </View>
-          {isVoiceOff(chatcut.voiceId) ? (
-            <Text className='rcompose__optiondesc'>已选「不配音」：直接使用画面原声，不生成配音；字幕与「清理停顿」一并关闭（它们都依赖配音的转录结果）。</Text>
-          ) : (
-            <>
-              <View className='rcompose__optionrow'>
-                <View><Text className='rcompose__optiontitle'>显示字幕</Text><Text className='rcompose__optiondesc'>按配音内容自动上字幕</Text></View>
-                <Switch checked={chatcut.subtitles} onChange={(event) => setChatcut((value) => ({ ...value, subtitles: event.detail.value }))} color='#e1251b' />
+          {chatcut.voiceId === 'custom' && (
+            <View className='rcompose__customvoice'>
+              <Text className='rcompose__optiondesc'>自定义配音会优先于服务器音色，并作为整条旁白使用。</Text>
+              <View className='rcompose__voiceactions'>
+                <Button size='mini' loading={customVoiceUploading} onClick={() => void chooseCustomVoice()}>选择音频</Button>
+                <Button size='mini' type={recording ? 'warn' : 'default'} onClick={recording ? stopCustomVoice : () => void recordCustomVoice()}>
+                  {recording ? '停止录音' : '开始录音'}
+                </Button>
               </View>
-              {chatcut.subtitles && (
-                <View className='rcompose__choice'>
-                  <Text className='rcompose__fieldlabel'>字幕样式</Text>
-                  <View className='rcompose__choices'>
-                    {(['CLEAN', 'EMPHASIS', 'SOCIAL'] as const).map((value) => (
-                      <Text
-                        key={value}
-                        className={`rcompose__choiceitem ${chatcut.subtitleStyle === value ? 'rcompose__choiceitem--on' : ''}`}
-                        onClick={() => setChatcut((item) => ({ ...item, subtitleStyle: value }))}
-                      >
-                        {SUBTITLE_STYLE_LABEL[value]}
-                      </Text>
-                    ))}
-                  </View>
+              {customVoice && (
+                <View className='rcompose__customvoiceline'>
+                  <Text className='rcompose__optiondesc'>{customVoice.name}</Text>
+                  <Text className='rcompose__colorreset' onClick={() => setCustomVoice(null)}>移除</Text>
                 </View>
               )}
-              <View className='rcompose__optionrow'>
-                <View><Text className='rcompose__optiontitle'>清理停顿</Text><Text className='rcompose__optiondesc'>自动剪掉口播之间的空白</Text></View>
-                <Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' />
+              {!customVoice && !customVoiceUploading && <Text className='rcompose__optiondesc'>请先选择音频或录制一段配音。</Text>}
+            </View>
+          )}
+
+          <View className='rcompose__optionrow'>
+            <View>
+              <Text className='rcompose__optiontitle'>显示字幕</Text>
+              <Text className='rcompose__optiondesc'>字幕独立于配音，可识别视频原声。</Text>
+            </View>
+            <Switch checked={chatcut.subtitleMode !== 'OFF'} onChange={(event) => setChatcut((value) => ({ ...value, subtitles: event.detail.value, subtitleMode: event.detail.value ? (voiceOff ? 'SOURCE_AUDIO' : 'VOICE') : 'OFF' }))} color='#e1251b' />
+          </View>
+          {chatcut.subtitleMode !== 'OFF' && (
+            <>
+              <View className='rcompose__choice'>
+                <Text className='rcompose__fieldlabel'>字幕来源</Text>
+                <View className='rcompose__choices'>
+                  {(['VOICE', 'SOURCE_AUDIO', 'VOICE_AND_SOURCE'] as const).map((value) => (
+                    <Text key={value} className={`rcompose__choiceitem ${chatcut.subtitleMode === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, subtitleMode: value, subtitles: true }))}>
+                      {SUBTITLE_MODE_LABEL[value]}
+                    </Text>
+                  ))}
+                </View>
+              </View>
+              <View className='rcompose__choice'>
+                <Text className='rcompose__fieldlabel'>字幕样式</Text>
+                <View className='rcompose__choices'>
+                  {(['CLEAN', 'EMPHASIS', 'SOCIAL'] as const).map((value) => (
+                    <Text key={value} className={`rcompose__choiceitem ${chatcut.subtitleStyle === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, subtitleStyle: value }))}>
+                      {SUBTITLE_STYLE_LABEL[value]}
+                    </Text>
+                  ))}
+                </View>
               </View>
             </>
           )}
@@ -1229,58 +1374,29 @@ export default function RenderCompose() {
             <Text className='rcompose__fieldlabel'>剪辑节奏</Text>
             <View className='rcompose__choices'>
               {(['NATURAL', 'FAST', 'STORY'] as const).map((value) => (
-                <Text
-                  key={value}
-                  className={`rcompose__choiceitem ${chatcut.pacing === value ? 'rcompose__choiceitem--on' : ''}`}
-                  onClick={() => setChatcut((item) => ({ ...item, pacing: value }))}
-                >
-                  {PACING_LABEL[value]}
+                <Text key={value} className={`rcompose__choiceitem ${chatcut.pacing === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, pacing: value }))}>
+                  {{ NATURAL: '自然', FAST: '紧凑', STORY: '叙事' }[value]}
                 </Text>
               ))}
             </View>
-            <Text className='rcompose__optiondesc'>{PACING_HINT[chatcut.pacing]}</Text>
           </View>
-
           <View className='rcompose__choice'>
-            <Text className='rcompose__fieldlabel'>转场风格</Text>
+            <Text className='rcompose__fieldlabel'>转场效果</Text>
             <View className='rcompose__choices'>
               {(['CLEAN', 'SMOOTH', 'DYNAMIC'] as const).map((value) => (
-                <Text
-                  key={value}
-                  className={`rcompose__choiceitem ${chatcut.transitions === value ? 'rcompose__choiceitem--on' : ''}`}
-                  onClick={() => setChatcut((item) => ({ ...item, transitions: value }))}
-                >
-                  {TRANSITION_LABEL[value]}
+                <Text key={value} className={`rcompose__choiceitem ${chatcut.transitions === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, transitions: value }))}>
+                  {{ CLEAN: '硬切', SMOOTH: '柔和溶解', DYNAMIC: '动态擦除' }[value]}
                 </Text>
               ))}
             </View>
-            <Text className='rcompose__optiondesc'>{TRANSITION_HINT[chatcut.transitions]}</Text>
           </View>
-
-          {/* 配乐是**生成类**调用（消耗额度），服务端用 CHATCUT_BGM_ENABLED 控制开关。
-              关着时不给选项而是明说「暂未开放」—— 选了却出不来音乐，比不让选更伤人。 */}
-          <View className='rcompose__choice'>
-            <Text className='rcompose__fieldlabel'>配乐</Text>
-            {bgmEnabled ? (
-              <View className='rcompose__choices'>
-                {(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM'] as const).map((value) => (
-                  <Text
-                    key={value}
-                    className={`rcompose__choiceitem ${chatcut.bgm === value ? 'rcompose__choiceitem--on' : ''}`}
-                    onClick={() => setChatcut((item) => ({ ...item, bgm: value }))}
-                  >
-                    {BGM_LABEL[value]}
-                  </Text>
-                ))}
-              </View>
-            ) : (
-              <Text className='rcompose__optiondesc'>配乐暂未开放，本次成片不带背景音乐。</Text>
-            )}
-          </View>
-
           <View className='rcompose__optionrow'>
-            <View><Text className='rcompose__optiontitle'>统一音量</Text><Text className='rcompose__optiondesc'>平衡各镜头的响度，避免忽大忽小</Text></View>
+            <View><Text className='rcompose__optiontitle'>统一音量</Text><Text className='rcompose__optiondesc'>统一原声和配音的响度，减少忽大忽小</Text></View>
             <Switch checked={chatcut.normalizeAudio} onChange={(event) => setChatcut((value) => ({ ...value, normalizeAudio: event.detail.value }))} color='#e1251b' />
+          </View>
+          <View className='rcompose__optionrow'>
+            <View><Text className='rcompose__optiontitle'>清理停顿</Text><Text className='rcompose__optiondesc'>压缩过长静音，保留正常语句节奏</Text></View>
+            <Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' />
           </View>
 
           <Text className='rcompose__fieldlabel'>备注与关键字</Text>
@@ -1339,7 +1455,7 @@ export default function RenderCompose() {
       {activeTasks.map((task) => (
         <View className='rcompose__card' key={task.id}>
           <View className='rcompose__history-heading'>
-            <Text className='rcompose__sectitle'>{gradeTitle(task.grade)} · 进行中</Text>
+            <Text className='rcompose__sectitle'>{gradeTitle(task.grade)}{clipPrepSuffix(task)} · 进行中</Text>
           </View>
           <ProgressLine
             percent={task.progress}
@@ -1397,7 +1513,7 @@ export default function RenderCompose() {
                 }
               >
                 <View className='rcompose__history-top'>
-                  <Text className='rcompose__history-title'>{gradeTitle(task.grade)}</Text>
+                  <Text className='rcompose__history-title'>{gradeTitle(task.grade)}{clipPrepSuffix(task)}</Text>
                   <Text
                     className={`ds-pill ${
                       task.status === 'SUCCESS'
@@ -1435,7 +1551,7 @@ export default function RenderCompose() {
             与档位、调色都无关 —— 所以没有必要跟三档/调色并排挤在一起。 */}
       <View className='rcompose__card'>
         <View className='rcompose__history-heading'>
-          <Text className='rcompose__sectitle'>发布素材 · 标题 / 封面 / 文案</Text>
+          <Text className='rcompose__sectitle'>发布素材</Text>
           {!!publishMat && !publishLoading && (
             <Button size='mini' onClick={() => void doGeneratePublish('ALL')}>重新生成</Button>
           )}
@@ -1481,7 +1597,21 @@ export default function RenderCompose() {
         {!!publishMat && (
           <>
             {publishMat.coverUrl ? (
-              <Image className='rcompose__pubcover' mode='aspectFill' src={publishMat.coverUrl} />
+              <>
+                {/* 封面就地能看、能存 —— 点一下放大（微信预览页里还能再长按保存），长按直接存相册。
+                    不必再为了存一张图跳到详情页。
+                    ★ previewImage 要把被点的那张放在 urls[0]：`current` 靠「能在 urls 里精确
+                      匹配到」定位，匹配不上会**静默回落到第一张**（见 pages/dish/edit.tsx 的说明）；
+                      这里只有一张，天然满足。 */}
+                <Image
+                  className='rcompose__pubcover'
+                  mode='aspectFill'
+                  src={publishMat.coverUrl}
+                  onClick={() => Taro.previewImage({ current: publishMat.coverUrl!, urls: [publishMat.coverUrl!] })}
+                  onLongPress={() => void saveCover()}
+                />
+                <Text className='rcompose__pubcoverhint'>点封面可放大查看，长按保存到相册</Text>
+              </>
             ) : (
               <View className='rcompose__pubcoverph'>
                 <Text className='rcompose__pubcoverphtext'>
@@ -1492,22 +1622,21 @@ export default function RenderCompose() {
             )}
 
             <View className='rcompose__pubblock'>
-              <Text className='rcompose__publabel'>标题</Text>
+              {/* ★ 复制做成明确的按钮，而不是只依赖划选：手机上想一次选中一整段标题/文案很难，
+                  划选失败会让人以为「复制不了」。 */}
+              <View className='rcompose__pubblockhead'>
+                <Text className='rcompose__publabel'>标题</Text>
+                <Text className='rcompose__pubcopy' onClick={() => void copyText(publishMat.title, '标题')}>复制</Text>
+              </View>
               <Text className='rcompose__pubtitle'>{publishMat.title || '（空）'}</Text>
             </View>
 
             <View className='rcompose__pubblock'>
-              <Text className='rcompose__publabel'>文案</Text>
+              <View className='rcompose__pubblockhead'>
+                <Text className='rcompose__publabel'>文案</Text>
+                <Text className='rcompose__pubcopy' onClick={() => void copyText(publishMat.caption, '文案')}>复制</Text>
+              </View>
               <Text className='rcompose__pubcaption'>{publishMat.caption || '（空）'}</Text>
-            </View>
-
-            <View className='rcompose__pubacts'>
-              <Button
-                className='ds-btn rcompose__pubbtn'
-                onClick={() => Taro.navigateTo({ url: `/pages/render/result?id=${publishMat.creationId}` })}
-              >
-                详情页查看 / 保存
-              </Button>
             </View>
           </>
         )}

@@ -188,6 +188,74 @@ export async function ffmpegConcat(inputs: string[], output: string, timeoutMs =
   }
 }
 
+export type TransitionStyle = 'CLEAN' | 'SMOOTH' | 'DYNAMIC'
+
+/**
+ * 拼接并应用真实的镜头转场。CLEAN 保持无损硬切；其余两档用 xfade/acrossfade
+ * 同步处理画面和声音。素材过短、缺少时长或当前 ffmpeg 不支持滤镜时回退硬切，
+ * 保证选项不会把任务变成不可恢复的失败。
+ */
+export async function ffmpegConcatWithTransitions(
+  inputs: string[],
+  output: string,
+  transition: TransitionStyle,
+  timeoutMs = 120_000,
+): Promise<void> {
+  if (transition === 'CLEAN' || inputs.length < 2) {
+    await ffmpegConcat(inputs, output, timeoutMs)
+    return
+  }
+  const durations = await Promise.all(inputs.map((input) => probeDurationMs(input)))
+  if (durations.some((duration) => !duration || duration <= 700)) {
+    await ffmpegConcat(inputs, output, timeoutMs)
+    return
+  }
+  const durationSec = transition === 'DYNAMIC' ? 0.28 : 0.35
+  const transitionName = transition === 'DYNAMIC' ? 'wipeleft' : 'fade'
+  if (durations.some((duration) => (duration as number) / 1000 <= durationSec + 0.1)) {
+    await ffmpegConcat(inputs, output, timeoutMs)
+    return
+  }
+  const args = inputs.flatMap((input) => ['-i', input])
+  let filter = ''
+  let videoLabel = '0:v'
+  let audioLabel = '0:a'
+  let timelineSec = (durations[0] as number) / 1000
+  for (let index = 1; index < inputs.length; index += 1) {
+    const nextVideo = `${index}:v`
+    const nextAudio = `${index}:a`
+    const nextVideoLabel = `v${index}`
+    const nextAudioLabel = `a${index}`
+    const offset = Math.max(0, timelineSec - durationSec)
+    filter += `[${videoLabel}][${nextVideo}]xfade=transition=${transitionName}:duration=${durationSec}:offset=${offset.toFixed(3)}[${nextVideoLabel}];`
+    filter += `[${audioLabel}][${nextAudio}]acrossfade=d=${durationSec}:c1=tri:c2=tri[${nextAudioLabel}];`
+    videoLabel = nextVideoLabel
+    audioLabel = nextAudioLabel
+    timelineSec += (durations[index] as number) / 1000 - durationSec
+  }
+  args.push(
+    '-filter_complex', filter,
+    '-map', `[${videoLabel}]`, '-map', `[${audioLabel}]`,
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-shortest', '-y', output,
+  )
+  try {
+    await runFfmpeg(args, timeoutMs)
+  } catch (error) {
+    console.warn(`[ffmpeg] ${transition} 转场不可用，回退硬切：`, (error as Error).message)
+    await ffmpegConcat(inputs, output, timeoutMs)
+  }
+}
+
+/** 从视频提取单声道 16k PCM WAV，供 Whisper-compatible ASR 使用。 */
+export async function ffmpegExtractAudio(input: string, output: string, timeoutMs = 120_000): Promise<void> {
+  await runFfmpeg([
+    '-i', input,
+    '-vn', '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le',
+    '-y', output,
+  ], timeoutMs)
+}
+
 async function runFfmpeg(args: string[], timeoutMs: number): Promise<void> {
   try {
     await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
@@ -520,6 +588,43 @@ export async function probeSpeechEndMs(input: string, timeoutMs = 45_000): Promi
     .filter((value) => Number.isFinite(value) && value >= 0)
   if (starts.length === 0) return null
   return Math.round(starts[starts.length - 1]! * 1000)
+}
+
+export interface VisualQualitySignals {
+  blackRatio: number | null
+  freezeRatio: number | null
+}
+
+/**
+ * 轻量级画面健康检查。它不是内容理解模型，只负责淘汰明显不可用的黑帧/冻结片段；
+ * 失败返回 null，由上层继续走保守规则，不把可选质量信号变成出片硬依赖。
+ */
+export async function probeVisualQuality(input: string, timeoutMs = 45_000): Promise<VisualQualitySignals | null> {
+  const durationMs = await probeDurationMs(input)
+  if (!durationMs || durationMs <= 0) return null
+  const args = [
+    '-hide_banner', '-nostdin', '-i', input,
+    '-vf', 'blackdetect=d=0.20:pix_th=0.10,freezedetect=n=-60dB:d=0.50',
+    '-an', '-f', 'null', '-',
+  ]
+  let stderr = ''
+  try {
+    stderr = String((await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 })).stderr)
+  } catch (e) {
+    stderr = String((e as { stderr?: string }).stderr ?? '')
+  }
+  const blackMs = [...stderr.matchAll(/black_duration:\s*(\d+(?:\.\d+)?)/g)]
+    .map((m) => Number(m[1]) * 1000)
+    .filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0)
+  const freezeMs = [...stderr.matchAll(/freeze_duration:\s*(\d+(?:\.\d+)?)/g)]
+    .map((m) => Number(m[1]) * 1000)
+    .filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0)
+  return {
+    blackRatio: Number.isFinite(blackMs) ? Math.min(1, blackMs / durationMs) : null,
+    freezeRatio: Number.isFinite(freezeMs) ? Math.min(1, freezeMs / durationMs) : null,
+  }
 }
 
 /**

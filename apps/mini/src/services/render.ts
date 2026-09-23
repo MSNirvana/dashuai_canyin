@@ -17,7 +17,14 @@ export interface RenderClip {
   trimEndMs: number | null
   durationMs: number | null
   line?: string | null
+  shotType?: string | null
+  shotSize?: string | null
+  visualReq?: string | null
 }
+
+export const AUTO_EDIT_PROFILES = ['DISH', 'TALKING_HEAD', 'VENUE', 'MIXED'] as const
+export type AutoEditProfile = (typeof AUTO_EDIT_PROFILES)[number]
+export type SubtitleMode = 'OFF' | 'VOICE' | 'SOURCE_AUDIO' | 'VOICE_AND_SOURCE'
 
 /**
  * AI 档「配音」档位。
@@ -33,7 +40,16 @@ export const CHATCUT_VOICES = [
   { id: 'gentle-male', name: '温和男声', desc: '沉稳自然，适合品牌介绍' },
   { id: 'magnetic-male', name: '磁性男声', desc: '质感突出，适合品质表达' },
   { id: 'energetic-youth', name: '活力青年', desc: '轻快有冲劲，适合同城引流' },
+  { id: 'custom', name: '我的配音', desc: '上传自己的录音作为旁白' },
 ] as const
+
+/**
+ * 去掉「不配音」的**纯音色**列表 —— 界面上「不配音」是一个**开关**、不是音色卡片
+ * （见 compose.tsx 的「AI 成片选项」）。
+ * ★ 但 `none` 这个取值**不能**从 CHATCUT_VOICES 里删掉：它同时是 `voiceId` 的合法值
+ *   与后端 `CHATCUT_VOICE_OFF` 的契约值，删了类型与提交都会塌。
+ */
+export const CHATCUT_VOICE_CHOICES = CHATCUT_VOICES.filter((voice) => voice.id !== 'none')
 
 /** 是否选了「不配音」（原声直出）。提交前用它把字幕一并关掉。 */
 export const isVoiceOff = (voiceId: ChatCutOptions['voiceId']): boolean => voiceId === 'none'
@@ -41,10 +57,18 @@ export const isVoiceOff = (voiceId: ChatCutOptions['voiceId']): boolean => voice
 export type ChatCutOptions = {
   voiceId: typeof CHATCUT_VOICES[number]['id']
   subtitles: boolean
+  subtitleMode: SubtitleMode
   subtitleStyle: 'CLEAN' | 'EMPHASIS' | 'SOCIAL'
   bgm: 'NONE' | 'LIGHT' | 'UPBEAT' | 'PREMIUM'
   pacing: 'NATURAL' | 'FAST' | 'STORY'
   transitions: 'CLEAN' | 'SMOOTH' | 'DYNAMIC'
+  /**
+   * 素材送云端前的处理路线（2026-09-22 新增，用户可选）。
+   * `ORIGINAL` = 原文件直传（默认，**原来的路线**）；`NORMALIZED` = 先在本机归一化再传。
+   * ★ 判读历史任务时只能写 `task.chatcut?.clipPrep === 'NORMALIZED'`：
+   *   老任务存进库的 `paramsJson.chatcut` **没有这个字段**，直接取值为 `undefined`。
+   */
+  clipPrep: 'ORIGINAL' | 'NORMALIZED'
   removeSilence: boolean
   normalizeAudio: boolean
   note: string
@@ -93,6 +117,17 @@ export interface RenderTask {
   finishAt: string | null
   assignedAt: string | null
   deadlineAt: string | null
+  /**
+   * 这条任务**提交时用的 AI 档参数**（服务端一直在回显，此前前端类型里漏了）。
+   * ★ 用途：成片记录要能看出「这条片子走的哪条素材路线」。
+   * ★ 只读、不要拿它去回填编辑器状态 —— 它是历史快照，不是当前选择。
+   * ★ **老任务没有 `clipPrep` 字段**，判读只能写 `=== 'NORMALIZED'`（见 ChatCutOptions）。
+   */
+  chatcut?: ChatCutOptions
+  engine?: 'LOCAL' | 'CHATCUT'
+  profile?: AutoEditProfile
+  customVoiceKey?: string
+  customVoiceDurationMs?: number
 }
 
 export interface PlayUrl {
@@ -109,6 +144,10 @@ export function submitRender(
     requestId: string
     aiMode?: boolean
     chatcut?: ChatCutOptions
+    engine?: 'LOCAL' | 'CHATCUT'
+    profile?: AutoEditProfile
+    customVoiceKey?: string
+    customVoiceDurationMs?: number
   },
 ) {
   return http.post<{ task: RenderTask; duplicated: boolean }>(`/creations/${creationId}/render`, body)

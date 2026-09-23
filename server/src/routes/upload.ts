@@ -29,7 +29,7 @@ const localUpload = multer({
 const confirmInput = z.object({
   cosKey: z.string().min(1).max(512),
   storeId: z.string().min(1),
-  type: z.enum(['VIDEO', 'IMAGE']),
+  type: z.enum(['VIDEO', 'IMAGE', 'AUDIO']),
   sizeBytes: z.number().int().min(0),
   width: z.number().int().optional(),
   height: z.number().int().optional(),
@@ -64,7 +64,7 @@ router.post('/local', localUpload.single('file'), async (req, res) => {
   try {
     const input = z.object({
       storeId: z.string().min(1),
-      type: z.enum(['VIDEO', 'IMAGE']),
+      type: z.enum(['VIDEO', 'IMAGE', 'AUDIO']),
       width: z.coerce.number().int().optional(),
       height: z.coerce.number().int().optional(),
       durationMs: z.coerce.number().int().optional(),

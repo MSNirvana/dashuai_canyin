@@ -217,10 +217,10 @@ export function verifyLocalMediaToken(key: string, expiresRaw: string, token: st
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
-export function extensionForUpload(originalName: string, type: 'VIDEO' | 'IMAGE'): string {
+export function extensionForUpload(originalName: string, type: 'VIDEO' | 'IMAGE' | 'AUDIO'): string {
   const ext = extname(basename(originalName)).toLowerCase().replace(/[^a-z0-9.]/g, '')
   if (ext && ext.length <= 10) return ext
-  return type === 'IMAGE' ? '.jpg' : '.mp4'
+  return type === 'IMAGE' ? '.jpg' : type === 'AUDIO' ? '.m4a' : '.mp4'
 }
 
 export function contentTypeForKey(key: string): string {
@@ -233,5 +233,10 @@ export function contentTypeForKey(key: string): string {
   if (ext === '.gif') return 'image/gif'
   if (ext === '.webm') return 'video/webm'
   if (ext === '.mov') return 'video/quicktime'
+  if (ext === '.mp3') return 'audio/mpeg'
+  if (ext === '.m4a' || ext === '.aac') return 'audio/mp4'
+  if (ext === '.wav') return 'audio/wav'
+  if (ext === '.ogg') return 'audio/ogg'
+  if (ext === '.flac') return 'audio/flac'
   return 'video/mp4'
 }

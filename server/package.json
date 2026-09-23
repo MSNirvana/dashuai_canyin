@@ -65,6 +65,8 @@
     "shot-skip:verify": "tsx scripts/verify-shot-skip.ts",
     "dish-combo:verify": "tsx scripts/verify-dish-combo.ts",
     "render-errors:verify": "tsx scripts/verify-render-errors.ts",
+    "auto-edit:verify": "tsx scripts/verify-auto-edit.ts",
+    "render-options:verify": "tsx scripts/verify-render-options.ts",
     "tts:probe-speakers": "tsx scripts/probe-volcano-speakers.ts",
     "tts:setup-volcano": "tsx scripts/setup-volcano-tts.ts",
     "tts:verify-voices": "tsx scripts/verify-tts-voices.ts"

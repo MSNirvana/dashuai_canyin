@@ -52,9 +52,10 @@ export class UploadObjectMismatchError extends Error {
  *   「静默不播 / 合成失败」的形式出现，而上传这一步看起来完全成功。
  *   这里只做「扩展名 ↔ 声明类型」的一致性 + 后缀白名单，避免出现可执行/脚本类后缀。
  */
-const ALLOWED_EXT_BY_TYPE: Record<'VIDEO' | 'IMAGE', string[]> = {
+const ALLOWED_EXT_BY_TYPE: Record<'VIDEO' | 'IMAGE' | 'AUDIO', string[]> = {
   VIDEO: ['.mp4', '.m4v', '.mov', '.webm', '.avi'],
   IMAGE: ['.jpg', '.jpeg', '.png', '.webp', '.gif'],
+  AUDIO: ['.mp3', '.m4a', '.wav', '.aac', '.ogg', '.flac'],
 }
 
 function extOf(key: string): string {
@@ -62,7 +63,7 @@ function extOf(key: string): string {
   return i < 0 ? '' : key.slice(i).toLowerCase()
 }
 
-function assertExtensionMatches(key: string, type: 'VIDEO' | 'IMAGE'): void {
+function assertExtensionMatches(key: string, type: 'VIDEO' | 'IMAGE' | 'AUDIO'): void {
   const ext = extOf(key)
   const allowed = ALLOWED_EXT_BY_TYPE[type]
   if (!ext || !allowed.includes(ext)) {
@@ -183,7 +184,7 @@ export async function getSts(merchantId: bigint): Promise<StsCredential> {
 export interface ConfirmUploadInput {
   cosKey: string
   storeId: bigint
-  type: 'VIDEO' | 'IMAGE'
+  type: 'VIDEO' | 'IMAGE' | 'AUDIO'
   sizeBytes: number
   width?: number
   height?: number

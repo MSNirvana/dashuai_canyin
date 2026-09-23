@@ -5,13 +5,14 @@
 //   3) 配音音频替换原静音轨，与画面时间轴严格对齐
 // 智能剪辑节奏：口播时长驱动每镜字幕停留（已按分镜时长布时）；更细的节拍检测留作后续能力。
 import { join } from 'node:path'
-import { writeFile, rm, mkdtemp } from 'node:fs/promises'
+import { writeFile, rm, mkdtemp, copyFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { synthesizeNarration } from './tts.js'
-import { ffmpegBin, ffmpegConcat, ffmpegSupportsSubtitles } from './ffmpeg.js'
+import { ffmpegBin, ffmpegConcat, ffmpegExtractAudio, ffmpegSupportsSubtitles, hasAudioStream, probeDurationMs } from './ffmpeg.js'
+import { transcribeAudio, type TranscriptionSegment } from './transcription.js'
 import type { TtsProviderConfig } from '../services/tts-provider.service.js'
 
 const execFileP = promisify(execFile)
@@ -21,6 +22,23 @@ export interface SynthesisShot {
   line?: string | null
   /** 该分镜在成片中的时长（毫秒） */
   durationMs: number
+}
+
+export interface SynthesisOptions {
+  /** false 时由调用方保留素材原声，不生成旁白轨 */
+  voiceEnabled?: boolean
+  /** false 时仍可生成旁白，但不烧录字幕 */
+  subtitles?: boolean
+  /** 字幕来源；未传时兼容旧逻辑：有旁白就按文案生成字幕。 */
+  subtitleMode?: 'OFF' | 'VOICE' | 'SOURCE_AUDIO' | 'VOICE_AND_SOURCE'
+  /** 用户自定义配音文件，优先于逐镜头 TTS。 */
+  customVoicePath?: string
+  /** 原视频音频来源，用于无旁白时的语音识别。 */
+  sourceAudioPath?: string
+  /** 对最终音轨做响度均衡。 */
+  normalizeAudio?: boolean
+  /** 删除明显过长的静音段，并用静音补回视频总时长。 */
+  removeSilence?: boolean
 }
 
 function toSrtTime(msIn: number): string {
@@ -47,6 +65,41 @@ function buildSrt(shots: SynthesisShot[]): string {
     cursor += shot.durationMs
   }
   return blocks.join('\n')
+}
+
+function lineSegments(shots: SynthesisShot[]): TranscriptionSegment[] {
+  let cursor = 0
+  const segments: TranscriptionSegment[] = []
+  for (const shot of shots) {
+    const text = (shot.line ?? '').trim()
+    if (text && shot.durationMs > 0) segments.push({ startMs: cursor, endMs: cursor + shot.durationMs, text })
+    cursor += Math.max(0, shot.durationMs)
+  }
+  return segments
+}
+
+function segmentsToSrt(segments: TranscriptionSegment[]): string {
+  return segments.map((segment, index) => (
+    `${index + 1}\n${toSrtTime(segment.startMs)} --> ${toSrtTime(segment.endMs)}\n${segment.text}\n`
+  )).join('\n')
+}
+
+function audioFilter(options: SynthesisOptions): string {
+  const filters: string[] = []
+  if (options.removeSilence) {
+    filters.push('silenceremove=start_periods=1:start_duration=0.15:start_threshold=-45dB:stop_periods=-1:stop_duration=0.35:stop_threshold=-45dB')
+  }
+  if (options.normalizeAudio) filters.push('loudnorm=I=-16:TP=-1.5:LRA=11')
+  return filters.join(',')
+}
+
+async function processVoiceTrack(input: string, output: string, targetDurationMs: number, options: SynthesisOptions, timeoutMs: number): Promise<void> {
+  const filters = [audioFilter(options), 'apad'].filter(Boolean).join(',')
+  await execFileP(ffmpegBin(), [
+    '-i', input, '-vn', '-af', filters,
+    '-t', (Math.max(1, targetDurationMs) / 1000).toFixed(3),
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-y', output,
+  ], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
 }
 
 interface CjkFont {
@@ -84,44 +137,87 @@ export async function applyAiSynthesis(
   outPath: string,
   timeoutMs = 180_000,
   provider?: TtsProviderConfig | null,
+  options: SynthesisOptions = {},
 ): Promise<{ subtitled: boolean }> {
   const workDir = await mkdtemp(join(tmpdir(), 'dashuai-ai-'))
   try {
-    // 1) 逐分镜配音：每个分镜产出一段时长 = 分镜时长的音频（静音/语音），保证时间轴对齐
-    const narrationFiles: string[] = []
-    for (let i = 0; i < shots.length; i++) {
-      const shot = shots[i]
-      if (!shot) continue
-      const durMs = Math.max(1, Math.round(shot.durationMs))
-      const text = (shot.line ?? '').trim()
-      const npath = join(workDir, `narr_${i}.m4a`)
-      try {
-        await synthesizeNarration(text, durMs, npath, provider, timeoutMs)
-        narrationFiles.push(npath)
-      } catch (e) {
-        // 配音失败：用等长静音轨兜底，保证音频轨道与画面时长一致
-        console.warn(`[synthesis] 分镜 ${i} 配音失败，用静音兜底：`, (e as Error).message)
-        await synthSilence(durMs, npath, timeoutMs)
-        narrationFiles.push(npath)
+    const voiceEnabled = options.voiceEnabled !== false
+    const subtitleMode = options.subtitles === false ? 'OFF' : (options.subtitleMode ?? (voiceEnabled ? 'VOICE' : 'OFF'))
+    let voicePath: string | null = null
+    const generatedVoice = voiceEnabled && !options.customVoicePath
+    if (options.customVoicePath) {
+      voicePath = options.customVoicePath
+    } else if (generatedVoice && shots.length > 0) {
+      // 1) 逐分镜 TTS：每个分镜产出与画面等长的音频，保证时间轴稳定。
+      const narrationFiles: string[] = []
+      for (let i = 0; i < shots.length; i++) {
+        const shot = shots[i]
+        if (!shot) continue
+        const durMs = Math.max(1, Math.round(shot.durationMs))
+        const text = (shot.line ?? '').trim()
+        const npath = join(workDir, `narr_${i}.m4a`)
+        try {
+          await synthesizeNarration(text, durMs, npath, provider, timeoutMs)
+          narrationFiles.push(npath)
+        } catch (e) {
+          console.warn(`[synthesis] 分镜 ${i} 配音失败，用静音兜底：`, (e as Error).message)
+          await synthSilence(durMs, npath, timeoutMs)
+          narrationFiles.push(npath)
+        }
+      }
+      if (narrationFiles.length) {
+        voicePath = join(workDir, 'narration.m4a')
+        await ffmpegConcat(narrationFiles, voicePath, timeoutMs)
       }
     }
+    if (voicePath) {
+      const targetDurationMs = (await probeDurationMs(videoPath)) ?? Math.max(1, shots.reduce((sum, shot) => sum + shot.durationMs, 0))
+      const processedVoicePath = join(workDir, 'voice-processed.m4a')
+      await processVoiceTrack(voicePath, processedVoicePath, targetDurationMs, options, timeoutMs)
+      voicePath = processedVoicePath
+    }
 
-    // 2) 拼接配音轨（各分镜编码参数一致，可直接 copy 拼接）
-    const narrationPath = join(workDir, 'narration.m4a')
-    await ffmpegConcat(narrationFiles, narrationPath, timeoutMs)
-
-    // 3) 生成字幕并烧录（尽力而为）
-    //    前置条件有两个，缺一不可：① 有可用中文字体 ② ffmpeg 编译了 libass（subtitles 滤镜）。
-    //    只查字体目录存在会误判：精简版 ffmpeg（如 Homebrew 的 `ffmpeg`，libass 被拆到 `ffmpeg-full`）
-    //    根本没有 subtitles 滤镜，硬烧只会白跑一遍必然失败的重编码。
-    const srt = buildSrt(shots)
+    // 2) 组装字幕片段：旁白优先使用文案，原视频声音则调用 ASR。
+    let subtitleSegments: TranscriptionSegment[] = []
+    if (subtitleMode === 'VOICE' || subtitleMode === 'VOICE_AND_SOURCE') {
+      if (options.customVoicePath) {
+        const voiceWav = join(workDir, 'custom-voice.wav')
+        await ffmpegExtractAudio(options.customVoicePath, voiceWav, timeoutMs)
+        const asr = await transcribeAudio(voiceWav, timeoutMs).catch((e) => {
+          console.warn('[synthesis] 自定义配音 ASR 失败：', (e as Error).message)
+          return null
+        })
+        subtitleSegments = asr?.segments ?? []
+      } else {
+        subtitleSegments = lineSegments(shots)
+      }
+    }
+    if (subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE') {
+      const source = options.sourceAudioPath ?? videoPath
+      const sourceWav = join(workDir, 'source-audio.wav')
+      const asr = await (async () => {
+        try {
+          await ffmpegExtractAudio(source, sourceWav, timeoutMs)
+          return await transcribeAudio(sourceWav, timeoutMs)
+        } catch (e) {
+          console.warn('[synthesis] 原视频语音识别失败：', (e as Error).message)
+          return null
+        }
+      })()
+      if (asr?.segments?.length) subtitleSegments = [...subtitleSegments, ...asr.segments].sort((a, b) => a.startMs - b.startMs)
+    }
+    // 没有 ASR 配置时，SOURCE_AUDIO 仍尽量使用已有分镜文案，不让任务失败。
+    if (!subtitleSegments.length && (subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE')) {
+      subtitleSegments = lineSegments(shots)
+    }
+    const srt = subtitleMode === 'OFF' ? '' : segmentsToSrt(subtitleSegments)
     const font = detectCjkFont()
     let subtitled = false
     if (srt.trim() && font) {
       if (await ffmpegSupportsSubtitles()) {
         const srtPath = join(workDir, 'subs.srt')
         await writeFile(srtPath, srt, 'utf8')
-        subtitled = await muxWithSubtitles(videoPath, narrationPath, srtPath, font, outPath, timeoutMs)
+        subtitled = await muxWithSubtitles(videoPath, voicePath, srtPath, font, outPath, timeoutMs, options)
       } else {
         console.warn(
           '[synthesis] 跳过字幕烧录：当前 ffmpeg 未编译 libass（缺少 subtitles 滤镜）。' +
@@ -131,9 +227,11 @@ export async function applyAiSynthesis(
       }
     }
 
-    // 4) 未烧字幕或烧录失败：仅替换配音轨（视频 copy，不重编码）
+    // 3) 未烧字幕或烧录失败：替换自定义/TTS音轨；没有旁白时保留原视频声音。
     if (!subtitled) {
-      await muxAudioOnly(videoPath, narrationPath, outPath, timeoutMs)
+      if (voicePath) await muxAudioOnly(videoPath, voicePath, outPath, timeoutMs)
+      else if (options.normalizeAudio || options.removeSilence) await processVideoAudio(videoPath, outPath, options, timeoutMs)
+      else await copyFile(videoPath, outPath)
     }
     return { subtitled }
   } finally {
@@ -157,24 +255,34 @@ async function synthSilence(durMs: number, outPath: string, timeoutMs: number): 
 
 async function muxWithSubtitles(
   videoPath: string,
-  audioPath: string,
+  audioPath: string | null,
   srtPath: string,
   font: CjkFont,
   outPath: string,
   timeoutMs: number,
+  options: SynthesisOptions,
 ): Promise<boolean> {
   try {
     const vf = `subtitles=${escapeFilterPath(srtPath)}:fontsdir=${escapeFilterPath(font.dir)}:force_style='FontName=${font.family}'`
+    const args = ['-i', videoPath]
+    if (audioPath) args.push('-i', audioPath)
+    args.push('-filter_complex', `[0:v]${vf}[v]`, '-map', '[v]')
+    if (audioPath) args.push('-map', '1:a')
+    else args.push('-map', '0:a?')
+    const sourceAudioFilter = !audioPath ? audioFilter(options) : ''
+    if (sourceAudioFilter) {
+      args.push('-af', `${sourceAudioFilter},apad`)
+      const durationMs = await probeDurationMs(videoPath)
+      if (durationMs) args.push('-t', (durationMs / 1000).toFixed(3))
+    }
+    args.push(
+      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+      '-c:a', 'aac', '-b:a', '128k',
+      '-shortest', '-y', outPath,
+    )
     await execFileP(
       ffmpegBin(),
-      [
-        '-i', videoPath, '-i', audioPath,
-        '-filter_complex', `[0:v]${vf}[v]`,
-        '-map', '[v]', '-map', '1:a',
-        '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-        '-c:a', 'aac', '-b:a', '128k',
-        '-shortest', '-y', outPath,
-      ],
+      args,
       { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
     )
     return true
@@ -182,6 +290,23 @@ async function muxWithSubtitles(
     console.warn('[synthesis] 字幕烧录失败，降级为仅配音：', (e as Error).message)
     return false
   }
+}
+
+async function processVideoAudio(videoPath: string, outPath: string, options: SynthesisOptions, timeoutMs: number): Promise<void> {
+  if (!(await hasAudioStream(videoPath))) {
+    await copyFile(videoPath, outPath)
+    return
+  }
+  await execFileP(
+    ffmpegBin(),
+    [
+      '-i', videoPath,
+      '-map', '0:v', '-map', '0:a',
+      '-c:v', 'copy', '-af', audioFilter(options), '-c:a', 'aac', '-b:a', '128k',
+      '-movflags', '+faststart', '-y', outPath,
+    ],
+    { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+  )
 }
 
 async function muxAudioOnly(

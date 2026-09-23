@@ -18,6 +18,7 @@ import {
 import { BeanNotEnoughError } from '../bean/bean.service.js'
 import { RequestConflictError } from '../domain/request.js'
 import { CHATCUT_CLIP_PREPS } from '../render/chatcut.js'
+import { AUTO_EDIT_PROFILES } from '../render/auto-edit.js'
 
 const router = createRouter()
 router.use(auth)
@@ -25,6 +26,10 @@ router.use(auth)
 const submitInput = z.object({
   mode: z.enum(['FULL', 'RECOLOR']).optional(),
   grade: z.enum(['BASIC', 'AI', 'PREMIUM']).optional(),
+  engine: z.enum(['LOCAL', 'CHATCUT']).optional(),
+  profile: z.enum(AUTO_EDIT_PROFILES).optional(),
+  customVoiceKey: z.string().max(512).optional(),
+  customVoiceDurationMs: z.number().int().positive().optional(),
   color: z
     .object({
       brightness: z.number().int().min(-100).max(100),
@@ -36,8 +41,9 @@ const submitInput = z.object({
   requestId: z.string().trim().min(8).max(64).optional(),
   aiMode: z.boolean().optional(),
   chatcut: z.object({
-    voiceId: z.enum(['none', 'warm-female', 'bright-female', 'gentle-male', 'magnetic-male', 'energetic-youth']).optional(),
+    voiceId: z.enum(['none', 'warm-female', 'bright-female', 'gentle-male', 'magnetic-male', 'energetic-youth', 'custom']).optional(),
     subtitles: z.boolean().optional(),
+    subtitleMode: z.enum(['OFF', 'VOICE', 'SOURCE_AUDIO', 'VOICE_AND_SOURCE']).optional(),
     subtitleStyle: z.enum(['CLEAN', 'EMPHASIS', 'SOCIAL']).optional(),
     bgm: z.enum(['NONE', 'LIGHT', 'UPBEAT', 'PREMIUM']).optional(),
     pacing: z.enum(['NATURAL', 'FAST', 'STORY']).optional(),
@@ -57,6 +63,10 @@ router.post('/:id/render', async (req, res) => {
     const r = await renderSvc.submitRender(prisma, req.merchantId!, idParam(req.params.id, 'id'), {
       mode: body.mode ?? 'FULL',
       grade: body.grade,
+      engine: body.engine,
+      profile: body.profile,
+      customVoiceKey: body.customVoiceKey,
+      customVoiceDurationMs: body.customVoiceDurationMs,
       color: body.color,
       requestId: body.requestId ?? randomUUID(),
       aiMode: body.aiMode,

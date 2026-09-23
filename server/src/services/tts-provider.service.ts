@@ -18,6 +18,22 @@ export interface TtsProviderConfig {
   extra: Record<string, unknown>
 }
 
+/** 对外稳定的音色档位 → 供应商真实 speaker id。未配置映射时沿用后台默认音色。 */
+export const TTS_VOICE_ENV_KEYS: Record<string, string> = {
+  'warm-female': 'CHATCUT_TTS_VOICE_WARM_FEMALE',
+  'bright-female': 'CHATCUT_TTS_VOICE_BRIGHT_FEMALE',
+  'gentle-male': 'CHATCUT_TTS_VOICE_GENTLE_MALE',
+  'magnetic-male': 'CHATCUT_TTS_VOICE_MAGNETIC_MALE',
+  'energetic-youth': 'CHATCUT_TTS_VOICE_ENERGETIC_YOUTH',
+}
+
+export function providerForVoice(provider: TtsProviderConfig | null, voiceId?: string): TtsProviderConfig | null {
+  if (!provider || !voiceId || voiceId === 'none' || voiceId === 'custom') return provider
+  const envKey = TTS_VOICE_ENV_KEYS[voiceId]
+  const speaker = envKey ? process.env[envKey]?.trim() : ''
+  return speaker ? { ...provider, voiceId: speaker } : provider
+}
+
 /** 后台列表视图（Key 已掩码，不含明文） */
 export interface TtsProviderView {
   id: string

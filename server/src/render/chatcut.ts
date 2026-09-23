@@ -8,6 +8,7 @@ export const CHATCUT_VOICES = [
   { id: 'gentle-male', name: '温和男声', description: '沉稳自然，适合品牌介绍' },
   { id: 'magnetic-male', name: '磁性男声', description: '质感突出，适合品质表达' },
   { id: 'energetic-youth', name: '活力青年', description: '轻快有冲劲，适合同城引流' },
+  { id: 'custom', name: '我的配音', description: '上传自己的录音作为旁白' },
 ] as const
 
 /**
@@ -37,6 +38,7 @@ export const CHATCUT_CLIP_PREPS = ['ORIGINAL', 'NORMALIZED'] as const
 export const ChatCutOptionsSchema = z.object({
   voiceId: z.enum([CHATCUT_VOICE_OFF, ...CHATCUT_VOICES.map((voice) => voice.id)] as [string, ...string[]]),
   subtitles: z.boolean(),
+  subtitleMode: z.enum(['OFF', 'VOICE', 'SOURCE_AUDIO', 'VOICE_AND_SOURCE']),
   // ── 以下 6 项已于 2026-09-21 **全部接上真实原语**（此前是「收了但不用」的装饰控件）──────
   // 每一项的落地方式见下面的 *_PRESETS/*_PLANS 常量与 chatcut-driver.ts 里的对应阶段。
   // ⚠ 仍然存在的前置条件（不是 bug，是额度/依赖约束）：
@@ -58,6 +60,7 @@ export type ChatCutOptions = z.infer<typeof ChatCutOptionsSchema>
 export const DEFAULT_CHATCUT_OPTIONS: ChatCutOptions = {
   voiceId: 'warm-female',
   subtitles: true,
+  subtitleMode: 'VOICE',
   subtitleStyle: 'CLEAN',
   // ★ 默认 NONE：BGM 是**生成类**调用（消耗 ChatCut 额度）且要显式开 `CHATCUT_BGM_ENABLED`，
   //   默认选 LIGHT 会让每次渲染都白跑一次生成。用户主动选了才做。

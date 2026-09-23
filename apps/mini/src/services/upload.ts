@@ -36,6 +36,7 @@ export interface MediaAsset {
   cosKey: string
   type: string
   sizeBytes: number
+  durationMs?: number
   status: string
   coverKey?: string | null
 }
@@ -165,7 +166,7 @@ async function sliceUploadWithRetry(
 export async function uploadMediaFile(opts: {
   filePath: string
   storeId: string
-  type: 'IMAGE' | 'VIDEO'
+  type: 'IMAGE' | 'VIDEO' | 'AUDIO'
   durationMs?: number
   sizeBytes?: number
   /** 视频封面图本地路径（chooseMedia 的 thumbTempFilePath）：COS 模式随视频一起上报，用于生成缩略图 */
@@ -188,7 +189,7 @@ export async function uploadMediaFile(opts: {
     if (opts.isCancelled?.()) throw new UploadAbortedError()
   }
   const sts = await http.post<StsCredential>('/upload/sts')
-  const ext = (opts.filePath.split('.').pop() || (opts.type === 'IMAGE' ? 'jpg' : 'mp4')).toLowerCase()
+  const ext = (opts.filePath.split('.').pop() || (opts.type === 'IMAGE' ? 'jpg' : opts.type === 'AUDIO' ? 'm4a' : 'mp4')).toLowerCase()
 
   if (sts.mode === 'local') {
     const token = Taro.getStorageSync<string>(STORAGE_KEYS.token)
@@ -307,4 +308,17 @@ export function uploadVideoFile(opts: {
   isCancelled?: () => boolean
 }): Promise<MediaAsset> {
   return uploadMediaFile({ ...opts, type: 'VIDEO' })
+}
+
+/** 上传用户自定义配音文件（微信文件选择器返回的 mp3/m4a/wav 等）。 */
+export function uploadAudioFile(opts: {
+  filePath: string
+  storeId: string
+  durationMs?: number
+  sizeBytes?: number
+  onProgress?: (percent: number) => void
+  onTask?: (task: UploadTaskHandle) => void
+  isCancelled?: () => boolean
+}): Promise<MediaAsset> {
+  return uploadMediaFile({ ...opts, type: 'AUDIO' })
 }

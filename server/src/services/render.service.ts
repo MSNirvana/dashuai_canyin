@@ -1,5 +1,5 @@
-// 合成服务：把分镜已上传素材按序硬切拼接为 9:16 成片
-// 三档产品档位（grade）：BASIC=纯粗剪 / AI=全自动（配音+字幕+节奏）/ PREMIUM=人工精剪（不进 FFmpeg 队列）
+// 合成服务：把分镜素材按自动规划结果生成 9:16 成片
+// 三档产品档位（grade）：BASIC=纯粗剪 / AI=本地自动剪辑（配音+字幕+质量筛选）/ PREMIUM=人工精剪（不进 FFmpeg 队列）
 // 计费（v5）：时长(秒) × point_per_sec × 档位系数 ×（RECOLOR 再乘 recolor_ratio）
 // 扣积分两阶段：freeze（提交时预留）→ consume（合成成功结算）；失败/unfreeze 退款由 worker / sweeper 负责
 // 演示环境（FFMPEG_WORKER≠true，无 ffmpeg）下，BASIC/AI 任务会在同一事务内模拟「成功」完成，打通最小闭环；
@@ -15,6 +15,7 @@ import { getNumber, getDecimal } from '../lib/settings.js'
 import { decFromNumber, decFromString, decMulCeil } from '../lib/decimal.js'
 import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } from '../domain/request.js'
 import { ChatCutOptionsSchema, DEFAULT_CHATCUT_OPTIONS, chatCutConfigured, type ChatCutOptions } from '../render/chatcut.js'
+import type { AutoEditProfile } from '../render/auto-edit.js'
 import { userFacingRenderError } from '../render/user-errors.js'
 
 // 计费点数（后台可配置化见 docs/05，此处为默认值）
@@ -139,7 +140,14 @@ export interface RenderClip {
   durationMs: number | null
   /** 该分镜的口播文案（Shot.line），AI 合成用于配音与字幕 */
   line: string | null
+  /** 用于自动剪辑规划的分镜语义元数据 */
+  shotType?: string | null
+  shotSize?: string | null
+  visualReq?: string | null
 }
+
+export type RenderEngine = 'LOCAL' | 'CHATCUT'
+export type SubtitleMode = 'OFF' | 'VOICE' | 'SOURCE_AUDIO' | 'VOICE_AND_SOURCE'
 
 export interface SubmitRenderInput {
   mode: RenderMode
@@ -151,6 +159,13 @@ export interface SubmitRenderInput {
   grade?: RenderGrade
   /** AI 档 ChatCut 编辑选项；BASIC/PREMIUM 忽略 */
   chatcut?: Partial<ChatCutOptions>
+  /** AI 引擎；默认 LOCAL，CHATCUT 仅作为兼容/实验通道 */
+  engine?: RenderEngine
+  /** 自动识别也可由用户指定剪辑风格 */
+  profile?: AutoEditProfile
+  /** 用户上传的自定义配音对象键（仅本地自动剪辑引擎使用） */
+  customVoiceKey?: string
+  customVoiceDurationMs?: number
 }
 
 export interface RenderTaskView {
@@ -185,6 +200,10 @@ export interface RenderTaskView {
   deadlineAt: string | null
   chatcut?: ChatCutOptions
   chatcutJob?: { externalJobId?: string; projectId?: string; editorUrl?: string }
+  engine?: RenderEngine
+  profile?: AutoEditProfile
+  customVoiceKey?: string
+  customVoiceDurationMs?: number
 }
 
 function toView(row: {
@@ -214,6 +233,10 @@ function toView(row: {
     clips?: RenderClip[]
     chatcut?: ChatCutOptions
     chatcutJob?: { externalJobId?: string; projectId?: string; editorUrl?: string }
+    engine?: RenderEngine
+    profile?: AutoEditProfile
+    customVoiceKey?: string
+    customVoiceDurationMs?: number
   }
   return {
     id: row.id.toString(),
@@ -239,6 +262,10 @@ function toView(row: {
     deadlineAt: row.deadlineAt?.toISOString() ?? null,
     chatcut: p.chatcut,
     chatcutJob: p.chatcutJob,
+    engine: p.engine ?? 'LOCAL',
+    profile: p.profile,
+    customVoiceKey: p.customVoiceKey,
+    customVoiceDurationMs: p.customVoiceDurationMs,
   }
 }
 
@@ -318,7 +345,7 @@ export async function buildRenderClips(
   const assetMap = new Map(assets.map((a) => [a.id, a]))
 
   const clips: RenderClip[] = shots
-    .map((s) => {
+    .map((s): RenderClip | null => {
       const a = s.assetId ? assetMap.get(s.assetId) : undefined
       if (!a) return null
       return {
@@ -330,7 +357,10 @@ export async function buildRenderClips(
         trimEndMs: s.trimEndMs,
         durationMs: a.durationMs ?? null,
         line: s.line,
-      } satisfies RenderClip
+        shotType: s.shotType,
+        shotSize: s.shotSize,
+        visualReq: s.visualReq,
+      }
     })
     .filter((c): c is RenderClip => c !== null)
   if (clips.length === 0) throw new RenderNoAssetError()
@@ -358,16 +388,28 @@ export async function submitRender(
   const aiMode = grade !== 'BASIC' // BASIC 纯粗剪；AI/PREMIUM 含配音字幕管线（PREMIUM 由人工执行）
   const chatcut = ChatCutOptionsSchema.parse({ ...DEFAULT_CHATCUT_OPTIONS, ...(input.chatcut ?? {}) })
 
-  // ★ 提交前档位可用性校验（在 freeze 之前）：
-  //   AI 档的 worker 分支是「p.aiMode && !chatCutConfigured() → 直接抛错」，
-  //   即通道没配好时 AI 档 100% 失败。旧行为会先冻结 1.5 倍费用再退款，用户白等一轮。
-  // ★ 文案只说「档位暂时不可用」，不写通道/集成细节：这句话会原样弹给商户，
-  //   「外部剪辑通道未配置完整」对用户既不可操作、又暴露了实现细节。
-  if (grade === 'AI' && !chatCutConfigured()) {
-    throw new RenderGradeUnavailableError(
-      grade,
-      `${GRADE_LABEL.AI}暂不可用，正在升级维护中，请先选择${GRADE_LABEL.BASIC}`,
-    )
+  const requestedEngine = input.engine ?? (process.env.RENDER_ENGINE?.trim().toUpperCase() === 'CHATCUT' ? 'CHATCUT' : 'LOCAL')
+  // ChatCut 没有配置时自动回到本地引擎，第三方服务不可用不应阻断用户出片。
+  // 自定义配音需要本地直接合成，不能交给 ChatCut 的预设音色通道。
+  const engine: RenderEngine = input.customVoiceKey
+    ? 'LOCAL'
+    : requestedEngine === 'CHATCUT' && chatCutConfigured() ? 'CHATCUT' : 'LOCAL'
+
+  let customVoiceDurationMs: number | undefined
+  if (input.customVoiceKey) {
+    const customVoice = await prisma.mediaAsset.findFirst({
+      where: {
+        merchantId,
+        storeId: creation.storeId,
+        cosKey: input.customVoiceKey,
+        type: 'AUDIO',
+        deletedAt: null,
+        status: 'READY',
+      },
+      select: { durationMs: true },
+    })
+    if (!customVoice) throw new Error('自定义配音素材不存在或不属于当前门店')
+    customVoiceDurationMs = input.customVoiceDurationMs ?? customVoice.durationMs ?? undefined
   }
 
   // 计费时长 = 各分镜有效时长之和；任一分镜时长未知则拒绝（无法正确计价会少扣积分）
@@ -378,7 +420,10 @@ export async function submitRender(
     totalMs += dur
   }
 
-  const requestPayload = { creationId: creationId.toString(), mode, color, grade, aiMode, clips, chatcut }
+  const requestPayload = {
+    creationId: creationId.toString(), mode, color, grade, aiMode, clips, chatcut,
+    engine, profile: input.profile, customVoiceKey: input.customVoiceKey, customVoiceDurationMs,
+  }
   // 创建任务 + 并发拦截 + 业务请求占用 + freeze 放在同一事务并对创作行加锁：
   // 防止两个并发请求同时通过「无进行中任务」检查、创建出两个任务双重扣积分
   // 计价系数一律用精确十进制读取（getDecimal 解析库里原始字符串，不经 Number()）
@@ -448,6 +493,10 @@ export async function submitRender(
           aiMode,
           color,
           chatcut,
+          engine,
+          profile: input.profile,
+          customVoiceKey: input.customVoiceKey,
+          customVoiceDurationMs,
           creationId: creationId.toString(),
           title: creation.title ?? `大帅餐饮成片-${creationId.toString()}`,
           output: RENDER_OUTPUT,

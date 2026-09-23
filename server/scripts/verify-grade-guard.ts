@@ -1,6 +1,6 @@
-// P1-6 + AI 档提交前拦截验证
-//   ① chatCutConfigured() 的可用性契约（★ 语义已改，见下）
-//   ② POST /creations/:id/render 传 grade=AI 在通道不可用时应 409/4013 且**不冻结**
+// AI 引擎回退验证
+//   ① chatCutConfigured() 的兼容契约
+//   ② ChatCut 不可用时 grade=AI 仍应进入本地自动剪辑，不冻结失败、不灰掉档位
 import { chatCutConfigured, ChatCutOptionsSchema, DEFAULT_CHATCUT_OPTIONS } from '../src/render/chatcut.js'
 import { prisma } from '../src/db.js'
 import crypto from 'node:crypto'
@@ -66,7 +66,7 @@ for (const [name, env, expect] of cases) {
 console.log(`${contractOk ? '✓' : '✗'} ① 契约用例${contractOk ? '全部通过' : '有不通过项'}`)
 setEnv(saved as Partial<Record<(typeof ENV_KEYS)[number], string>>)
 
-console.log('\n=== ② 提交 AI 档：应拒绝且不冻结 ===')
+console.log('\n=== ② 提交 AI 档：ChatCut 不可用时回退本地引擎 ===')
 const BASE = 'http://127.0.0.1:3000/api/v1'
 const H = { authorization: `Bearer ${token(1)}`, 'content-type': 'application/json' }
 
@@ -90,7 +90,7 @@ const afterTasks = await prisma.renderTask.count({ where: { merchantId: 1n, stat
 console.log(`HTTP ${res.status}  code=${body.code}  message=${body.message}`)
 console.log(`冻结积分：${before.frozen} → ${after.frozen}   ${before.frozen === after.frozen ? '✓ 未冻结' : '✗ 被冻结了'}`)
 console.log(`余额：  ${before.balance} → ${after.balance}   ${before.balance === after.balance ? '✓ 未变动' : '✗ 被扣了'}`)
-console.log(`PENDING_RESERVATION 任务数：${beforeTasks} → ${afterTasks}   ${beforeTasks === afterTasks ? '✓ 未建任务' : '✗ 建了任务'}`)
-console.log(`${res.status === 409 && body.code === 4013 ? '✓ 正确的拒绝语义' : '✗ 拒绝语义不符（期望 409/4013）'}`)
+console.log(`PENDING_RESERVATION 任务数：${beforeTasks} → ${afterTasks}   ${afterTasks === beforeTasks ? '✓ 没有悬空预留任务' : '✗ 出现悬空预留任务'}`)
+console.log(`${res.status >= 200 && res.status < 300 && body.code === 0 ? '✓ 已进入本地自动剪辑链路' : '✗ AI 本地回退提交失败'}`)
 
 await prisma.$disconnect()

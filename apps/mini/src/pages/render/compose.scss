@@ -219,6 +219,9 @@
   &__voicename, &__voicedesc { display: block; }
   &__voicename { font-size: 26rpx; font-weight: 600; }
   &__voicedesc { margin-top: 6rpx; font-size: 20rpx; color: var(--td-text-color-placeholder); }
+  &__customvoice { margin-top: 16rpx; padding: 16rpx; border: 1rpx dashed var(--td-component-stroke); border-radius: var(--td-radius-default); }
+  &__voiceactions { display: flex; gap: 14rpx; margin-top: 14rpx; }
+  &__customvoiceline { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-top: 12rpx; }
   &__optionrow { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 18rpx 0; border-top: 1rpx solid var(--td-component-border); }
   &__optiontitle, &__optiondesc { display: block; }
   &__optiontitle { font-size: 26rpx; }
@@ -595,12 +598,19 @@
   &__pubcoverphtext {
     font-size: 23rpx;
   }
+  /* 「能点、能长按」必须写出来：封面是一张静止的图，没有任何可点的视觉线索，
+     不说明的话用户不会去点它，更不会想到长按 */
+  &__pubcoverhint {
+    display: block;
+    margin-top: 12rpx;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+  }
   &__pubblock {
     margin-top: 24rpx;
   }
   &__publabel {
     display: block;
-    margin-bottom: 8rpx;
     font-size: 22rpx;
     color: var(--td-text-color-placeholder);
   }
@@ -622,8 +632,22 @@
     /* 文案带 \n（服务端保留换行），文本节点默认会压成空格 —— 话题标签会挤成一行 */
     white-space: pre-wrap;
   }
-  &__pubacts {
-    margin-top: 24rpx;
+  /* 标签 + 「复制」同一行：复制是这一块唯一的动作，靠右更好找 */
+  &__pubblockhead {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16rpx;
+    margin-bottom: 8rpx;
+  }
+  /* 与详情页的 rresult__copy 同一套观感（描边小按钮）——两处的「复制」看起来才是同一个功能 */
+  &__pubcopy {
+    flex: none;
+    padding: 6rpx 20rpx;
+    font-size: 22rpx;
+    color: var(--td-brand-color);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
   }
   &__pubnotice {
     display: block;

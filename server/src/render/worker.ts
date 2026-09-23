@@ -1,5 +1,6 @@
-// 合成 Worker：轮询 RenderTask(QUEUED) → 拉素材 → FFmpeg 粗剪 → 回传 COS → 结算扣积分
+// 合成 Worker：轮询 RenderTask(QUEUED) → 自动规划/质量筛选 → FFmpeg 渲染 → 回传 COS → 结算扣积分
 // 与 API 服务解耦：CPU 密集的转码不在请求线程里跑，可独立进程/独立机器部署
+// AI 默认走本地自动剪辑；ChatCut 只有在任务显式指定 engine=CHATCUT 且通道可用时才启用。
 // 计费铁律：submitRender 只 freeze 预留；本 worker 成功才 consume，失败 unfreeze 全额释放
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
@@ -25,13 +26,16 @@ import {
   ffmpegNormalize,
   ffmpegApplyColor,
   ffmpegConcat,
+  ffmpegConcatWithTransitions,
   probeDurationMs,
+  probeClipMeta,
+  probeVisualQuality,
   probeVideo,
   buildColorFilter,
   ffmpegSupportsSubtitles,
 } from './ffmpeg.js'
 import { applyAiSynthesis, type SynthesisShot } from './synthesis.js'
-import { activeTtsProvider } from '../services/tts-provider.service.js'
+import { activeTtsProvider, providerForVoice } from '../services/tts-provider.service.js'
 import { signedObjectUrl } from '../lib/cos.js'
 import {
   chatCutConfigured,
@@ -43,6 +47,14 @@ import {
   startChatCutRender,
   type ChatCutJobState,
 } from './chatcut-driver.js'
+import {
+  applyAutoEditPlan,
+  buildAutoEditPlan,
+  validateOutputQuality,
+  type AutoEditPlan,
+  type AutoEditProfile,
+} from './auto-edit.js'
+import type { RenderEngine } from '../services/render.service.js'
 
 const POLL_MS = Math.max(1000, Number(process.env.FFMPEG_POLL_MS ?? 3000))
 const TASK_TIMEOUT_MS = Math.max(30_000, Number(process.env.FFMPEG_TASK_TIMEOUT_MS ?? 600_000))
@@ -331,11 +343,12 @@ async function tick(): Promise<void> {
       console.error(`[render-worker] task ${task.id} failed:`, (e as Error).message)
       // ★ 错误码按档位归因：AI 档走 ChatCut，根本没跑 ffmpeg。旧代码一律报 FFMPEG_FAILED，
       //   后台按错误码排查会被带偏（实测 990022 的素材探测 403 也记成了 FFMPEG_FAILED）。
-      const isAi = Boolean((task.paramsJson as { aiMode?: boolean } | null)?.aiMode)
+      const taskParams = (task.paramsJson as { aiMode?: boolean; engine?: RenderEngine } | null) ?? {}
+      const isExternalAi = Boolean(taskParams.aiMode && taskParams.engine === 'CHATCUT')
       const state = await failRender(
         prisma,
         task.id,
-        isAi ? 'CHATCUT_FAILED' : 'FFMPEG_FAILED',
+        isExternalAi ? 'CHATCUT_FAILED' : 'FFMPEG_FAILED',
         (e as Error).message,
         fence,
       )
@@ -366,6 +379,35 @@ async function reportProgress(taskId: bigint, progress: number, fence?: RenderFe
     .catch((e) => console.warn(`[render-worker] task ${taskId} 进度写入失败:`, (e as Error).message))
 }
 
+/** 保存本次自动剪辑的可解释快照，便于后台排查「为什么选了这些镜头」。 */
+async function storeAutoEditPlan(taskId: bigint, plan: AutoEditPlan, fence?: RenderFence): Promise<void> {
+  const row = await prisma.renderTask.findUnique({ where: { id: taskId }, select: { paramsJson: true } })
+  if (!row) return
+  const current = (row.paramsJson ?? {}) as Record<string, unknown>
+  const snapshot = {
+    profile: plan.profile,
+    confidence: plan.confidence,
+    targetDurationMs: plan.targetDurationMs,
+    warnings: plan.warnings,
+    candidates: plan.candidates.map((item) => ({
+      shotId: item.clip.shotId,
+      sourceIndex: item.sourceIndex,
+      role: item.role,
+      score: item.score,
+      targetDurationMs: item.targetDurationMs,
+      reason: item.reason,
+    })),
+  }
+  await prisma.renderTask.updateMany({
+    where: {
+      id: taskId,
+      status: 'RUNNING',
+      ...(fence ? { leaseOwner: fence.owner, leaseVersion: fence.version } : {}),
+    },
+    data: { paramsJson: { ...current, autoEdit: snapshot } as never },
+  })
+}
+
 async function processTask(
   task: {
     id: bigint
@@ -379,28 +421,39 @@ async function processTask(
     clips?: RenderClip[]
     color?: ColorGrade
     aiMode?: boolean
+    engine?: RenderEngine
+    profile?: AutoEditProfile
     chatcut?: ChatCutOptions
+    customVoiceKey?: string
+    customVoiceDurationMs?: number
     creationId?: string
     title?: string
     output?: { width: number; height: number; fps: number }
   }
-  if (p.aiMode && chatCutConfigured()) {
-    await processChatCutTask(task, p, fence)
-    return
+  if (p.aiMode && p.engine === 'CHATCUT') {
+    if (chatCutConfigured()) {
+      await processChatCutTask(task, p, fence)
+      return
+    }
+    console.warn(`[render-worker] task ${task.id} ChatCut 不可用，自动降级到本地自动剪辑`)
   }
-  if (p.aiMode && !chatCutConfigured()) {
-    throw new Error('AI 档需要先完成 ChatCut MCP 授权和工具映射')
-  }
-  const clips = p.clips ?? []
-  if (clips.length === 0) throw new Error('合成任务没有可用素材')
+  const inputClips = p.clips ?? []
+  if (inputClips.length === 0) throw new Error('合成任务没有可用素材')
   const output = p.output ?? { width: 1080, height: 1920, fps: 30 }
   const color = p.color ?? DEFAULT_COLOR
   const aiMode = p.aiMode ?? true // v5：默认 AI 合成
+  const plan = aiMode ? buildAutoEditPlan(inputClips, p.profile) : null
+  const clips = plan ? applyAutoEditPlan(plan) : inputClips
+  if (plan) {
+    await storeAutoEditPlan(task.id, plan, fence)
+    await reportProgress(task.id, 8, fence)
+  }
 
   const dir = await mkdtemp(join(tmpdir(), 'dashuai-render-'))
   try {
     // 1) 逐镜头：归一化（命中缓存则跳过）→ 调色
     const tmpClips: string[] = []
+    const renderedClips: RenderClip[] = []
     let hitCount = 0
     for (let i = 0; i < clips.length; i++) {
       const clip = clips[i]
@@ -433,15 +486,31 @@ async function processTask(
         )
       }
 
+      // AI 档额外淘汰明显黑帧/冻结片段；检测失败只记录，不阻断出片。
+      if (aiMode) {
+        const signals = await probeVisualQuality(normPath, TASK_TIMEOUT_MS).catch(() => null)
+        const blackRatio = signals?.blackRatio ?? 0
+        const freezeRatio = signals?.freezeRatio ?? 0
+        if (blackRatio > 0.65 || freezeRatio > 0.75) {
+          console.warn(
+            `[render-worker] task ${task.id} 跳过低质量片段 ${clip.shotId}（black=${blackRatio.toFixed(2)}, freeze=${freezeRatio.toFixed(2)}）`,
+          )
+          continue
+        }
+      }
+
       // 无调色时归一化物即成片片段；这里只收集，调色统一放到拼接后做（见下）
       tmpClips.push(normPath)
+      renderedClips.push(clip)
     }
-    const allCacheHit = tmpClips.length > 0 && hitCount === clips.length
+    if (tmpClips.length === 0) throw new Error('素材画面质量不足，无法生成可用成片')
+    const allCacheHit = tmpClips.length > 0 && hitCount === renderedClips.length
 
-    // 2) 硬切拼接（copy，不重编码）
+    // 2) 按用户选择拼接：硬切保持无损，柔和/动态档真实使用 xfade + acrossfade。
     await reportProgress(task.id, 75, fence)
     const concatPath = join(dir, 'concat.mp4')
-    await ffmpegConcat(tmpClips, concatPath, TASK_TIMEOUT_MS)
+    const transition = aiMode ? (p.chatcut?.transitions ?? 'CLEAN') : 'CLEAN'
+    await ffmpegConcatWithTransitions(tmpClips, concatPath, transition, TASK_TIMEOUT_MS)
 
     // 3) 整片调色：放在拼接后做单一 pass，而不是逐镜头各做一次。
     //    这样 N 个镜头只编码 1 次；重调色时可完全复用归一化缓存，只跑「拼接 + 一遍调色」，
@@ -452,33 +521,62 @@ async function processTask(
       await ffmpegApplyColor(concatPath, finalPath, color, TASK_TIMEOUT_MS)
     }
 
-    // 3.5) AI 合成（aiMode=true，默认）：AI 配音 + 字幕 + 智能节奏，叠加到成片
+    // 3.5) AI 合成：支持多音色、自定义配音和独立的原声 ASR 字幕。
     if (aiMode) {
       await reportProgress(task.id, 82, fence)
       // 逐分镜探测实际时长（归一化产物），并携带口播文案，供配音/字幕按时间轴布时
       const shots: SynthesisShot[] = []
       for (let i = 0; i < tmpClips.length; i++) {
         const tp = tmpClips[i]
-        const clip = clips[i]
+        const clip = renderedClips[i]
         if (!tp || !clip) continue
         shots.push({ line: clip.line, durationMs: (await probeDurationMs(tp)) ?? 0 })
       }
-      if (shots.length > 0) {
+      const voiceEnabled = Boolean(p.customVoiceKey) || p.chatcut?.voiceId !== 'none'
+      const subtitleMode = p.chatcut?.subtitles === false ? 'OFF' : (p.chatcut?.subtitleMode ?? (voiceEnabled ? 'VOICE' : 'OFF'))
+      if (shots.length > 0 || p.customVoiceKey || subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE') {
         const aiPath = join(dir, 'ai.mp4')
-      // 兼容历史 AI 任务：新 AI 任务由 ChatCut 处理；旧快照仍可走本地 TTS + 字幕。
-      const tts = await activeTtsProvider(prisma).catch(() => null)
+        let customVoicePath: string | undefined
+        if (p.customVoiceKey) {
+          customVoicePath = join(dir, 'custom-voice.m4a')
+          await downloadToFile(p.customVoiceKey, customVoicePath)
+        }
+        const baseTts = await activeTtsProvider(prisma).catch(() => null)
+        const tts = providerForVoice(baseTts, p.chatcut?.voiceId)
       if (tts) {
-        console.log(`[render-worker] task ${task.id} 使用 TTS 供应商 ${tts.code}，调用失败时按镜头静音兜底`)
+          console.log(`[render-worker] task ${task.id} 使用 TTS 供应商 ${tts.code}（voice=${p.chatcut?.voiceId ?? 'default'}），调用失败时按镜头静音兜底`)
       } else {
           console.log('[render-worker] 未配置 TTS 供应商，AI 合成以「静音 + 字幕」出片')
         }
-        const { subtitled } = await applyAiSynthesis(finalPath, shots, aiPath, TASK_TIMEOUT_MS, tts)
+        const { subtitled } = await applyAiSynthesis(
+          finalPath,
+          shots,
+          aiPath,
+          TASK_TIMEOUT_MS,
+          tts,
+          {
+            voiceEnabled,
+            subtitles: subtitleMode !== 'OFF',
+            subtitleMode,
+            customVoicePath,
+            sourceAudioPath: finalPath,
+            normalizeAudio: p.chatcut?.normalizeAudio,
+            removeSilence: p.chatcut?.removeSilence,
+          },
+        )
         finalPath = aiPath
         console.log(`[render-worker] task ${task.id} AI合成完成（字幕=${subtitled ? '是' : '否'}）`)
       }
     }
 
-    // 4) 回传 COS
+    // 4) 上传前进行内容级质检，坏文件、错误比例和异常时长都不能进入成功结算。
+    const meta = await probeClipMeta(finalPath, TASK_TIMEOUT_MS)
+    const quality = validateOutputQuality(meta, { maxDurationMs: aiMode ? 65_000 : 6 * 60 * 60 * 1000 })
+    if (!quality.ok) {
+      throw new Error(`成片质量校验失败：${quality.warnings.join('；')}`)
+    }
+
+    // 5) 回传 COS
     await reportProgress(task.id, 90, fence)
     const key = `renders/${task.merchantId.toString()}/${task.id.toString()}.mp4`
     const size = await uploadFile(finalPath, key, 'video/mp4')
