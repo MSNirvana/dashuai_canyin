@@ -676,7 +676,7 @@ export function startAiHealthSweeper(prisma: PrismaClient): void {
   console.log(
     `[ai-health] started (interval=${SWEEP_INTERVAL_MS}ms, first=${FIRST_RUN_DELAY_MS}ms, ` +
       `probeTimeout=${PROBE_TIMEOUT_MS}ms, retryRounds=${RETRY_ROUNDS}, retryDelay=${RETRY_DELAY_MS}ms, ` +
-      `gap=${GAP_MS}ms, evidence=${EVIDENCE_MS}ms)`,
+      `gap=${GAP_MS}ms, evidence=${EVIDENCE_MS}ms, failThreshold=${FAIL_THRESHOLD})`,
   )
 }
 
