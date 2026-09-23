@@ -180,10 +180,11 @@ let deepseekModelId = 0n
     [s.defaultModelId, ...(Array.isArray(s.fallbackModelIds) ? (s.fallbackModelIds as unknown[]) : []).map((v) => BigInt(v as number))]
 
   // 默认链：其余场景都是 主GPT → 备Claude → 备DeepSeek
-  // 已知例外（两者都在下面单独断言，理由各自写在那一块里）：
+  // 已知例外（都在下面单独断言，理由各自写在那一块里）：
   //   · storyboard_generate —— 大输出场景
+  //   · edit_plan —— AI 剪辑决策，跑在 worker 内、不参与前端超时预算；主 GPT、备 DeepSeek
   //   · 五个文案款 copy_* —— 2026-09-22 改型后重定：主 DeepSeek、备 GPT、**移出 Claude**
-  const SPECIAL = new Set(['storyboard_generate'])
+  const SPECIAL = new Set(['storyboard_generate', 'edit_plan'])
   const COPY_SCENES = new Set([
     'copy_traffic',
     'copy_persona',
@@ -375,6 +376,45 @@ let deepseekModelId = 0n
     LOW_REASONING_SCENES.has('storyboard_generate'),
     '★ storyboard_generate 在 LOW_REASONING_SCENES 里（压掉思考预算；实测中位 102s → 39s）',
   )
+
+  /**
+   * `edit_plan`（AI 剪辑决策）的例外必须成立。
+   *
+   * ★ 它跑在 **worker 里**、不参与小程序侧的超时预算（见 setup-ai-channels.ts 同名说明），
+   *   所以这里**不能**套用 copy_* 那条「最坏耗时 ≤ 前端兜底」的不变量 —— 套了会得出
+   *   错误的结论。它真正的硬纪律是「**绝不抛错**」（最坏退化成按面板档位剪），
+   *   连同提示词变量白名单、兜底模板、`edl.ts` 零 import，都由 `edl:verify` 守。
+   *
+   * 这里只补**数据库层的候选链形状** —— 此前两个脚本都没在**库层**断言过它
+   *   （`edl:verify` 查的是源码里的 `SCENE_OVERRIDES`，不是同步后的 `ai_scene` 行），
+   *   于是它对上面那条通用断言而言一直是「看得见但没人管」的例外：常亮红灯，
+   *   久了会训练人忽略告警 —— 这正是 2026-09-23 收尾时发现它的由来。
+   */
+  const ep = scenes.find((s) => s.code === 'edit_plan')
+  if (ep) {
+    const c = chainOf(ep)
+    check(
+      c.length === 2 && c[0] === gptModelId && c[1] === deepseekModelId,
+      'edit_plan 候选链 = [GPT → DeepSeek]（worker 内跑：主 GPT、备 DeepSeek）',
+      `实际 ${JSON.stringify(c.map((v) => String(v)))}`,
+    )
+    check(
+      !c.includes(claudeModelId),
+      '★ edit_plan 候选链里没有 Claude（它无视 reasoning_effort，4000 预算被思考吃光返回空正文 ⇒ 非通道级故障会按 maxRetries 反复重试同一通道）',
+    )
+    check(
+      ep.maxRetries === 0,
+      'edit_plan 不重试（有真备用后，在同一慢通道原地重试纯属浪费：GPT 的超时是系统性的，换通道比原地重试有效）',
+      `实际 ${ep.maxRetries}`,
+    )
+    check(
+      ep.timeoutMs >= 60_000 && ep.timeoutMs <= 120_000,
+      'edit_plan 超时落在 60~120s（实测单次 46.6s 的约 1.9 倍余量，给镜头更多的长视频留空间）',
+      `实际 ${ep.timeoutMs}ms`,
+    )
+  } else {
+    check(false, 'edit_plan 场景存在')
+  }
 
   // 三个候选通道都是推理模型，max_tokens 要同时容纳「思考 + 正文」。
   // 原先 300~800 的预算（按 mock/非推理模型定的）会让输出被思考吃光、正文返回空。
