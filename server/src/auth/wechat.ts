@@ -117,15 +117,15 @@ export async function getWxAccessToken(redis: Redis): Promise<string> {
   return r.access_token
 }
 
-/** getPhoneNumber 返回的 code → 真实手机号（按次付费，需已申请「手机号快速验证」） */
-export async function verifyPhoneNumber(redis: Redis, code: string): Promise<VerifysessionResult> {
+/** 单次调用（不含自愈）。
+ *  ★ 接口名必须是 business/getuserphonenumber：曾误写成 secsvcs/verifysession，
+ *    微信对该路径稳定返回 errcode 40066「invalid url」⇒ 微信一键登录**永远失败**，
+ *    且这里抛的是 WxLoginFailedError、路由又没打日志，线上只看得到 502、日志一片空白。
+ *    实测对照（同一 access_token、同一假 code，2026-09-23）：
+ *      /wxa/secsvcs/verifysession       → 40066 invalid url
+ *      /wxa/business/getuserphonenumber → 40029 invalid code（接口正确，只是 code 无效） */
+async function fetchPhoneNumber(redis: Redis, code: string): Promise<VerifysessionResult> {
   const accessToken = await getWxAccessToken(redis)
-  // ★ 接口名必须是 business/getuserphonenumber。曾误写成 secsvcs/verifysession，
-  //   微信对该路径稳定返回 errcode 40066「invalid url」⇒ 微信一键登录**永远失败**，
-  //   且这里抛的是 WxLoginFailedError、路由又没打日志，线上只看得到 502、日志一片空白。
-  //   实测对照（同一 access_token、同一假 code，2026-09-23）：
-  //     /wxa/secsvcs/verifysession      → 40066 invalid url
-  //     /wxa/business/getuserphonenumber → 40029 invalid code（接口正确，只是 code 无效）
   const url = `${WX_HOST}/wxa/business/getuserphonenumber?access_token=${accessToken}`
   const r = await postJson<{
     errcode?: number
@@ -139,6 +139,34 @@ export async function verifyPhoneNumber(redis: Redis, code: string): Promise<Ver
     phoneNumber: r.phone_info.phoneNumber,
     purePhoneNumber: r.phone_info.purePhoneNumber,
     countryCode: r.phone_info.countryCode,
+  }
+}
+
+/**
+ * getPhoneNumber 返回的 code → 真实手机号（按次付费，需已申请「手机号快速验证」）。
+ *
+ * ★ 为什么需要「清缓存重试」这一层：微信的 client_credential access_token 是**全局单例**，
+ *   后取者会让先取者手里的那个立刻变成「invalid or not latest」（errcode 40001）。
+ *   本项目把它缓存进 Redis、TTL 接近 2 小时 ⇒ 只要发生过任何一次外部获取
+ *   （运维手工排查、别的系统接入同一 appid、将来新接的微信能力），
+ *   应用就会**攥着已失效的 token 连续失败近 2 小时**，用户侧看到的就是「登录根本用不了」。
+ *   实测（2026-09-23）：排查时手工调过一次 /cgi-bin/token，随后真机登录连续 3 次 40001。
+ *
+ *   这里在 40001 / 42001 上做一次「删缓存 → 重新取 → 用原 code 重试」：
+ *   - token 无效是在**鉴权阶段**被拒的，微信没有消费掉这次 code，所以重试可用；
+ *   - 只重试一次，再失败仍抛原错误，不掩盖真实故障。
+ */
+export async function verifyPhoneNumber(redis: Redis, code: string): Promise<VerifysessionResult> {
+  try {
+    return await fetchPhoneNumber(redis, code)
+  } catch (e) {
+    if (e instanceof WxApiError && (e.errcode === 40001 || e.errcode === 42001)) {
+      const { appid } = getWxConfig()
+      console.warn(`[wx] access_token 已失效（errcode ${e.errcode}），清缓存后重试一次`)
+      await redis.del(ACCESS_TOKEN_KEY(appid))
+      return await fetchPhoneNumber(redis, code)
+    }
+    throw e
   }
 }
 
