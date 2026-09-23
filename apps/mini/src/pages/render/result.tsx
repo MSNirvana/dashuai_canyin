@@ -168,7 +168,7 @@ export default function RenderResult() {
   return (
     <View className='rresult'>
       {/* ── 视频 ── */}
-      <View className='rresult__card'>
+      <View className='rresult__card rresult__card--hero'>
         <View className='rresult__head'>
           <Text className='rresult__title'>{GRADE_LABEL[task.grade] || task.grade}</Text>
           <Text
@@ -209,7 +209,7 @@ export default function RenderResult() {
       </View>
 
       {/* ── 发布素材（标题 / 封面 / 文案）── */}
-      <View className='rresult__card'>
+      <View className='rresult__card rresult__card--publish'>
         <View className='rresult__head'>
           <Text className='rresult__title'>发布素材</Text>
           {material && (

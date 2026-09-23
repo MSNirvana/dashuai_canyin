@@ -55,6 +55,8 @@ export const CHATCUT_VOICE_CHOICES = CHATCUT_VOICES.filter((voice) => voice.id !
 export const isVoiceOff = (voiceId: ChatCutOptions['voiceId']): boolean => voiceId === 'none'
 
 export type ChatCutOptions = {
+  /** AUTO 由服务端识别素材并选择参数；ADVANCED 使用下方所有手动设置。 */
+  editMode: 'AUTO' | 'ADVANCED'
   voiceId: typeof CHATCUT_VOICES[number]['id']
   subtitles: boolean
   subtitleMode: SubtitleMode

@@ -184,3 +184,50 @@
     color: var(--td-text-color-placeholder);
   }
 }
+
+/* 交付页只回答两个问题：视频能不能看、发布素材能不能拿走。 */
+.rresult {
+  padding: 18rpx 32rpx calc(56rpx + env(safe-area-inset-bottom));
+}
+
+.rresult__card {
+  margin-bottom: 16rpx;
+  padding: 24rpx;
+  border: 1rpx solid var(--td-component-stroke);
+  border-radius: var(--td-radius-large);
+  box-shadow: none;
+}
+
+.rresult__card--hero {
+  padding: 20rpx;
+  background: #fff;
+}
+
+.rresult__card--publish { background: rgba(255, 255, 255, 0.82); }
+.rresult__title { font-size: 28rpx; letter-spacing: 0; }
+.rresult__meta { font-size: 21rpx; }
+
+.rresult__video,
+.rresult__videoph {
+  height: 62vh;
+  margin-top: 16rpx;
+  border-radius: var(--td-radius-default);
+}
+
+.rresult__acts { gap: 10rpx; margin-top: 16rpx; }
+.rresult__act { height: 80rpx; border-radius: var(--td-radius-default); font-size: 26rpx; }
+.rresult__act:first-child { flex: 1.15; }
+
+.rresult__cover {
+  height: 680rpx;
+  margin-top: 14rpx;
+  border-radius: var(--td-radius-default);
+}
+
+.rresult__block { margin-top: 22rpx; padding-top: 18rpx; }
+.rresult__blocktitle { font-size: 23rpx; }
+.rresult__value { font-size: 28rpx; line-height: 1.55; }
+.rresult__value--caption { font-size: 24rpx; line-height: 1.7; }
+.rresult__copy { padding: 8rpx 16rpx; border-radius: var(--td-radius-default); }
+.rresult__emptytitle { font-size: 26rpx; }
+.rresult__emptytext { font-size: 23rpx; }

@@ -276,3 +276,13 @@
     color: var(--td-text-color-placeholder);
   }
 }
+
+/* 分镜页：用缩略图承担主视觉，上传动作固定在每个分镜的上下文里。 */
+.cshots { padding: 16rpx 32rpx calc(190rpx + env(safe-area-inset-bottom)); }
+.cshots__stage { padding: 24rpx; margin-bottom: 16rpx; border-radius: var(--td-radius-large); background: #191a1d; }
+.cshots__stage-title { font-size: 32rpx; letter-spacing: 0; }
+.cshots__card { padding: 22rpx; margin-bottom: 14rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-large); box-shadow: none; }
+.cshots__type { font-size: 27rpx; }
+.cshots__thumb { border-radius: var(--td-radius-default); }
+.cshots__drop { height: 168rpx; border-radius: var(--td-radius-default); }
+.cshots__btn { min-height: 72rpx; border-radius: var(--td-radius-default); }

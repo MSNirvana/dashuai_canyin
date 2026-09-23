@@ -682,3 +682,17 @@
     font-weight: 650;
   }
 }
+
+/* 最终产品化尺寸覆写（放在组件覆写之后，确保构建顺序稳定）。 */
+.cedit { padding: 16rpx 32rpx calc(148rpx + env(safe-area-inset-bottom)); }
+.cedit__stage { padding: 24rpx; border-radius: var(--td-radius-large); background: #191a1d; }
+.cedit__stage-title { font-size: 32rpx; letter-spacing: 0; }
+.cedit__head { padding: 18rpx 4rpx; }
+.cedit__htitle { font-size: 30rpx; letter-spacing: 0; }
+.cedit__card { padding: 24rpx; margin-bottom: 16rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-large); box-shadow: none; }
+.cedit__sectitle { font-size: 27rpx; letter-spacing: 0; }
+.cedit__textarea { min-height: 144rpx; padding: 20rpx; font-size: 26rpx; }
+.cedit__shot { padding: 20rpx 0; }
+.cedit__shotseq { width: 42rpx; height: 42rpx; line-height: 42rpx; }
+.cedit__genbox { margin-top: 14rpx; }
+.cedit .ds-footer { padding: 12rpx 24rpx calc(12rpx + env(safe-area-inset-bottom)); background: rgba(255,255,255,.96); border-top: 1rpx solid var(--td-component-stroke); box-shadow: 0 -6rpx 24rpx rgba(17,17,20,.06); }

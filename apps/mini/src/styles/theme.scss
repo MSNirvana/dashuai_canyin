@@ -34,9 +34,9 @@ page {
 
   // —— 圆角（1px = 2rpx） ——
   --td-radius-small: 12rpx;            // 6px  · 小标签
-  --td-radius-default: 20rpx;          // 10px · 按钮 / 输入框
-  --td-radius-large: 36rpx;            // 18px · 卡片
-  --td-radius-extra: 48rpx;            // 24px · 弹层
+  --td-radius-default: 16rpx;          // 8px · 按钮 / 输入框
+  --td-radius-large: 24rpx;            // 12px · 卡片
+  --td-radius-extra: 32rpx;            // 16px · 弹层
   --td-radius-pill: 999px;
 
   // —— 业务语义色 ——
@@ -50,13 +50,20 @@ page {
 
   // —— 阴影（极轻，只做层次不做装饰） ——
   --ds-shadow-card: 0 2rpx 6rpx rgba(17, 17, 20, 0.04), 0 16rpx 48rpx rgba(17, 17, 20, 0.05);
-  --ds-glow-red: 0 12rpx 36rpx rgba(225, 37, 27, 0.22);
-  --ds-glow-gold: 0 12rpx 36rpx rgba(196, 137, 44, 0.18);
+  --ds-glow-red: 0 6rpx 18rpx rgba(225, 37, 27, 0.14);
+  --ds-glow-gold: 0 6rpx 18rpx rgba(196, 137, 44, 0.12);
+
+  // 页面布局令牌：用来保持页面节奏一致，避免每页各自发明间距
+  --ds-space-1: 8rpx;
+  --ds-space-2: 16rpx;
+  --ds-space-3: 24rpx;
+  --ds-space-4: 32rpx;
+  --ds-space-5: 48rpx;
 
   font-family: -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'PingFang SC', 'Helvetica Neue', sans-serif;
   background: var(--td-bg-color-page);
   color: var(--td-text-color-primary);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
   -webkit-font-smoothing: antialiased;
 }
 

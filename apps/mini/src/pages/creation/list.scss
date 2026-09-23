@@ -137,3 +137,15 @@
     margin-top: 18rpx;
   }
 }
+
+/* 创作列表：让状态先于操作，卡片只保留一个主要点击目标。 */
+.clist { padding: 12rpx 32rpx calc(48rpx + env(safe-area-inset-bottom)); }
+.clist__bar { margin-bottom: 6rpx; }
+.clist__new { width: 56rpx; height: 56rpx; box-shadow: none; }
+.clist__intro { margin-bottom: 12rpx; font-size: 21rpx; }
+.clist__filter { margin-bottom: 14rpx; }
+.clist__swipe { margin-bottom: 12rpx; box-shadow: none; border: 1rpx solid var(--td-component-stroke); }
+.clist__card { padding: 18rpx; border-radius: var(--td-radius-large); }
+.clist__cover { width: 92rpx; height: 92rpx; border-radius: var(--td-radius-default); }
+.clist__name { font-size: 26rpx; }
+.clist__progress { margin-top: 16rpx; }

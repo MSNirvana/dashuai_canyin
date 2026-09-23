@@ -704,3 +704,61 @@
     color: var(--td-text-color-disabled);
   }
 }
+
+/* 首页是内容入口，不是数据看板：减少装饰，保留“看内容 → 开始创作”的节奏。 */
+.home {
+  padding-bottom: calc(40rpx + env(safe-area-inset-bottom));
+}
+
+.home__top { padding: 16rpx 32rpx 0; }
+.home__slogan-banner { margin-bottom: 20rpx; border-radius: var(--td-radius-large); }
+.home__slogan-image { height: 226rpx; }
+.home__body { padding: 0 32rpx; }
+.home__banner,
+.home__create-card { height: 336rpx; border-radius: var(--td-radius-large); }
+.home__banner { box-shadow: 0 10rpx 28rpx rgba(17, 17, 20, 0.12); }
+.home__create-copy { padding: 32rpx 30rpx 0; }
+.home__create-title { margin-top: 14rpx; font-size: 36rpx; }
+.home__create-action { left: 30rpx; bottom: 26rpx; height: 60rpx; padding: 0 20rpx; border-radius: var(--td-radius-default); }
+.home__sec { padding: 32rpx 4rpx 14rpx; }
+.home__sec-title { font-size: 29rpx; letter-spacing: 0; }
+.home__sec-desc { margin-top: 4rpx; font-size: 21rpx; }
+
+.home__recent {
+  display: flex;
+  gap: 12rpx;
+  background: transparent;
+  overflow: visible;
+  box-shadow: none;
+}
+
+.home__recent-item {
+  display: block;
+  width: 50%;
+  min-width: 0;
+  padding: 0;
+  border: 1rpx solid var(--td-component-stroke);
+  border-radius: var(--td-radius-large);
+  background: #fff;
+  overflow: hidden;
+}
+
+.home__recent-cover { width: 100%; height: 168rpx; margin-right: 0; border-radius: 0; }
+.home__recent-cover-image { border-radius: 0; }
+.home__recent-main { padding: 16rpx; }
+.home__recent-title { font-size: 25rpx; }
+.home__recent-meta { margin-top: 8rpx; gap: 8rpx; }
+.home__recent-arrow { display: none; }
+
+.home__works-tabs { margin-top: 2rpx; }
+.home__work-tab { padding: 10rpx 20rpx; margin-right: 10rpx; font-size: 22rpx; }
+.home__works { margin-top: 16rpx; }
+.home__work { height: 500rpx; margin-bottom: 14rpx; border-radius: var(--td-radius-large); box-shadow: none; }
+.home__work-top { top: 16rpx; left: 16rpx; right: 16rpx; }
+.home__work-bottom { left: 16rpx; right: 16rpx; bottom: 16rpx; }
+.home__work-title { margin-bottom: 12rpx; font-size: 24rpx; }
+.home__work-cta { height: 48rpx; padding: 0 18rpx; border-radius: var(--td-radius-default); box-shadow: none; }
+.home__work-play-icon { width: 68rpx; height: 68rpx; }
+.home__guest { margin: 28rpx 0; padding: 32rpx 24rpx; border-radius: var(--td-radius-large); }
+.home__guest-title { font-size: 28rpx; }
+.home__guest-desc { font-size: 23rpx; }

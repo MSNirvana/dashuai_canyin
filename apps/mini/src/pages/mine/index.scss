@@ -426,3 +426,17 @@
     font-size: 26rpx;
   }
 }
+
+/* 我的：账户信息轻量化，经营资料和权益用分组列表表达。 */
+.mine { padding-bottom: calc(36rpx + env(safe-area-inset-bottom)); }
+.mine__head { padding: 28rpx 32rpx 22rpx; }
+.mine__avatarbox, .mine__avatar, .mine__avatar-img { width: 96rpx; height: 96rpx; }
+.mine__avatarbox { margin-right: 20rpx; }
+.mine__name { font-size: 34rpx; letter-spacing: 0; }
+.mine__storage { margin: 16rpx 32rpx 0; padding: 22rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-large); box-shadow: none; }
+.mine__learn { margin: 16rpx 32rpx 0; border-radius: var(--td-radius-large); box-shadow: none; }
+.mine__menu { margin: 0 32rpx; border-radius: var(--td-radius-large); box-shadow: none; border: 1rpx solid var(--td-component-stroke); }
+.mine__item { padding: 22rpx 20rpx; }
+.mine__item-title { font-size: 26rpx; }
+.mine__item-desc { font-size: 21rpx; }
+.mine__login-modal { border-radius: var(--td-radius-extra); }

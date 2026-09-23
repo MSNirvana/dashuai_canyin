@@ -714,3 +714,145 @@
     flex: 1;
   }
 }
+
+/* ── 产品化页面编排 ─────────────────────────────────────────────
+   合成页的阅读顺序只有一条主路径：当前项目 → 预览 → 生成 → 选项。
+   JSX 中的业务顺序不能随意改变（多个状态块共用轮询和错误提示），这里用
+   flex order 做视觉编排，保留原有事件和数据流。 */
+.rcompose {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-top: 16rpx;
+}
+
+.rcompose > .rcompose__stage { order: 1; }
+.rcompose > .rcompose__head { order: 2; }
+.rcompose > .rcompose__preview { order: 3; }
+.rcompose > .rcompose__previewtip { order: 4; }
+.rcompose > .rcompose__notice { order: 5; }
+.rcompose > .rcompose__actions { order: 6; }
+.rcompose > .rcompose__card--clips { order: 7; }
+.rcompose > .rcompose__card--generation { order: 8; }
+.rcompose > .rcompose__card--ai { order: 9; }
+.rcompose > .rcompose__card--color { order: 10; }
+.rcompose > .rcompose__card--active { order: 11; }
+.rcompose > .rcompose__card--history { order: 12; }
+.rcompose > .rcompose__card--publish { order: 13; }
+.rcompose > .rcompose__recolor { order: 14; }
+.rcompose > .rcompose__lightbox { order: 20; }
+.rcompose > .ds-footer { order: 30; }
+
+.rcompose__stage {
+  margin-bottom: 14rpx;
+  padding: 26rpx 24rpx;
+  border-radius: var(--td-radius-large);
+  background: #191a1d;
+}
+
+.rcompose__stage-title {
+  font-size: 34rpx;
+  letter-spacing: 0;
+}
+
+.rcompose__stage-desc { margin-top: 8rpx; }
+
+.rcompose__head {
+  align-items: center;
+  padding: 8rpx 4rpx 18rpx;
+}
+
+.rcompose__title { font-size: 32rpx; letter-spacing: 0; }
+.rcompose__store { margin-top: 4rpx; font-size: 22rpx; }
+.rcompose__materials { font-size: 21rpx; padding: 6rpx 14rpx; }
+
+.rcompose__preview {
+  height: 410rpx;
+  margin-top: 0;
+  border-radius: var(--td-radius-large);
+  box-shadow: 0 10rpx 28rpx rgba(17, 17, 20, 0.12);
+}
+
+.rcompose__preview-badge {
+  top: 16rpx;
+  left: 16rpx;
+  padding: 6rpx 12rpx;
+  font-size: 20rpx;
+  border-radius: 999px;
+}
+
+.rcompose__actions { margin-top: 12rpx; }
+.rcompose__action { height: 72rpx; border-radius: var(--td-radius-default); }
+
+.rcompose__card {
+  margin-top: 16rpx;
+  padding: 24rpx;
+  border: 1rpx solid var(--td-component-stroke);
+  border-radius: var(--td-radius-large);
+  box-shadow: none;
+}
+
+.rcompose__card--clips {
+  margin-top: 20rpx;
+  background: #fff;
+}
+
+.rcompose__card--generation {
+  background: #fff;
+  border-color: var(--td-brand-color-light);
+}
+
+.rcompose__card--ai,
+.rcompose__card--color,
+.rcompose__card--history,
+.rcompose__card--publish { background: rgba(255, 255, 255, 0.78); }
+
+.rcompose__sectitle {
+  margin-bottom: 16rpx;
+  font-size: 28rpx;
+  letter-spacing: 0;
+}
+
+.rcompose__grades { gap: 10rpx; }
+.rcompose__grade {
+  min-height: 154rpx;
+  padding: 20rpx 12rpx 16rpx;
+  border-radius: var(--td-radius-default);
+}
+.rcompose__grade--on { box-shadow: inset 0 0 0 1rpx var(--td-brand-color); }
+.rcompose__gradetitle { font-size: 25rpx; }
+.rcompose__gradedesc { font-size: 20rpx; }
+.rcompose__graderatio { margin-top: 10rpx; font-size: 20rpx; }
+
+.rcompose__choiceitem {
+  min-height: 64rpx;
+  padding: 14rpx 16rpx;
+  border-radius: var(--td-radius-default);
+  font-size: 22rpx;
+  display: inline-flex;
+  align-items: center;
+}
+
+.rcompose__optionrow { padding: 16rpx 0; }
+.rcompose__optiontitle { font-size: 25rpx; }
+.rcompose__optiondesc { font-size: 21rpx; line-height: 1.55; }
+.rcompose__fieldlabel { margin: 18rpx 0 10rpx; font-size: 23rpx; font-weight: 600; }
+
+.rcompose__history { padding: 18rpx 0; }
+.rcompose__history-title { font-size: 25rpx; }
+.rcompose__history-go { margin-top: 8rpx; font-size: 21rpx; }
+
+.rcompose__pubcover { height: 720rpx; border-radius: var(--td-radius-default); }
+.rcompose__pubbtn { width: 100%; height: 88rpx; }
+
+/* 固定底栏只承担结算和唯一主动作，保持内容区不被遮挡。 */
+.rcompose .ds-footer {
+  padding: 14rpx 24rpx calc(14rpx + env(safe-area-inset-bottom));
+  background: rgba(255, 255, 255, 0.96);
+  border-top: 1rpx solid var(--td-component-stroke);
+  box-shadow: 0 -6rpx 24rpx rgba(17, 17, 20, 0.06);
+}
+
+.rcompose__render { height: 84rpx; font-size: 28rpx; }
+.rcompose__cost-value { font-size: 40rpx; }
+.rcompose__balance { margin-top: 6rpx; font-size: 20rpx; }

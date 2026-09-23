@@ -45,6 +45,7 @@ const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3
  *   服务端不会执行它们。显示了却一定不生效，比不显示更伤信任。
  */
 const DEFAULT_CHATCUT: ChatCutOptions = {
+  editMode: 'AUTO',
   voiceId: 'warm-female', subtitles: true, subtitleMode: 'VOICE', subtitleStyle: 'CLEAN', bgm: 'NONE',
   // ★ 默认有转场（2026-09-22 由 'CLEAN' 改来）：`CLEAN` 就是「不加转场」，而用户从不主动改
   //   这个选项 ⇒ 每条默认出片都必然是硬拼，线上真实投诉正是「没有转场和剪辑」。
@@ -947,8 +948,8 @@ export default function RenderCompose() {
             }
           : undefined,
         engine: grade === 'AI' ? 'LOCAL' : undefined,
-        profile: grade === 'AI' ? autoEditProfile : undefined,
-        ...(grade === 'AI' && chatcut.voiceId === 'custom' && customVoice
+        profile: grade === 'AI' && chatcut.editMode === 'ADVANCED' ? autoEditProfile : undefined,
+        ...(grade === 'AI' && chatcut.editMode === 'ADVANCED' && chatcut.voiceId === 'custom' && customVoice
           ? { customVoiceKey: customVoice.cosKey, customVoiceDurationMs: customVoice.durationMs }
           : {}),
         requestId: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
@@ -1122,7 +1123,7 @@ export default function RenderCompose() {
             「去上传素材」按钮就在同一行里，若把 onClick 挂在父容器上，
             在小程序里按钮的 tap 会冒泡到父节点 ⇒ 点「去上传」会顺手把列表收起来。
             （stopPropagation 在 weapp 里不可靠，所以从结构上避开，而不是靠它。） */}
-      <View className='rcompose__card rcompose__card--lead'>
+      <View className='rcompose__card rcompose__card--lead rcompose__card--clips'>
         <View className='rcompose__history-heading'>
           <Text className='rcompose__sectitle'>分镜素材 · 已上传 {readyShots.length}/{detail.shots.length}</Text>
           {/* 「缺哪几个分镜」不再用文字说一遍 —— 缺素材的格子自己就写着「缺素材」，重复只是噪音。
@@ -1243,7 +1244,7 @@ export default function RenderCompose() {
       )}
 
       {/* ── 生成方式 ── */}
-      <View className='rcompose__card'>
+      <View className='rcompose__card rcompose__card--generation'>
         <Text className='rcompose__sectitle'>生成方式</Text>
         <View className='rcompose__grades'>
           {GRADE_OPTIONS.map((option) => {
@@ -1284,9 +1285,20 @@ export default function RenderCompose() {
       </View>
 
       {grade === 'AI' && (
-        <View className='rcompose__card'>
+        <View className='rcompose__card rcompose__card--ai'>
           <Text className='rcompose__sectitle'>AI 自动剪辑</Text>
           <Text className='rcompose__optiondesc'>服务器会分析素材内容、画面质量和口播关系，自动选择镜头与节奏。</Text>
+          <View className='rcompose__choice'>
+            <Text className='rcompose__fieldlabel'>剪辑模式</Text>
+            <View className='rcompose__choices'>
+              <Text className={`rcompose__choiceitem ${chatcut.editMode === 'AUTO' ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((value) => ({ ...value, editMode: 'AUTO' }))}>AI 默认模式</Text>
+              <Text className={`rcompose__choiceitem ${chatcut.editMode === 'ADVANCED' ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((value) => ({ ...value, editMode: 'ADVANCED' }))}>高级模式</Text>
+            </View>
+          </View>
+          {chatcut.editMode === 'AUTO' ? (
+            <View className='ds-notice ds-notice--info'>系统将自动识别镜头类型、语音节奏、转场和字幕来源，并优先保证语句完整和音画同步。</View>
+          ) : (
+            <>
           <View className='rcompose__choice'>
             <Text className='rcompose__fieldlabel'>剪辑内容类型</Text>
             <View className='rcompose__choices'>
@@ -1401,12 +1413,14 @@ export default function RenderCompose() {
 
           <Text className='rcompose__fieldlabel'>备注与关键字</Text>
           <Textarea className='rcompose__note' maxlength={300} placeholder='例如：突出招牌菜、适合小红书种草' value={chatcut.note} onInput={(event) => setChatcut((value) => ({ ...value, note: event.detail.value }))} />
+            </>
+          )}
         </View>
       )}
 
       {/* ── 整片调色 ── */}
       {grade !== 'PREMIUM' && (
-        <View className='rcompose__card'>
+        <View className='rcompose__card rcompose__card--color'>
           <View className='rcompose__colorhead'>
             <Text className='rcompose__sectitle rcompose__sectitle--flush'>整片调色</Text>
             {!colorUnsupported && !isNoopColor(color) && (
@@ -1453,7 +1467,7 @@ export default function RenderCompose() {
           但用户看到的是「点了没反应 + 一条报错」，体验很差。
           每张卡片都带档位名：「合成中」在一页里出现两次而不说是哪一档，等于没说。 */}
       {activeTasks.map((task) => (
-        <View className='rcompose__card' key={task.id}>
+        <View className='rcompose__card rcompose__card--active' key={task.id}>
           <View className='rcompose__history-heading'>
             <Text className='rcompose__sectitle'>{gradeTitle(task.grade)}{clipPrepSuffix(task)} · 进行中</Text>
           </View>
@@ -1493,7 +1507,7 @@ export default function RenderCompose() {
 
       {/* ── 成片记录 ── */}
       {renders.length > 0 && (
-        <View className='rcompose__card'>
+        <View className='rcompose__card rcompose__card--history'>
           <View className='rcompose__history-heading'>
             <Text className='rcompose__sectitle'>成片记录</Text>
             <Button size='mini' loading={refreshingHistory} disabled={refreshingHistory} onClick={() => void reloadHistory()}>刷新</Button>
@@ -1549,7 +1563,7 @@ export default function RenderCompose() {
           放在成片记录之后，因为它是整条链路的**最后一步**（视频出来了才谈发布包装）。
           ★ 它依赖的是**口播文案**（服务端会重新读一遍创作的门店/菜品上下文），
             与档位、调色都无关 —— 所以没有必要跟三档/调色并排挤在一起。 */}
-      <View className='rcompose__card'>
+      <View className='rcompose__card rcompose__card--publish'>
         <View className='rcompose__history-heading'>
           <Text className='rcompose__sectitle'>发布素材</Text>
           {!!publishMat && !publishLoading && (
