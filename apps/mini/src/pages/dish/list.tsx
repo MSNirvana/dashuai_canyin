@@ -34,6 +34,8 @@ export default function DishListPage() {
    *   页面于是显示「添加第一道菜」—— 用户有菜也会以为没有，跑去重复添加。
    */
   const [loadError, setLoadError] = useState('')
+  /** 请求代次：切店 / 重复显示并发时，乱序回包只认最后一次（否则旧店的菜覆盖新店的列表） */
+  const reqRef = useRef(0)
 
   // 从门店管理带 storeId 进来时，同步为全局当前门店，保持全站上下文一致。
   // ★ 必须过 readRouteId：`?storeId=undefined` 会让这里把全局门店**真的切到 'undefined'**，
@@ -50,9 +52,11 @@ export default function DishListPage() {
       setLoading(false)
       return
     }
+    const my = ++reqRef.current
     setLoading(true)
     try {
       const data = await listDishes(currentStoreId)
+      if (my !== reqRef.current) return
       setList(data)
       setLoadError('')
       const entries = await Promise.all(
@@ -67,8 +71,11 @@ export default function DishListPage() {
           }
         }),
       )
+      // 封面是第二轮请求，回来时页面可能已经在看另一家店 —— 同样要比代次
+      if (my !== reqRef.current) return
       setCoverUrls(Object.fromEntries(entries.filter((x): x is readonly [string, string] => !!x)))
     } catch {
+      if (my !== reqRef.current) return
       /**
        * ★ 原来这里只有 `finally`、没有 `catch`：两个后果一起发生 ——
        *   ① 请求失败变成**未处理的 Promise rejection**（调用点写的是 `void load()`）；
@@ -79,7 +86,7 @@ export default function DishListPage() {
        */
       setLoadError('菜品加载失败，点这里重试')
     } finally {
-      setLoading(false)
+      if (my === reqRef.current) setLoading(false)
     }
   }
 

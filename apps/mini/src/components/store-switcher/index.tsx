@@ -31,7 +31,13 @@ export default function StoreSwitcher({ className = '', emptyText = '选择门�
   const goStores = () => Taro.navigateTo({ url: '/pages/store/list' })
 
   const onTap = async () => {
-    const list = await loadStores(true).catch(() => [])
+    // ★ 失败 ≠ 没有门店：catch 给空数组会把「网络抖了一下」显示成「还没有门店」，
+    //   用户跟着「去建店」就会建出重复门店。失败给 null，单独提示重试。
+    const list = await loadStores(true).catch(() => null)
+    if (!list) {
+      Taro.showToast({ title: '门店列表加载失败，请重试', icon: 'none' })
+      return
+    }
     if (!list.length) {
       const r = await Taro.showModal({
         title: '还没有门店',

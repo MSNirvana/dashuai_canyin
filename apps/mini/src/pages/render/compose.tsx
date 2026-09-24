@@ -46,7 +46,7 @@ const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3
  */
 const DEFAULT_CHATCUT: ChatCutOptions = {
   editMode: 'AUTO',
-  voiceId: 'warm-female', subtitles: true, subtitleMode: 'VOICE', subtitleStyle: 'CLEAN', bgm: 'NONE',
+  voiceId: 'none', subtitles: true, subtitleMode: 'SOURCE_AUDIO', subtitleStyle: 'CLEAN', bgm: 'NONE',
   // ★ 默认有转场（2026-09-22 由 'CLEAN' 改来）：`CLEAN` 就是「不加转场」，而用户从不主动改
   //   这个选项 ⇒ 每条默认出片都必然是硬拼，线上真实投诉正是「没有转场和剪辑」。
   //   代价（整片略短）不在这里解释 —— `TRANSITION_HINT.SMOOTH` 已经把话说给用户了。
@@ -312,6 +312,16 @@ export default function RenderCompose() {
    */
   const [previewedSignature, setPreviewedSignature] = useState<string | null>(null)
   /**
+   * 「松手了、防抖中的那 0.8s」窗口：请求还没发出，但画面必须已经切到静帧近似。
+   *
+   * ★ 这个窗口原来是用 `colorDirty`（当前指纹 ≠ 已预览指纹）推导的 —— 那是错的：
+   *   「看过成片」（showResult → clearColorPreview ⇒ 指纹置空）之后，只要滑块不是全 0，
+   *   推导就恒为真，画面永久停在「正在生成整片精确预览…」，而此时**没有任何请求在飞**、
+   *   也没有机制会再发起（已实测复现）。推导值分不清「等请求」和「在看别的内容」，
+   *   所以改成显式状态：松手时置位，请求真正发出（或被清空）时复位。
+   */
+  const [colorReqPending, setColorReqPending] = useState(false)
+  /**
    * 提交锁按**档位**分开（不是单一布尔）。
    *
    * ★ 为什么：三档互不干扰之后，用户在 AI 提交尚未返回时可以立刻点基础生成。
@@ -320,6 +330,13 @@ export default function RenderCompose() {
    *   用集合按档位去重，才既防了同档双击、又不吞掉异档提交。
    */
   const submitLock = useRef<Set<RenderGrade>>(new Set())
+  /**
+   * 发布素材的同步再入锁。`publishLoading` 是 state、要等渲染才生效，而确认弹窗
+   * （await showModal）会挂起整个函数 —— 挂起期间第二次点击看到的 loading 仍是 false，
+   * 于是两个弹窗、两次「开始生成」、两笔扣费（每次调用都 newRequestId，服务端幂等
+   * 按 requestId 去重 ⇒ 新 id 就是新的一笔）。锁必须在 showModal **之前**同步置位。
+   */
+  const publishLock = useRef(false)
   const recorderRef = useRef<ReturnType<typeof Taro.getRecorderManager> | null>(null)
   const recordingRef = useRef(false)
   const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -338,6 +355,12 @@ export default function RenderCompose() {
   const activeTasks = renders.filter((task) => ACTIVE_STATUS.includes(task.status))
   const pendingTask = activeTasks.find((task) => task.grade === grade) ?? null
   const lastSuccess = renders.find((task) => task.status === 'SUCCESS') ?? null
+  /**
+   * 「按当前调色重新出片」的判据：必须真有 **BASIC** 成片（RECOLOR 复用的是上一版
+   * BASIC 的归一化缓存，见 server render.service.ts）。只跑过 AI 档的用户没有那份缓存，
+   * 让他看到这个按钮就是放行一次必然失败的提交。
+   */
+  const lastBasicSuccess = renders.find((task) => task.status === 'SUCCESS' && task.grade === 'BASIC') ?? null
   /**
    * 「保存到相册」该下载哪条成片。
    *
@@ -394,6 +417,7 @@ export default function RenderCompose() {
     setPreviewedSignature(null)
     setColorPreviewUrl(null)
     setPreviewing(false)
+    setColorReqPending(false)
     setPreviewError('')
     setDraggingAxis(null)
   }, [])
@@ -521,12 +545,31 @@ export default function RenderCompose() {
     previewVersion.current += 1
     // 预览链接是签名过的、会过期，离开就丢掉；下次回来按需重算（服务端有缓存，很快）
     clearColorPreview()
+    // 录音同样不能带出本页（navigateTo 走时页面只是隐藏、不会卸载，卸载钩子救不了这条路）：
+    // 先清标记再 stop，onStop 走早退分支、不会发起那次孤儿上传
+    recordingRef.current = false
+    setRecording(false)
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+    try { recorderRef.current?.stop() } catch { /* 没在录音 */ }
   })
 
   useEffect(() => () => {
     loadVersion.current += 1
     previewVersion.current += 1
     if (colorPreviewTimer.current) clearTimeout(colorPreviewTimer.current)
+    // ★ 录音必须随页面终止：RecorderManager 是 App 级单例，不主动 stop 它会继续采集到
+    //   60s 上限，然后 onStop 回调照常执行 uploadCustomVoice —— 落一条没有任何提交
+    //   会引用的孤儿素材，用户也不知道「为什么还在录音」。
+    //   先清标记再 stop：onStop 见 recordingRef 已清会走早退分支，不会触发那次上传。
+    recordingRef.current = false
+    if (recordingTimerRef.current) {
+      clearTimeout(recordingTimerRef.current)
+      recordingTimerRef.current = null
+    }
+    try { recorderRef.current?.stop() } catch { /* 没在录音 */ }
   }, [])
 
   useEffect(() => {
@@ -666,37 +709,43 @@ export default function RenderCompose() {
    *   编一个「进度条」只会让人盯着一个假的百分比。所以只说清"要等多久、在等什么"。
    */
   const doGeneratePublish = async (part: 'ALL' | 'COVER') => {
-    if (!id || publishLoading) return
-    const cap = publishEstimate?.textBeanCap
-    const cover = publishEstimate?.coverBeans
-    const costText =
-      part === 'COVER'
-        ? `封面固定 ${cover ?? '?'} 积分`
-        : `标题与文案最多 ${cap ?? '?'} 积分 + 封面固定 ${cover ?? '?'} 积分`
-    const { confirm } = await Taro.showModal({
-      title: part === 'COVER' ? '重新生成封面' : '生成发布素材',
-      content:
-        `${costText}。\n大约需要 1 分钟：先出标题与文案，再出封面（3:4 竖版）。\n` +
-        (part === 'COVER' ? '标题与文案会沿用已生成的那版，不会重复扣费。' : ''),
-      confirmText: '开始生成',
-      cancelText: '再想想',
-    })
-    if (!confirm) return
-
-    setPublishLoading(true)
-    setPublishError('')
-    setPublishNotice('')
+    if (!id || publishLoading || publishLock.current) return
+    // 同步上锁（见 publishLock 的说明）：此后整条链路 —— 包括等弹窗期间 —— 第二次点击直接挡掉
+    publishLock.current = true
     try {
-      const r = await generatePublishMaterial(id, newRequestId(), part)
-      setPublishMat(r.material)
-      // duplicated = 同一 requestId 又打了一次（连点/重试），库里并没有再扣钱
-      setPublishNotice(r.duplicated ? '这次是重复提交，没有再扣积分。' : (r.notice ?? ''))
-      // 扣过积分就要把底部条的「可用」刷新掉，否则用户会以为没扣
-      if (!r.duplicated) void refreshMe()
-    } catch (error) {
-      setPublishError((error as Error).message || '生成失败，请稍后重试')
+      const cap = publishEstimate?.textBeanCap
+      const cover = publishEstimate?.coverBeans
+      const costText =
+        part === 'COVER'
+          ? `封面固定 ${cover ?? '?'} 积分`
+          : `标题与文案最多 ${cap ?? '?'} 积分 + 封面固定 ${cover ?? '?'} 积分`
+      const { confirm } = await Taro.showModal({
+        title: part === 'COVER' ? '重新生成封面' : '生成发布素材',
+        content:
+          `${costText}。\n大约需要 1 分钟：先出标题与文案，再出封面（3:4 竖版）。\n` +
+          (part === 'COVER' ? '标题与文案会沿用已生成的那版，不会重复扣费。' : ''),
+        confirmText: '开始生成',
+        cancelText: '再想想',
+      })
+      if (!confirm) return
+
+      setPublishLoading(true)
+      setPublishError('')
+      setPublishNotice('')
+      try {
+        const r = await generatePublishMaterial(id, newRequestId(), part)
+        setPublishMat(r.material)
+        // duplicated = 同一 requestId 又打了一次（连点/重试），库里并没有再扣钱
+        setPublishNotice(r.duplicated ? '这次是重复提交，没有再扣积分。' : (r.notice ?? ''))
+        // 扣过积分就要把底部条的「可用」刷新掉，否则用户会以为没扣
+        if (!r.duplicated) void refreshMe()
+      } catch (error) {
+        setPublishError((error as Error).message || '生成失败，请稍后重试')
+      } finally {
+        setPublishLoading(false)
+      }
     } finally {
-      setPublishLoading(false)
+      publishLock.current = false
     }
   }
 
@@ -708,6 +757,9 @@ export default function RenderCompose() {
    */
   const requestColorPreview = useCallback(async (next: ColorGrade) => {
     if (!id) return
+    // 请求真正接管了（无论后面是发出去、被去重还是被素材不齐挡下），防抖窗口都算结束。
+    // 放在所有早退分支之前：否则「拖回已预览过的参数」这类去重命中会让 pending 挂着不复位。
+    setColorReqPending(false)
     if (isNoopColor(next)) {
       // 四轴都回到 0 = 没有可预览的变化，服务端会直接 4014 拒掉。客户端先自己收手，
       // 顺手清掉上一次的预览，免得画面上留着「旧的调色」误导人。
@@ -768,6 +820,8 @@ export default function RenderCompose() {
       return
     }
     setDraggingAxis(null)
+    // 防抖窗口开始：请求还没发出，画面先切到静帧近似（见 colorReqPending 的说明）
+    setColorReqPending(true)
     if (colorPreviewTimer.current) clearTimeout(colorPreviewTimer.current)
     colorPreviewTimer.current = setTimeout(() => { void requestColorPreview(next) }, COLOR_PREVIEW_DEBOUNCE_MS)
   }
@@ -958,8 +1012,11 @@ export default function RenderCompose() {
       if (task.status === 'SUCCESS') void showResult(task)
       void refreshMe().catch(() => setLoadError('任务已提交，账户刷新失败，请刷新查看'))
     } catch (error) {
+      // ★ 顺序不能反：load() 的同步首段就有 setLoadError('')，先 set 再 void load()
+      //   会在同一次事件循环里把刚写上的错误抹成空串 —— 横幅根本不显示。
+      //   而请求层对「网络层失败」（断网/超时）又不弹 toast，这条横幅是用户唯一的反馈。
+      await load()
       setLoadError((error as Error).message || '提交失败，请刷新任务列表后重试')
-      void load()
     } finally {
       submitLock.current.delete(grade)
       setSubmittingGrades((list) => list.filter((item) => item !== grade))
@@ -1080,19 +1137,19 @@ export default function RenderCompose() {
   // 用静帧而不是「当前正在播的某一帧」，是因为 video 是原生组件、内部渲染吃不到样式 ——
   // 这是刻意的取舍，不是图省事。
   const stillCover = detail.shots.find((shot) => shot.assetId && shot.coverUrl)?.coverUrl ?? null
-  // 「当前参数还没被精确预览过」⇒ 该显示静帧近似。全 0 不算脏：那时根本没有可预览的变化。
-  const colorDirty = !isNoopColor(color) && colorSignature(color) !== previewedSignature
   /**
    * 显示静帧近似的条件，要盖住从「按下滑块」到「精确预览拿到」的**整段**窗口：
-   * 拖动中 → 松手后的 0.8s 防抖等待 → 请求中 → 请求失败（配错误提示收尾）。
+   * 拖动中 → 松手后的 0.8s 防抖等待（colorReqPending）→ 请求中 → 请求失败（配错误提示收尾）。
    * ⚠ 中间那段最容易漏：松手时 draggingAxis 已清空、而 previewing 要等防抖到期才置起，
    *   少一项就会在这 ≤0.8s 里闪回上一版旧预览 —— 看着像操作失败。
+   * ★ 这段窗口**只能**用显式状态表达（见 colorReqPending 的说明）：用「指纹不等」推导
+   *   会把「正在看某条成片」也算成脏，画面永久停在「正在生成…」而没有任何请求在飞。
    * materialsReady 也是必要条件：素材不齐时预览不会发起（服务端 4003），
    *   否则静帧会一直停在「正在生成…」上不动。
    * 本地 AI 引擎与基础引擎共用同一套调色管线，因此 AI 档也可以生成精确调色预览。
    */
   const showingStill =
-    materialsReady && !!stillCover && (draggingAxis !== null || colorDirty || previewing || !!previewError)
+    materialsReady && !!stillCover && (draggingAxis !== null || colorReqPending || previewing || !!previewError)
   const showingColorPreview = !showingStill && !!colorPreviewUrl
   const playUrl = colorPreviewUrl ?? videoUrl
   const previewBadge = showingStill ? '调色近似' : showingColorPreview ? '调色预览' : `${previewedGrade}${clipPrepSuffix(selectedResult)}`
@@ -1296,7 +1353,7 @@ export default function RenderCompose() {
             </View>
           </View>
           {chatcut.editMode === 'AUTO' ? (
-            <View className='ds-notice ds-notice--info'>系统将自动识别镜头类型、语音节奏、转场和字幕来源，并优先保证语句完整和音画同步。</View>
+            <View className='ds-notice ds-notice--info'>默认不添加 AI 配音，保留素材原声并自动生成字幕；系统会识别镜头类型、语音节奏和转场，优先保证语句完整与音画同步。</View>
           ) : (
             <>
           <View className='rcompose__choice'>
@@ -1668,7 +1725,7 @@ export default function RenderCompose() {
       {/* 「重新导出」入口：复用归一化缓存，只跑「拼接 + 一遍调色」，所以比首次合成便宜。
           只在已有 BASIC 成片、且当前仍选 BASIC 时出现 —— RECOLOR 的语义是「把上一版成片重调色」，
           没有可复用的成片时这条路径不成立。 */}
-      {lastSuccess && grade === 'BASIC' && (
+      {lastBasicSuccess && grade === 'BASIC' && (
         <Button
           className='rcompose__recolor'
           loading={submitting}

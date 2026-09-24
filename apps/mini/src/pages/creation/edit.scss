@@ -460,6 +460,17 @@
     color: var(--td-text-color-primary);
     text-align: right;
   }
+  &__picker--action {
+    text-align: left;
+    color: var(--td-brand-color);
+    text-decoration: underline;
+    text-decoration-color: rgba(225, 37, 27, 0.35);
+    text-underline-offset: 6rpx;
+  }
+  &__picker--retry {
+    color: var(--td-text-color-secondary);
+    text-decoration: none;
+  }
   // 标题行：文字与占位提示**左对齐**（原来跟上面两行一样右对齐）。
   // 门店/菜品的值是短词，贴右更好扫；标题的占位提示是一整句话（「选填，默认门店+菜品名」），
   // 右对齐会把它压到最右边、左边空出一大块，看着像没对齐 —— 所以让它跟 label 一样从左边起。

@@ -485,10 +485,8 @@ export const PUBLISH_SCENES = [
     fallback: PUBLISH_COVER_FALLBACK,
     temperature: 0.6,
     /**
-     * ★★ 出图场景的 beanPrice **不是上限，就是报价本身** ——
-     *    图像场景走固定价结算（`AiChargeParams.fixedBeans`），因为出图返回里
-     *    **没有 token 用量**（实测 `usage: null`），按 token 成本算恒为 0。
-     *    所以它直接等于用户点一次「生成封面」花掉的积分。
+     * ★★ 出图场景的 beanPrice 是初始预留额度，不是最终扣费。
+     *    图像场景没有 token 用量，最终扣费读取 AiModel.unitPriceMicroFen 的实际单张成本。
      *
      * 定价依据（2026-09-21 实测，可原样复核）：
      *   ① 上游单价：tokenbox 计费表 `gpt-image-2` 的 `model_price = 0.10`（USD/张）。

@@ -136,6 +136,13 @@ export default function CreationEdit() {
    */
   const idBroken = isBrokenRouteId(params)
   const [detail, setDetail] = useState<CreationDetail | null>(null)
+  /**
+   * 详情加载失败的可读原因（空串 = 没失败 / 正在加载）。
+   * ★ 必须有它：原来 `loadDetail(localId)` 是裸调（无 catch），失败一次 `detail` 就恒为
+   *   null，页面永久停在「加载中…」，没有错误提示也没有重试入口，只能杀掉小程序重进。
+   *   模式照抄拍摄页（shots.tsx 的 loadError + 重新加载）。
+   */
+  const [detailError, setDetailError] = useState('')
   const [stores, setStores] = useState<StoreItem[]>([])
   const [dishes, setDishes] = useState<DishItem[]>([])
   /**
@@ -167,7 +174,6 @@ export default function CreationEdit() {
    * 生成出来的东西跟这家店没关系，用户还得到最后一步才发现。
    */
   const [dishIdx, setDishIdx] = useState(0)
-  const [title, setTitle] = useState('')
   const [copyLoading, setCopyLoading] = useState(false)
   const [boardLoading, setBoardLoading] = useState(false)
   // P0-7 再入锁：state 更新是异步的，而且 tdesign 组件的 loading 要经 native setData 下发，
@@ -219,6 +225,14 @@ export default function CreationEdit() {
    * 而这里要求「点下去立刻对已经在等待的请求链生效」。
    */
   const autoExitRef = useRef<'stay' | 'cancel' | 'background'>('stay')
+  /**
+   * runAuto 的运行代次。每次启动自增，旧运行在 await 回来之后先比代次再继续：
+   * 「取消生成」会立刻释放创建锁（见 onCancelGenerate），用户可以马上再点一次「生成」，
+   * 新旧两条 runAuto 会短暂并发 —— 不比代次的话，旧运行的在途请求回来后会把
+   * autoExitRef 当成自己的（已是新运行置的 'stay'），于是替旧创作再买一次分镜、
+   * 最后还把页面跳到旧创作的拍摄页。旧运行必须识别自己已过期并静默退出。
+   */
+  const autoRunSeqRef = useRef(0)
   /** 正在生成的创作 id：取消时要把它拉回来，否则 detail 仍为 null 会闪一下「加载中…」 */
   const autoIdRef = useRef('')
   /**
@@ -282,7 +296,20 @@ export default function CreationEdit() {
     if (d.complexity === 'SIMPLE' || d.complexity === 'COMPLEX' || d.complexity === 'FINE') setComplexity(d.complexity)
   }, [])
 
-  /** 拉取同款配方：预填文案款式 / 镜头复杂度 / 标题，用户仍可自行改 */
+  /**
+   * 首次进入 / 用户点「重新加载」时拉详情，失败落到 detailError 给重试出口。
+   * loadDetail 本体保持抛错（runAuto 的 finally 等调用方各自决定怎么兜），
+   * 只有「页面上唯一的加载入口」这一条路必须把失败转成可见状态。
+   */
+  const reloadDetail = useCallback(
+    (id: string) => {
+      setDetailError('')
+      loadDetail(id).catch((e) => setDetailError((e as Error)?.message || '加载失败，请重试'))
+    },
+    [loadDetail],
+  )
+
+  /** 拉取同款配方：预填文案款式与镜头复杂度；创作标题统一由门店和菜品生成 */
   useEffect(() => {
     if (!workId) return
     let cancelled = false
@@ -298,7 +325,6 @@ export default function CreationEdit() {
         const rt = toDishTrack(r.track)
         if (rt) setTrack(rt)
         if (r.complexity === 'SIMPLE' || r.complexity === 'COMPLEX' || r.complexity === 'FINE') setComplexity(r.complexity)
-        if (r.titleHint) setTitle(r.titleHint)
       } catch {
         if (!cancelled) {
           // 配方拉不到不阻断建创作，退回让用户手选
@@ -345,7 +371,7 @@ export default function CreationEdit() {
   // ── 店铺/菜品加载 ────────────────────────────────────────────────
   useEffect(() => {
     if (localId) {
-      loadDetail(localId)
+      reloadDetail(localId)
       return
     }
     let cancelled = false
@@ -359,7 +385,7 @@ export default function CreationEdit() {
       if (sid) loadDishesFor(sid)
     })()
     return () => { cancelled = true }
-  }, [localId, loadDetail])
+  }, [localId, reloadDetail])
 
   // ★ 表单里原来的「门店」下拉已删（2026-09-21）：它和左上角 StoreSwitcher 是同一件事，
   //   而且两个选择器会各写一次全局门店，谁覆盖谁取决于点的顺序 —— 用户只会觉得「换了一家没生效」。
@@ -400,6 +426,10 @@ export default function CreationEdit() {
    *   或者在上一步 FAILED 时直接返回兜底模板而不再真的重试。这是服务端刻意的契约。
    */
   const runAuto = async (id: string, opts?: { skipCopy?: boolean; skipBoard?: boolean }) => {
+    // 本次运行代次：取消后用户可能立刻再点「生成」，旧运行回来之后必须先比代次
+    // （见 autoRunSeqRef 的说明），否则会替旧创作再买分镜、并把页面跳到旧创作。
+    const myRun = ++autoRunSeqRef.current
+    const runStale = () => autoRunSeqRef.current !== myRun
     autoExitRef.current = 'stay'
     autoIdRef.current = id
     autoFailedRef.current = false
@@ -411,23 +441,29 @@ export default function CreationEdit() {
     try {
       // 判据取自**服务端**而不是本地 state：失败可能发生在本页重新进入之后，
       // 本地 detail 未必是最新的。读不到时按「需要生成」处理（缺一步总比漏一步好）。
-      const needCopy = !opts?.skipCopy && !(await getCreation(id).catch(() => null))?.copyText
+      // ★ 分镜也要走同一个服务端判据（原来只查文案）：弱网下「分镜其实已生成、
+      //   但 finally 的 loadDetail 失败 ⇒ detail 仍是 null」时，重试会 skipBoard=false
+      //   再买一次分镜 —— 与 :465 注释自证过的「白扣两笔分镜积分」是同型事故。
+      //   文案生成不会改动分镜，所以一次读回可以供两步共同判据。
+      const serverDetail = await getCreation(id).catch(() => null)
+      const needCopy = !opts?.skipCopy && !serverDetail?.copyText
+      const needBoard = !opts?.skipBoard && !(serverDetail?.shots?.length)
       if (needCopy) {
         failing = '文案'
         const cr = await generateCopy(id, newRequestId(), track)
         // 等待期间被「取消生成」：不再发起分镜请求。
         // 已经发出去的这一笔文案请求撤不回来（请求层没有 abort 能力），
         // 但它的结果会落库 —— 为它付的那笔积分不浪费，用户可从「创作」进入接着用。
-        if (waitingExit() === 'cancel') return
+        if (waitingExit() === 'cancel' || runStale()) return
         usedFallback = cr.isFallbackTemplate
       }
       // 分镜已经生成过时跳过（重试专用）：每次生成都是一笔真实扣费，
       // 跳转失败后重试不该再买一遍同样的分镜。
-      if (!opts?.skipBoard) {
+      if (needBoard) {
         failing = '分镜'
         const br = await generateStoryboard(id, newRequestId(), complexity)
         // 「关闭等待」：两步照常跑完落库（用户稍后从「创作」进入），只是不再自动跳拍摄页
-        if (waitingExit() !== 'stay') return
+        if (waitingExit() !== 'stay' || runStale()) return
         if (!br.parsed || br.shots.length === 0) {
           // 没有分镜就没法拍摄，停在本页让用户重试，避免落到一个空的拍摄列表
           throw new Error('分镜内容没解析出来')
@@ -446,8 +482,9 @@ export default function CreationEdit() {
       if (!isNumericId(id)) throw new Error('编号丢失')
       Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })
     } catch {
-      // 用户主动取消时的失败不必再报「生成中断」——那是他自己按掉的
-      if (waitingExit() === 'stay') {
+      // 用户主动取消时的失败不必再报「生成中断」——那是他自己按掉的；
+      // 已过期的旧运行也不许碰悬浮窗（新运行正在用它）。
+      if (waitingExit() === 'stay' && !runStale()) {
         autoFailedRef.current = true
         setAutoError(failing ? `${failing}这一步没成功` : '内容已生成，但没能打开拍摄页，请点重试')
       }
@@ -456,7 +493,8 @@ export default function CreationEdit() {
       // 二是重试时要能按 detail 判断哪一步已经完成了（跳过它，不重复扣积分）。
       // 只置 autoRunning=false 而不拉详情，detail 仍是 null，页面会卡在「加载中…」。
       // 「关闭等待」会先离开本页，此时再拉一次只是白发一个请求（setState 也不会生效）。
-      if (mountedRef.current) {
+      // 旧运行的 finally 跳过：新运行会拉自己的详情、管自己的悬浮窗。
+      if (mountedRef.current && !runStale()) {
         await loadDetail(id).catch(() => undefined)
         // ★ 失败时保留悬浮窗，见 autoFailedRef 的说明
         if (!autoFailedRef.current) setAutoRunning(false)
@@ -508,7 +546,6 @@ export default function CreationEdit() {
       const c = await createCreation({
         storeId: sid,
         dishId: did,
-        title: title || undefined,
         track,
         complexity,
         // 同款的分镜骨架：服务端在创建的事务里一并落成分镜。
@@ -536,6 +573,13 @@ export default function CreationEdit() {
   const onCancelGenerate = async () => {
     autoExitRef.current = 'cancel'
     Taro.showToast({ title: '已取消生成', icon: 'none' })
+    // ★ 立刻释放创建锁：取消的检查点在在途请求**回来之后**（文案请求前端超时 120s），
+    //   不在这里释放的话，悬浮窗是收了、但「生成」按钮仍 disabled 到那笔请求回来，
+    //   与「取消」的意图直接相悖（实测要等 8~13s，故障通道最长 2 分钟）。
+    //   在途请求的结果照样落库（积分不浪费）；onCreate 的 finally 再置一次 false 无害。
+    //   用户立刻再点「生成」也是安全的：新 runAuto 自增代次，旧运行回来后静默退出。
+    createLockRef.current = false
+    setCreating(false)
     // 先把详情拉回来再收悬浮窗：否则 detail 仍是 null，页面会闪一下「加载中…」
     if (autoIdRef.current) await loadDetail(autoIdRef.current).catch(() => undefined)
     if (mountedRef.current) setAutoRunning(false)
@@ -743,6 +787,25 @@ export default function CreationEdit() {
     return dishes[dishIdx] ? dishLabel(dishes[dishIdx]) : '请选择菜品'
   })()
 
+  /** 空菜品状态是创作流程的下一步入口，直接带当前门店进入菜品管理。 */
+  const openDishManagement = () => {
+    const storeId = stores[storeIdx]?.id || currentStoreId
+    if (!storeId) {
+      void Taro.navigateTo({ url: '/pages/store/list' })
+      return
+    }
+    void Taro.navigateTo({ url: `/pages/dish/list?storeId=${storeId}` })
+  }
+
+  const retryOrOpenDishManagement = () => {
+    const store = stores[storeIdx]
+    if (dishesFailed && store) {
+      loadDishesFor(store.id)
+      return
+    }
+    openDishManagement()
+  }
+
   /**
    * 链接里的创作编号不合法（最典型的是 `?id=undefined`）。
    * 这里既不能去请求（服务端 idParam 回 4000「参数不合法」，指向不了任何操作），
@@ -825,32 +888,27 @@ export default function CreationEdit() {
           {/* ★ 这里**没有**「门店」字段（2026-09-21 删）：门店由顶上的 StoreSwitcher 决定，
               本页只负责「这道菜」。同一页放两个门店选择器，用户会以为是两件事，
               而且两个都写全局门店时谁生效取决于点的顺序 ⇒ 表现为「换了一家没生效」。 */}
-          <View className='cedit__field'>
+          <View className='cedit__field cedit__field--last'>
             <Text className='cedit__label'>菜品</Text>
             {/* 必选：range 里不再有「不指定」这一项，所以下标与 dishes 一一对应，
                 这里也就不再需要 `- 1` 换算（旧写法是「下标 -1 = 不指定」的约定）。 */}
-            <Picker
-              mode='selector'
-              range={dishes.map(dishLabel)}
-              onChange={(e: { detail: { value: string | number } }) => setDishIdx(Number(e.detail.value))}
-              // 菜品必须确认属于**当前门店**才可点：dishesStoreId 与所选门店不一致时
-              // 说明列表还是上一家店的（或还没回来），此时不该让用户选（见 dishesStoreId 的说明）
-              disabled={!stores[storeIdx] || !dishes.length || dishesStoreId !== stores[storeIdx]?.id}
-            >
-              <View className='cedit__picker' onClick={() => dishesFailed && stores[storeIdx] && loadDishesFor(stores[storeIdx]!.id)}>
+            {dishes.length && dishesStoreId === stores[storeIdx]?.id ? (
+              <Picker
+                mode='selector'
+                range={dishes.map(dishLabel)}
+                onChange={(e: { detail: { value: string | number } }) => setDishIdx(Number(e.detail.value))}
+              >
+                <View className='cedit__picker'>{dishPickerText}</View>
+              </Picker>
+            ) : (
+              <View
+                className={`cedit__picker cedit__picker--action${dishesFailed ? ' cedit__picker--retry' : ''}`}
+                hoverClass='ds-hover--press'
+                onClick={retryOrOpenDishManagement}
+              >
                 {dishPickerText}
               </View>
-            </Picker>
-          </View>
-          <View className='cedit__field cedit__field--last'>
-            <Text className='cedit__label'>标题</Text>
-            <Input
-              className='cedit__input'
-              value={title}
-              onInput={(e: { detail: { value: string } }) => setTitle(e.detail.value)}
-              placeholder='选填，默认门店+菜品名'
-              placeholderClass='cedit__ph'
-            />
+            )}
           </View>
         </View>
 
@@ -1016,7 +1074,14 @@ export default function CreationEdit() {
     )
   }
 
-  if (!detail) return <View className='cedit__tip'>加载中…</View>
+  if (!detail) {
+    return (
+      <View className='cedit__tip'>
+        {detailError || '加载中…'}
+        {!!detailError && !!localId && <Button onClick={() => reloadDetail(localId)}>重新加载</Button>}
+      </View>
+    )
+  }
 
   const hasCopy = !!detail.copyText
   const hasShots = detail.shots.length > 0

@@ -1,4 +1,6 @@
 import type { RenderClip } from '../services/render.service.js'
+import type { ChatCutOptions } from './chatcut.js'
+import { estimateSpeechMs } from './tts.js'
 
 export const AUTO_EDIT_PROFILES = ['DISH', 'TALKING_HEAD', 'VENUE', 'MIXED'] as const
 export type AutoEditProfile = (typeof AUTO_EDIT_PROFILES)[number]
@@ -68,9 +70,10 @@ function effectiveDurationMs(clip: RenderClip): number {
 function speechTargetMs(clip: RenderClip, availableMs: number): number {
   const text = (clip.line ?? '').trim()
   if (!text) return Math.min(availableMs, 4_500)
-  // 中文口播通常 5-7 字/秒；保留少量头尾余量，避免字幕/配音从句中截断。
-  const estimated = 700 + text.length * 165
-  return Math.min(availableMs, Math.max(1_500, Math.min(7_000, estimated)))
+  // TTS 与规划必须使用同一套估算。镜头不够长时返回更长的目标，渲染器会用尾帧补齐，
+  // 绝不能把可用时长当成硬上限，否则一句话会从中间被截断。
+  const estimated = Math.min(12_000, Math.max(1_500, estimateSpeechMs(text) + 350))
+  return availableMs > estimated ? estimated : Math.max(availableMs, estimated)
 }
 
 function roleBonus(profile: AutoEditProfile, role: AutoEditRole, index: number): number {
@@ -158,19 +161,15 @@ export function buildAutoEditPlan(
       role,
       score: Math.max(0, Math.min(100, score)),
       reason: reasons,
-      targetDurationMs: speechTargetMs(clip, available),
+      // 默认模式必须把完整原片作为成本/时长单位；不能用台词估时把一段长素材
+      // 当成短镜头选入，随后又在渲染阶段为了卡总时长把它从中间截断。
+      targetDurationMs: available,
     }
   })
 
-  // Talking-head 需要保持原始语义顺序；其余类型优先 Hook，再按质量分排序。
-  if (profile === 'TALKING_HEAD') {
-    candidates.sort((a, b) => a.sourceIndex - b.sourceIndex)
-  } else {
-    candidates.sort((a, b) => {
-      const roleRank = (role: AutoEditRole) => (role === 'HOOK' ? 0 : role === 'TALKING' ? 1 : role === 'PROCESS' ? 2 : role === 'RESULT' ? 3 : role === 'VENUE' ? 4 : role === 'CTA' ? 5 : 6)
-      return roleRank(a.role) - roleRank(b.role) || b.score - a.score || a.sourceIndex - b.sourceIndex
-    })
-  }
+  // 默认模式必须尊重用户上传顺序。角色识别只用于评分、淘汰和解释，不能把「成品」
+  // 强行挪到片头导致叙事倒置；只有未来显式的高级重排策略才允许改变 sourceIndex。
+  candidates.sort((a, b) => a.sourceIndex - b.sourceIndex)
 
   const selected: AutoEditCandidate[] = []
   let total = 0
@@ -178,8 +177,9 @@ export function buildAutoEditPlan(
     if (candidate.targetDurationMs <= 0) continue
     const remaining = maxDurationMs - total
     if (remaining <= 0) break
-    const target = Math.min(candidate.targetDurationMs, remaining)
-    if (target < 800 && selected.length > 0) break
+    // 最后一条台词也不能为了卡上限而被截断；宁可停止继续选镜头，保住已经完整的语句。
+    if (selected.length > 0 && candidate.targetDurationMs > remaining) break
+    const target = candidate.targetDurationMs
     selected.push({ ...candidate, targetDurationMs: target })
     total += target
   }
@@ -192,12 +192,39 @@ export function buildAutoEditPlan(
 }
 
 export function applyAutoEditPlan(plan: AutoEditPlan): RenderClip[] {
-  return plan.candidates.map(({ clip, targetDurationMs }) => {
-    const start = Math.max(0, clip.trimStartMs ?? 0)
-    const available = effectiveDurationMs(clip)
-    if (!available || targetDurationMs >= available) return clip
-    return { ...clip, trimEndMs: start + Math.max(1, targetDurationMs) }
-  })
+  // 默认模式没有逐字 ASR 终点之前，不能根据「文案估算时长」裁原视频。
+  // 同一句话的真实语速可能比估算慢很多，按估算 trim 会直接切掉句尾。
+  // 规划器仍负责筛选素材；真正的裁切只交给 worker 的黑屏/坏帧等确定性信号。
+  return plan.candidates.map(({ clip }) => clip)
+}
+
+/**
+ * AUTO 模式的唯一决策入口。前端只表达“交给 AI”，具体参数在服务端按素材画像确定，
+ * 这样默认模式不会被面板上的历史默认值悄悄覆盖。
+ */
+export function resolveAutoChatcutOptions(
+  options: ChatCutOptions,
+  profile: AutoEditProfile,
+  clips: RenderClip[],
+): ChatCutOptions {
+  return {
+    ...options,
+    editMode: 'ADVANCED',
+    voiceId: 'none',
+    subtitles: true,
+    subtitleMode: 'SOURCE_AUDIO',
+    subtitleStyle: 'CLEAN',
+    // 默认模式以完整表达优先：不按比例压缩镜头，也不让交叉转场吞掉句尾。
+    pacing: 'NATURAL',
+    transitions: 'CLEAN',
+    // 不能只压缩音轨静音，否则画面、原声与字幕会失去同一时间轴。
+    // 默认模式仅裁首尾确定性坏画面，中间停顿保留到后续音画联合裁剪能力处理。
+    removeSilence: false,
+    normalizeAudio: true,
+    // 菜品制作使用更明快的节奏，空间展示偏质感，其余保持轻柔；worker 负责曲库/兜底和混音。
+    bgm: profile === 'DISH' ? 'UPBEAT' : profile === 'VENUE' ? 'PREMIUM' : 'LIGHT',
+    note: options.note,
+  }
 }
 
 export function validateOutputQuality(meta: OutputQualityInput, options?: { maxDurationMs?: number }): OutputQuality {

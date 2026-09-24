@@ -4,6 +4,7 @@
 // 计费铁律：submitRender 只 freeze 预留；本 worker 成功才 consume，失败 unfreeze 全额释放
 import { mkdtemp, rm } from 'node:fs/promises'
 import { createWriteStream } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import { tmpdir } from 'node:os'
@@ -27,15 +28,20 @@ import {
   ffmpegApplyColor,
   ffmpegConcat,
   ffmpegConcatWithTransitions,
+  ffmpegExtendVideo,
+  ffmpegGenerateBackgroundMusic,
   probeDurationMs,
   probeClipMeta,
   probeVisualQuality,
+  probeMeaningfulRange,
   probeVideo,
   buildColorFilter,
+  ffmpegSupportsFilter,
   ffmpegSupportsSubtitles,
 } from './ffmpeg.js'
-import { applyAiSynthesis, type SynthesisShot } from './synthesis.js'
+import { applyAiSynthesis, fitShotDurationsToTimeline, type SynthesisShot } from './synthesis.js'
 import { activeTtsProvider, providerForVoice } from '../services/tts-provider.service.js'
+import { estimateSpeechMs } from './tts.js'
 import { signedObjectUrl } from '../lib/cos.js'
 import {
   chatCutConfigured,
@@ -50,6 +56,7 @@ import {
 import {
   applyAutoEditPlan,
   buildAutoEditPlan,
+  resolveAutoChatcutOptions,
   validateOutputQuality,
   type AutoEditPlan,
   type AutoEditProfile,
@@ -107,13 +114,12 @@ export function startRenderWorker(): void {
   if (!cosReady()) {
     console.warn('[render-worker] 警告：COS 未配置，真实合成无法下载素材/上传成片（FFMPEG_WORKER=true 时务必配 COS_*）')
   }
-  // 字幕烧录依赖 ffmpeg 的 libass（subtitles 滤镜）；精简版 ffmpeg 没有，AI 档会静默降级为无字幕
-  void ffmpegSupportsSubtitles().then((ok) => {
-    if (!ok) {
-      console.warn(
-        '[render-worker] 警告：ffmpeg 未编译 libass（缺少 subtitles 滤镜），AI 档只出配音轨、不烧字幕。' +
-          'macOS：brew install ffmpeg-full 并设 FFMPEG_PATH；Linux：安装带 libass 的 ffmpeg 与 fonts-noto-cjk。',
-      )
+  // 优先用 libass；精简版 FFmpeg 可通过 Sharp 生成字幕 PNG，再用 overlay 烧录。
+  void Promise.all([ffmpegSupportsSubtitles(), ffmpegSupportsFilter('overlay')]).then(([libass, overlay]) => {
+    if (!libass && !overlay) {
+      console.warn('[render-worker] 警告：ffmpeg 同时缺少 subtitles 与 overlay 滤镜，字幕无法烧录')
+    } else if (!libass) {
+      console.info('[render-worker] ffmpeg 缺少 libass，字幕将使用 PNG overlay 回退')
     }
   })
   console.log(`[render-worker] started (poll=${POLL_MS}ms, taskTimeout=${TASK_TIMEOUT_MS}ms)`)
@@ -442,8 +448,32 @@ async function processTask(
   const output = p.output ?? { width: 1080, height: 1920, fps: 30 }
   const color = p.color ?? DEFAULT_COLOR
   const aiMode = p.aiMode ?? true // v5：默认 AI 合成
+  // AUTO is intentionally conservative. Older clients may send a stale
+  // transition selection, so do not let that state re-enable xfade.
+  const isAutoEdit = aiMode && (p.chatcut?.editMode ?? 'AUTO') === 'AUTO'
   const plan = aiMode ? buildAutoEditPlan(inputClips, p.profile) : null
-  const clips = plan ? applyAutoEditPlan(plan) : inputClips
+  const plannedClips = plan ? applyAutoEditPlan(plan) : inputClips
+  const effectiveChatcut = aiMode
+    ? ((p.chatcut?.editMode ?? 'AUTO') === 'AUTO'
+        ? resolveAutoChatcutOptions(p.chatcut ?? DEFAULT_CHATCUT_OPTIONS, plan?.profile ?? 'MIXED', inputClips)
+        : p.chatcut ?? DEFAULT_CHATCUT_OPTIONS)
+    : DEFAULT_CHATCUT_OPTIONS
+  // 紧凑节奏只压缩无台词画面；有台词的镜头以完整语句时长为硬下限。
+  const clips = aiMode && effectiveChatcut.pacing === 'FAST'
+    ? plannedClips.map((clip) => {
+        const start = Math.max(0, clip.trimStartMs ?? 0)
+        const end = clip.trimEndMs !== null && clip.trimEndMs > start
+          ? clip.trimEndMs
+          : clip.durationMs ?? 0
+        const available = end > start ? end - start : 0
+        if (available <= 900) return clip
+        const speechFloor = clip.line?.trim()
+          ? Math.min(12_000, Math.max(1_500, estimateSpeechMs(clip.line.trim()) + 350))
+          : 0
+        const target = Math.max(speechFloor, Math.round(available * 0.78))
+        return target < available - 100 ? { ...clip, trimEndMs: start + target } : clip
+      })
+    : plannedClips
   if (plan) {
     await storeAutoEditPlan(task.id, plan, fence)
     await reportProgress(task.id, 8, fence)
@@ -460,19 +490,42 @@ async function processTask(
       if (!clip) continue
       await reportProgress(task.id, 10 + Math.round((i / clips.length) * 60), fence)
 
-      const startMs = clip.trimStartMs ?? 0
-      const endMs = clip.trimEndMs ?? 0
+      const rawPath = join(dir, `in_${i}.mp4`)
+      let effectiveClip = clip
+      // 默认模式先识别首尾明显无效区间，再把裁切写回本次 EDL。
+      // 只剪首尾，避免把中间一句话切断；没有可靠信号时保留原始时间窗。
+      if (aiMode) {
+        await downloadToFile(clip.cosKey, rawPath)
+        const range = await probeMeaningfulRange(rawPath, TASK_TIMEOUT_MS).catch(() => null)
+        if (range) {
+          const requestedStart = Math.max(0, clip.trimStartMs ?? 0)
+          const requestedEnd = clip.trimEndMs && clip.trimEndMs > requestedStart
+            ? clip.trimEndMs
+            : range.durationMs
+          const candidateStart = Math.min(requestedEnd - 300, Math.max(requestedStart, range.startMs))
+          const candidateEnd = Math.max(candidateStart + 300, Math.min(requestedEnd, range.endMs))
+          if (candidateStart > requestedStart + 450 || candidateEnd < requestedEnd - 450) {
+            effectiveClip = { ...clip, trimStartMs: candidateStart, trimEndMs: candidateEnd }
+            console.log(
+              `[render-worker] task ${task.id} 裁掉素材 ${clip.shotId} 首尾无效区间 ` +
+              `(${requestedStart}-${requestedEnd}ms -> ${candidateStart}-${candidateEnd}ms)`,
+            )
+          }
+        }
+      }
+
+      const startMs = effectiveClip.trimStartMs ?? 0
+      const endMs = effectiveClip.trimEndMs ?? 0
       const normPath = join(dir, `norm_${i}.mp4`)
 
       // 中间产物缓存：key 由 (assetId, trim, 尺寸) 决定，与调色无关，故重调色可复用。
       // ⚠ 键的计算在 render/cache-keys.ts —— 调色预览要用**同一个键**才能命中这里的产物
-      const cacheKey = normalizedClipKey(task.merchantId, clip, output)
+      const cacheKey = normalizedClipKey(task.merchantId, effectiveClip, output)
       if (await objectExists(cacheKey)) {
         await downloadToFile(cacheKey, normPath)
         hitCount++
       } else {
-        const rawPath = join(dir, `in_${i}.mp4`)
-        await downloadToFile(clip.cosKey, rawPath)
+        if (!aiMode) await downloadToFile(effectiveClip.cosKey, rawPath)
         await ffmpegNormalize(rawPath, normPath, {
           width: output.width,
           height: output.height,
@@ -499,9 +552,21 @@ async function processTask(
         }
       }
 
+      // 含口播的镜头必须先保证画面时长容得下完整句子。只延长临时片段，
+      // 不写回归一化缓存，避免同一素材因不同文案共享错误时长。
+      let preparedPath = normPath
+      if (aiMode && effectiveClip.line?.trim()) {
+        const visualMs = await probeDurationMs(normPath)
+        const speechMs = Math.min(12_000, Math.max(1_500, estimateSpeechMs(effectiveClip.line.trim()) + 350))
+        if (visualMs && speechMs > visualMs + 100) {
+          preparedPath = join(dir, `speech_${i}.mp4`)
+          await ffmpegExtendVideo(normPath, preparedPath, speechMs, TASK_TIMEOUT_MS)
+        }
+      }
+
       // 无调色时归一化物即成片片段；这里只收集，调色统一放到拼接后做（见下）
-      tmpClips.push(normPath)
-      renderedClips.push(clip)
+      tmpClips.push(preparedPath)
+      renderedClips.push(effectiveClip)
     }
     if (tmpClips.length === 0) throw new Error('素材画面质量不足，无法生成可用成片')
     const allCacheHit = tmpClips.length > 0 && hitCount === renderedClips.length
@@ -509,7 +574,7 @@ async function processTask(
     // 2) 按用户选择拼接：硬切保持无损，柔和/动态档真实使用 xfade + acrossfade。
     await reportProgress(task.id, 75, fence)
     const concatPath = join(dir, 'concat.mp4')
-    const transition = aiMode ? (p.chatcut?.transitions ?? 'CLEAN') : 'CLEAN'
+    const transition = isAutoEdit ? 'CLEAN' : (aiMode ? effectiveChatcut.transitions : 'CLEAN')
     await ffmpegConcatWithTransitions(tmpClips, concatPath, transition, TASK_TIMEOUT_MS)
 
     // 3) 整片调色：放在拼接后做单一 pass，而不是逐镜头各做一次。
@@ -525,26 +590,48 @@ async function processTask(
     if (aiMode) {
       await reportProgress(task.id, 82, fence)
       // 逐分镜探测实际时长（归一化产物），并携带口播文案，供配音/字幕按时间轴布时
-      const shots: SynthesisShot[] = []
+      const rawShots: SynthesisShot[] = []
       for (let i = 0; i < tmpClips.length; i++) {
         const tp = tmpClips[i]
         const clip = renderedClips[i]
         if (!tp || !clip) continue
-        shots.push({ line: clip.line, durationMs: (await probeDurationMs(tp)) ?? 0 })
+        rawShots.push({ line: clip.line, durationMs: (await probeDurationMs(tp)) ?? 0 })
       }
-      const voiceEnabled = Boolean(p.customVoiceKey) || p.chatcut?.voiceId !== 'none'
-      const subtitleMode = p.chatcut?.subtitles === false ? 'OFF' : (p.chatcut?.subtitleMode ?? (voiceEnabled ? 'VOICE' : 'OFF'))
-      if (shots.length > 0 || p.customVoiceKey || subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE') {
+      const renderedDurationMs = (await probeDurationMs(finalPath)) ?? rawShots.reduce((sum, shot) => sum + shot.durationMs, 0)
+      const shots = fitShotDurationsToTimeline(rawShots, renderedDurationMs)
+      const customVoiceKey = p.chatcut?.editMode === 'ADVANCED' ? p.customVoiceKey : undefined
+      const voiceEnabled = Boolean(customVoiceKey) || effectiveChatcut.voiceId !== 'none'
+      const subtitleMode = effectiveChatcut.subtitles === false ? 'OFF' : (effectiveChatcut.subtitleMode ?? (voiceEnabled ? 'VOICE' : 'OFF'))
+      if (shots.length > 0 || customVoiceKey || subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE') {
         const aiPath = join(dir, 'ai.mp4')
+        let backgroundMusicPath: string | undefined
+        if (effectiveChatcut.bgm !== 'NONE') {
+          const configuredBgm = process.env.DEFAULT_BGM_PATH?.trim()
+          if (configuredBgm && existsSync(configuredBgm)) {
+            backgroundMusicPath = configuredBgm
+          } else {
+            const durationMs = (await probeDurationMs(finalPath)) ?? 1_000
+            backgroundMusicPath = join(dir, 'default-bgm.m4a')
+            await ffmpegGenerateBackgroundMusic(
+              backgroundMusicPath,
+              durationMs,
+              effectiveChatcut.bgm === 'UPBEAT' || effectiveChatcut.bgm === 'PREMIUM' ? effectiveChatcut.bgm : 'LIGHT',
+              TASK_TIMEOUT_MS,
+            ).catch((e) => {
+              console.warn(`[render-worker] 默认 BGM 生成失败，继续无配乐出片：`, (e as Error).message)
+              backgroundMusicPath = undefined
+            })
+          }
+        }
         let customVoicePath: string | undefined
-        if (p.customVoiceKey) {
+        if (customVoiceKey) {
           customVoicePath = join(dir, 'custom-voice.m4a')
-          await downloadToFile(p.customVoiceKey, customVoicePath)
+          await downloadToFile(customVoiceKey, customVoicePath)
         }
         const baseTts = await activeTtsProvider(prisma).catch(() => null)
-        const tts = providerForVoice(baseTts, p.chatcut?.voiceId)
-      if (tts) {
-          console.log(`[render-worker] task ${task.id} 使用 TTS 供应商 ${tts.code}（voice=${p.chatcut?.voiceId ?? 'default'}），调用失败时按镜头静音兜底`)
+        const tts = providerForVoice(baseTts, effectiveChatcut.voiceId)
+        if (tts) {
+          console.log(`[render-worker] task ${task.id} 使用 TTS 供应商 ${tts.code}（voice=${effectiveChatcut.voiceId}），调用失败时按镜头静音兜底`)
       } else {
           console.log('[render-worker] 未配置 TTS 供应商，AI 合成以「静音 + 字幕」出片')
         }
@@ -560,8 +647,10 @@ async function processTask(
             subtitleMode,
             customVoicePath,
             sourceAudioPath: finalPath,
-            normalizeAudio: p.chatcut?.normalizeAudio,
-            removeSilence: p.chatcut?.removeSilence,
+            normalizeAudio: effectiveChatcut.normalizeAudio,
+            removeSilence: effectiveChatcut.removeSilence,
+            backgroundMusicPath,
+            backgroundMusicGain: 0.10,
           },
         )
         finalPath = aiPath
@@ -682,7 +771,11 @@ async function processChatCutTask(
    * ★ 老任务 / 老客户端的 `params.chatcut` 里没有这个字段 ⇒ 必须落到默认值，
    *   行为与改动前**完全一致**（这就是「不覆盖原来 AI 生成路线」的落点）。
    */
-  const clipPrep = params.chatcut?.clipPrep ?? DEFAULT_CHATCUT_OPTIONS.clipPrep
+  const rawChatcut = params.chatcut ?? DEFAULT_CHATCUT_OPTIONS
+  const effectiveChatcut = rawChatcut.editMode === 'AUTO'
+    ? resolveAutoChatcutOptions(rawChatcut, buildAutoEditPlan(clips).profile, clips)
+    : rawChatcut
+  const clipPrep = effectiveChatcut.clipPrep
   /**
    * ★★ 阶段上报器**只建一个**，打底阶段与驱动阶段共用。
    *    不能各建一个：`makePhaseReporter` 的单调性靠它自己的闭包变量 `last`，
@@ -716,7 +809,7 @@ async function processChatCutTask(
     creationId: params.creationId ?? task.creationId.toString(),
     title: params.title?.trim() || `大帅餐饮成片-${task.id.toString()}`,
     clips: sourceClips,
-    options: params.chatcut ?? DEFAULT_CHATCUT_OPTIONS,
+    options: effectiveChatcut,
     output,
     // ★ 启动阶段本身就是分钟级（建项目 → 探素材 → 逐镜头 TTS → 上传全部字节 → 排轨），
     //   不报阶段的话这整段时间进度都停在 tick() 写的 5%，就是用户看到的「一直卡在 5%」

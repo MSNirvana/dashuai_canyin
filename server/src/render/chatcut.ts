@@ -36,6 +36,8 @@ export const CHATCUT_VOICE_OFF = 'none'
 export const CHATCUT_CLIP_PREPS = ['ORIGINAL', 'NORMALIZED'] as const
 
 export const ChatCutOptionsSchema = z.object({
+  /** AUTO 交给系统按素材识别；ADVANCED 完全使用用户明确选择的参数。 */
+  editMode: z.enum(['AUTO', 'ADVANCED']),
   voiceId: z.enum([CHATCUT_VOICE_OFF, ...CHATCUT_VOICES.map((voice) => voice.id)] as [string, ...string[]]),
   subtitles: z.boolean(),
   subtitleMode: z.enum(['OFF', 'VOICE', 'SOURCE_AUDIO', 'VOICE_AND_SOURCE']),
@@ -58,6 +60,7 @@ export const ChatCutOptionsSchema = z.object({
 export type ChatCutOptions = z.infer<typeof ChatCutOptionsSchema>
 
 export const DEFAULT_CHATCUT_OPTIONS: ChatCutOptions = {
+  editMode: 'AUTO',
   voiceId: 'warm-female',
   subtitles: true,
   subtitleMode: 'VOICE',

@@ -16,21 +16,14 @@ export type SceneRunResult =
       ok: true
       text: string
       usage: AiUsage
+      costMicroFen: bigint
       costFen: number
       providerId: bigint
       modelId: bigint
       modelCode: string
       usedFallback: boolean
       attempts: number
-      /**
-       * 「这次调用的价格不由 token 决定，就是场景标价」。
-       *
-       * ★ 只有图像场景会带上它（见候选循环里的 kind==='IMAGE' 分支）。原因：出图返回里
-       *   **没有 token 用量**（实测 usage=null），按 token 结算会把一整张封面算成 0 积分，
-       *   而平台是真的付了钱的。所以图像场景的 `ai_scene.bean_price` 语义是**报价本身**，
-       *   不是「单次上限」。由这里显式传给账务层，免得结算函数再去猜「什么时候按固定价」。
-       */
-      fixedBeans?: bigint
+      /** image generation output count */
     }
   | {
       ok: false
@@ -71,6 +64,18 @@ export function computeCostFen(
   const n = Number(fen)
   if (!Number.isSafeInteger(n)) throw new RangeError(`computeCostFen: 结果溢出 ${fen}`)
   return n
+}
+
+/** Cost in micro-fen (1e-6 fen), preserving sub-fen token usage until final billing. */
+export function computeCostMicroFen(
+  promptTokens: number,
+  completionTokens: number,
+  inputPriceFenPerMtok: number,
+  outputPriceFenPerMtok: number,
+): bigint {
+  const perMtok = 1_000_000n
+  return safeNonNegInt(promptTokens) * safeNonNegInt(inputPriceFenPerMtok) +
+    safeNonNegInt(completionTokens) * safeNonNegInt(outputPriceFenPerMtok)
 }
 
 /** 把任意入参归一为非负安全整数：NaN / Infinity / 负数 / 小数一律按语义安全处理，绝不抛错 */
@@ -198,6 +203,12 @@ export class AiGateway {
         continue
       }
 
+      // Never make a paid upstream request with an unknown/zero tariff.
+      if (provider.protocol !== 'MOCK' && (wantImage ? model.unitPriceMicroFen <= 0n : model.inputPricePerMtok <= 0 && model.outputPricePerMtok <= 0)) {
+        skipped.push(`候选模型 ${model.modelCode} 未配置有效成本费率，已阻止调用以避免零成本记账`)
+        continue
+      }
+
       // MOCK 协议只实现 chat（用于无网络联调），出图没有 mock —— 明确跳过而不是发一个假请求
       if (wantImage && provider.protocol === 'MOCK') {
         skipped.push(`候选通道 ${provider.code} 是 MOCK 协议，不支持图像生成`)
@@ -226,12 +237,12 @@ export class AiGateway {
             sceneCode: scene.code,
           })
 
-          const costFen = computeCostFen(
-            res.usage.promptTokens,
-            res.usage.completionTokens,
-            model.inputPricePerMtok,
-            model.outputPricePerMtok,
-          )
+          const costMicroFen = wantImage
+            ? model.unitPriceMicroFen
+            : computeCostMicroFen(res.usage.promptTokens, res.usage.completionTokens, model.inputPricePerMtok, model.outputPricePerMtok)
+          const costFenBig = (costMicroFen + 999_999n) / 1_000_000n
+          const costFen = Number(costFenBig)
+          if (!Number.isSafeInteger(costFen)) throw new RangeError(`AI costFen overflow: ${costFenBig}`)
           const latencyMs = Date.now() - startedAt
 
           await this.circuit.record(provider.id, true)
@@ -262,6 +273,7 @@ export class AiGateway {
                 completionTokens: res.usage.completionTokens,
                 totalTokens: res.usage.promptTokens + res.usage.completionTokens,
                 costFen,
+                costMicroFen,
                 latencyMs,
                 status: i > 0 ? 'FALLBACK_USED' : 'SUCCESS',
                 promptSnapshot: prompt.slice(0, 8000),
@@ -274,14 +286,13 @@ export class AiGateway {
             ok: true,
             text: res.text,
             usage: res.usage,
+            costMicroFen,
             costFen,
             providerId: provider.id,
             modelId: model.id,
             modelCode: model.modelCode,
             usedFallback: i > 0,
             attempts,
-            // 图像场景：本次调用的价格就是场景标价（出图无 token 用量，按 token 结算会算成 0）
-            ...(wantImage ? { fixedBeans: scene.beanPrice } : {}),
           }
         } catch (e) {
           const err = e as AiCallError

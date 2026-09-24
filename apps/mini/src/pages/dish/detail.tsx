@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { View, Text, Image, Video } from '@tarojs/components'
-import Taro, { useRouter } from '@tarojs/taro'
+import Taro, { useRouter, useDidShow } from '@tarojs/taro'
 import { getDish, getDishMediaUrl, type DishItem, type DishMedia } from '../../services/dish'
 import { useMerchantStore } from '../../store/merchant'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
@@ -15,7 +15,10 @@ export default function DishDetailPage() {
   const router = useRouter(); const { currentStoreId } = useMerchantStore(); const storeId = readRouteId(router.params, 'storeId') ?? currentStoreId; const id = readRouteId(router.params)
   const idBroken = isBrokenRouteId(router.params) || isBrokenRouteId(router.params, 'storeId')
   const [dish, setDish] = useState<DishItem | null>(null); const [media, setMedia] = useState<MediaView[]>([]); const [loading, setLoading] = useState(true)
-  useEffect(() => { if (!id) { setLoading(false); return }; getDish(storeId, id).then(async (d) => { setDish(d); const legacy: DishMedia[] = d.media?.length ? d.media : [...(d.coverKey ? [{ type: 'IMAGE' as const, cosKey: d.coverKey, sort: 0 }] : []), ...(d.videoKey ? [{ type: 'VIDEO' as const, cosKey: d.videoKey, sort: 0 }] : [])]; const views = await Promise.all(legacy.map(async (m) => { const r = await getDishMediaUrl(m.cosKey).catch(() => ({ url: null })); const c = m.coverKey ? await getDishMediaUrl(m.coverKey).catch(() => ({ url: null })) : { url: null }; return { ...m, url: r.url || '', coverUrl: c.url || undefined } })); setMedia(views) }).catch(() => Taro.showToast({ title: '菜品加载失败', icon: 'none' })).finally(() => setLoading(false)) }, [id, storeId])
+  // ★ 必须 useDidShow 而不是挂载期 useEffect：从「编辑菜品」返回时页面不重挂载，
+  //   挂载期只拉一次 ⇒ 改完的菜名/价格/图回来还是旧的。每次显示静默重拉
+  //   （不重置 loading，已有内容先留着，回来不闪「加载中…」）。
+  useDidShow(() => { if (!id) { setLoading(false); return }; getDish(storeId, id).then(async (d) => { setDish(d); const legacy: DishMedia[] = d.media?.length ? d.media : [...(d.coverKey ? [{ type: 'IMAGE' as const, cosKey: d.coverKey, sort: 0 }] : []), ...(d.videoKey ? [{ type: 'VIDEO' as const, cosKey: d.videoKey, sort: 0 }] : [])]; const views = await Promise.all(legacy.map(async (m) => { const r = await getDishMediaUrl(m.cosKey).catch(() => ({ url: null })); const c = m.coverKey ? await getDishMediaUrl(m.coverKey).catch(() => ({ url: null })) : { url: null }; return { ...m, url: r.url || '', coverUrl: c.url || undefined } })); setMedia(views) }).catch(() => Taro.showToast({ title: '菜品加载失败', icon: 'none' })).finally(() => setLoading(false)) })
   const images = media.filter((m) => m.type === 'IMAGE' && m.url); const videos = media.filter((m) => m.type === 'VIDEO')
   const imageUrls = images.map((m) => m.url)
   // ★ 被点的那张必须排到 urls[0]。

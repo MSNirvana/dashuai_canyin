@@ -48,7 +48,7 @@ export default function LoginPage() {
   return (
     <div className="login-wrap">
       <aside className="login-side" aria-label="后台介绍">
-        <div className="login-side__brand"><span className="login-side__mark">大</span><span>大帅餐饮</span></div>
+        <div className="login-side__brand"><img className="login-side__logo" src="/logo-transparent.png" alt="大帅餐饮" /><span>大帅餐饮</span></div>
         <div className="login-side__copy">
           <span className="login-side__eyebrow">OPERATIONS CONSOLE</span>
           <h1>把门店内容，<br />做成能用的视频。</h1>
@@ -57,7 +57,7 @@ export default function LoginPage() {
         <div className="login-side__footer">内容运营工作台 · 内部使用</div>
       </aside>
       <form className="login-card" onSubmit={submit}>
-        <div className="login-card__brand"><span className="login-card__brand-mark">大</span><span>大帅餐饮</span></div>
+        <div className="login-card__brand"><img className="login-card__logo" src="/logo-transparent.png" alt="大帅餐饮" /><span>大帅餐饮</span></div>
         <div className="login-card__title">登录管理后台</div>
         <p className="login-card__subtitle">使用管理员账号继续</p>
         <div className="login-card__form">
@@ -84,9 +84,6 @@ export default function LoginPage() {
           <Button theme="primary" type="submit" block loading={loading}>
             登 录
           </Button>
-        </div>
-        <div className="login-card__hint">
-          默认账号 admin / admin123456（仅种子已写入时可用）
         </div>
       </form>
     </div>

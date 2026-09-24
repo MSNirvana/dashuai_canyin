@@ -6,6 +6,7 @@ import { pickAndUploadAvatar } from '../../services/profile'
 import { listMembershipReminders, markMembershipReminderRead, type MembershipReminder } from '../../services/account'
 import { TUTORIAL_CATEGORIES, listTutorialStats } from '../../services/tutorial'
 import { STORAGE_KEYS } from '../../config'
+import { platform } from '../../platform'
 import { useMerchantStore } from '../../store/merchant'
 import logoPng from '../../assets/logo.png'
 // 会员到期日只到日（formatDay），与「订阅」页、个人资料页同一入口
@@ -129,8 +130,8 @@ export default function Mine() {
     const requestNo = ++loginRequest.current
     setSubmitting(true)
     try {
-      const loginRes = await Taro.login()
-      const res = await authApi.wechatLogin({ phoneCode, wxLoginCode: loginRes.code })
+      const { code } = await platform.login()
+      const res = await authApi.wechatLogin({ phoneCode, wxLoginCode: code })
       if (requestNo !== loginRequest.current) return
       setLogin(res)
       setShowLogin(false)

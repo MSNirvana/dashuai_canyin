@@ -156,6 +156,7 @@ async function recoverOne(
       bizId: reservation.bizId,
       sceneName: scene?.name ?? log.sceneCode,
       costFen: log.costFen,
+      costMicroFen: log.costMicroFen,
       usedFallback: log.isFallback,
       // ★ 计价快照：用预留行的未结余量作为上限，不重读当前价格
       cap: remaining,

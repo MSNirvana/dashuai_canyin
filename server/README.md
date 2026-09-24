@@ -38,7 +38,13 @@ AI 成片默认使用本地自动剪辑引擎：素材探测、镜头规划、FF
 
 本地引擎的核心实现位于 `src/render/auto-edit.ts` 与 `src/render/worker.ts`，会自动识别菜品、口播、门店环境和混合内容，并把选择结果写入任务快照，便于后台排查。AI 档支持多音色 TTS、自定义配音、独立字幕来源、xfade 转场、节奏控制、静音清理和响度均衡。
 
-原声字幕使用 OpenAI-compatible Whisper 接口。配置 `ASR_API_URL`、`ASR_API_KEY`、`ASR_MODEL` 和 `ASR_LANGUAGE` 后，用户选择“原声识别”或“旁白+原声”即可识别视频中的语音；未配置时会回退到分镜文案，不会让渲染任务失败。
+原声字幕默认支持腾讯云语音识别。配置 `ASR_PROVIDER=tencent` 和 `TENCENT_ASR_ENABLED=true` 后，可复用已有的 `TENCENT_SMS_SECRET_ID/KEY`（该身份需拥有 ASR 权限），也可通过 `TENCENT_ASR_SECRET_ID/KEY` 使用独立子账号。60 秒内且不超过 3MB 的 WAV 走一句话识别；其余音频临时上传现有 COS 后走录音文件识别，完成后立即删除临时对象。`TENCENT_ASR_ENGINE_MODEL` 默认 `16k_zh_en_2.0`，识别结果自带句级时间轴供单行字幕使用。
+
+腾讯云控制台只开通产品还不够，当前 SecretId 对应的 CAM 用户/角色还需授予语音识别权限（至少覆盖 `asr:SentenceRecognition`、`asr:CreateRecTask`、`asr:DescribeTaskStatus`；可在 CAM 策略中使用腾讯云 ASR 的完整访问策略）。
+
+未启用腾讯云时仍兼容 OpenAI-compatible Whisper：配置 `ASR_API_URL`、`ASR_API_KEY`、`ASR_MODEL` 和 `ASR_LANGUAGE` 即可。两种通道均未配置时会回退到分镜文案，不阻断出片。腾讯云连通性可用 `npm run asr:probe -- /绝对路径/测试音频.wav` 验证，输出不包含任何密钥。
+
+默认 AI 自动剪辑会使用无歌词低音量 BGM，并与原声混音；如需替换为已获授权的曲库文件，在服务端设置 `DEFAULT_BGM_PATH=/绝对路径/track.m4a`。未设置时使用本地确定性和弦床，不依赖 ChatCut 配乐额度。
 
 ChatCut MCP 仍可用于对照实验或特殊风格。启用时服务端读取 `CHATCUT_MCP_URL`、`CHATCUT_MCP_SUBMIT_TOOL` 和 `CHATCUT_MCP_STATUS_TOOL`。工具名必须以授权后的 `tools/list` 实际返回为准，不能根据公开资料猜测。
 

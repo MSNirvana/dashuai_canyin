@@ -154,6 +154,9 @@ export default function CreationList() {
   /** 当前展开左滑的那一行 id（空串 = 全部收起）。放在页面级是为了保证一次只展开一行 */
   const [openId, setOpenId] = useState('')
 
+  /** 请求代次：切店 / 动作后重载 / 每次显示都会发请求，乱序回包只认最后一次 */
+  const reqRef = useRef(0)
+
   const load = async () => {
     // 无门店：不拉数据（页面显示建店引导）
     if (!currentStoreId) {
@@ -161,21 +164,26 @@ export default function CreationList() {
       setArchived([])
       return
     }
+    const sid = currentStoreId
+    const my = ++reqRef.current
     setLoading(true)
     setLoadError('')
     try {
       await loadStores().catch(() => [])
       // 两个列表一起拉：分类上要显示各自的数量，切分类时也不必再请求
       const [active, done] = await Promise.all([
-        listCreations(currentStoreId),
-        listCreations(currentStoreId, { archived: true }),
+        listCreations(sid),
+        listCreations(sid, { archived: true }),
       ])
+      // ★ 只认最新一次：切店后旧店的慢响应若覆盖列表，用户看到的就是别家店的创作
+      if (my !== reqRef.current) return
       setList(active)
       setArchived(done)
     } catch (error) {
+      if (my !== reqRef.current) return
       setLoadError((error as Error).message || '创作列表加载失败，请重试')
     } finally {
-      setLoading(false)
+      if (my === reqRef.current) setLoading(false)
     }
   }
 

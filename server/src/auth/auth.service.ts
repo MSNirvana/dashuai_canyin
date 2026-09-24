@@ -26,15 +26,6 @@ export class WxLoginFailedError extends Error {
   }
 }
 
-/** 创建默认门店（首次登录的商家） */
-async function ensureDefaultStore(prisma: PrismaClient, merchantId: bigint): Promise<void> {
-  const exists = await prisma.store.findFirst({ where: { merchantId, isDefault: true } })
-  if (exists) return
-  await prisma.store.create({
-    data: { merchantId, name: '默认门店', isDefault: true },
-  })
-}
-
 /** 新用户发注册赠积分（一次性）。
  *
  * ★ 两个要点：
@@ -95,7 +86,6 @@ export async function loginByWechat(
 
   // 3) 按手机号匹配或创建账号；首次登录绑定 openid
   const merchant = await upsertMerchantByPhone(prisma, phone, openid, unionid)
-  await ensureDefaultStore(prisma, merchant.id)
   await grantRegisterBeanIfNeeded(prisma, merchant.id)
 
   return buildLoginResult(prisma, merchant)
@@ -106,7 +96,6 @@ export async function loginByPhone(prisma: PrismaClient, phone: string, code: st
   await verifyCode(prisma, phone, code)
 
   const merchant = await upsertMerchantByPhone(prisma, phone)
-  await ensureDefaultStore(prisma, merchant.id)
   await grantRegisterBeanIfNeeded(prisma, merchant.id)
   await prisma.merchant.update({ where: { id: merchant.id }, data: { lastLoginAt: new Date() } })
 
@@ -208,14 +197,13 @@ export async function refresh(prisma: PrismaClient, refreshToken: string): Promi
 /**
  * 开发登录旁路：仅在 DEV_LOGIN=true 时可用（默认关闭，生产绝不暴露）。
  * 不依赖真实微信 / 短信，直接按手机号创建或找回账号，走与正式登录一致的
- * 默认门店创建 + 注册赠积分 + 签发 token 流程，便于在微信开发者工具里联调。
+ * 注册赠积分 + 签发 token 流程，便于在微信开发者工具里联调。
  */
 export async function devLogin(prisma: PrismaClient, phone: string): Promise<LoginResult> {
   if (process.env.NODE_ENV === 'production' || process.env.DEV_LOGIN !== 'true') throw new Error('dev login disabled')
   if (!/^1\d{10}$/.test(phone)) throw new Error('invalid phone')
 
   const merchant = await upsertMerchantByPhone(prisma, phone, `dev_openid_${phone}`)
-  await ensureDefaultStore(prisma, merchant.id)
   await grantRegisterBeanIfNeeded(prisma, merchant.id)
   await prisma.merchant.update({ where: { id: merchant.id }, data: { lastLoginAt: new Date() } })
   return buildLoginResult(prisma, merchant)

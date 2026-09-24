@@ -11,7 +11,7 @@
   "scripts": {
     "dev:weapp": "NODE_ENV=production npm run build:weapp -- --watch",
     "dev:weapp:local": "npm run dev:weapp",
-    "build:weapp:dev": "NODE_ENV=production npm run build:weapp && node scripts/verify-weapp-dist.mjs",
+    "build:weapp:dev": "NODE_ENV=production npm run build:weapp && node scripts/verify-weapp-dist.mjs && node scripts/check-platform-boundary.mjs",
     "build:weapp": "taro build --type weapp",
     "dev:tt": "npm run build:tt -- --watch",
     "build:tt": "taro build --type tt",
@@ -21,6 +21,7 @@
     "dev:h5": "npm run build:h5 -- --watch",
     "typecheck": "tsc --noEmit",
     "verify:dist": "node scripts/verify-weapp-dist.mjs",
+    "verify:boundary": "node scripts/check-platform-boundary.mjs",
     "assets:upload": "node scripts/upload-static-assets.mjs",
     "assets:slogan": "node scripts/render-slogan-banner.mjs",
     "tdesign:closure": "node scripts/tdesign-closure.mjs",

@@ -12,7 +12,7 @@ import {
   floorDiv,
   type Dec,
 } from '../src/lib/decimal.js'
-import { computeCostFen } from '../src/ai/gateway.js'
+import { computeCostFen, computeCostMicroFen } from '../src/ai/gateway.js'
 
 let failed = 0
 function check(name: string, actual: unknown, expected: unknown) {
@@ -98,6 +98,8 @@ check('整数边界 2000000 tokens × 1 分/百万', computeCostFen(2_000_000, 0
 check('零 tokens', computeCostFen(0, 0, 100, 400), '0')
 check('负数/NaN 归零防御', computeCostFen(-5, Number.NaN, 100, 400), '0')
 check('mock-chat 3e4 in + 1e4 out（100/400 分每百万）', computeCostFen(30_000, 10_000, 100, 400), '7')
+check('精确成本 1000 in + 500 out（1/2 分每百万）', computeCostMicroFen(1000, 500, 1, 2), '2000')
+check('精确成本不对输入/输出分项向上取整', computeCostMicroFen(1, 1, 1, 1), '2')
 
 console.log(`\n${failed ? `★ ${failed} 项未通过` : '★ 全部通过'}`)
 process.exitCode = failed ? 1 : 0

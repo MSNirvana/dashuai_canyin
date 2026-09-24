@@ -46,19 +46,14 @@ button, input, textarea { font-family: inherit; }
   padding: 0 20px;
   border-bottom: 1px solid var(--ds-line-light);
 }
-.logo__mark, .login-card__brand-mark, .login-side__mark {
+.logo__image, .login-card__logo, .login-side__logo {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
-  border-radius: 8px;
-  background: var(--ds-red);
-  color: #fff;
-  font-size: 20px;
-  font-weight: 800;
-  line-height: 1;
+  object-fit: contain;
 }
 .logo__text { display: flex; flex-direction: column; gap: 2px; line-height: 1.2; }
 .logo__text strong { color: var(--ds-ink); font-size: 15px; letter-spacing: .03em; }
@@ -246,9 +241,20 @@ button, input, textarea { font-family: inherit; }
 
 /* Login */
 .login-wrap { display: grid; grid-template-columns: minmax(320px, 42%) minmax(420px, 58%); min-height: 100dvh; background: #fff; }
-.login-side { display: flex; flex-direction: column; justify-content: space-between; min-height: 100dvh; padding: 42px 52px 34px; color: #fff; background: var(--ds-red); }
+.login-side {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 100dvh;
+  padding: 42px 52px 34px;
+  color: #fff;
+  background-color: var(--ds-red);
+  background-image: linear-gradient(120deg, rgb(169 31 24 / 88%), rgb(169 31 24 / 66%)), url('/login-cover.png');
+  background-position: center;
+  background-size: cover;
+}
 .login-side__brand { display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 650; letter-spacing: .04em; }
-.login-side__mark { width: 34px; height: 34px; background: #fff; color: var(--ds-red); }
+.login-side__logo { filter: brightness(0) invert(1); }
 .login-side__copy { max-width: 360px; margin: auto 0; }
 .login-side__eyebrow { display: block; margin-bottom: 17px; color: rgb(255 255 255 / 70%); font-size: 10px; font-weight: 700; letter-spacing: .18em; }
 .login-side h1 { margin: 0; font-size: clamp(32px, 3.4vw, 48px); font-weight: 750; line-height: 1.18; letter-spacing: -.045em; }
@@ -256,12 +262,11 @@ button, input, textarea { font-family: inherit; }
 .login-side__footer { color: rgb(255 255 255 / 65%); font-size: 11px; }
 .login-card { align-self: center; width: min(420px, calc(100% - 72px)); margin: auto; padding: 8px 0; }
 .login-card__brand { display: flex; align-items: center; gap: 10px; margin-bottom: 32px; color: var(--ds-ink); font-size: 15px; font-weight: 650; }
-.login-card__brand-mark { width: 30px; height: 30px; flex-basis: 30px; font-size: 17px; }
+.login-card__logo { width: 30px; height: 30px; flex-basis: 30px; }
 .login-card__title { margin-bottom: 8px; color: var(--ds-ink); font-size: 28px; font-weight: 750; letter-spacing: -.035em; }
 .login-card__subtitle { margin: 0 0 30px; color: var(--ds-muted); font-size: 13px; }
 .login-card__form { display: flex; flex-direction: column; gap: 18px; }
 .login-card__field { display: flex; flex-direction: column; gap: 8px; color: var(--ds-body); font-size: 13px; font-weight: 600; }
-.login-card__hint { margin-top: 19px; color: var(--ds-subtle); font-size: 11px; line-height: 1.6; }
 
 /* Forms, uploads, alerts and key TDesign primitives */
 .form-group { display: flex; flex-direction: column; }

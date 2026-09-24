@@ -800,6 +800,8 @@ model AiModel {
   maxOutputTokens    Int?     @map("max_output_tokens") @db.UnsignedInt()
   inputPricePerMtok  Int      @default(0) @map("input_price_per_mtok") @db.UnsignedInt()
   outputPricePerMtok Int      @default(0) @map("output_price_per_mtok") @db.UnsignedInt()
+  /// 图像模型按张计费，单位为 1e-6 分/张。文本模型保持 0。
+  unitPriceMicroFen  BigInt   @default(0) @map("unit_price_micro_fen")
   enabled            Boolean  @default(true)
   createdAt          DateTime @default(now()) @map("created_at") @db.DateTime(3)
   updatedAt          DateTime @updatedAt @map("updated_at") @db.DateTime(3)
@@ -854,6 +856,8 @@ model AiCallLog {
   completionTokens    Int      @default(0) @map("completion_tokens") @db.UnsignedInt()
   totalTokens         Int      @default(0) @map("total_tokens") @db.UnsignedInt()
   costFen             Int      @default(0) @map("cost_fen") @db.UnsignedInt()
+  /// 精确供应商成本，单位为 1e-6 分。costFen 仅保留为向后兼容的展示值。
+  costMicroFen        BigInt   @default(0) @map("cost_micro_fen")
   beanCharged         BigInt   @default(0) @map("bean_charged")
   /// 场景单次上限（ai_scene.bean_price）截断掉的积分数 = 应付 − 实收，由平台承担。
   /// 没有这一列时，上限「是安全网还是常态折扣」完全看不出来 ——

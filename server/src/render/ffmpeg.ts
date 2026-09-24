@@ -34,8 +34,25 @@ export function ffprobeBin(): string {
   return 'ffprobe'
 }
 
-/** subtitles 滤镜（libass）能力探测结果缓存：进程内只探测一次 */
-let subtitlesSupport: boolean | null = null
+/** FFmpeg 滤镜能力探测结果缓存：进程内每种滤镜只探测一次 */
+const filterSupport = new Map<string, boolean>()
+
+export async function ffmpegSupportsFilter(name: string): Promise<boolean> {
+  const cached = filterSupport.get(name)
+  if (cached !== undefined) return cached
+  let supported = false
+  try {
+    const { stdout } = await execFileP(ffmpegBin(), ['-hide_banner', '-filters'], {
+      timeout: 15_000,
+      maxBuffer: 8 * 1024 * 1024,
+    })
+    supported = new RegExp(`\\b${name}\\b`).test(stdout)
+  } catch {
+    supported = false
+  }
+  filterSupport.set(name, supported)
+  return supported
+}
 
 /**
  * 本机 ffmpeg 是否编译了 libass（即是否有 subtitles 滤镜）。
@@ -43,17 +60,7 @@ let subtitlesSupport: boolean | null = null
  * 只查字体目录存在会误判（精简版 ffmpeg 没有 subtitles 滤镜，必烧必败）。
  */
 export async function ffmpegSupportsSubtitles(): Promise<boolean> {
-  if (subtitlesSupport !== null) return subtitlesSupport
-  try {
-    const { stdout } = await execFileP(ffmpegBin(), ['-hide_banner', '-filters'], {
-      timeout: 15_000,
-      maxBuffer: 8 * 1024 * 1024,
-    })
-    subtitlesSupport = /\bsubtitles\b/.test(stdout)
-  } catch {
-    subtitlesSupport = false
-  }
-  return subtitlesSupport
+  return ffmpegSupportsFilter('subtitles')
 }
 
 export class FfmpegError extends Error {
@@ -123,6 +130,156 @@ export async function ffmpegNormalize(input: string, output: string, opts: Norma
     '-y', output,
   )
   await runFfmpeg(args, opts.timeoutMs ?? 120_000)
+}
+
+/**
+ * 用最后一帧延长画面到目标时长。口播比原镜头长时使用，避免为了对齐音画而截断句子。
+ * 输入已经是统一编码的中间片段，因此这里单独编码一个临时文件，不污染归一化缓存。
+ */
+export async function ffmpegExtendVideo(
+  input: string,
+  output: string,
+  targetDurationMs: number,
+  timeoutMs = 120_000,
+): Promise<void> {
+  const target = Math.max(1, Math.round(targetDurationMs))
+  await runFfmpeg([
+    '-i', input,
+    '-vf', `tpad=stop_mode=clone:stop_duration=${(target / 1000).toFixed(3)}`,
+    '-af', 'apad',
+    '-t', (target / 1000).toFixed(3),
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-movflags', '+faststart',
+    '-y', output,
+  ], timeoutMs)
+}
+
+/**
+ * 生成一条极低存在感的无歌词背景音乐。
+ *
+ * 默认模式不能依赖外部音乐服务才能出片，因此这里使用确定性的和弦床作为兜底。
+ * 运营可以通过 `DEFAULT_BGM_PATH` 替换成已获授权的音乐文件；调用方只在没有配置
+ * 外部曲库时使用这个函数。音量会在混音阶段再次压低，避免盖住人声或原声。
+ */
+export async function ffmpegGenerateBackgroundMusic(
+  output: string,
+  durationMs: number,
+  style: 'LIGHT' | 'UPBEAT' | 'PREMIUM' = 'LIGHT',
+  timeoutMs = 120_000,
+): Promise<void> {
+  const duration = Math.max(1, Math.round(durationMs)) / 1000
+  const presets = {
+    LIGHT: [220, 277.18, 329.63],
+    UPBEAT: [261.63, 329.63, 392],
+    PREMIUM: [196, 246.94, 293.66],
+  } as const
+  const [a, b, c] = presets[style]
+  const pulse = style === 'UPBEAT'
+    ? '(0.72+0.28*sin(2*PI*2*t))'
+    : style === 'PREMIUM'
+      ? '(0.86+0.14*sin(2*PI*0.25*t))'
+      : '(0.90+0.10*sin(2*PI*0.5*t))'
+  const expr = `${pulse}*(0.30*sin(2*PI*${a}*t)+0.20*sin(2*PI*${b}*t)+0.14*sin(2*PI*${c}*t))`
+  await runFfmpeg([
+    '-f', 'lavfi', '-i', `aevalsrc=${expr}:s=44100:d=${duration.toFixed(3)}`,
+    '-af', `lowpass=f=1800,highpass=f=80,volume=0.22,afade=t=in:st=0:d=0.8,afade=t=out:st=${Math.max(0, duration - 1.5).toFixed(3)}:d=1.5`,
+    '-ac', '2', '-ar', '44100', '-c:a', 'aac', '-b:a', '96k', '-t', duration.toFixed(3),
+    '-y', output,
+  ], timeoutMs)
+}
+
+export interface MeaningfulRange {
+  durationMs: number
+  startMs: number
+  endMs: number
+  blackRatio: number | null
+  freezeRatio: number | null
+  leadingSilenceMs: number
+  trailingSilenceMs: number
+}
+
+/**
+ * 找出一段素材里可以安全去掉的首尾无效区间。
+ * 只处理首尾，绝不因为中间短暂安静就切断画面；这条保守策略能避免把一句话从中间
+ * 剁掉。内部长停顿交给音频混音阶段处理，画面时间轴保持稳定。
+ */
+export async function probeMeaningfulRange(input: string, timeoutMs = 45_000): Promise<MeaningfulRange | null> {
+  const durationMs = await probeDurationMs(input)
+  if (!durationMs || durationMs <= 0) return null
+  const videoArgs = [
+    '-hide_banner', '-nostdin', '-i', input,
+    '-vf', 'blackdetect=d=0.20:pix_th=0.10,freezedetect=n=-60dB:d=0.50',
+    '-an', '-f', 'null', '-',
+  ]
+  const audioArgs = [
+    '-hide_banner', '-nostdin', '-i', input,
+    '-af', 'silencedetect=noise=-45dB:d=0.35',
+    '-vn', '-f', 'null', '-',
+  ]
+  const [videoResult, audioResult] = await Promise.all([
+    execFileP(ffmpegBin(), videoArgs, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }).catch((e) => e as { stderr?: string }),
+    execFileP(ffmpegBin(), audioArgs, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }).catch((e) => e as { stderr?: string }),
+  ])
+  const videoLog = String((videoResult as { stderr?: string }).stderr ?? '')
+  const audioLog = String((audioResult as { stderr?: string }).stderr ?? '')
+  const blackMs = [...videoLog.matchAll(/black_duration:\s*(\d+(?:\.\d+)?)/g)]
+    .map((m) => Number(m[1]) * 1000).filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0)
+  const freezeMs = [...videoLog.matchAll(/freeze_duration:\s*(\d+(?:\.\d+)?)/g)]
+    .map((m) => Number(m[1]) * 1000).filter(Number.isFinite)
+    .reduce((sum, value) => sum + value, 0)
+  const silenceStarts = [...audioLog.matchAll(/silence_start:\s*(-?\d+(?:\.\d+)?)/g)]
+    .map((m) => Number(m[1]) * 1000).filter((v) => Number.isFinite(v) && v >= 0)
+  const silenceEnds = [...audioLog.matchAll(/silence_end:\s*(-?\d+(?:\.\d+)?)/g)]
+    .map((m) => Number(m[1]) * 1000).filter((v) => Number.isFinite(v) && v >= 0)
+  const leadingSilenceMs = silenceStarts[0] === 0 && silenceEnds[0] !== undefined
+    ? Math.min(durationMs, silenceEnds[0]!)
+    : 0
+  const lastStart = silenceStarts[silenceStarts.length - 1]
+  const lastEnd = silenceEnds[silenceEnds.length - 1]
+  const trailingSilenceMs = lastStart !== undefined && (lastEnd === undefined || lastEnd >= durationMs - 120)
+    ? Math.max(0, durationMs - lastStart)
+    : 0
+  const blackRatio = Number.isFinite(blackMs) ? Math.min(1, blackMs / durationMs) : null
+  const freezeRatio = Number.isFinite(freezeMs) ? Math.min(1, freezeMs / durationMs) : null
+  const leadingVisualMs = parseLeadingVisualMs(videoLog)
+  const trailingVisualMs = parseTrailingVisualMs(videoLog, durationMs)
+  // 安静不等于无意义：餐饮 B-roll 常常没有人声。静音只作为诊断信号返回，
+  // 不能单独驱动画面裁切；实际裁切只采用黑屏/长冻结这类确定性坏画面信号。
+  const startMs = Math.min(durationMs, Math.max(0, leadingVisualMs))
+  const endTrimMs = Math.max(0, trailingVisualMs)
+  const endMs = Math.max(startMs + 300, durationMs - endTrimMs)
+  return { durationMs, startMs, endMs, blackRatio, freezeRatio, leadingSilenceMs, trailingSilenceMs }
+}
+
+function parseLeadingVisualMs(log: string): number {
+  const ranges = visualRanges(log)
+  const leading = ranges.filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.start <= 0.12).sort((a, b) => b.end - a.end)[0]
+  return leading && leading.end - leading.start >= 0.5 ? Math.round(leading.end * 1000) : 0
+}
+
+function parseTrailingVisualMs(log: string, durationMs: number): number {
+  const trailing = visualRanges(log)
+    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.end * 1000 >= durationMs - 120)
+    .sort((a, b) => a.start - b.start)[0]
+  return trailing && trailing.end - trailing.start >= 0.5
+    ? Math.max(0, Math.round(durationMs - trailing.start * 1000))
+    : 0
+}
+
+function visualRanges(log: string): Array<{ start: number; end: number }> {
+  const pair = (startPattern: RegExp, endPattern: RegExp) => {
+    const starts = [...log.matchAll(startPattern)].map((m) => Number(m[1])).filter(Number.isFinite)
+    const ends = [...log.matchAll(endPattern)].map((m) => Number(m[1])).filter(Number.isFinite)
+    return starts.flatMap((start, index) => {
+      const end = ends[index]
+      return end !== undefined && end > start ? [{ start, end }] : []
+    })
+  }
+  return [
+    ...pair(/black_start:\s*(\d+(?:\.\d+)?)/g, /black_end:\s*(\d+(?:\.\d+)?)/g),
+    ...pair(/freeze_start:\s*(\d+(?:\.\d+)?)/g, /freeze_end:\s*(\d+(?:\.\d+)?)/g),
+  ]
 }
 
 /**
@@ -217,13 +374,20 @@ export async function ffmpegConcatWithTransitions(
     return
   }
   const args = inputs.flatMap((input) => ['-i', input])
-  let filter = ''
-  let videoLabel = '0:v'
-  let audioLabel = '0:a'
+  // xfade/acrossfade require every input to start at PTS=0. The normalized
+  // files normally do, but concat/cache paths and container edit lists can
+  // still carry a non-zero timestamp. Reset both streams explicitly so a
+  // transition cannot repeat or stall a short section at a seam.
+  let filter = inputs.map((_, index) =>
+    `[${index}:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,setsar=1,format=yuv420p[v${index}];` +
+    `[${index}:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a${index}];`,
+  ).join('')
+  let videoLabel = 'v0'
+  let audioLabel = 'a0'
   let timelineSec = (durations[0] as number) / 1000
   for (let index = 1; index < inputs.length; index += 1) {
-    const nextVideo = `${index}:v`
-    const nextAudio = `${index}:a`
+    const nextVideo = `v${index}`
+    const nextAudio = `a${index}`
     const nextVideoLabel = `v${index}`
     const nextAudioLabel = `a${index}`
     const offset = Math.max(0, timelineSec - durationSec)

@@ -19,27 +19,49 @@ export default function PersonaPage() {
   const [loaded, setLoaded] = useState(false)
   const [saving, setSaving] = useState(false)
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
+  /**
+   * 当前表单内容属于哪家门店。只接受「最新一次请求」的响应还不够 ——
+   * 保存时也要再比一次：切店后旧店的慢响应若覆盖表单，用户一点保存，
+   * 就把 A 店的人设写进了 B 店（savePersona 按 currentStoreId 落库）。
+   */
+  const [formStoreId, setFormStoreId] = useState('')
+  /**
+   * 加载是否**真失败**。服务端对「没记录」返回 200 + 空值（走 then），
+   * 能进 catch 的都是网络/接口错误 —— 绝不能当空表单展示，否则用户一保存
+   * 就把库里真实的人设覆盖成空白。
+   */
+  const [loadFailed, setLoadFailed] = useState(false)
+  /** 请求代次：切店/重进并发时，只认最后一次请求的响应 */
+  const reqRef = useRef(0)
 
   const load = () => {
     // 无门店：引导去建店（人设挂在门店下）
     if (!currentStoreId) {
       setForm({ bossTags: '', activity: '' })
       setUpdatedAt(null)
+      setFormStoreId('')
+      setLoadFailed(false)
       setLoaded(true)
       return
     }
+    const sid = currentStoreId
+    const my = ++reqRef.current
     setLoaded(false)
-    getPersona(currentStoreId)
+    setLoadFailed(false)
+    getPersona(sid)
       .then((p: PersonaItem) => {
+        if (my !== reqRef.current) return
         setForm({ bossTags: p.bossTags ?? '', activity: p.activity ?? '' })
         setUpdatedAt(p.updatedAt)
+        setFormStoreId(sid)
       })
       .catch(() => {
-        // 没记录属正常，给空值
-        setForm({ bossTags: '', activity: '' })
-        setUpdatedAt(null)
+        if (my !== reqRef.current) return
+        setLoadFailed(true)
       })
-      .finally(() => setLoaded(true))
+      .finally(() => {
+        if (my === reqRef.current) setLoaded(true)
+      })
   }
 
   useEffect(() => {
@@ -76,6 +98,15 @@ export default function PersonaPage() {
       Taro.showToast({ title: '请先选择门店（左上角）', icon: 'none' })
       return
     }
+    if (loadFailed) {
+      Taro.showToast({ title: '加载失败的内容不能保存，请重新加载', icon: 'none' })
+      return
+    }
+    // 表单内容必须是**当前门店**的（见 formStoreId 的说明）：挡住「切店后旧响应覆盖表单」
+    if (formStoreId !== currentStoreId) {
+      Taro.showToast({ title: '正在加载当前门店的人设，请稍候再保存', icon: 'none' })
+      return
+    }
     setSaving(true)
     try {
       const r = await savePersona(currentStoreId, {
@@ -101,6 +132,15 @@ export default function PersonaPage() {
   )
 
   if (!loaded) return <View className='persona persona--loading'>加载中…</View>
+
+  if (loadFailed) {
+    return (
+      <View className='persona persona--loading'>
+        <Text>人设加载失败，请检查网络</Text>
+        <View className='persona__save' onClick={() => load()}><Text>重新加载</Text></View>
+      </View>
+    )
+  }
 
   if (!currentStoreId) return <View className='persona'>
     {bar}

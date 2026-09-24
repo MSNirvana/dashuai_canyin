@@ -246,16 +246,32 @@ export async function uploadMediaFile(opts: {
 
   // 用户主动取消的标记：abort 句柄置位后，分片上传不再重试（见 sliceUploadWithRetry）
   const cancel = { byUser: false }
+  // 签名用凭证：分片上传期间可能被 getAuthorization 换成新的一份（见下面回调的说明）
+  let activeCred = sts
 
   const cos = new COS({
     getAuthorization: (_opt: unknown, cb: (info: unknown) => void) => {
-      cb({
-        TmpSecretId: sts.tmpSecretId,
-        TmpSecretKey: sts.tmpSecretKey,
-        XCosSecurityToken: sts.sessionToken,
-        ExpiredTime: sts.expiredTime,
-        StartTime: sts.startTime,
-      })
+      const serve = (cred: StsCredential) =>
+        cb({
+          TmpSecretId: cred.tmpSecretId,
+          TmpSecretKey: cred.tmpSecretKey,
+          XCosSecurityToken: cred.sessionToken,
+          ExpiredTime: cred.expiredTime,
+          StartTime: cred.startTime,
+        })
+      // ★ 凭证不能全程冻结：SDK 对**每个分片**都调一次本回调签名，而 2GB 长上传动辄
+      //   几十分钟 —— 一旦越过 expiredTime，后续每个分片都拿着过期凭证 403，
+      //   「同 key 续传」恰恰在最需要它的长上传场景系统性失效，桶里还留碎片。
+      //   临近过期（留 5 分钟签名余量）就换新；换新失败先给旧的，比重试空转强。
+      const nowSec = Math.floor(Date.now() / 1000)
+      if (activeCred.expiredTime - nowSec > 300) { serve(activeCred); return }
+      http
+        .post<StsCredential>('/upload/sts')
+        .then((fresh) => {
+          activeCred = fresh
+          serve(fresh)
+        })
+        .catch(() => serve(activeCred))
     },
   })
 

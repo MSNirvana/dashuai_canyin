@@ -86,7 +86,7 @@ export default function AppLayout() {
     <Layout className="app-layout">
       <Layout.Aside className="app-layout__sider">
         <div className="logo">
-          <span className="logo__mark">大</span>
+          <img className="logo__image" src="/logo-transparent.png" alt="大帅餐饮" />
           <span className="logo__text"><strong>大帅餐饮</strong><small>运营管理后台</small></span>
         </div>
         <nav className="app-layout__nav" aria-label="后台导航">

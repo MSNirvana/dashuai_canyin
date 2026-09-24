@@ -10,6 +10,7 @@ import {
   type MemberPlan,
   queryOrder,
 } from '../../services/order'
+import { platform } from '../../platform'
 import { useMerchantStore } from '../../store/merchant'
 import Segmented from '../../components/segmented'
 // 到期日只要「到日为止」，但仍走统一入口（原来这里有一份自己的 fmtDate，三个页面各写一份必然漂移）
@@ -151,7 +152,7 @@ export default function Recharge() {
       // 一键登录的账号本来就有 openid，不带 code 照样能付款。
       let wxLoginCode: string | undefined
       try {
-        wxLoginCode = (await Taro.login()).code
+        wxLoginCode = (await platform.login()).code
       } catch {
         wxLoginCode = undefined
       }
@@ -172,7 +173,7 @@ export default function Recharge() {
       }
       let paymentSucceeded = false
       await new Promise<void>((resolve) => {
-        Taro.requestPayment({
+        platform.requestPayment({
           ...r.payParams!,
           success: () => {
             paymentSucceeded = true

@@ -342,6 +342,7 @@ export interface AiModelView {
   maxOutputTokens: number | null
   inputPricePerMtok: number
   outputPricePerMtok: number
+  unitPriceMicroFen: number
   enabled: boolean
   createdAt: string
   updatedAt: string
@@ -360,6 +361,7 @@ export function modelView(m: AiModel & { provider?: { code: string; name: string
     maxOutputTokens: m.maxOutputTokens,
     inputPricePerMtok: m.inputPricePerMtok,
     outputPricePerMtok: m.outputPricePerMtok,
+    unitPriceMicroFen: Number(m.unitPriceMicroFen),
     enabled: m.enabled,
     createdAt: m.createdAt.toISOString(),
     updatedAt: m.updatedAt.toISOString(),
@@ -388,6 +390,7 @@ export async function upsertAiModel(
     maxOutputTokens?: number | null
     inputPricePerMtok: number
     outputPricePerMtok: number
+    unitPriceMicroFen?: number
     enabled?: boolean
   },
 ) {
@@ -402,6 +405,7 @@ export async function upsertAiModel(
     maxOutputTokens: input.maxOutputTokens ?? null,
     inputPricePerMtok: input.inputPricePerMtok,
     outputPricePerMtok: input.outputPricePerMtok,
+    unitPriceMicroFen: BigInt(input.unitPriceMicroFen ?? 0),
     enabled: input.enabled ?? true,
   }
   const include = { provider: { select: { code: true, name: true } } } as const

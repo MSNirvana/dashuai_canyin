@@ -676,6 +676,7 @@ const modelInput = z.object({
   maxOutputTokens: z.number().int().nullable().optional(),
   inputPricePerMtok: z.number().int().min(0),
   outputPricePerMtok: z.number().int().min(0),
+  unitPriceMicroFen: z.number().int().min(0).optional(),
   enabled: z.boolean().optional(),
 })
 router.post('/ai/models', async (req, res) => {

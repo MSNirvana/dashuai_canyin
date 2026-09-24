@@ -506,12 +506,14 @@ export async function createCreation(
     where: { id: storeId, merchantId, deletedAt: null },
   })
   if (!store) throw new CreationStoreMismatchError()
+  let dishName: string | undefined
   if (mode === 'DISH' && input.dishId !== undefined) {
     const dish = await prisma.dish.findFirst({
       where: { id: input.dishId, storeId, store: { merchantId, deletedAt: null }, deletedAt: null },
-      select: { id: true },
+      select: { id: true, name: true },
     })
     if (!dish) throw new CreationDishMismatchError()
+    dishName = dish.name
   }
   const skeleton = input.shotSkeleton ?? []
   // 事务：创作行与预置分镜必须同生共死。见 CreateCreationInput.shotSkeleton 的说明
@@ -524,7 +526,12 @@ export async function createCreation(
         storeId,
         // 话题稿永远没有菜品（上面已经拒绝传入），显式写 undefined 而不是 input.dishId
         dishId: mode === 'TOPIC' ? undefined : input.dishId,
-        title: input.title,
+        // 菜品创作默认使用稳定、可读的标题；保留旧调用方传入标题的兼容性。
+        title: input.title?.trim() || (
+          mode === 'DISH' && dishName
+            ? `${store.name}+${dishName}`
+            : undefined
+        ),
         // ★ 话题稿**强制**用流量款：它是唯一一份不喂门店/菜品的文案模板。
         //   允许调用方传别的款式，会让「话题稿却走介绍款模板」这种组合悄悄生效 ——
         //   介绍款要求讲清菜名与卖点，而话题稿手里一个字都没有，模型只能编。

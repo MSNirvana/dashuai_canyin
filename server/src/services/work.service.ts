@@ -89,7 +89,7 @@ export function isSignableWorkKey(key: string | null | undefined): key is string
 
 /** 同款配方：与 creation 的 track / complexity 取值对齐 */
 export interface WorkRecipe {
-  /** 文案款式，对应 CopyTrack：TRAFFIC 流量款 / INTRO 介绍款 / QUALITY 质量款 / RECOMMEND 种草型 */
+  /** 文案款式，对应 CopyTrack；存量 INTRO / QUALITY 仅用于兼容旧配方 */
   track?: 'TRAFFIC' | 'INTRO' | 'QUALITY' | 'RECOMMEND'
   /** 镜头复杂度：SIMPLE 简单 / COMPLEX 复杂 / FINE 精细 */
   complexity?: 'SIMPLE' | 'COMPLEX' | 'FINE'

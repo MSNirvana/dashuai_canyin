@@ -66,14 +66,10 @@ export interface BilledSceneParams {
  * IEEE754 下 7/100×100×4 = 28.000000000000004 → ceil = 29，凭空多扣 1 积分。
  * 实测成本 1~20000 分里有 1148 个取值（5.74%）被多扣 1 积分，且只会多扣不会少扣。
  */
-function beansFromCost(costFen: number, beansPerYuan: Dec, multiplier: Dec): bigint {
-  if (!Number.isSafeInteger(costFen) || costFen < 0) {
-    throw new RangeError(`beansFromCost: costFen 必须是非负安全整数，实际 ${costFen}`)
-  }
-  if (costFen === 0) return 0n
-  const costDec = decFromNumber(costFen)
-  if (!costDec) throw new RangeError(`beansFromCost: costFen 无法解析，实际 ${costFen}`)
-  return decMulCeil([costDec, beansPerYuan, multiplier], 100n)
+export function beansFromCostMicroFen(costMicroFen: bigint, beansPerYuan: Dec, multiplier: Dec): bigint {
+  if (costMicroFen < 0n) throw new RangeError('AI cost cannot be negative')
+  if (costMicroFen === 0n) return 0n
+  return decMulCeil([{ num: costMicroFen, exp: 0 }, beansPerYuan, multiplier], 100_000_000n)
 }
 
 // ────────────────────────────── 租约与结算（供本模块与 ai-recovery 共用） ──────────────────────────────
@@ -100,18 +96,8 @@ export interface AiChargeParams {
   /** 场景中文名，只用于流水备注 */
   sceneName: string
   costFen: number
+  costMicroFen?: bigint
   usedFallback: boolean
-  /**
-   * ★ 固定价调用（只有图像场景会给）：本次应付**就是这个数**，不按 token 成本换算。
-   *
-   * 为什么必须有这条路：出图返回里没有 token 用量，`costFen` 恒为 0，
-   * 而 `beansFromCost(0) = 0n` ⇒ 按成本结算等于**一张封面收 0 积分**，
-   * 平台却真实付了上游的钱。图像场景的 `ai_scene.bean_price` 因此是「报价」而非「上限」。
-   *
-   * ⚠ 仍然受 `cap` 约束（`charged = min(固定价, 预留余额)`）：运营在调用进行中调价时，
-   *   结算必须仍然以**当初冻结的那个数**为界，否则会扣出预留不存在的钱。
-   */
-  fixedBeans?: bigint
   /**
    * ★ 冻结快照 = 本次预留的未结余量（`bean_reservation.reserved - consumed - released`）。
    * 所有加减都以它为界；**不要**在这里重新读 `ai_scene.bean_price`。
@@ -149,21 +135,24 @@ export async function settleAiCharge(
     getDecimal(prisma, 'bean', 'cost_multiplier', 4),
   ])
   // 固定价场景（图像）直接用报价，不走 token 换算 —— 见 AiChargeParams.fixedBeans 的说明。
-  const wantCharge = p.fixedBeans ?? beansFromCost(p.costFen, beansPerYuan, multiplier)
-  const charged = wantCharge > p.cap ? p.cap : wantCharge
-  // 被单次上限截断的部分由平台承担。必须落库 + 告警，否则「上限是安全网还是
-  // 常态折扣」在账上完全看不出来（实测 copy 系场景 10/10 次调用都被截掉 3 积分）。
-  const absorbed = wantCharge > p.cap ? wantCharge - p.cap : 0n
-  if (absorbed > 0n) {
-    console.warn(
-      `[ai-billing] 场景 ${p.sceneCode} 成本 ${p.costFen} 分应付 ${wantCharge} 积分，` +
-        `被单次上限 ${p.cap} 积分截断，平台承担 ${absorbed} 积分（requestId=${p.requestId}）`,
-    )
-  }
+  // Legacy logs predate cost_micro_fen and contain only costFen.
+  const costMicroFen = p.costMicroFen && p.costMicroFen > 0n
+    ? p.costMicroFen
+    : BigInt(p.costFen) * 1_000_000n
+  const wantCharge = beansFromCostMicroFen(costMicroFen, beansPerYuan, multiplier)
+  const charged = wantCharge
+  const absorbed = 0n
 
   return prisma.$transaction(async (tx) => {
     let cr: { charged: bigint; bucket: BeanBucket | null }
     if (charged > 0n) {
+      if (charged > p.cap) {
+        await bean.increaseReservation(tx, {
+          merchantId: p.merchantId, requestId: p.requestId, bizType: p.bizType,
+          bizId: p.bizId ?? undefined, amount: charged - p.cap,
+          remark: '实际成本高于初始预留，补充冻结差额',
+        })
+      }
       const consumed = await bean.consume(tx, {
         merchantId: p.merchantId,
         requestId: p.requestId,
@@ -176,7 +165,7 @@ export async function settleAiCharge(
       await unfreezeIfPositive(tx, {
         merchantId: p.merchantId,
         requestId: p.requestId,
-        amount: p.cap - charged,
+        amount: p.cap > charged ? p.cap - charged : 0n,
         bizType: p.bizType,
         bizId: p.bizId ?? undefined,
         remark: '结算后差额释放',
@@ -238,7 +227,7 @@ export async function runBilledScene(
   }
 
   const chargeArgs = (
-    o: { costFen: number; usedFallback: boolean; cap: bigint; fixedBeans?: bigint },
+    o: { costFen: number; costMicroFen?: bigint; usedFallback: boolean; cap: bigint },
   ): AiChargeParams => ({
     merchantId: params.merchantId,
     sceneCode: params.sceneCode,
@@ -297,7 +286,7 @@ export async function runBilledScene(
             //   若这里不补固定价，重放会把预留**全额释放**——用户拿走了封面却一分没扣。
             //   金额取 `cap`（当初冻结的那个数）而不是当前 scene.beanPrice：
             //   运营可能中途改过价，而预留是按旧价冻的，用新价结算会「超扣」。
-            ...(scene.kind === 'IMAGE' ? { fixedBeans: cap } : {}),
+            costMicroFen: log.costMicroFen,
           }))
       const b = await balanceAfter()
       return {
@@ -427,9 +416,9 @@ export async function runBilledScene(
   // 4) 成功：按实际成本结算，并与业务请求完成状态同事务提交。
   const res = await settleAiCharge(prisma, chargeArgs({
     costFen: r.costFen,
+    costMicroFen: r.costMicroFen,
     usedFallback: r.usedFallback,
     cap,
-    fixedBeans: r.fixedBeans,
   }))
   await releaseRequestLease(prisma, {
     merchantId: params.merchantId,

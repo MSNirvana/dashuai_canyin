@@ -163,6 +163,8 @@
     width: auto;
     &.is-disabled {
       opacity: 0.5;
+      // 半透明只是「看着不能点」；点击拦截在 onSave 的 loading 守卫，这里再做一层兜底
+      pointer-events: none;
     }
   }
 }

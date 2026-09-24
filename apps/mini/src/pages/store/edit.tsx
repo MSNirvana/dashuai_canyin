@@ -60,11 +60,16 @@ export default function StoreEditPage() {
   const [videoPreview, setVideoPreview] = useState('')
   const [uploadingVideo, setUploadingVideo] = useState(false)
 
-  useEffect(() => {
-    if (!id) {
-      setLoaded(true)
-      return
-    }
+  /**
+   * 编辑对象是否加载失败。
+   * ★ 失败绝不能落进「空表单可保存」：保存会把 intro/coverKey/videoKey 以 null 写回，
+   *   门店的简介、主图、视频被**全部清空** —— 与 dish/edit 是同一条数据丢失链。
+   */
+  const [loadFailed, setLoadFailed] = useState(false)
+
+  const loadDetail = () => {
+    if (!id) return
+    setLoadFailed(false)
     getStore(id)
       .then((s: StoreItem) => {
         const area = resolveAreaNames(s)
@@ -87,10 +92,16 @@ export default function StoreEditPage() {
           getStoreMediaUrl(s.videoKey).then((r) => setVideoPreview(r.url ?? '')).catch(() => undefined)
         }
       })
-      .catch(() => {
-        Taro.showToast({ title: '门店不存在', icon: 'none' })
-      })
+      .catch(() => setLoadFailed(true))
       .finally(() => setLoaded(true))
+  }
+
+  useEffect(() => {
+    if (!id) {
+      setLoaded(true)
+      return
+    }
+    loadDetail()
   }, [id])
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -155,6 +166,8 @@ export default function StoreEditPage() {
   }
 
   const onSubmit = async () => {
+    // ★ 数据没加载成功就**绝不保存**：此刻表单是空的，保存 = 清空门店简介/主图/视频
+    if (loadFailed) { Taro.showToast({ title: '门店还没加载成功，不能保存', icon: 'none' }); return }
     if (saving || uploadingVideo) return
     if (!form.name.trim()) {
       Taro.showToast({ title: '请填写门店名称', icon: 'none' })
@@ -173,7 +186,8 @@ export default function StoreEditPage() {
         district: form.district || undefined,
         address: form.address || undefined,
         intro: form.intro.trim() || null,
-        isDefault: form.isDefault || undefined,
+        // ★ 如实传 boolean（服务端已支持）：false 用来「取消默认」，传 undefined 服务端会当成「没提这件事」
+        isDefault: form.isDefault,
       }
       if (storeId) {
         if (pendingImage) {
@@ -238,6 +252,19 @@ export default function StoreEditPage() {
   }
 
   if (!loaded) return <View className='store-edit store-edit--loading'>加载中…</View>
+
+  // ★ 加载失败：整页只给重试，绝不渲染空表单（空表单保存 = 清空门店简介/主图/视频）
+  if (loadFailed) {
+    return (
+      <View className='store-edit store-edit--loading'>
+        <View style={{ padding: '80rpx 40rpx', textAlign: 'center' }}>
+          <Text style={{ display: 'block', marginBottom: '16rpx' }}>门店加载失败，请检查网络后重试。</Text>
+          <Text style={{ display: 'block', marginBottom: '32rpx' }}>失败时不显示表单，避免误保存清空原有数据。</Text>
+          <View className='ds-btn ds-btn--primary' style={{ display: 'inline-flex' }} onClick={() => { setLoaded(false); loadDetail() }}><Text>重新加载</Text></View>
+        </View>
+      </View>
+    )
+  }
 
   // 坏编号：既不能请求，也不能退化成「新建」（那会凭空多出一家门店）。
   // 唯一的真出路是回门店列表重新进入。

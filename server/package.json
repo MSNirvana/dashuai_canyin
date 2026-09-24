@@ -66,10 +66,12 @@
     "dish-combo:verify": "tsx scripts/verify-dish-combo.ts",
     "render-errors:verify": "tsx scripts/verify-render-errors.ts",
     "auto-edit:verify": "tsx scripts/verify-auto-edit.ts",
+    "auto-edit:smoke": "tsx scripts/verify-default-auto-edit.ts",
     "render-options:verify": "tsx scripts/verify-render-options.ts",
     "tts:probe-speakers": "tsx scripts/probe-volcano-speakers.ts",
     "tts:setup-volcano": "tsx scripts/setup-volcano-tts.ts",
-    "tts:verify-voices": "tsx scripts/verify-tts-voices.ts"
+    "tts:verify-voices": "tsx scripts/verify-tts-voices.ts",
+    "asr:probe": "tsx scripts/probe-tencent-asr.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -82,6 +84,8 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.3.0",
     "qcloud-cos-sts": "^3.1.3",
+    "sharp": "^0.34.5",
+    "tencentcloud-sdk-nodejs-asr": "^4.1.315",
     "tencentcloud-sdk-nodejs-sms": "^4.1.306",
     "zod": "^3.23.8"
   },

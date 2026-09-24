@@ -88,8 +88,9 @@ interface AiModel {
   capability: string
   maxContextTokens: number | null
   maxOutputTokens: number | null
-  inputPricePerMtok: number
-  outputPricePerMtok: number
+    inputPricePerMtok: number
+    outputPricePerMtok: number
+    unitPriceMicroFen: number
   enabled: boolean
   provider: { code: string; name: string }
 }
@@ -114,7 +115,7 @@ export default function AiModelsPage() {
   const [form, setForm] = useState({
     providerId: '', modelCode: '', displayName: '', capability: 'TEXT',
     maxContextTokens: 0 as number, maxOutputTokens: 0 as number,
-    inputPricePerMtok: 0, outputPricePerMtok: 0, enabled: true,
+    inputPricePerMtok: 0, outputPricePerMtok: 0, unitPriceMicroFen: 0, enabled: true,
   })
 
   const load = async () => {
@@ -166,7 +167,7 @@ export default function AiModelsPage() {
     setForm({
       providerId: providers[0]?.id ?? '', modelCode: '', displayName: '', capability: 'TEXT',
       maxContextTokens: 0, maxOutputTokens: 0,
-      inputPricePerMtok: 0, outputPricePerMtok: 0, enabled: true,
+      inputPricePerMtok: 0, outputPricePerMtok: 0, unitPriceMicroFen: 0, enabled: true,
     })
     setOpen(true)
   }
@@ -179,6 +180,7 @@ export default function AiModelsPage() {
       capability: normalizeCapability(m.capability),
       maxContextTokens: m.maxContextTokens ?? 0, maxOutputTokens: m.maxOutputTokens ?? 0,
       inputPricePerMtok: m.inputPricePerMtok, outputPricePerMtok: m.outputPricePerMtok,
+      unitPriceMicroFen: m.unitPriceMicroFen ?? 0,
       enabled: m.enabled,
     })
     setOpen(true)
@@ -201,6 +203,7 @@ export default function AiModelsPage() {
       maxOutputTokens: preset.maxOutputTokens,
       inputPricePerMtok: preset.inputPricePerMtok,
       outputPricePerMtok: preset.outputPricePerMtok,
+      unitPriceMicroFen: 0,
     }))
     if (hit) message.success(`已填入 ${preset.label} · 通道 ${hit.code}`)
     else message.warning(`已填入 ${preset.label}，但没有找到名字含「${preset.channelHint}」的通道，请手动选`)
@@ -248,6 +251,7 @@ export default function AiModelsPage() {
           { colKey: 'capability', title: '能力', width: 110, render: ({ row }: any) => (row ? capLabel(row.capability) : '能力') },
           { colKey: 'inputPricePerMtok', title: '输入(分/MTok)', width: 130 },
           { colKey: 'outputPricePerMtok', title: '输出(分/MTok)', width: 130 },
+          { colKey: 'unitPriceMicroFen', title: '图片(微分/张)', width: 130 },
           { colKey: 'enabled', title: '启用', width: 80, render: ({ row }: any) => (row ? (row.enabled ? <Tag theme="success">是</Tag> : <Tag>否</Tag>) : '启用') },
           { colKey: 'op', title: '操作', width: 160, fixed: 'right',
             render: ({ row }: any) =>
@@ -289,6 +293,7 @@ export default function AiModelsPage() {
           <Field label="最大输出(tokens)"><InputNumber value={form.maxOutputTokens} onChange={(v) => setForm((f) => ({ ...f, maxOutputTokens: v as number }))} min={0} /></Field>
           <Field label="输入(分/MTok)"><InputNumber value={form.inputPricePerMtok} onChange={(v) => setForm((f) => ({ ...f, inputPricePerMtok: v as number }))} min={0} /></Field>
           <Field label="输出(分/MTok)"><InputNumber value={form.outputPricePerMtok} onChange={(v) => setForm((f) => ({ ...f, outputPricePerMtok: v as number }))} min={0} /></Field>
+          <Field label="图片(微分/张)"><InputNumber value={form.unitPriceMicroFen} onChange={(v) => setForm((f) => ({ ...f, unitPriceMicroFen: v as number }))} min={0} /></Field>
           <Field label="启用"><Switch value={form.enabled} onChange={(v) => setForm((f) => ({ ...f, enabled: v as boolean }))} /></Field>
         </FieldGroup>
       </Dialog>

@@ -54,7 +54,7 @@
 //   TB_GPT_MODEL / TB_CLAUDE_MODEL / TB_DEEPSEEK_MODEL   模型码覆盖
 //   SCENE_MIN_OUTPUT_TOKENS   场景输出预算下限，默认 4000
 //   TB_SET_PRICES=1           把真实单价写库（否则单价 0 ⇒ 扣 0 积分）
-//   TB_SET_CAPS=1             把场景单次上限写库（否则扣费恒被截断成封顶值）
+//   TB_SET_CAPS=1             把场景预冻结额写库（用于减少结算时的补充冻结，不改变实际成本计费）
 //   TB_REGISTER_GRANT=n       注册赠积分（未设 = 不改；`0` = 关掉注册赠积分，当前策略）
 //   TB_USD_TO_CNY             汇率，默认 7.2
 //
@@ -143,6 +143,11 @@ const MODEL_DEEPSEEK = (process.env.TB_DEEPSEEK_MODEL ?? 'deepseek-v4-flash').tr
  *        以及 prompts.ts 里 publish_cover 的 beanPrice（说明写在那里）。
  */
 const MODEL_IMAGE = (process.env.TB_IMAGE_MODEL ?? 'gpt-image-2').trim()
+// 供应商实际按张成本，单位 1e-6 分；不设置时保留库中已有值，新模型保持 0 并被网关阻止。
+const IMAGE_UNIT_PRICE_MICRO_FEN = (process.env.TB_IMAGE_UNIT_PRICE_MICRO_FEN ?? '').trim()
+const parsedImageUnitPrice = IMAGE_UNIT_PRICE_MICRO_FEN && /^\d+$/.test(IMAGE_UNIT_PRICE_MICRO_FEN)
+  ? BigInt(IMAGE_UNIT_PRICE_MICRO_FEN)
+  : null
 
 /**
  * 场景输出预算下限（token）。低于它的一律抬到它，只抬不降。
@@ -392,13 +397,13 @@ const SCENE_OVERRIDES: Record<
 }
 
 /**
- * 场景单次上限（= 预冻结额 = 单次最大扣费，`ai_scene.bean_price`）。
+ * 场景预冻结额（`ai_scene.bean_price`）。
  *
  * ★ 这是**给用户的报价**，不是技术参数 —— 改了它等于改用户实付多少积分。
  *   所以默认**不写库**，只在 `TB_SET_CAPS=1` 时应用。
  *
  * 为什么需要调：计费口径是「扣积分 = ceil(成本分 × points_per_yuan × cost_multiplier / 100)」，
- * 而 beanPrice 是硬截断线（`charged = min(wantCharge, frozenAmount)`）。
+ * 而 beanPrice 只是调用前的预冻结额；实际成本超过它时，结算事务会补充冻结差额。
  * 实测（2026-09-15，全场景各 1 次真实调用，gpt-5.5）：
  *
  *   场景                 应扣积分   现上限   差距
@@ -414,13 +419,13 @@ const SCENE_OVERRIDES: Record<
  *   rhythm_detect          94  >    3
  *   copy_recommend         28  >    5
  *
- * → **11/11 场景全部被截断**，现上限是按「mock / 早期便宜模型」定的。
- *   要让「按成本×系数扣」真正成立，上限必须抬到不会截断的水平（上限只是财务安全网）。
+ * → 现有值按「mock / 早期便宜模型」估算，可能低于真实成本；抬高它只能减少补充冻结，
+ *   不会把实际扣费改成固定价。
  *
  * 下表 = 实测应扣积分 × 2 取整到 10（留一倍余量给输出长度抖动）。
  * ⚠ 上限只是安全网，**不保证不被击穿**：实测同一提示词、同一通道连打 3 次，
  *   单次成本 5 / 31 / 2 分（差 15 倍，全看思考 token 花多少），上限一定会周期性被击穿；
- *   被击穿的那部分记 `absorbedBeans`（平台承担）。这是设计如此，不是 bug。
+ *   被击穿的部分会补充冻结并按实际成本扣除，不会记作平台补贴。
  * ⚠ 注意副作用：上限同时是**预冻结额**，抬上去后「账户可用积分不足」的门槛也一起抬高
  *   （新用户注册赠积分目前 30，copy_persona / copy_knowledge / copy_product 需 80 冻结 ⇒ 新用户一上来用不了）。
  *   所以调上限必须连带调 `TB_REGISTER_GRANT`，否则新用户注册即「一个 AI 功能都用不了」。
@@ -696,6 +701,7 @@ async function main() {
           enabled: true,
           inputPricePerMtok: price.inputFen,
           outputPricePerMtok: price.outputFen,
+          ...(c.capability === 'IMAGE' && parsedImageUnitPrice !== null ? { unitPriceMicroFen: parsedImageUnitPrice } : {}),
         }
         const model = dup
           ? await prisma.aiModel.update({ where: { id: dup.id }, data: modelData })
@@ -703,13 +709,9 @@ async function main() {
         if (!primaryModelOf.has(c.code)) primaryModelOf.set(c.code, model.id)
         console.log(`        模型 ${dup ? '更新' : '新建'}  ${m.modelCode}  (id=${model.id})`)
         if (c.capability === 'IMAGE') {
-          // ★ 出图没有 token 用量，ai_model 的两列「分/百万 token」对它没有意义，
-          //   所以这里**故意留 0**，而把价写在 ai_scene.bean_price（固定价）。
-          //   打印时不说清楚，运维会以为「单价 0 ⇒ 扣 0 积分 ⇒ 白送」——
-          //   实际恰恰相反：固定价走的是另一条路。
+          // 出图没有 token 用量，使用模型的按张实际成本；未配置时网关会阻止真实调用。
           console.log(
-            `          能力=IMAGE，token 单价不适用（留 0）` +
-              `；**价在 ai_scene.bean_price**（固定价，见 prompts.ts 的 PUBLISH_SCENES）`,
+            `          能力=IMAGE，按张成本=${parsedImageUnitPrice === null ? '未配置（将阻止调用）' : `${parsedImageUnitPrice} 微分`}`,
           )
         } else {
           console.log(
@@ -833,7 +835,7 @@ async function main() {
     if (raised === 0) console.log('  （全部已在下限之上，无需调整）')
 
     console.log(`\n[4/6] 商业参数（场景单次上限 + 注册赠积分）${SET_CAPS ? '' : ' —— 上限仅对照，未应用'}`)
-    // 上限是硬截断线，决定用户实付多少积分。默认只打印对照，不改。
+    // 预冻结额只影响调用前的余额门槛。默认只打印对照，不改。
     let capChanged = 0
     console.log(`  ${'场景'.padEnd(22)}${'现上限'.padEnd(9)}建议   说明`)
     for (const s of scenes) {
@@ -845,7 +847,7 @@ async function main() {
           : want === cur
             ? '已一致'
             : want > cur
-              ? `低于实测应扣 ⇒ 现在会被截断`
+              ? `低于实测应扣 ⇒ 结算时补充冻结`
               : `高于实测应扣（收紧）`
       console.log(`  ${s.code.padEnd(22)}${String(cur).padEnd(9)}${String(want ?? '-').padEnd(8)}${note}`)
       if (SET_CAPS && want !== undefined && want !== cur) {
@@ -857,8 +859,8 @@ async function main() {
       console.log(`  ⇒ 已更新 ${capChanged} 个场景的上限`)
     } else {
       console.log(
-        '  ⚠ 未应用（未设 TB_SET_CAPS=1）。上限现在会截断几乎所有场景的真实成本，\n' +
-          '    于是实际扣费是「封顶值」而不是「成本 × 系数」。确认后 TB_SET_CAPS=1 重跑。',
+        '  ⚠ 未应用（未设 TB_SET_CAPS=1）。当前值仍作为预冻结额；实际结算按成本 × 系数，\n' +
+          '    低于实际成本时会在结算事务中补充冻结差额。',
       )
     }
 

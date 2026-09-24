@@ -220,8 +220,10 @@ export interface ColorPreviewResult {
  *   · 4029 触发防滥用限流（滑动窗口只计「真的新算一次」的请求，命中缓存不占额度）
  *
  * timeout 必须放大：服务端单步容许 120s，仍用默认的 30s 会在暖机路径上误报超时。
- * 超时也不算白干 —— 服务端有 in-flight 去重 + 内容寻址缓存，重试会直接命中那次已完成的计算。
+ * ★ 取值必须 ≥ 服务端上限（120s），不能取 90s：暖机路径真跑满时客户端先断开，
+ *   把一次本来能成功的预览报成「超时」。（服务端有 in-flight 去重 + 内容寻址缓存，
+ *   即便真的超时，重试也会直接命中那次已完成的计算。）
  */
 export function previewColor(creationId: string, color: ColorGrade) {
-  return http.post<ColorPreviewResult>(`/creations/${creationId}/render/preview`, { color }, { timeout: 90000 })
+  return http.post<ColorPreviewResult>(`/creations/${creationId}/render/preview`, { color }, { timeout: 125000 })
 }

@@ -6,13 +6,14 @@
 //     音色/语速等经 extra 配置：resourceId(seed-tts-1.0/2.0)/sampleRate/bitRate/speechRate
 // - tencent：腾讯云 TTS 暂未实现（需要 TC3 签名，待接入）
 // 合成结果统一 ffmpeg 转 aac（44.1kHz 立体声 128k，与静音兜底轨参数一致，保证拼接 copy），
-// 并 apad+截断对齐 targetMs —— 音频轨与画面分镜时长严格一致。
+// 供应商原始语音先完整落盘，不在这里用 -t 硬截；最终由 synthesis 根据整条视频时间轴
+// 统一限速/补静音。这样句尾不会因为单个镜头估算偏小而被截掉。
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { writeFile, rm } from 'node:fs/promises'
 import type { TtsProviderConfig } from '../services/tts-provider.service.js'
-import { ffmpegBin } from './ffmpeg.js'
+import { ffmpegBin, probeDurationMs } from './ffmpeg.js'
 
 const execFileP = promisify(execFile)
 
@@ -154,7 +155,7 @@ async function synthesizeVolcano(
   }
   if (!chunks.length) throw new Error('volcano TTS 未返回音频数据（可能音色与 resourceId 不匹配，检查 TtsProvider.voiceId / extra.resourceId）')
 
-  // mp3 → aac，apad 补静音 + -t 截断，严格对齐分镜时长
+  // mp3 → aac：保留完整语音，时间轴对齐在 synthesis 阶段统一处理。
   const mp3Path = `${outPath}.src.mp3`
   await writeFile(mp3Path, Buffer.concat(chunks))
   try {
@@ -162,8 +163,6 @@ async function synthesizeVolcano(
       ffmpegBin(),
       [
         '-i', mp3Path,
-        '-af', 'apad',
-        '-t', (durMs / 1000).toFixed(3),
         '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
         '-y', outPath,
       ],
@@ -172,5 +171,5 @@ async function synthesizeVolcano(
   } finally {
     await rm(mp3Path, { force: true }).catch(() => {})
   }
-  return durMs
+  return (await probeDurationMs(outPath)) ?? durMs
 }

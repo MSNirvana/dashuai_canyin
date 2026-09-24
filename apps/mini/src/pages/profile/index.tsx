@@ -91,6 +91,13 @@ export default function Profile() {
 
   const onSave = async () => {
     if (saveLock.current) return
+    // ★ 资料还没加载回来时绝不能放行：此时 nickname 是初始空串，保存会把库里的
+    //   真实昵称清成 null（空值 = 清空，见下面注释）。样式上的 is-disabled 只是
+    //   半透，不挡点击，必须在这里硬拦。
+    if (loading) {
+      Taro.showToast({ title: '资料还在加载，请稍候', icon: 'none' })
+      return
+    }
     saveLock.current = true
     const value = nickname.trim()
     setSaving(true)

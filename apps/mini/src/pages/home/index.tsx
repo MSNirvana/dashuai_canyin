@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { CoverView, Image, ScrollView, Swiper, SwiperItem, Text, Video, View } from '@tarojs/components'
 import Taro, { useDidHide, useDidShow, useReachBottom } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
+import { STORAGE_KEYS } from '../../config'
 import { guideLogin } from '../../utils/login-guide'
 import { listCreations, type CreationItem } from '../../services/creation'
 import { getWork, listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
@@ -46,7 +47,8 @@ const WORK_CATEGORY_ALL = ''
 
 /** 首页 · 创作工作台：顶部只有口号海报（原顶栏的门店切换与头像按钮已去掉），全页只有一个红色实心主按钮 */
 export default function HomePage() {
-  const merchant = useMerchantStore((s) => s.merchant)
+  const token = useMerchantStore((s) => s.token)
+  const hydrate = useMerchantStore((s) => s.hydrate)
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const stores = useMerchantStore((s) => s.stores)
   const loadStores = useMerchantStore((s) => s.loadStores)
@@ -94,7 +96,18 @@ export default function HomePage() {
   /** 正在取播放地址的作品 id：取地址要发一次请求，期间让按钮有反馈 */
   const [playPending, setPlayPending] = useState<string | null>(null)
   const playUrlRef = useRef<Record<string, { url: string; at: number }>>({})
-  const storeName = stores.find((s) => s.id === currentStoreId)?.name ?? ''
+  const currentStore = stores.find((s) => s.id === currentStoreId)
+  const storeName = currentStore?.name ?? ''
+  const currentDishCount = currentStore?._count?.dishes ?? 0
+  // token 是当前会话的权威登录态；merchant 资料可能在冷启动或资料刷新期间暂未恢复。
+  const persistedToken = Taro.getStorageSync<string>(STORAGE_KEYS.token) ?? ''
+  const isLoggedIn = !!token || !!persistedToken
+  /** 创作依赖真实业务上下文：必须先有门店，再有当前门店的至少一道菜。 */
+  const setupStage: 'STORE' | 'DISH' | 'READY' = !stores.length || !currentStore
+    ? 'STORE'
+    : currentDishCount > 0
+      ? 'READY'
+      : 'DISH'
 
   /**
    * 作品列表的请求代次。
@@ -161,7 +174,10 @@ export default function HomePage() {
   }
 
   const refresh = async () => {
-    if (!merchant) return
+    // 首页可能先于 App 的 launch hydrate 完成显示；先从本地会话恢复，再决定是否请求业务数据。
+    if (!token && persistedToken) hydrate()
+    const sessionToken = useMerchantStore.getState().token
+    if (!sessionToken) return
     // 重试前先把「上一次失败留下的」提示收掉（只收自己这两块；作品区的提示由 loadWorks 负责清理）
     clearError('home')
     clearError('recent')
@@ -233,6 +249,9 @@ export default function HomePage() {
   const goMine = () => Taro.switchTab({ url: '/pages/mine/index' })
 
   const goStores = () => Taro.navigateTo({ url: '/pages/store/list' })
+  const goDishes = () => currentStoreId
+    ? Taro.navigateTo({ url: `/pages/dish/list?storeId=${currentStoreId}` })
+    : goStores()
   const goCreations = () => Taro.switchTab({ url: '/pages/creation/list' })
   const goCreate = () => (currentStoreId ? Taro.navigateTo({ url: '/pages/creation/edit' }) : goStores())
   const openCreation = (id: string) => Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
@@ -240,7 +259,7 @@ export default function HomePage() {
   const openWork = (work: WorkItem) => Taro.navigateTo({ url: `/pages/work/detail?id=${work.id}` })
   const goCloneWork = (work: WorkItem) => {
     // 未登录先给一句解释，别把用户丢去门店页吃一个 401、再被请求层弹到「我的」（见 utils/login-guide.ts）
-    if (!merchant) { guideLogin({ reason: '生成同款需要先登录' }); return }
+    if (!isLoggedIn) { guideLogin({ reason: '生成同款需要先登录' }); return }
     if (!currentStoreId) { goStores(); return }
     void markWorkClone(work.id).catch(() => undefined)
     Taro.navigateTo({ url: `/pages/creation/edit?workId=${work.id}` })
@@ -315,35 +334,69 @@ export default function HomePage() {
     </View>
 
     <View className='home__body'>
-      {/* ── 创作入口：运营可在后台配成轮播（只配一张时等于原来的静态卡片） ── */}
-      <Swiper
-        className='home__banner'
-        // 只有一张时不轮播、也不显示圆点：一个孤零零的圆点看着像出错
-        autoplay={banners.length > 1}
-        circular={banners.length > 1}
-        interval={4000}
-        duration={420}
-        indicatorDots={banners.length > 1}
-        indicatorColor='rgba(255, 255, 255, 0.35)'
-        indicatorActiveColor='#ffffff'
-      >
-        {banners.map((s) => (
-          <SwiperItem key={s.id}>
-            <View className='home__create-card' hoverClass='ds-hover--press' onClick={() => onBannerTap(s)}>
-              <Image className='home__create-image' src={s.image} mode='aspectFill' />
-              <View className='home__create-shade' />
-              <View className='home__create-copy'>
-                {!!s.kicker && <Text className='home__create-kicker'>{s.kicker}</Text>}
-                <Text className='home__create-title'>{s.title}</Text>
-                {!!s.desc && <Text className='home__create-desc'>{s.desc}</Text>}
+      {isLoggedIn && setupStage !== 'READY' ? (
+        <View className='home__setup'>
+          <View className='home__setup-head'>
+            <Text className='home__setup-kicker'>开始创作前</Text>
+            <Text className='home__setup-title'>先把你的生意资料准备好</Text>
+            <Text className='home__setup-desc'>门店和菜品会成为后续文案、分镜与成片的真实素材。</Text>
+          </View>
+          <View className='home__setup-steps'>
+            <View className={`home__setup-step ${setupStage === 'STORE' ? 'home__setup-step--active' : 'home__setup-step--done'}`}>
+              <View className='home__setup-index'><Text>{setupStage === 'STORE' ? '1' : '✓'}</Text></View>
+              <View className='home__setup-step-copy'>
+                <Text className='home__setup-step-title'>创建门店</Text>
+                <Text className='home__setup-step-desc'>{setupStage === 'STORE' ? '先建立你的门店档案' : `已准备好 · ${storeName || '当前门店'}`}</Text>
               </View>
-              {!!s.actionText && (
-                <View className='home__create-action'><Text>{s.actionText}</Text><Text className='home__create-arrow'>→</Text></View>
-              )}
             </View>
-          </SwiperItem>
-        ))}
-      </Swiper>
+            <View className={`home__setup-step ${setupStage === 'DISH' ? 'home__setup-step--active' : 'home__setup-step--locked'}`}>
+              <View className='home__setup-index'><Text>2</Text></View>
+              <View className='home__setup-step-copy'>
+                <Text className='home__setup-step-title'>添加菜品</Text>
+                <Text className='home__setup-step-desc'>至少添加一道招牌菜，创作才有内容依据</Text>
+              </View>
+            </View>
+          </View>
+          <View
+            className='home__setup-action'
+            hoverClass='ds-hover--press'
+            onClick={setupStage === 'STORE' ? goStores : goDishes}
+          >
+            <Text>{setupStage === 'STORE' ? '创建第一家门店' : '添加第一道菜品'}</Text>
+            <Text className='home__setup-arrow'>→</Text>
+          </View>
+        </View>
+      ) : (
+        /* ── 创作入口：完成门店与菜品准备后再开放 ── */
+        <Swiper
+          className='home__banner'
+          // 只有一张时不轮播、也不显示圆点：一个孤零零的圆点看着像出错
+          autoplay={banners.length > 1}
+          circular={banners.length > 1}
+          interval={4000}
+          duration={420}
+          indicatorDots={banners.length > 1}
+          indicatorColor='rgba(255, 255, 255, 0.35)'
+          indicatorActiveColor='#ffffff'
+        >
+          {banners.map((s) => (
+            <SwiperItem key={s.id}>
+              <View className='home__create-card' hoverClass='ds-hover--press' onClick={() => onBannerTap(s)}>
+                <Image className='home__create-image' src={s.image} mode='aspectFill' />
+                <View className='home__create-shade' />
+                <View className='home__create-copy'>
+                  {!!s.kicker && <Text className='home__create-kicker'>{s.kicker}</Text>}
+                  <Text className='home__create-title'>{s.title}</Text>
+                  {!!s.desc && <Text className='home__create-desc'>{s.desc}</Text>}
+                </View>
+                {!!s.actionText && (
+                  <View className='home__create-action'><Text>{s.actionText}</Text><Text className='home__create-arrow'>→</Text></View>
+                )}
+              </View>
+            </SwiperItem>
+          ))}
+        </Swiper>
+      )}
 
       {!!error && (
         <View className='ds-notice home__error' onClick={retryHome}>
@@ -351,7 +404,16 @@ export default function HomePage() {
         </View>
       )}
 
-      {merchant ? (
+      {!isLoggedIn ? (
+        /* 未登录：原来这里是一整页的早退分支（文字 hero + 登录卡），现在只替换
+           「接着上次拍」这一块。首页其余部分 —— 口号海报、轮播、优秀作品 ——
+           对未登录用户同样是有效内容，尤其作品区：那才是给未登录用户的引流素材。 */
+        <View className='ds-card home__guest home__guest--inline'>
+          <Text className='home__guest-title'>登录后开始创作</Text>
+          <Text className='home__guest-desc'>进入「我的」完成微信一键登录</Text>
+          <View className='ds-btn ds-btn--primary ds-btn--block' hoverClass='ds-hover' onClick={goMine}>去登录</View>
+        </View>
+      ) : setupStage === 'READY' ? (
         <>
           {/* ── 最近创作 ── */}
           <View className='home__sec'>
@@ -393,16 +455,10 @@ export default function HomePage() {
             </View>
           )}
         </>
-      ) : (
-        /* 未登录：原来这里是一整页的早退分支（文字 hero + 登录卡），现在只替换
-           「接着上次拍」这一块。首页其余部分 —— 口号海报、轮播、优秀作品 ——
-           对未登录用户同样是有效内容，尤其作品区：那才是给未登录用户的引流素材。 */
-        <View className='ds-card home__guest home__guest--inline'>
-          <Text className='home__guest-title'>登录后开始创作</Text>
-          <Text className='home__guest-desc'>进入「我的」完成微信一键登录</Text>
-          <View className='ds-btn ds-btn--primary ds-btn--block' hoverClass='ds-hover' onClick={goMine}>去登录</View>
-        </View>
-      )}
+      ) : /* 已登录但门店/菜品还没备好：上面已经有 setup 卡在手把手指引，
+             这里不再出任何卡片 —— ★ 原来这个分支落进「去登录」卡，
+             已登录用户会看到「登录后开始创作」，与上面的 setup 卡自相矛盾（已实测复现） */
+        null}
 
       {/* ── 优秀作品：分类横滑 + 两列网格 + 上拉加载更多 ── */}
       <View className='home__sec'>

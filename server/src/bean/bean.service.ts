@@ -16,6 +16,7 @@ export type LedgerType =
   | 'RECHARGE'
   | 'GRANT'
   | 'FREEZE'
+  | 'FREEZE_ADJUST'
   | 'CONSUME'
   | 'UNFREEZE'
   | 'EXPIRE'
@@ -337,6 +338,57 @@ export async function freeze(
   }
 
   return { duplicated: false, frozen: frozenAfter, available: available - args.amount, reservationId: reservation.id }
+}
+
+/** Add to an existing reservation after the provider's exact cost is known. */
+export async function increaseReservation(
+  tx: Db,
+  args: { merchantId: bigint; requestId: string; amount: bigint; bizType: string; bizId?: string; remark?: string },
+): Promise<void> {
+  if (args.amount <= 0n) return
+  const acc = await lockAccount(tx, args.merchantId)
+  const reservation = await findReservation(tx, args)
+  if (!reservation) throw new Error('补充冻结找不到对应积分预留')
+  const available = acc.balance + acc.grant_balance + acc.grant_register_balance - acc.frozen
+  if (available < args.amount) throw new BeanNotEnoughError(args.amount, available)
+  const grantReserved = acc.grant_balance < args.amount ? acc.grant_balance : args.amount
+  const registerRemaining = args.amount - grantReserved
+  const registerReserved = acc.grant_register_balance < registerRemaining ? acc.grant_register_balance : registerRemaining
+  const cycle = await tx.membership.findFirst({
+    where: { merchantId: args.merchantId, status: 'ACTIVE', endAt: { gt: new Date() } },
+    orderBy: { endAt: 'desc' },
+    select: { id: true },
+  })
+  await tx.beanReservation.update({
+    where: { id: reservation.id },
+    data: {
+      reserved: { increment: args.amount },
+      grantReserved: { increment: grantReserved },
+      grantRegisterReserved: { increment: registerReserved },
+      ...(cycle && grantReserved > 0n && !reservation.membershipId ? { membershipId: cycle.id } : {}),
+      status: 'ACTIVE',
+    },
+  })
+  const frozenAfter = acc.frozen + args.amount
+  await tx.beanAccount.update({
+    where: { merchantId: args.merchantId },
+    data: { frozen: frozenAfter, version: { increment: 1 } },
+  })
+  await writeLedger(tx, {
+    merchantId: args.merchantId,
+    type: 'FREEZE_ADJUST',
+    amount: args.amount,
+    bucket: grantReserved + registerReserved > 0n ? 'GRANT' : 'RECHARGE',
+    grantAmount: grantReserved + registerReserved,
+    grantRegisterAmount: registerReserved,
+    balanceAfter: acc.balance,
+    grantAfter: acc.grant_balance + acc.grant_register_balance,
+    frozenAfter,
+    bizType: args.bizType,
+    bizId: args.bizId,
+    requestId: args.requestId,
+    remark: args.remark ?? `补充预留 ${args.amount} 积分`,
+  })
 }
 
 export interface ConsumeResult {

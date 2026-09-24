@@ -172,5 +172,40 @@ if (localhostHits.length) {
   console.log('    ✓ 未发现 127.0.0.1 / localhost 内联地址')
 }
 
+// ── 7. 跨端隔离：微信产物里不得出现抖音端的代码 ──
+// 平台适配层刻意拆成 src/platform/impl.weapp.ts / impl.tt.ts，由 Taro 的
+// MultiPlatformPlugin 按 TARO_ENV 解析 ⇒ 另一端那份**根本不会进本端产物**。
+// 这条断言守的就是它：既防止包体积被另一端代码吃掉，也防止「一端包里出现另一端的
+// 代码 / 字样」这类平台审核风险（凸先生明确要求过的那一点）。
+//
+// 第一项（金丝雀）是硬断言：impl.tt.ts 把 TT_IMPL_CANARY 插值进了运行时错误消息，
+// 所以只要那份文件进了图，这个串就一定在产物里 —— 不会被压缩器当死代码删掉。
+// 第二项（兜底退化）防的是另一种失效：Taro 若没解析到 impl.weapp.ts，会落到
+// src/platform/impl.ts 兜底文件（该文件在模块顶层直接抛错），产物里就会出现它的标记。
+const TT_CANARY = 'platform-impl-canary:tt' // 必须与 src/platform/impl.tt.ts 的 TT_IMPL_CANARY 一致
+const FALLBACK_MARKER = 'platform-impl-missing:' // src/platform/impl.ts 兜底标记
+const ttLeaks = []
+const fallbackLeaks = []
+for (const f of jsFiles) {
+  const t = readFileSync(f, 'utf8')
+  if (t.includes(TT_CANARY)) ttLeaks.push(f.replace(DIST + '/', ''))
+  if (t.includes(FALLBACK_MARKER)) fallbackLeaks.push(f.replace(DIST + '/', ''))
+}
+console.log('\n[自检] 跨端隔离：')
+if (ttLeaks.length) {
+  fail += 1
+  console.log(`    ✗ 微信产物里出现了抖音端代码（金丝雀 ${TT_CANARY}）：${ttLeaks.join(', ')}`)
+  console.log('      修法：端差异必须走 src/platform/impl.<端>.ts，不要在公共代码里写 if (IS_DOUYIN) ——')
+  console.log('            那会把两端的代码和字样一起编进同一个包。约定见 docs/12-多端架构约定.md')
+}
+if (fallbackLeaks.length) {
+  fail += 1
+  console.log(`    ✗ 适配层退化到兜底文件（${FALLBACK_MARKER}）：${fallbackLeaks.join(', ')}`)
+  console.log('      修法：确认 src/platform/impl.weapp.ts 存在且被正确解析（见 src/platform/index.ts 顶部说明）')
+}
+if (!ttLeaks.length && !fallbackLeaks.length) {
+  console.log('    ✓ 无另一端代码，适配层未退化')
+}
+
 console.log(`\n${fail === 0 ? '★ 自检通过' : `★ 自检失败（${fail} 项）`}`)
 process.exit(fail === 0 ? 0 : 1)

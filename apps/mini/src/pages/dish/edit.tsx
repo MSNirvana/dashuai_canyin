@@ -55,16 +55,17 @@ export default function DishEditPage() {
   const [candidates, setCandidates] = useState<DishItem[]>([])
   const [candidatesFailed, setCandidatesFailed] = useState(false)
 
-  useEffect(() => {
-    if (!storeId) { setLoaded(true); return }
-    // 候选菜与「正在编辑的这条」并行拉取：两者互不依赖，串行只会让页面多等一个来回
-    void listDishes(storeId)
-      .then((all) => {
-        setCandidates(all.filter((d) => d.kind !== 'COMBO'))
-        setCandidatesFailed(false)
-      })
-      .catch(() => setCandidatesFailed(true))
-    if (!id) { setLoaded(true); return }
+  /**
+   * 编辑对象是否加载失败。
+   * ★ 失败绝不能落进「空表单可保存」：空表单提交会带 media=[] 上去，
+   *   而服务端 replaceMedia 是整体替换（先删后插）——该菜品的图片/封面/视频会被**全部清空**。
+   *   这是数据丢失，不是显示问题。所以失败时整页只给「重试」，表单根本不渲染。
+   */
+  const [loadFailed, setLoadFailed] = useState(false)
+
+  const loadDetail = () => {
+    if (!storeId || !id) return
+    setLoadFailed(false)
     getDish(storeId, id).then(async (d: DishItem) => {
       const legacy: DishMedia[] = d.media?.length ? d.media : [...(d.coverKey ? [{ type: 'IMAGE' as const, cosKey: d.coverKey, sort: 0 }] : []), ...(d.videoKey ? [{ type: 'VIDEO' as const, cosKey: d.videoKey, sort: 0 }] : [])]
       const media = await Promise.all(legacy.map(toLocalMedia))
@@ -82,7 +83,20 @@ export default function DishEditPage() {
         originalPrice: d.originalPriceFen === null || d.originalPriceFen === undefined ? '' : fenToYuan(d.originalPriceFen),
         combo: (d.comboItems ?? []).map((it) => ({ dishId: it.dishId, name: it.name, quantity: it.quantity })),
       })
-    }).catch(() => Taro.showToast({ title: '菜品不存在', icon: 'none' })).finally(() => setLoaded(true))
+    }).catch(() => setLoadFailed(true)).finally(() => setLoaded(true))
+  }
+
+  useEffect(() => {
+    if (!storeId) { setLoaded(true); return }
+    // 候选菜与「正在编辑的这条」并行拉取：两者互不依赖，串行只会让页面多等一个来回
+    void listDishes(storeId)
+      .then((all) => {
+        setCandidates(all.filter((d) => d.kind !== 'COMBO'))
+        setCandidatesFailed(false)
+      })
+      .catch(() => setCandidatesFailed(true))
+    if (!id) { setLoaded(true); return }
+    loadDetail()
   }, [id, storeId])
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((f) => ({ ...f, [key]: value }))
@@ -130,15 +144,69 @@ export default function DishEditPage() {
   }
 
   const pickImage = async () => {
-    if (uploading) return; const remaining = 3 - form.images.length; if (remaining <= 0) { Taro.showToast({ title: '图片最多上传 3 个', icon: 'none' }); return }; setUploading(true)
-    try { const r = await Taro.chooseImage({ count: remaining, sizeType: ['compressed'], sourceType: ['album', 'camera'] }); const next = [...form.images]; for (const file of r.tempFiles) { const asset = await uploadMediaFile({ filePath: file.path, storeId, type: 'IMAGE', sizeBytes: file.size }); const preview = await getDishMediaUrl(asset.cosKey); next.push({ type: 'IMAGE', cosKey: asset.cosKey, sort: next.length, url: preview.url || '' }) }; set('images', refreshSort(next)); Taro.showToast({ title: '图片已上传', icon: 'success' }) } catch { Taro.showToast({ title: '图片上传失败', icon: 'none' }) } finally { setUploading(false) }
+    if (uploading) return
+    const remaining = 3 - form.images.length
+    if (remaining <= 0) { Taro.showToast({ title: '图片最多上传 3 个', icon: 'none' }); return }
+    // ★ 选择与上传分两段 try：chooseImage 在**用户主动取消**时也 reject，
+    //   合在一个 catch 里会把「取消」报成「图片上传失败」（每次都弹一次）。
+    let files: { path: string; size: number }[]
+    try {
+      files = (await Taro.chooseImage({ count: remaining, sizeType: ['compressed'], sourceType: ['album', 'camera'] })).tempFiles
+    } catch {
+      return
+    }
+    setUploading(true)
+    try {
+      const next = [...form.images]
+      for (const file of files) {
+        const asset = await uploadMediaFile({ filePath: file.path, storeId, type: 'IMAGE', sizeBytes: file.size })
+        const preview = await getDishMediaUrl(asset.cosKey)
+        next.push({ type: 'IMAGE', cosKey: asset.cosKey, sort: next.length, url: preview.url || '' })
+      }
+      set('images', refreshSort(next))
+      Taro.showToast({ title: '图片已上传', icon: 'success' })
+    } catch {
+      Taro.showToast({ title: '图片上传失败', icon: 'none' })
+    } finally {
+      setUploading(false)
+    }
   }
   const pickVideo = async () => {
-    if (uploading) return; const remaining = 3 - form.videos.length; if (remaining <= 0) { Taro.showToast({ title: '视频最多上传 3 个', icon: 'none' }); return }; setUploading(true)
-    try { const r = await Taro.chooseMedia({ count: remaining, mediaType: ['video'], sourceType: ['album', 'camera'], maxDuration: 60 }); const next = [...form.videos]; for (const file of r.tempFiles) { const asset = await uploadMediaFile({ filePath: file.tempFilePath, storeId, type: 'VIDEO', durationMs: file.duration ? file.duration * 1000 : undefined, sizeBytes: file.size }); const preview = await getDishMediaUrl(asset.cosKey); next.push({ type: 'VIDEO', cosKey: asset.cosKey, sort: next.length, url: preview.url || '' }) }; set('videos', refreshSort(next)); Taro.showToast({ title: '视频已上传', icon: 'success' }) } catch { Taro.showToast({ title: '视频上传失败', icon: 'none' }) } finally { setUploading(false) }
+    if (uploading) return
+    const remaining = 3 - form.videos.length
+    if (remaining <= 0) { Taro.showToast({ title: '视频最多上传 3 个', icon: 'none' }); return }
+    let files: { tempFilePath: string; size: number; duration?: number }[]
+    try {
+      files = (await Taro.chooseMedia({ count: remaining, mediaType: ['video'], sourceType: ['album', 'camera'], maxDuration: 60 })).tempFiles
+    } catch {
+      return
+    }
+    setUploading(true)
+    try {
+      const next = [...form.videos]
+      for (const file of files) {
+        const asset = await uploadMediaFile({ filePath: file.tempFilePath, storeId, type: 'VIDEO', durationMs: file.duration ? file.duration * 1000 : undefined, sizeBytes: file.size })
+        const preview = await getDishMediaUrl(asset.cosKey)
+        next.push({ type: 'VIDEO', cosKey: asset.cosKey, sort: next.length, url: preview.url || '' })
+      }
+      set('videos', refreshSort(next))
+      Taro.showToast({ title: '视频已上传', icon: 'success' })
+    } catch {
+      Taro.showToast({ title: '视频上传失败', icon: 'none' })
+    } finally {
+      setUploading(false)
+    }
   }
-  const removeImage = (index: number) => set('images', refreshSort(form.images.filter((_, i) => i !== index)))
-  const removeVideo = (index: number) => set('videos', refreshSort(form.videos.filter((_, i) => i !== index)))
+  // ★ 上传期间禁止删除：上面的上传循环结束时会用「选取那一刻的快照」整体覆盖列表，
+  //   这期间删掉的图会被旧快照带回来（复活）。
+  const removeImage = (index: number) => {
+    if (uploading) { Taro.showToast({ title: '上传中，请稍候再删', icon: 'none' }); return }
+    set('images', refreshSort(form.images.filter((_, i) => i !== index)))
+  }
+  const removeVideo = (index: number) => {
+    if (uploading) { Taro.showToast({ title: '上传中，请稍候再删', icon: 'none' }); return }
+    set('videos', refreshSort(form.videos.filter((_, i) => i !== index)))
+  }
   // ★ 与 pages/dish/detail.tsx 是同一处坑：被点的那张必须排到 urls[0]。
   // previewImage 的 current 只收「图片链接」、靠能在 urls 里精确匹配到来定位；
   // 匹配不上（或平台实现忽略 current）时会静默回落到 urls[0]，
@@ -155,6 +223,8 @@ export default function DishEditPage() {
   }
 
   const onSubmit = async () => {
+    // ★ 数据没加载成功就**绝不保存**：此刻表单是空的，保存 = 清空原有数据（见 loadFailed 的说明）
+    if (loadFailed) { Taro.showToast({ title: '菜品还没加载成功，不能保存', icon: 'none' }); return }
     if (!form.name.trim()) { Taro.showToast({ title: '请填写名称', icon: 'none' }); return }
     if (!storeId) { Taro.showToast({ title: '缺少门店参数', icon: 'none' }); return }
     if (saving || uploading) return
@@ -196,6 +266,14 @@ export default function DishEditPage() {
   }
 
   if (!loaded) return <View className='dish-edit dish-edit--loading'>加载中…</View>
+  // ★ 加载失败：整页只给重试，绝不渲染空表单（空表单保存 = 清空原有数据，见 loadFailed）
+  if (loadFailed) return <View className='dish-edit dish-edit--loading'>
+    <View style={{ padding: '80rpx 40rpx', textAlign: 'center' }}>
+      <Text style={{ display: 'block', marginBottom: '16rpx' }}>菜品加载失败，请检查网络后重试。</Text>
+      <Text style={{ display: 'block', marginBottom: '32rpx' }}>失败时不显示表单，避免误保存清空原有数据。</Text>
+      <View className='ds-btn ds-btn--primary' style={{ display: 'inline-flex' }} onClick={() => { setLoaded(false); loadDetail() }}><Text>重新加载</Text></View>
+    </View>
+  </View>
   // 坏编号：既不能请求，也不能退化成「新建」（那会凭空多出一道菜）。唯一的真出路是回列表重进。
   if (idBroken) return <View className='dish-edit dish-edit--loading'>链接里的菜品编号有误，继续保存会新建出一道新菜品。请回到菜品列表重新进入。</View>
 

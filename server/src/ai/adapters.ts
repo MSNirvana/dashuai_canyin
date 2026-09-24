@@ -314,9 +314,8 @@ export const mockAdapter: AiAdapter = async (p) => {
  *
  *   2. **没有 token 用量**：实测返回体 `usage: null`（中转站不回落上游的计费字段）。
  *      因此 `usage` 恒为 0 —— 也就意味着**按 token 结算会把出图算成 0 积分**。
- *      出图场景的计费走「按张固定价」（网关把 ai_scene.bean_price 作为该次调用的价格，
- *      见 gateway.ts 的 fixedBeans 与 ai.service.ts 的 settleAiCharge）。
- *      ⚠ 所以图像场景的 `bean_price` **不是**「单次上限」，而是**报价本身**，别当成安全网随手调小。
+ *      出图场景的计费走模型的按张实际成本（AiModel.unitPriceMicroFen），再乘统一积分系数；
+ *      场景 bean_price 仅用于初始预留。
  *
  *   3. **结果是 URL 或 base64，不是文本**：中转站给的是 `data[0].url`
  *      （域名通常与 API 域名不同，本机/国内直连可能被 SNI 拦，见下面的取样说明）；

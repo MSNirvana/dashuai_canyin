@@ -4,7 +4,7 @@
  * 为什么需要它：本轮（2026-09-15）踩到的坑是「配置看起来完全正确，实际一分没扣」——
  *   · `charge_mode = COST_BASED` 在库里有，但**代码从来没读过**它（死配置）
  *   · 三个模型单价是 0，`costFen = 0` ⇒ `beansFromCost` 直接 return 0n ⇒ 扣 0 积分
- *   · 场景单次上限（3/5/10 积分）远低于真实成本 ⇒ 就算补上单价也只会被截断成封顶值
+ *   · 场景单次上限（3/5/10 积分）远低于真实成本 ⇒ 旧实现会被截断；当前实现把它作为预冻结额，结算时补充差额
  * 这三件事在后台界面上都看不出来。所以做一个只读自检，把「实际生效的」打出来。
  *
  * 用法：npx tsx scripts/billing-status.ts   （或 npm run billing:status）
@@ -62,33 +62,34 @@ async function main() {
     include: { provider: { select: { code: true } } },
     orderBy: [{ enabled: 'desc' }, { id: 'asc' }],
   })
-  const priced = models.filter((m) => m.enabled && (m.inputPricePerMtok > 0 || m.outputPricePerMtok > 0))
+  const priced = models.filter((m) => m.enabled && (m.inputPricePerMtok > 0 || m.outputPricePerMtok > 0 || m.unitPriceMicroFen > 0n))
   for (const m of models) {
-    const zero = m.inputPricePerMtok === 0 && m.outputPricePerMtok === 0
-    // 0 单价本身无害，**启用中的** 0 单价才是风险：走它 = 平台全额补贴
-    const risk = !m.enabled ? '停用（不影响计费）' : zero ? '★ 0 单价且启用中＝走它扣 0 积分' : ''
+    const zero = m.inputPricePerMtok === 0 && m.outputPricePerMtok === 0 && m.unitPriceMicroFen === 0n
+    // 0 单价本身无害，**启用中的** 0 单价会被网关拦截，避免平台无记录地承担上游成本。
+    const risk = !m.enabled ? '停用（不影响计费）' : zero ? '★ 未配置成本费率＝网关会阻止真实调用' : ''
+    const imageRate = m.unitPriceMicroFen > 0n ? ` image=${m.unitPriceMicroFen}微分/张` : ''
     console.log(
       `  ${(m.enabled ? '● ' : '○ ')}${m.provider.code.padEnd(18)} ${m.modelCode.padEnd(18)} in=${String(
         m.inputPricePerMtok,
-      ).padStart(5)} out=${String(m.outputPricePerMtok).padStart(5)} ${risk}`,
+      ).padStart(5)} out=${String(m.outputPricePerMtok).padStart(5)}${imageRate} ${risk}`,
     )
   }
-  console.log(`  （● 启用 / ○ 停用；启用中且单价 >0 的模型数 = ${priced.length}）`)
+  console.log(`  （● 启用 / ○ 停用；启用中且已配置成本费率的模型数 = ${priced.length}）`)
 
-  console.log('\n════ 三、场景：上限（＝预冻结额＝单次扣费硬上限）vs 实测应扣 ════')
+  console.log('\n════ 三、场景：预冻结额 vs 实测应扣（超出时结算补充冻结差额）════')
   const scenes = await prisma.aiScene.findMany({ orderBy: { id: 'asc' } })
   console.log(`  ${'场景'.padEnd(22)}${'上限(积分)'.padEnd(10)}${'实测应扣(参照)'.padEnd(16)}说明`)
-  let truncated = 0
+  let needsTopUp = 0
   for (const s of scenes) {
     const cap = Number(s.beanPrice)
     const m = MEASURED[s.code]
     let note = '（无实测参照）'
     if (m && m.beans !== undefined) {
       if (cap < m.beans) {
-        note = `会被截断（平台承担 ${m.beans - cap} 积分）`
-        truncated++
+        note = `预冻结不足 ${m.beans - cap}，结算时补充冻结 ✓`
+        needsTopUp++
       } else {
-        note = '不截断 ✓'
+        note = '预冻结覆盖参照成本 ✓'
       }
     } else if (m) {
       // 新场景：条目在表里但还没实测过 —— 必须区别于「表里根本没这个场景」，否则
@@ -141,14 +142,12 @@ async function main() {
   if (priced.length === 0) {
     console.log('  ✗ 所有模型单价为 0 ⇒ costFen 恒为 0 ⇒ **商户扣 0 积分，平台全额补贴**。')
     console.log('    要按成本计费：TB_SET_PRICES=1 重跑 setup-ai-channels.ts')
-  } else if (truncated > 0) {
-    console.log(`  △ 单价已就位，但 ${truncated}/${scenes.length} 个场景的上限低于实测应扣 ⇒`)
-    console.log('    实际扣费是「封顶值」而不是「成本 × 系数」。')
-    console.log('    要真正按成本扣：TB_SET_CAPS=1 重跑 setup-ai-channels.ts')
+  } else if (needsTopUp > 0) {
+    console.log(`  ✓ 单价已就位；${needsTopUp}/${scenes.length} 个场景的参照成本高于初始预冻结额。`)
+    console.log('    结算事务会按实际成本 × 系数补充冻结并扣费，不会静默按场景值截断。')
   } else {
     console.log('  ✓ 单价已就位、上限高于实测应扣 ⇒ **按「成本 × 系数」扣费已生效**。')
-    console.log('    注意：上限只是财务安全网，成本波动可达 15 倍（看思考 token），')
-    console.log('    被击穿的那部分记 absorbedBeans（平台承担），这是设计如此。')
+    console.log('    注意：场景值只是预冻结额，成本波动较大时仍会在结算时补充冻结。')
   }
   console.log('')
 }
