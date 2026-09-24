@@ -37,6 +37,18 @@ export interface AiCallParams {
   timeoutMs: number
   /** 场景码：MOCK 协议据此返回不同形态的样例文本（文案 vs 分镜 JSON） */
   sceneCode?: string
+  /**
+   * 参考图（`data:image/...` 或 http(s) 绝对地址）。**只有两类场景会传**：
+   *   · 图像场景（`kind='IMAGE'`）：作为「图生图」的底图 ⇒ 适配器改打 `/images/edits`；
+   *   · 视觉文本场景（如 `publish_cover_pick`）：作为多模态输入 ⇒ user 消息带 image_url。
+   *
+   * ★ 不传时，调用行为与加这个字段**之前完全一致** —— 现有 15 个场景一行都不受影响。
+   * ★ 上游要求的是**小图**：这些字符串会原样进 `ai_call_log.prompt_snapshot`
+   *   （只截前 8000 字）并被拼进请求体。实测 `/images/edits` 接受
+   *   `images:[{image_url}]` 且会真正解码校验（非法图回 `IMAGE_INPUT_DECODE_FAILED`），
+   *   支持 JPEG / PNG / WebP。所以调用方必须先把帧压到几百 KB 以内再传。
+   */
+  images?: string[]
 }
 
 export class AiCallError extends Error {
@@ -91,6 +103,21 @@ function isBlank(s: string): boolean {
 /** OpenAI 兼容协议：DeepSeek / 通义 / 豆包 / 混元 / 多数国产模型 */
 export const openaiCompatible: AiAdapter = async (p) => {
   const url = joinUrl(p.baseUrl, '/chat/completions')
+  /**
+   * 带参考图时，user 的 content 从「一个字符串」变成**内容块数组** ——
+   * 这是 OpenAI 多模态消息的标准形态，也是本仓库唯一的多模态入口
+   * （实测 tokenbox 的 gpt-5.5 接受它并正常作答）。
+   *
+   * ★ 无图时**必须**仍然发纯字符串：有些兼容端点对「只有一个 text 块的数组」处理不一致，
+   *   而这条路径承载着全部 5 个文案场景 + 分镜 + 编辑决策，不能为多模态去冒这个险。
+   */
+  const refs = (p.images ?? []).map((u) => u.trim()).filter(Boolean)
+  const userContent = refs.length
+    ? [
+        { type: 'text', text: p.user },
+        ...refs.map((imageUrl) => ({ type: 'image_url', image_url: { url: imageUrl } })),
+      ]
+    : p.user
   const data = (await postJson(url, {
     method: 'POST',
     headers: {
@@ -101,7 +128,7 @@ export const openaiCompatible: AiAdapter = async (p) => {
       model: p.model,
       messages: [
         ...(p.system ? [{ role: 'system', content: p.system }] : []),
-        { role: 'user', content: p.user },
+        { role: 'user', content: userContent },
       ],
       temperature: p.temperature ?? 0.7,
       max_tokens: p.maxOutputTokens ?? 2048,
@@ -328,9 +355,30 @@ export const mockAdapter: AiAdapter = async (p) => {
  * `size` 从环境变量读（`AI_IMAGE_SIZE`），默认 `1024x1365`：
  *   实测该中转站**接受**这个非标准尺寸，并按 3:4 出图（route 里 native_size=864x1152、
  *   最终落盘 1086x1448）。而标准竖版 `1024x1536` 是 2:3 —— 不是产品要的封面比例。
+ *
+ * ──────────────── ★★ 2026-09-24 增补：带参考图时改走「图生图」 ────────────────
+ *
+ * `p.images` 非空时改打 `POST {baseUrl}/images/edits`，body 形如
+ *   { model, prompt, size, images: [{ image_url }] }
+ * 这是**实测出来的**参数形状，三条证据缺一不可（2026-09-24，tokenbox / gpt-image-2）：
+ *   ① 端点存在：POST /images/edits 不带 images ⇒ 400 `images[].image_url is required`
+ *      （不是 404，说明端点是真的；换成 `image` 这个键名也报同一句，即键名必须是复数数组）
+ *   ② 它会真解码：images[].image_url 给一段坏 base64 ⇒
+ *      400 `IMAGE_INPUT_DECODE_FAILED`「参考图不是有效的 JPEG、PNG 或 WebP 图片」
+ *   ③ 能出图：传一张真实竖版帧 + 中文标题指令 ⇒ 200、34s、返回 data[0].url，
+ *      route 里 aspect_ratio=3:4 / native_size=864x1152，与纯文生图一致
+ * 另外 `n` **只在文生图路径上发**：edits 路径实测不需要它（也不需要其它参数）。
+ *
+ * ⚠ 图生图是「**以参考图重画**」，不是像素级贴字/贴图：主体与氛围会保留，
+ *   但皮肤、纹理等细节会被模型重绘（观感偏「美颜」）。要像素级保真就不要走这条路。
+ *   实测若 prompt 里不下「禁止增删画面元素」的铁律，模型会**按标题脑补**
+ *   （标题写「红烧肉」，画面里就凭空多出一盆红烧肉）—— 约束写法见
+ *   prisma/prompts.ts 的 PUBLISH_COVER_PROMPT。
  */
 export const openaiImage: AiAdapter = async (p) => {
-  const url = joinUrl(p.baseUrl, '/images/generations')
+  const refs = (p.images ?? []).map((u) => u.trim()).filter(Boolean)
+  const isEdit = refs.length > 0
+  const url = joinUrl(p.baseUrl, isEdit ? '/images/edits' : '/images/generations')
   const size = (process.env.AI_IMAGE_SIZE ?? '1024x1365').trim()
   const data = (await postJson(url, {
     method: 'POST',
@@ -338,7 +386,11 @@ export const openaiImage: AiAdapter = async (p) => {
       'content-type': 'application/json',
       authorization: `Bearer ${p.apiKey}`,
     },
-    body: JSON.stringify({ model: p.model, prompt: p.user, n: 1, size }),
+    body: JSON.stringify(
+      isEdit
+        ? { model: p.model, prompt: p.user, size, images: refs.map((image_url) => ({ image_url })) }
+        : { model: p.model, prompt: p.user, n: 1, size },
+    ),
     timeoutMs: p.timeoutMs,
   })) as any
 

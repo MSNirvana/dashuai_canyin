@@ -37,6 +37,14 @@ export interface RunSceneParams {
   variables: Record<string, string>
   merchantId?: bigint
   requestId: string
+  /**
+   * 参考图（data URI / http(s) 地址），透传给适配器。见 adapters.ts 的 `AiCallParams.images`。
+   *
+   * ★ 不传时全链路行为与加这个字段之前一致 —— 现有场景零影响。
+   * ★ 它**不进** `business_request.payload`（那是幂等/审计记录，塞 data URI 会把行撑爆）：
+   *   幂等键是 (merchantId, operation, requestId)，与参考图无关。
+   */
+  images?: string[]
 }
 
 /** 模板变量替换：{{key}} */
@@ -235,6 +243,9 @@ export class AiGateway {
             reasoningEffort: LOW_REASONING_SCENES.has(scene.code) ? 'low' : undefined,
             timeoutMs: scene.timeoutMs,
             sceneCode: scene.code,
+            // 参考图：图像场景 → 图生图底图；视觉文本场景 → 多模态输入。
+            // 未传时是 undefined，适配器侧走原来的纯文本 / 纯文生图路径。
+            images: params.images?.length ? params.images : undefined,
           })
 
           const costMicroFen = wantImage

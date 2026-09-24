@@ -34,6 +34,20 @@ export const SCENE = {
   //   把文本模型配进它的候选链，网关会在调用前就跳过并给出明确原因，不会「拿一段文字当图片」。
   publish_material: 'publish_material',
   publish_cover: 'publish_cover',
+  /**
+   * 发布素材 · 封面选帧（2026-09-24 新增）。
+   *
+   * ★ 它是**视觉文本场景**（`kind='TEXT'`，走 `chat/completions`），不是图像场景：
+   *   输入是若干张候选帧 + 一段说明，输出是一句 JSON（选第几张、为什么），
+   *   真正出图的是 `publish_cover`。
+   * ★ 所以它**不能**进 `IMAGE_SCENE_CODES`（那会让网关按图像协议去调它），
+   *   但它必须能收到 `images` —— 网关把它作为多模态输入发给 chat 适配器
+   *   （见 adapters.ts 里 `openaiCompatible` 的 userContent 分支）。
+   * ★ 为什么单独一个场景而不是塞进 `publish_cover` 的提示词里：
+   *   出图模型选不了帧（它只吃参考图不会比较），而「比较 N 张图挑一张」
+   *   与「按设计稿出图」是两种能力、两个模型、两笔账。
+   */
+  publish_cover_pick: 'publish_cover_pick',
   // AI 剪辑决策（EDL）—— 让模型决定「每个镜头各自留多长」以及整片的节奏/转场/字幕/配乐。
   // ★ 它在链路里的位置：AI 档开始合成、素材探测完之后、排轨之前（见 chatcut-driver.ts）。
   // ★ 输出是**结构化 JSON**（结构定义在 render/edl.ts），不是给人读的文案 ——
@@ -61,6 +75,7 @@ export const LIVE_SCENE_CODES: readonly SceneCode[] = [
   SCENE.storyboard_generate,
   SCENE.publish_material,
   SCENE.publish_cover,
+  SCENE.publish_cover_pick,
   SCENE.edit_plan,
 ]
 

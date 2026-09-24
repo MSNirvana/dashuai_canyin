@@ -54,6 +54,15 @@ export interface BilledSceneParams {
   requestId: string
   variables: Record<string, string>
   bizId?: string
+  /**
+   * 参考图（data URI / http(s) 地址），一路透传到适配器。见 adapters.ts 的 `AiCallParams.images`。
+   *
+   * ★ 刻意**不进** `claimBusinessRequest` 的 payload：那里是幂等/审计记录，
+   *   一行 data URI 就有几十 KB，塞进去会把 business_request 撑爆，
+   *   而幂等键本来就是 (merchantId, operation, requestId)，与参考图无关。
+   * ★ 不传时行为与加这个字段之前完全一致。
+   */
+  images?: string[]
 }
 
 /**
@@ -345,6 +354,7 @@ export async function runBilledScene(
     variables: params.variables,
     merchantId: params.merchantId,
     requestId: params.requestId,
+    images: params.images,
   })
 
   const cap = await reservedCap()

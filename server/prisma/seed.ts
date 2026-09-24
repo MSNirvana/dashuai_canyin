@@ -704,7 +704,10 @@ const HOME_CAROUSEL_SEED = [
     id: 'seed',
     image: 'https://dashuai-1485028436.cos.ap-beijing.myqcloud.com/static/mini/home/create-hero.jpg',
     kicker: '从一道菜开始',
-    title: '做一条能带来客人的视频',
+    // ★ 2026-09-24 按需求改标题（原「做一条能带来客人的视频」）。
+    // ⚠ 这里只是**新建行**时的起点：线上库当前没有 home 分组，这条 seed 不会自动补
+    //   到线上；线上渲染的是 apps/mini/src/services/home.ts::FALLBACK_SLIDE。
+    title: '让餐饮门店轻松拍视频',
     desc: '', // 副标题已按需求下线（2026-09-16）
     actionText: '开始创作',
     link: 'CREATE',

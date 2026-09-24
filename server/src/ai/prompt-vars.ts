@@ -101,7 +101,16 @@ const PUBLISH_VARS = [...COPY_VARS, 'copyText'] as const
  *   迟早出现「文本场景说拍红烧肉、图像场景按 dishName 拍别的菜」这种自相矛盾，
  *   而且**不会报错**。
  */
-const PUBLISH_COVER_VARS = ['coverPrompt'] as const
+const PUBLISH_COVER_VARS = ['coverPrompt', 'coverTitle'] as const
+
+/**
+ * 发布素材 · 封面选帧场景：只吃**候选帧的说明文字**（哪张来自哪个镜头、那个镜头想拍什么）。
+ *
+ * ★ 候选帧图片本身**不是变量**，走 `images` 参数（二进制图塞进模板只会变成一大段 base64）。
+ * ★ 它也**不该**吃到门店/菜品变量：选帧只判画面好坏，不判内容对不对
+ *   —— 让模型看着店名去挑帧，等于给它一个与画面无关的干扰项。
+ */
+const PUBLISH_PICK_VARS = ['pickContext'] as const
 
 /**
  * 场景 → 可用变量白名单。
@@ -123,6 +132,7 @@ export const SCENE_VARIABLES: Record<string, readonly string[]> = {
   rhythm_detect: SYNTH_VARS,
   publish_material: PUBLISH_VARS,
   publish_cover: PUBLISH_COVER_VARS,
+  publish_cover_pick: PUBLISH_PICK_VARS,
   edit_plan: EDIT_PLAN_VARS,
 }
 

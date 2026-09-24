@@ -30,8 +30,9 @@ const must = (name, r, expectCode = 0) => {
   return r.json
 }
 
-// 冒烟脚本会反复建门店，而门店数受 store.max_per_merchant 限制（默认 10）。
-// 软删除（deletedAt）不计入上限，所以在开始与结束时清理本次前缀的门店，保证可重复运行。
+// ★ 单店模型（2026-09-24）下，正常账号只有一家门店，而且它一定是**默认门店** ——
+//   默认门店删不掉（服务层刻意拦住）。所以本函数只对**历史遗留**的多门店数据有意义：
+//   清理掉非默认的「冒烟门店 / 隔离校验门店」，让这些老账号能回到单店状态。
 const TEST_STORE_PREFIXES = ['冒烟门店', '隔离校验门店']
 
 async function pruneTestStores(token) {
@@ -66,13 +67,26 @@ if (process.env.CLEAN_TEST_DATA === 'true') {
   if (pruned) console.log(`   已清理历史冒烟门店 ${pruned} 家`)
 }
 
-// 3. 门店
-const store = must('POST /stores', await api('POST', '/stores', {
-  token,
-  body: { name: `冒烟门店 ${Date.now() % 10000}`, category: '川菜', city: '成都', address: '高新区天府三街 1 号', isDefault: true },
-})).data
-const stores = must('GET /stores', await api('GET', '/stores', { token }))
-step('门店列表包含新门店', Array.isArray(stores.data) && stores.data.some((s) => s.id === store.id))
+// 3. 门店（★ 单店模型：一个账号只有一家门店）
+//    已有门店就**复用**，没有才创建 —— 否则这个脚本第二次跑就会撞上「库存已有一家」而变红。
+//    复用意味着本脚本往后的菜品 / 创作会落在这个账号唯一的那家门店下（本地 dev 账号，可接受）。
+const storeList = must('GET /stores', await api('GET', '/stores', { token })).data ?? []
+let store = storeList[0]
+if (store) {
+  console.log(`   复用账号已有门店 id=${store.id} ${store.name}`)
+} else {
+  store = must('POST /stores', await api('POST', '/stores', {
+    token,
+    body: { name: `冒烟门店 ${Date.now() % 10000}`, category: '川菜', city: '成都', address: '高新区天府三街 1 号' },
+  })).data
+  const after = must('GET /stores（创建后可读回）', await api('GET', '/stores', { token }))
+  step('门店列表包含新门店', Array.isArray(after.data) && after.data.some((s) => s.id === store.id))
+}
+
+// 3b. 单店上限：已经有门店的账号**再建第二家必须被拒**（2003）
+must('POST /stores 第二家应被拒（一个账号只能一家门店）', await api('POST', '/stores', {
+  token, body: { name: `冒烟门店-dup-${Date.now() % 10000}`, category: '川菜' },
+}), 2003)
 
 // 4. 菜品
 const dish = must('POST /stores/:id/dishes', await api('POST', `/stores/${store.id}/dishes`, {
@@ -88,12 +102,9 @@ must('PUT /stores/:id/persona', await api('PUT', `/stores/${store.id}/persona`, 
 const personaRead = must('GET /stores/:id/persona', await api('GET', `/stores/${store.id}/persona`, { token })).data
 step('人设写入后可读回', personaRead?.bossTags === '川菜老师傅,20 年掌勺,爱唠嗑,宠粉' && personaRead?.activity === '到店报暗号「大帅」送例汤')
 
-// 5b. 人设按门店隔离（门店是最高层：第二家门店不应读到第一家的老板人设）
-const store2 = must('POST /stores（第二家，用于隔离校验）', await api('POST', '/stores', {
-  token, body: { name: `隔离校验门店 ${Date.now() % 10000}`, category: '烧烤' },
-})).data
-const persona2 = must('GET 第二家门店人设', await api('GET', `/stores/${store2.id}/persona`, { token }))
-step('人设按门店隔离', persona2.code === 0 && persona2.data?.bossTags == null && persona2.data?.activity == null, `第二家 bossTags=${JSON.stringify(persona2.data?.bossTags)}`)
+// 5b. 原「人设按门店隔离」用例（建第二家门店再读它的空人设）已随**单店模型**下线：
+//     一个账号只能有一家门店（见上面的单店上限断言），第二家门店根本建不出来，
+//     「两家店之间会不会串人设」也就无从验证了。若将来恢复多门店，这个用例要一起加回来。
 
 // 6. 创作
 const creation = must('POST /creations', await api('POST', '/creations', {
