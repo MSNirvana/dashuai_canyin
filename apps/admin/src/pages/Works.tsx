@@ -93,7 +93,7 @@ const TRACK_OPTIONS = [
   { label: '人设型', value: 'PERSONA' },
   { label: '干货型', value: 'KNOWLEDGE' },
   { label: '产品型', value: 'PRODUCT' },
-  { label: '真诚推荐型', value: 'RECOMMEND' },
+  { label: '种草型', value: 'RECOMMEND' },
 ]
 
 /**

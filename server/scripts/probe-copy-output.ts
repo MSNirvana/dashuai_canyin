@@ -142,7 +142,7 @@ async function pickStore() {
       console.log('本次有套餐信息（价格来自入参，属允许）')
     }
   } else if (sceneArg === 'copy_recommend') {
-    // 真诚推荐型由老板本人介绍；拦截明显的虚构探店叙述。
+    // 种草型由老板本人介绍；拦截明显的虚构探店叙述。
     const inventedVisit = ['朋友带我去', '我前天去吃', '跟朋友来打卡', '路过这家店'].filter(has)
     console.log(`★ 虚构探店口吻：${inventedVisit.length ? inventedVisit.join('、') + '  ← 应改为老板真实介绍' : '未发现常见模板句'}`)
     // 套餐变量为空时，检测到价格只作人工核对提示；价格也可能合法地来自菜品简介或卖点。

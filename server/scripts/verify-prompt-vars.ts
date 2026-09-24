@@ -96,7 +96,7 @@ const TEMPLATES: Array<{ code: string; label: string; tpl: string; fallback: str
   { code: 'copy_persona', label: '文案·人设型', tpl: COPY_PERSONA_PROMPT, fallback: COPY_PERSONA_FALLBACK },
   { code: 'copy_knowledge', label: '文案·干货型', tpl: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK },
   { code: 'copy_product', label: '文案·产品型', tpl: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK },
-  { code: 'copy_recommend', label: '文案·真诚推荐型', tpl: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK },
+  { code: 'copy_recommend', label: '文案·种草型', tpl: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK },
   { code: 'storyboard_generate', label: '分镜', tpl: STORY_PROMPT, fallback: STORY_FALLBACK },
 ]
 
@@ -835,7 +835,7 @@ for (const t of TEMPLATES.filter((x) => x.code.startsWith('copy_'))) {
 const recommendTpl = TEMPLATES.find((t) => t.code === 'copy_recommend')!.tpl
 check(
   recommendTpl.includes('不要假扮消费者') && recommendTpl.includes('编试吃反应'),
-  '真诚推荐型由老板说明有依据的推荐理由，不虚构消费经历或试吃反应',
+  '种草型由老板说明有依据的推荐理由，不虚构消费经历或试吃反应',
 )
 const knowledgeTpl = TEMPLATES.find((t) => t.code === 'copy_knowledge')!.tpl
 check(
@@ -849,7 +849,7 @@ check(
 )
 check(
   !recommendTpl.includes('顾客视角') && !recommendTpl.includes('朋友带我去') && !recommendTpl.includes('装成食客'),
-  '真诚推荐型模板不含旧版顾客视角定位或示例',
+  '种草型模板不含旧版顾客视角定位或示例',
 )
 check(
   TEMPLATES.every((t) => !/朋友带我去|我前天去吃|人均不过几十|今天到店还有专属福利/.test(t.fallback)),

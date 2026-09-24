@@ -176,7 +176,7 @@ const PAGE_GUIDES: Array<{ match: string; content: PageGuideContent }> = [
       intro: '这里管理小程序里展示的优秀案例。发布前先确认视频、标题和封面都正常。',
       items: [
         { term: '上架 / 下架', description: '控制作品是否展示给小程序用户。' },
-        { term: '文案类型', description: '流量款、人设型、干货型、产品型和真诚推荐型。' },
+        { term: '文案类型', description: '流量款、人设型、干货型、产品型和种草型。' },
         { term: '分镜复杂度', description: '决定分镜大致有几个镜头，不代表一定要拍满。' },
       ],
     },

@@ -20,21 +20,24 @@ export const SCENE_COPY = SCENE.copy_generate
 export const SCENE_STORYBOARD = SCENE.storyboard_generate
 
 /**
- * 文案五款：流量款 + 四款菜品文案（人设型 / 干货型 / 产品型 / 真诚推荐型），
+ * 文案五款：流量款 + 四款菜品文案（人设型 / 干货型 / 产品型 / 种草型），
  * 各对应一个可在后台配置提示词的 AI 场景。
  *
  * ★ 2026-09-21 四款改型：删掉「介绍款（INTRO）」与「质量款（QUALITY）」，
  *   换成「人设型（PERSONA）/ 干货型（KNOWLEDGE）/ 产品型（PRODUCT）」，
- *   并把「真诚推荐型（RECOMMEND）」保留场景码、模板整份重写。
+ *   并把 `RECOMMEND` 保留场景码、模板整份重写。
+ * ★ 2026-09-24 **只改名**：`RECOMMEND` 的中文名由「真诚推荐型」改为「种草型」，
+ *   **标识符与场景码一个都没动**（`RECOMMEND` / `copy_recommend` 仍是原值）。
+ *   看到代码里的 `RECOMMEND`、`copy_recommend`，界面上就是「种草型」。
  *   四型的分界线是**内容重点**：人设讲老板真实做事方式／干货讲有依据的行业知识／
- *   产品讲清在售内容／真诚推荐由老板讲一个有依据的推荐理由。
+ *   产品讲清在售内容／种草型由老板讲一个有依据的推荐理由。
  */
 export const COPY_TRACKS = {
   TRAFFIC: { label: '流量款', scene: SCENE.copy_traffic, desc: '同城引流 / 话题热度' },
   PERSONA: { label: '人设型', scene: SCENE.copy_persona, desc: '讲人：立场 / 经历 / 情绪' },
   KNOWLEDGE: { label: '干货型', scene: SCENE.copy_knowledge, desc: '这行的知识：怎么做 / 怎么挑' },
   PRODUCT: { label: '产品型', scene: SCENE.copy_product, desc: '有什么 / 多少钱 / 值不值' },
-  RECOMMEND: { label: '真诚推荐型', scene: SCENE.copy_recommend, desc: '老板视角 / 讲一个有依据的推荐理由' },
+  RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '老板视角 / 讲一个有依据的推荐理由' },
 } as const
 export type CopyTrack = keyof typeof COPY_TRACKS
 

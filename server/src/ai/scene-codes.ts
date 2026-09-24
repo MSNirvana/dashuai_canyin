@@ -19,7 +19,7 @@ export const SCENE = {
   // ── 已接入：代码里已有调用方 ──
   copy_generate: 'copy_generate',
   copy_traffic: 'copy_traffic',
-  // 四款菜品文案（2026-09-21 改型）：人设型 / 干货型 / 产品型 / 真诚推荐型。
+  // 四款菜品文案（2026-09-21 改型）：人设型 / 干货型 / 产品型 / 种草型。
   // ★ 旧的 copy_intro（介绍款）与 copy_quality（质量款）**已删除** ——
   //   删一个场景码时，记得三处一起动：本文件、prompt-vars.ts 的白名单、
   //   creation.service.ts 的 COPY_TRACKS；漏一处会出现「能选到但模板校验不通过」。
