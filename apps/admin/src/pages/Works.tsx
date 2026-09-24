@@ -89,7 +89,7 @@ const CATEGORY_OPTIONS = ['餐饮', '教培', '美业', '生活服务', '休闲�
 }))
 
 const TRACK_OPTIONS = [
-  { label: '流量款', value: 'TRAFFIC' },
+  { label: '流量型', value: 'TRAFFIC' },
   { label: '人设型', value: 'PERSONA' },
   { label: '干货型', value: 'KNOWLEDGE' },
   { label: '产品型', value: 'PRODUCT' },

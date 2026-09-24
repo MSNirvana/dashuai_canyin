@@ -88,7 +88,9 @@ const LINK_OPTIONS: Array<{ label: string; value: LinkCode }> = [
   { label: '不跳转（纯展示）', value: 'NONE' },
   { label: '开始创作', value: 'CREATE' },
   { label: '全部创作', value: 'CREATIONS' },
-  { label: '门店列表', value: 'STORES' },
+  // ★ 2026-09-24 单店模型：原来叫「门店列表」，门店列表页已删除。
+  //   小程序侧现在按「有没有门店」分流：有 → 门店详情，没有 → 创建门店。
+  { label: '门店（门店信息 / 去创建）', value: 'STORES' },
   { label: '订阅与积分', value: 'MEMBER' },
   { label: '指定优秀作品（需填作品 ID）', value: 'WORK' },
 ]
@@ -104,7 +106,7 @@ const SEED_SLIDE: Slide = {
   id: '',
   image: SEED_IMAGE,
   kicker: '从一道菜开始',
-  title: '做一条能带来客人的视频',
+  title: '让餐饮门店轻松拍视频',
   desc: '', // 副标题已按需求下线（2026-09-16）
   actionText: '开始创作',
   link: 'CREATE',
@@ -522,7 +524,7 @@ export default function HomeCarouselPage() {
             <Input value={form.kicker} onChange={(v) => setForm((f) => ({ ...f, kicker: v as string }))} placeholder="从一道菜开始" />
           </Field>
           <Field label="标题" required help="建议不超过 14 个字；超过两行会被省略">
-            <Input value={form.title} onChange={(v) => setForm((f) => ({ ...f, title: v as string }))} placeholder="做一条能带来客人的视频" />
+            <Input value={form.title} onChange={(v) => setForm((f) => ({ ...f, title: v as string }))} placeholder="让餐饮门店轻松拍视频" />
           </Field>
           <Field label="描述" help="留空则不显示">
             <Input value={form.desc} onChange={(v) => setForm((f) => ({ ...f, desc: v as string }))} placeholder="一句话说明卖点，可留空" />
