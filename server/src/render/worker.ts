@@ -30,16 +30,19 @@ import {
   ffmpegConcatWithTransitions,
   ffmpegExtendVideo,
   ffmpegGenerateBackgroundMusic,
+  ffmpegRemoveTimeRanges,
   probeDurationMs,
   probeClipMeta,
   probeVisualQuality,
   probeMeaningfulRange,
+  probeRemovableFreezeSilenceRanges,
   probeVideo,
   buildColorFilter,
   ffmpegSupportsFilter,
   ffmpegSupportsSubtitles,
 } from './ffmpeg.js'
-import { applyAiSynthesis, fitShotDurationsToTimeline, type SynthesisShot } from './synthesis.js'
+import { applyAiSynthesis, fitShotDurationsToTimeline, shouldExtendForNarration, type SynthesisShot } from './synthesis.js'
+import { resolveBgmTrack } from './bgm-library.js'
 import { activeTtsProvider, providerForVoice } from '../services/tts-provider.service.js'
 import { estimateSpeechMs } from './tts.js'
 import { signedObjectUrl } from '../lib/cos.js'
@@ -458,6 +461,8 @@ async function processTask(
         ? resolveAutoChatcutOptions(p.chatcut ?? DEFAULT_CHATCUT_OPTIONS, plan?.profile ?? 'MIXED', inputClips)
         : p.chatcut ?? DEFAULT_CHATCUT_OPTIONS)
     : DEFAULT_CHATCUT_OPTIONS
+  const customVoiceKey = p.chatcut?.editMode === 'ADVANCED' ? p.customVoiceKey : undefined
+  const voiceEnabled = Boolean(customVoiceKey) || effectiveChatcut.voiceId !== 'none'
   // 紧凑节奏只压缩无台词画面；有台词的镜头以完整语句时长为硬下限。
   const clips = aiMode && effectiveChatcut.pacing === 'FAST'
     ? plannedClips.map((clip) => {
@@ -531,6 +536,8 @@ async function processTask(
           height: output.height,
           startMs,
           endMs,
+          // ★ 必须传：不统一帧率就会在 -c copy 拼接处丢帧（见 ffmpegNormalize 注释）
+          fps: output.fps,
           timeoutMs: TASK_TIMEOUT_MS,
         })
         // 回写缓存失败不阻塞主流程（下次重算即可）
@@ -539,9 +546,22 @@ async function processTask(
         )
       }
 
+      let preparedPath = normPath
+      // 默认模式只压缩“画面冻结 + 音频静音”同时持续的高置信度无效停顿。
+      // 两侧保留短暂停顿，避免把正常呼吸或语义边界剪成硬拼。
+      if (isAutoEdit) {
+        const removable = await probeRemovableFreezeSilenceRanges(normPath, TASK_TIMEOUT_MS).catch(() => [])
+        if (removable.length) {
+          const cleanedPath = join(dir, `clean_${i}.mp4`)
+          await ffmpegRemoveTimeRanges(normPath, cleanedPath, removable, TASK_TIMEOUT_MS)
+          preparedPath = cleanedPath
+          console.log(`[render-worker] task ${task.id} 压缩素材 ${clip.shotId} 的 ${removable.length} 处冻结静音停顿`)
+        }
+      }
+
       // AI 档额外淘汰明显黑帧/冻结片段；检测失败只记录，不阻断出片。
       if (aiMode) {
-        const signals = await probeVisualQuality(normPath, TASK_TIMEOUT_MS).catch(() => null)
+        const signals = await probeVisualQuality(preparedPath, TASK_TIMEOUT_MS).catch(() => null)
         const blackRatio = signals?.blackRatio ?? 0
         const freezeRatio = signals?.freezeRatio ?? 0
         if (blackRatio > 0.65 || freezeRatio > 0.75) {
@@ -554,13 +574,13 @@ async function processTask(
 
       // 含口播的镜头必须先保证画面时长容得下完整句子。只延长临时片段，
       // 不写回归一化缓存，避免同一素材因不同文案共享错误时长。
-      let preparedPath = normPath
-      if (aiMode && effectiveClip.line?.trim()) {
-        const visualMs = await probeDurationMs(normPath)
+      if (aiMode && voiceEnabled && effectiveClip.line?.trim()) {
+        const visualMs = await probeDurationMs(preparedPath)
         const speechMs = Math.min(12_000, Math.max(1_500, estimateSpeechMs(effectiveClip.line.trim()) + 350))
-        if (visualMs && speechMs > visualMs + 100) {
-          preparedPath = join(dir, `speech_${i}.mp4`)
-          await ffmpegExtendVideo(normPath, preparedPath, speechMs, TASK_TIMEOUT_MS)
+        if (shouldExtendForNarration(voiceEnabled, effectiveClip.line, visualMs, speechMs)) {
+          const extendedPath = join(dir, `speech_${i}.mp4`)
+          await ffmpegExtendVideo(preparedPath, extendedPath, speechMs, TASK_TIMEOUT_MS)
+          preparedPath = extendedPath
         }
       }
 
@@ -599,23 +619,51 @@ async function processTask(
       }
       const renderedDurationMs = (await probeDurationMs(finalPath)) ?? rawShots.reduce((sum, shot) => sum + shot.durationMs, 0)
       const shots = fitShotDurationsToTimeline(rawShots, renderedDurationMs)
-      const customVoiceKey = p.chatcut?.editMode === 'ADVANCED' ? p.customVoiceKey : undefined
-      const voiceEnabled = Boolean(customVoiceKey) || effectiveChatcut.voiceId !== 'none'
       const subtitleMode = effectiveChatcut.subtitles === false ? 'OFF' : (effectiveChatcut.subtitleMode ?? (voiceEnabled ? 'VOICE' : 'OFF'))
       if (shots.length > 0 || customVoiceKey || subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE') {
         const aiPath = join(dir, 'ai.mp4')
         let backgroundMusicPath: string | undefined
         if (effectiveChatcut.bgm !== 'NONE') {
+          /**
+           * 配乐取用顺序（**三级**，越靠前越优先）：
+           *   ① 本地曲库里该风格的那一首（`assets/bgm/<风格>.<ext>`）——
+           *      由 `npm run bgm:generate` 用 ChatCut 的 `submit_music`（mureka-9）生成后落盘；
+           *      运营也可以直接丢一个**已获授权**的文件进去，命名成 `LIGHT.mp3` 即可，不用改代码。
+           *   ② `DEFAULT_BGM_PATH` 指定的单个文件（老配置：所有风格共用一首，保留兼容）。
+           *   ③ 合成垫底 `ffmpegGenerateBackgroundMusic`。
+           *
+           * ★★ 曲库为什么排在 `DEFAULT_BGM_PATH` 前面：风格**已经识别出来了**
+           *   （`resolveAutoChatcutOptions` 按素材画像给出 LIGHT/UPBEAT/PREMIUM），
+           *   曲库能按风格各给一首；而 `DEFAULT_BGM_PATH` 只有一个文件 ——
+           *   能分风格就别退化成一首通用曲子。
+           *
+           * ★★ 曲库命中是**纯本地文件读取**：生产出片**不依赖 ChatCut 在线**，
+           *   联网只发生在 `bgm:generate` 那个运维动作里。这是刻意的 ——
+           *   把第三方的可用性/额度挡在出片链路之外。
+           *
+           * ⚠ 三级全落空也不会失败：垫底那条 `aevalsrc` 合成一定会给出一个文件，
+           *   最坏是「有一条长音垫底」（实测约 -37dBFS，听感是嗡不是曲子），而不是没有配乐。
+           */
+          const style = effectiveChatcut.bgm
+          const styleTrack = resolveBgmTrack(style)
           const configuredBgm = process.env.DEFAULT_BGM_PATH?.trim()
-          if (configuredBgm && existsSync(configuredBgm)) {
+          if (styleTrack) {
+            backgroundMusicPath = styleTrack
+            console.log(`[render-worker] task ${task.id} 配乐取自曲库 ${style}：${styleTrack}`)
+          } else if (configuredBgm && existsSync(configuredBgm)) {
             backgroundMusicPath = configuredBgm
+            console.log(`[render-worker] task ${task.id} 曲库无 ${style}，配乐取 DEFAULT_BGM_PATH：${configuredBgm}`)
           } else {
             const durationMs = (await probeDurationMs(finalPath)) ?? 1_000
             backgroundMusicPath = join(dir, 'default-bgm.m4a')
+            console.warn(
+              `[render-worker] task ${task.id} 曲库无 ${style} 且未配 DEFAULT_BGM_PATH ⇒ 退回合成垫底` +
+                `（只保证「有背景音」，听感不是曲子；用 npm run bgm:generate 补曲库）`,
+            )
             await ffmpegGenerateBackgroundMusic(
               backgroundMusicPath,
               durationMs,
-              effectiveChatcut.bgm === 'UPBEAT' || effectiveChatcut.bgm === 'PREMIUM' ? effectiveChatcut.bgm : 'LIGHT',
+              style === 'UPBEAT' || style === 'PREMIUM' ? style : 'LIGHT',
               TASK_TIMEOUT_MS,
             ).catch((e) => {
               console.warn(`[render-worker] 默认 BGM 生成失败，继续无配乐出片：`, (e as Error).message)
@@ -713,7 +761,7 @@ async function prepClipLocally(
   merchantId: bigint,
   taskId: bigint,
   clip: RenderClip,
-  output: { width: number; height: number },
+  output: { width: number; height: number; fps: number },
 ): Promise<string> {
   const key = normalizedFullClipKey(merchantId, clip, output)
   try {
@@ -729,6 +777,8 @@ async function prepClipLocally(
         height: output.height,
         startMs: 0,
         endMs: 0,
+        // ★ 与本地管线同一口径：整段打底也必须统一帧率，否则云端/本地拼接都可能撞接缝丢帧
+        fps: output.fps,
         timeoutMs: TASK_TIMEOUT_MS,
       })
       await uploadFile(out, key, 'video/mp4')

@@ -34,3 +34,20 @@ outputs/
 # 绝不能提交 —— 里面是"只对某台机器成立"的东西，提交了会部署到服务器上。
 docker-compose.override.yml
 docker-compose.*.override.yml
+
+# server/assets/bgm/：配乐曲库（LIGHT / UPBEAT / PREMIUM 各一首，`npm run bgm:generate` 生成）。
+# ★ 为什么不入库：
+#   ① 单曲 6~8MB、三首约 22MB —— 二进制进 git 只增不减，且每次重生成都留一份历史。
+#   ② 曲子由 ChatCut（mureka-9）生成，授权以 **ChatCut 服务条款**为准（元数据 json 里写明了），
+#      而本仓库是 **public** —— 「生成时获得的使用权」≠「再分发权」，
+#      别把法务风险固化进 git 历史里。删除不了的历史最贵。
+# ★ 它们是**运行时数据**，不是源码：渲染只从磁盘读（`src/render/bgm-library.ts`），
+#   放在服务器 `/opt/dashuai/server/assets/bgm/` 即可。`deploy.sh` 只做编译、不覆盖工作树，
+#   所以部署不会动它。换机器 / 曲库丢失时重新生成：
+#     cd server && npm run bgm:generate -- --style=ALL --yes      # 消耗 ChatCut 额度
+# ⚠ 路径必须带 `server/` 前缀：模式里只要含斜杠（`assets/bgm/*` 含两个）就**锚定在 .gitignore
+#   所在目录**，写成 `assets/bgm/*` 只匹配 `<根>/assets/bgm/*`，
+#   对 `server/assets/bgm/*` 一声不响地失效（`git check-ignore -v` 会回空 = 没被忽略）。
+server/assets/bgm/*
+# 目录说明本身要入库：运维 SSH 上去看到三首 mp3 时，得知道「别手删」和「怎么重生成」
+!server/assets/bgm/README.md

@@ -655,6 +655,48 @@ export async function callTool(name: string, args: Record<string, unknown>): Pro
   return extractStructured(result)
 }
 
+/**
+ * 下载 ChatCut 给出的素材/导出地址。
+ *
+ * ★★ 为什么不能直接 `fetch(url)`：`request_asset_download` 的官方描述原文是
+ *   「gives the user an **authenticated** ChatCut download URL」—— 它要的是同一个
+ *   `Authorization: Bearer <access_token>`。实测（2026-09-24）裸 fetch 拿到 **HTTP 401**，
+ *   而 `submit_music` 生成本身是成功的 —— 也就是「曲子已经生成好了、只是取不回来」。
+ *   所以这一步必须走本模块（只有这里拿得到 token）。
+ *
+ * ★ 401/403 时**强制刷新一次再试**，与 `rpc()` 同一条策略：access token 最长 1 小时，
+ *   而「生成分钟级 + 下载」很容易正好撞上过期那一刻。
+ *
+ * ★ 返回 bytes 而不是 Response：`AbortSignal.timeout` 会连**读 body** 一起中止，
+ *   把读取留在函数内才能让超时覆盖到真正的下载过程。
+ */
+export async function downloadChatCutAsset(
+  url: string,
+  timeoutMs = 180_000,
+): Promise<{ bytes: Buffer; contentType: string | null }> {
+  const request = (token: string): Promise<Response> =>
+    fetch(url, {
+      headers: { authorization: `Bearer ${token}`, accept: '*/*' },
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+
+  let response = await request(await accessToken())
+  if (
+    (response.status === 401 || response.status === 403) &&
+    (refreshConfigured() || process.env.CHATCUT_OAUTH_REFRESH_TOKEN?.trim())
+  ) {
+    response = await request(await accessToken(true))
+  }
+  if (!response.ok) {
+    const detail = await response.text().catch(() => '')
+    throw new Error(`ChatCut 素材下载失败 HTTP ${response.status}：${detail.slice(0, 200) || url.slice(0, 200)}`)
+  }
+  return {
+    bytes: Buffer.from(await response.arrayBuffer()),
+    contentType: response.headers.get('content-type'),
+  }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ★ 原来的 `submitChatCutJob()` / `getChatCutJob()` 已删除（2026-09-17）。
 //

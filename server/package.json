@@ -44,6 +44,9 @@
     "wxpay:appid": "tsx scripts/probe-wxpay-appid.ts",
     "ai-prompts:sync": "tsx scripts/ai-prompts-sync.ts",
     "ai-prompts:verify": "tsx scripts/verify-prompt-vars.ts",
+    "publish-cover:verify": "tsx scripts/verify-publish-cover-chain.ts",
+    "publish-cover:probe": "tsx scripts/probe-publish-cover.ts",
+    "cover:framing-drift": "python3 scripts/cover-framing-drift.py",
     "input-trim:verify": "tsx scripts/verify-input-trim.ts",
     "color-preview:verify": "tsx scripts/verify-color-preview.ts",
     "profile:verify": "tsx scripts/verify-profile.ts",
@@ -71,7 +74,9 @@
     "tts:probe-speakers": "tsx scripts/probe-volcano-speakers.ts",
     "tts:setup-volcano": "tsx scripts/setup-volcano-tts.ts",
     "tts:verify-voices": "tsx scripts/verify-tts-voices.ts",
-    "asr:probe": "tsx scripts/probe-tencent-asr.ts"
+    "asr:probe": "tsx scripts/probe-tencent-asr.ts",
+    "bgm:generate": "tsx scripts/bgm-generate.ts",
+    "bgm:verify": "tsx scripts/verify-bgm-library.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

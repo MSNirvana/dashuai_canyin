@@ -29,10 +29,34 @@ import type { TtsProviderConfig } from '../services/tts-provider.service.js'
 
 const execFileP = promisify(execFile)
 
-// Keep all subtitle backends visually consistent. The output is 1080x1920,
-// so a 36px single-line cue remains readable without covering the subject.
-const SUBTITLE_FONT_SIZE = 36
-const SUBTITLE_BOTTOM_MARGIN = 96
+// Fixed against the actual 1080x1920 output canvas. ASS must declare the same
+// PlayRes or libass interprets these values against its legacy 384x288 canvas.
+const SUBTITLE_FONT_SIZE = 52
+/**
+ * 字幕底边距（相对 PlayResY=1920 的像素）。
+ *
+ * ★★ 2026-09-24 实测修正 116 → **640**（用户看对照图后定的值）。
+ *   旧值 116 = 仅高出画面底边 6.0%，实测成片字幕glyph带落在 **y≈1770~1835（画面高度的
+ *   92~96%）**，正压在抖音/视频号底部的叠加层上（账号名、文案、音乐名、进度条大致占据
+ *   下方约 1/5）—— 用户反馈「字幕位置特别低」就是这个。
+ *   640 ⇒ 字幕带 y≈1246~1311（约 65~68%），离底边留足白，也被用户选中。
+ *   ⚠ 这个 1/5 是**估算**，不同端/不同版本会变；真机上仍被平台控件压住就继续加大这个值，
+ *     不要再各路径各改一处。
+ * ★ 该常量在每条烧字幕路径上生效（ASS 的 MarginV、drawtext 的 y=h-text_h-…、
+ *   overlay 的 y=main_h-overlay_h-… 三处共用），所以只改这一行即可。
+ * ⚠ `MarginV` 与字幕**墨迹底边并不重合**（libass 行盒含 descent，实测差约 31px）⇒
+ *   上面那串「y≈…」是**量出来的**（叠彩色横尺抽帧），不要用旧值去反推像素位置。
+ */
+const SUBTITLE_BOTTOM_MARGIN = 640
+/**
+ * 单条字幕的安全显示宽度（CJK 按 1、ASCII 按 0.55 计）。
+ *
+ * ★ 17 → 14 是**对齐仓库自己的定义**：`scripts/verify-auto-edit.ts` 里那条
+ *   `subtitleDisplayWidth(text) <= 14` 的断言，注释写的就是「每条字幕必须在竖屏安全宽度内」。
+ *   常量比自家断言还宽 3，等于把「安全宽度」写成了两套；这里收回成 14。
+ * ★ 14 × 52px = 728px / 1080 = 67% 宽，两侧留白才是竖屏字幕该有的呼吸感。
+ */
+const SUBTITLE_MAX_WIDTH = 14
 
 export interface SynthesisShot {
   /** 口播文案（Shot.line） */
@@ -96,6 +120,15 @@ function toSrtTime(msIn: number): string {
   return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`
 }
 
+function toAssTime(msIn: number): string {
+  const totalCentiseconds = Math.max(0, Math.round(msIn / 10))
+  const h = Math.floor(totalCentiseconds / 360_000)
+  const m = Math.floor((totalCentiseconds % 360_000) / 6_000)
+  const s = Math.floor((totalCentiseconds % 6_000) / 100)
+  const cs = totalCentiseconds % 100
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(cs).padStart(2, '0')}`
+}
+
 /** 生成 SRT：无口播的分镜不产生字幕块，但时间轴继续推进 */
 function buildSrt(shots: SynthesisShot[]): string {
   let cursor = 0
@@ -127,26 +160,42 @@ export function subtitleDisplayWidth(text: string): number {
   return [...text].reduce((sum, char) => sum + (/^[\x00-\xff]$/.test(char) ? 0.55 : 1), 0)
 }
 
+/**
+ * 无标点长句的兜底切分（标点可用时轮不到它）。
+ *
+ * ★ 为什么改成「先算块数再均分」，而不是原来的「填满一行再换行」：
+ *   贪心填满会把余数全甩到**最后一块**。实测生产成片（task 32）尾部因此出现
+ *   只有 **2 个字、停留 0.37s** 的孤儿 cue「吃呢」—— 一闪而过，观感就是「分段不好」。
+ *   现在先算需要几块 `n = ceil(总宽 / 单块上限)`，再按 `总宽 / n` 均匀切：
+ *   构造上每块仍 ≤ maxWidth，但不会再留孤儿块。
+ */
 function hardSplitSubtitle(text: string, maxWidth: number): string[] {
+  if (maxWidth <= 0) return text.trim() ? [text.trim()] : []
+  const chars = [...text]
+  const widths = chars.map(subtitleDisplayWidth)
+  const total = widths.reduce((sum, value) => sum + value, 0)
+  if (total <= maxWidth) return text.trim() ? [text.trim()] : []
+  const target = total / Math.ceil(total / maxWidth)
   const chunks: string[] = []
   let current = ''
   let width = 0
-  for (const char of text) {
-    const charWidth = subtitleDisplayWidth(char)
-    if (current && width + charWidth > maxWidth) {
+  for (let index = 0; index < chars.length; index += 1) {
+    const charWidth = widths[index] ?? 0
+    // 到均分目标就收口；再加一个字会超上限也必须收口
+    if (current && (width >= target || width + charWidth > maxWidth)) {
       chunks.push(current.trim())
       current = ''
       width = 0
     }
-    current += char
+    current += chars[index] ?? ''
     width += charWidth
   }
   if (current.trim()) chunks.push(current.trim())
-  return chunks
+  return chunks.filter(Boolean)
 }
 
 /** 先按完整句拆，再按逗号等语义停顿拆；最后才按安全宽度硬切。 */
-export function splitSubtitleText(text: string, maxWidth = 14): string[] {
+export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): string[] {
   const clean = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
   if (!clean) return []
   const sentences = clean.match(/[^。！？!?；;]+[。！？!?；;]?/g) ?? [clean]
@@ -177,7 +226,7 @@ export function splitSubtitleText(text: string, maxWidth = 14): string[] {
 /** 将字幕归一为单行、非重叠、连续替换的 cue，避免 libass 自动换成多行。 */
 export function normalizeSubtitleSegments(segments: TranscriptionSegment[]): TranscriptionSegment[] {
   const expanded: TranscriptionSegment[] = []
-  for (const segment of segments) {
+  for (const segment of mergeSubtitleSegments(segments)) {
     const text = String(segment.text ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
     if (!text) continue
     const chunks = splitSubtitleText(text)
@@ -207,10 +256,80 @@ export function normalizeSubtitleSegments(segments: TranscriptionSegment[]): Tra
   return result
 }
 
+/**
+ * ASR 服务可能因为内部长度上限把一句没有标点的口语拆成多个 segment。
+ * 先按连续语流合并，再做字幕宽度切分，避免出现“说不是冻货 / 6小时到店 / 锁鲜只”这种
+ * 半句话字幕。遇到明确句末标点、明显停顿或一段语音过长时才结束当前语义段。
+ */
+export function mergeSubtitleSegments(segments: TranscriptionSegment[]): TranscriptionSegment[] {
+  const ordered = segments
+    .map((segment) => ({
+      startMs: Math.max(0, Math.round(segment.startMs)),
+      endMs: Math.max(0, Math.round(segment.endMs)),
+      text: String(segment.text ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim(),
+    }))
+    .filter((segment) => segment.text && segment.endMs > segment.startMs)
+    .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
+  const result: TranscriptionSegment[] = []
+  for (const segment of ordered) {
+    const previous = result[result.length - 1]
+    if (!previous) {
+      result.push({ ...segment })
+      continue
+    }
+    const gapMs = Math.max(0, segment.startMs - previous.endMs)
+    const previousHasSentenceEnd = /[。！？!?；;.!?]$/.test(previous.text)
+    const currentSpanMs = segment.endMs - previous.startMs
+    const shouldMerge = !previousHasSentenceEnd && gapMs <= 900 && currentSpanMs <= 8_000
+    if (shouldMerge) {
+      previous.text += segment.text
+      previous.endMs = Math.max(previous.endMs, segment.endMs)
+    } else {
+      result.push({ ...segment })
+    }
+  }
+  return result
+}
+
 function segmentsToSrt(segments: TranscriptionSegment[]): string {
   return normalizeSubtitleSegments(segments).map((segment, index) => (
     `${index + 1}\n${toSrtTime(segment.startMs)} --> ${toSrtTime(segment.endMs)}\n${segment.text}\n`
   )).join('\n')
+}
+
+function escapeAssText(text: string): string {
+  return text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/[\r\n]+/g, ' ')
+}
+
+/** Build a single-line ASS document with an explicit vertical-video canvas. */
+export function segmentsToAss(segments: TranscriptionSegment[], fontFamily = 'Noto Sans CJK SC'): string {
+  const cues = normalizeSubtitleSegments(segments)
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,${fontFamily},${SUBTITLE_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,72,72,${SUBTITLE_BOTTOM_MARGIN},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
+  const events = cues.map((segment) => (
+    `Dialogue: 0,${toAssTime(segment.startMs)},${toAssTime(segment.endMs)},Default,,0,0,0,,${escapeAssText(segment.text)}`
+  ))
+  return `${header}\n${events.join('\n')}\n`
+}
+
+export function shouldExtendForNarration(
+  voiceEnabled: boolean,
+  line: string | null | undefined,
+  visualMs: number | null,
+  speechMs: number,
+): boolean {
+  return voiceEnabled && Boolean(line?.trim()) && Boolean(visualMs && speechMs > visualMs + 100)
 }
 
 function audioFilter(options: SynthesisOptions): string {
@@ -355,7 +474,7 @@ export async function applyAiSynthesis(
     if (!subtitleSegments.length && (subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE')) {
       subtitleSegments = lineSegments(shots)
     }
-    const srt = subtitleMode === 'OFF' ? '' : segmentsToSrt(subtitleSegments)
+    const normalizedSubtitleSegments = subtitleMode === 'OFF' ? [] : normalizeSubtitleSegments(subtitleSegments)
     let mixedAudioPath = voicePath
     if (options.backgroundMusicPath) {
       mixedAudioPath = join(workDir, 'mixed-audio.m4a')
@@ -364,22 +483,22 @@ export async function applyAiSynthesis(
     const font = detectCjkFont()
     let subtitled = false
     // ASR 暂不可用时不阻断出片：有文案就使用文案，没有文本则交付无字幕成片并留日志。
-    if (subtitleMode !== 'OFF' && !srt.trim()) console.warn('[synthesis] 字幕开启但没有可用文本，跳过烧录')
-    if (srt.trim()) {
+    if (subtitleMode !== 'OFF' && !normalizedSubtitleSegments.length) console.warn('[synthesis] 字幕开启但没有可用文本，跳过烧录')
+    if (normalizedSubtitleSegments.length) {
       if (!font) throw new Error('字幕无法生成：服务器未安装可用的中文字体，请安装 fonts-noto-cjk')
-      const srtPath = join(workDir, 'subs.srt')
-      await writeFile(srtPath, srt, 'utf8')
       if (await ffmpegSupportsSubtitles()) {
-        subtitled = await muxWithSubtitles(muxVideoPath, mixedAudioPath, srtPath, font, outPath, timeoutMs, options)
+        const assPath = join(workDir, 'subs.ass')
+        await writeFile(assPath, segmentsToAss(normalizedSubtitleSegments, font.family), 'utf8')
+        subtitled = await muxWithSubtitles(muxVideoPath, mixedAudioPath, assPath, font, outPath, timeoutMs, options)
       } else if (await ffmpegSupportsFilter('drawtext')) {
         console.warn('[synthesis] FFmpeg 缺少 libass，改用 drawtext 烧录字幕')
-        subtitled = await muxWithDrawtext(muxVideoPath, mixedAudioPath, normalizeSubtitleSegments(subtitleSegments), font, outPath, timeoutMs)
+        subtitled = await muxWithDrawtext(muxVideoPath, mixedAudioPath, normalizedSubtitleSegments, font, outPath, timeoutMs)
       } else {
         console.warn('[synthesis] FFmpeg 缺少 libass/drawtext，改用图片叠加烧录字幕')
         subtitled = await muxWithCaptionOverlays(
           muxVideoPath,
           mixedAudioPath,
-          normalizeSubtitleSegments(subtitleSegments),
+          normalizedSubtitleSegments,
           font,
           workDir,
           outPath,
@@ -432,7 +551,7 @@ async function muxWithDrawtext(
     const enable = `between(t\\,${(segment.startMs / 1000).toFixed(3)}\\,${(segment.endMs / 1000).toFixed(3)})`
     filters.push(
       `[${current}]drawtext=fontfile='${escapeDrawtextPath(font.file!)}':text='${escapeDrawtextText(segment.text)}':` +
-      `fontcolor=white:fontsize=${SUBTITLE_FONT_SIZE}:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-155:enable='${enable}'[${next}]`,
+      `fontcolor=white:fontsize=${SUBTITLE_FONT_SIZE}:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-${SUBTITLE_BOTTOM_MARGIN}:enable='${enable}'[${next}]`,
     )
     current = next
   })
@@ -479,8 +598,8 @@ async function muxWithCaptionOverlays(
     const segment = normalized[index]!
     const captionPath = join(workDir, `caption-${index}.png`)
     const svg = `
-      <svg width="1080" height="86" xmlns="http://www.w3.org/2000/svg">
-        <text x="540" y="78" text-anchor="middle"
+      <svg width="1080" height="82" xmlns="http://www.w3.org/2000/svg">
+        <text x="540" y="56" text-anchor="middle"
           font-family="${escapeXml(font.family)}" font-size="${SUBTITLE_FONT_SIZE}" font-weight="600"
           fill="white" stroke="black" stroke-width="3" paint-order="stroke fill"
           letter-spacing="0">${escapeXml(segment.text)}</text>
@@ -499,7 +618,7 @@ async function muxWithCaptionOverlays(
     const imageIndex = imageStartIndex + index
     const enable = `between(t\\,${(segment.startMs / 1000).toFixed(3)}\\,${(segment.endMs / 1000).toFixed(3)})`
     filters.push(
-      `[${current}][${imageIndex}:v]overlay=x=(main_w-overlay_w)/2:y=main_h-overlay_h-${SUBTITLE_BOTTOM_MARGIN - 10}:` +
+      `[${current}][${imageIndex}:v]overlay=x=(main_w-overlay_w)/2:y=main_h-overlay_h-${SUBTITLE_BOTTOM_MARGIN}:` +
       `eof_action=repeat:shortest=0:enable='${enable}'[${next}]`,
     )
     current = next
@@ -578,15 +697,15 @@ async function synthSilence(durMs: number, outPath: string, timeoutMs: number): 
 async function muxWithSubtitles(
   videoPath: string,
   audioPath: string | null,
-  srtPath: string,
+  subtitlePath: string,
   font: CjkFont,
   outPath: string,
   timeoutMs: number,
   options: SynthesisOptions,
 ): Promise<boolean> {
   try {
-    // force_style 使用 ASS 的逗号分隔键值；冒号会被 FFmpeg 解析成 subtitles 滤镜自身的参数。
-    const vf = `subtitles=${escapeFilterPath(srtPath)}:fontsdir=${escapeFilterPath(font.dir)}:force_style='FontName=${font.family},FontSize=${SUBTITLE_FONT_SIZE},Alignment=2,MarginL=80,MarginR=80,MarginV=${SUBTITLE_BOTTOM_MARGIN},Outline=2,Shadow=0'`
+    // 字号、画布、边距均写在 ASS 头里，避免 libass 使用 384x288 默认画布放大样式。
+    const vf = `subtitles=${escapeFilterPath(subtitlePath)}:fontsdir=${escapeFilterPath(font.dir)}`
     const args = ['-i', videoPath]
     if (audioPath) args.push('-i', audioPath)
     args.push('-filter_complex', `[0:v]${vf}[v]`, '-map', '[v]')

@@ -11,6 +11,9 @@ import { DEFAULT_CHATCUT_OPTIONS } from '../src/render/chatcut.js'
 import {
   fitShotDurationsToTimeline,
   normalizeSubtitleSegments,
+  mergeSubtitleSegments,
+  segmentsToAss,
+  shouldExtendForNarration,
   splitSubtitleText,
   subtitleDisplayWidth,
 } from '../src/render/synthesis.js'
@@ -78,6 +81,22 @@ const subtitleCues = normalizeSubtitleSegments([
 assert.ok(subtitleCues.length >= 2)
 assert.equal(subtitleCues[0]?.text, '第一句话完整显示。')
 assert.ok(subtitleCues.every((cue, index) => index === 0 || cue.startMs >= subtitleCues[index - 1]!.endMs), '字幕不能重叠堆积')
+const ass = segmentsToAss(subtitleCues)
+assert.match(ass, /PlayResX: 1080/)
+assert.match(ass, /PlayResY: 1920/)
+assert.match(ass, /WrapStyle: 2/)
+assert.match(ass, /Style: Default,Noto Sans CJK SC,52,/)
+assert.ok(ass.split('\n').filter((line) => line.startsWith('Dialogue:')).every((line) => !line.includes('\\N')), 'ASS 字幕必须保持单行')
+assert.equal(shouldExtendForNarration(false, '默认模式有文案但不配音', 2_000, 4_000), false, '无配音时不得补静止尾帧')
+assert.equal(shouldExtendForNarration(true, '高级模式配音', 2_000, 4_000), true)
+const mergedSubtitleCues = mergeSubtitleSegments([
+  { startMs: 0, endMs: 900, text: '说不是冻货' },
+  { startMs: 920, endMs: 1_800, text: '6小时到店' },
+  { startMs: 1_820, endMs: 2_600, text: '锁鲜只' },
+  { startMs: 2_620, endMs: 3_000, text: '有完整语句。' },
+])
+assert.equal(mergedSubtitleCues.length, 1, '无标点的连续 ASR 片段应先合并')
+assert.equal(mergedSubtitleCues[0]?.text, '说不是冻货6小时到店锁鲜只有完整语句。')
 
 assert.equal(validateOutputQuality({ ok: true, width: 1080, height: 1920, durationMs: 15_000 }).ok, true)
 assert.equal(validateOutputQuality({ ok: true, width: 1920, height: 1080, durationMs: 15_000 }).ok, false)

@@ -153,6 +153,9 @@ async function renderPreview(args: {
           height: output.height,
           startMs: clip.trimStartMs ?? 0,
           endMs: clip.trimEndMs ?? 0,
+          // ★ 预览产物与正式合成**共用同一份缓存键**，参数也必须同口径，
+          //   否则预览写进缓存的片段会和正式合成期望的帧率不一致（见 ffmpegNormalize 注释）
+          fps: output.fps,
           timeoutMs: PREVIEW_STEP_TIMEOUT_MS,
         })
         await rm(raw, { force: true })

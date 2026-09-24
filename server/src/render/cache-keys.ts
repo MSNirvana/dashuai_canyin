@@ -21,8 +21,13 @@ export const INTERMEDIATE_CACHE_PREFIX = 'renders/_cache/'
 /**
  * 中间产物缓存版本：**归一化产出语义变化时必须递增**，否则会命中旧产物。
  *   v1 → v2：归一化从「丢弃原声挂静音轨」改为「保留原声」，v1 缓存全是静音片段，必须失效。
+ *   v2 → v3：归一化补上 `fps=`（逐段统一帧率/时间基）。v2 缓存里可能有**非 30fps 的异质片段**
+ *            （实测 asset 56 是 7500/253 + timebase 1/15000），它们正是 `-c copy` 拼接
+ *            丢帧卡顿的来源。**不递增就等于这两处修复在旧素材上完全不生效** ——
+ *            键里不含编码参数，改了滤镜也照样命中旧产物。
+ *            （代价：v2 键整体作废，下一次合成对每段素材各多跑一次归一化。）
  */
-export const INTERMEDIATE_CACHE_VERSION = 'v2'
+export const INTERMEDIATE_CACHE_VERSION = 'v3'
 
 /**
  * 中间产物缓存键：(缓存版本, assetId, trim 起止, 输出尺寸) → sha1

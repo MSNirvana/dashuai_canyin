@@ -8,9 +8,11 @@ import {
   ffmpegBin,
   ffmpegConcatWithTransitions,
   ffmpegGenerateBackgroundMusic,
+  ffmpegRemoveTimeRanges,
   probeClipMeta,
   probeDurationMs,
   probeMeaningfulRange,
+  probeRemovableFreezeSilenceRanges,
 } from '../src/render/ffmpeg.js'
 import { applyAiSynthesis, fitShotDurationsToTimeline } from '../src/render/synthesis.js'
 
@@ -38,6 +40,19 @@ async function generateBlackHeadClip(path: string): Promise<void> {
   ], { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 })
 }
 
+async function generateFrozenSilenceClip(path: string): Promise<void> {
+  await execFileP(ffmpegBin(), [
+    '-hide_banner', '-loglevel', 'error',
+    '-f', 'lavfi', '-i', 'testsrc2=s=360x640:r=30:d=1.2',
+    '-f', 'lavfi', '-i', 'color=c=blue:s=360x640:r=30:d=1.2',
+    '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=1.2',
+    '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100:d=1.2',
+    '-filter_complex', '[0:v][1:v][0:v]concat=n=3:v=1:a=0[v];[2:a][3:a][2:a]concat=n=3:v=0:a=1[a]',
+    '-map', '[v]', '-map', '[a]', '-t', '3.6',
+    '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-y', path,
+  ], { timeout: 120_000, maxBuffer: 16 * 1024 * 1024 })
+}
+
 async function main(): Promise<void> {
   // 避免开发机上的真实 ASR 配置让验证产生网络依赖；字幕应走文案兜底。
   for (const key of [
@@ -52,6 +67,15 @@ async function main(): Promise<void> {
     const range = await probeMeaningfulRange(blackHead)
     assert.ok(range)
     assert.ok(range.startMs >= 900 && range.startMs <= 1_100, `unexpected black trim: ${range.startMs}`)
+
+    const frozenSilence = join(dir, 'frozen-silence.mp4')
+    await generateFrozenSilenceClip(frozenSilence)
+    const removable = await probeRemovableFreezeSilenceRanges(frozenSilence)
+    assert.equal(removable.length, 1, `unexpected removable ranges: ${JSON.stringify(removable)}`)
+    const cleaned = join(dir, 'frozen-silence-cleaned.mp4')
+    await ffmpegRemoveTimeRanges(frozenSilence, cleaned, removable)
+    const cleanedMs = await probeDurationMs(cleaned)
+    assert.ok(cleanedMs && cleanedMs < 3_250 && cleanedMs > 2_400, `unexpected cleaned duration: ${cleanedMs}`)
 
     const first = join(dir, 'first.mp4')
     const second = join(dir, 'second.mp4')

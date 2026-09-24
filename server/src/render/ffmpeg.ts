@@ -95,25 +95,42 @@ export interface NormalizeOpts {
   height: number
   startMs: number
   endMs: number
+  /** 输出帧率。**必须传**（成片画布 fps）：见 ffmpegNormalize 里关于帧率不统一的注释 */
+  fps?: number
   timeoutMs?: number
 }
 
 /**
  * 第一级：归一化（可缓存）
- * 按 trim 起止裁切 → 等比放大并居中裁切到 9:16 → 统一编码参数，**不含调色**
+ * 按 trim 起止裁切 → 等比放大并居中裁切到 9:16 → **统一帧率/时间基** → 统一编码参数，**不含调色**
  * 音轨：**保留素材原声**，统一为 aac 44.1k 立体声 128k；素材本身没有音轨时才挂 anullsrc 静音轨。
- *       两条分支产出参数一致，所以 concat demuxer -c copy 仍然成立。
- *       （早期版本一律丢弃原声挂静音轨，导致成片完全无声，已修正。）
  * 产物按 (assetId, trim, 尺寸) 缓存，重调色时直接复用，省掉源解码+缩放这个最贵的环节
+ *
+ * ★★ 为什么必须显式 `fps=`（2026-09-24 实测 task 32，用户反馈「中间卡顿」的真因）：
+ *   原实现只统一了「编码参数」，**漏了帧率与时间基** —— 而下游拼接走的是
+ *   `ffmpegConcat`（`-f concat -c copy`，流拷贝不重编码）。素材来自小程序自建相机的录制，
+ *   帧率不保证是 30：实测 6 段里 5 段是 30/1 + timebase 1/15360，**第 4 段（asset 56）
+ *   是 7500/253 ≈ 29.644fps + timebase 1/15000**。concat demuxer 用**第一段**的时间基做输出、
+ *   再按各段自身 timebase 换算偏移，异质段就被错位挂上去，后果实测为：
+ *     · 15.664s → 16.073s 丢约 12 帧（画面定住 0.4s，正是用户看到的卡顿）
+ *     · 同时出现 `-0.066602s` 的**负间隔**和 `0.000196s` 的重复帧（接缝处的回跳/停顿）
+ *   只加一条 `fps=30` 重编码**修不掉**（实测仍有 0.400000s×1 空洞），必须**逐段**统一帧率；
+ *   而统一后同样的 `-c copy` 拼接实测 **0 异常**，所以既有速度也保住了。
+ *   ⚠ 改了这条判据必须同时递增 `cache-keys.ts` 的 `INTERMEDIATE_CACHE_VERSION`，
+ *     否则会继续命中按旧参数编出来的异质片段。
  */
 export async function ffmpegNormalize(input: string, output: string, opts: NormalizeOpts): Promise<void> {
   const args: string[] = []
+  const fps = Number.isFinite(opts.fps) && (opts.fps as number) > 0 ? (opts.fps as number) : 30
   if (opts.startMs > 0) args.push('-ss', (opts.startMs / 1000).toFixed(3))
   if (opts.endMs > opts.startMs) args.push('-to', (opts.endMs / 1000).toFixed(3))
   args.push('-i', input)
+  // fps + settb 放在 format 之前：先落到统一网格，再定像素格式。
+  // 顺序与 2026-09-24 的对照实验一致（fps=30,settb=AVTB,setsar=1 实测 -c copy 拼接 0 异常）
   const base =
     `scale=${opts.width}:${opts.height}:force_original_aspect_ratio=increase,` +
-    `crop=${opts.width}:${opts.height},format=yuv420p`
+    `crop=${opts.width}:${opts.height},` +
+    `fps=${fps},settb=AVTB,setsar=1,format=yuv420p`
   if (await hasAudioStream(input)) {
     // apad 把音轨补到不短于画面，再靠 -shortest 截到画面长度：画面时长不受音频长短影响
     args.push('-filter_complex', `[0:v]${base}[v];[0:a]apad[a]`)
@@ -196,6 +213,131 @@ export interface MeaningfulRange {
   freezeRatio: number | null
   leadingSilenceMs: number
   trailingSilenceMs: number
+}
+
+export interface TimeRangeMs {
+  startMs: number
+  endMs: number
+}
+
+/**
+ * 找出画面冻结与音频静音同时持续的区间。
+ *
+ * 单独的静音可能是正常 B-roll，单独的静止画面也可能是有意停留；两者重合且持续
+ * 超过 0.8 秒时才视为高置信度无效停顿。首尾各保留 150ms，避免把呼吸和切点压得过硬。
+ */
+export async function probeRemovableFreezeSilenceRanges(
+  input: string,
+  timeoutMs = 45_000,
+): Promise<TimeRangeMs[]> {
+  const durationMs = await probeDurationMs(input)
+  if (!durationMs || durationMs <= 0) return []
+  const [videoResult, audioResult] = await Promise.all([
+    execFileP(ffmpegBin(), [
+      '-hide_banner', '-nostdin', '-i', input,
+      '-vf', 'freezedetect=n=-60dB:d=0.45', '-an', '-f', 'null', '-',
+    ], { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }).catch((e) => e as { stderr?: string }),
+    execFileP(ffmpegBin(), [
+      '-hide_banner', '-nostdin', '-i', input,
+      '-af', 'silencedetect=noise=-42dB:d=0.45', '-vn', '-f', 'null', '-',
+    ], { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }).catch((e) => e as { stderr?: string }),
+  ])
+  const durationSec = durationMs / 1000
+  const freezes = detectedRanges(
+    String((videoResult as { stderr?: string }).stderr ?? ''),
+    /freeze_start:\s*(-?\d+(?:\.\d+)?)/g,
+    /freeze_end:\s*(-?\d+(?:\.\d+)?)/g,
+    durationSec,
+  )
+  const silences = detectedRanges(
+    String((audioResult as { stderr?: string }).stderr ?? ''),
+    /silence_start:\s*(-?\d+(?:\.\d+)?)/g,
+    /silence_end:\s*(-?\d+(?:\.\d+)?)/g,
+    durationSec,
+  )
+  const result: TimeRangeMs[] = []
+  for (const freeze of freezes) {
+    for (const silence of silences) {
+      const start = Math.max(freeze.start, silence.start)
+      const end = Math.min(freeze.end, silence.end)
+      if (end - start < 0.8) continue
+      const startMs = Math.round((start + 0.15) * 1000)
+      const endMs = Math.round((end - 0.15) * 1000)
+      if (endMs - startMs >= 300) result.push({ startMs, endMs })
+    }
+  }
+  return mergeTimeRanges(result, durationMs)
+}
+
+function detectedRanges(
+  log: string,
+  startPattern: RegExp,
+  endPattern: RegExp,
+  durationSec: number,
+): Array<{ start: number; end: number }> {
+  const starts = [...log.matchAll(startPattern)].map((match) => Number(match[1])).filter(Number.isFinite)
+  const ends = [...log.matchAll(endPattern)].map((match) => Number(match[1])).filter(Number.isFinite)
+  let endIndex = 0
+  return starts.flatMap((start) => {
+    while (endIndex < ends.length && ends[endIndex]! <= start) endIndex += 1
+    const end = endIndex < ends.length ? ends[endIndex++]! : durationSec
+    return end > start ? [{ start: Math.max(0, start), end: Math.min(durationSec, end) }] : []
+  })
+}
+
+function mergeTimeRanges(ranges: TimeRangeMs[], durationMs: number): TimeRangeMs[] {
+  const sorted = ranges
+    .map((range) => ({
+      startMs: Math.max(0, Math.min(durationMs, range.startMs)),
+      endMs: Math.max(0, Math.min(durationMs, range.endMs)),
+    }))
+    .filter((range) => range.endMs - range.startMs >= 100)
+    .sort((a, b) => a.startMs - b.startMs)
+  const merged: TimeRangeMs[] = []
+  for (const range of sorted) {
+    const previous = merged[merged.length - 1]
+    if (previous && range.startMs <= previous.endMs + 50) previous.endMs = Math.max(previous.endMs, range.endMs)
+    else merged.push({ ...range })
+  }
+  return merged
+}
+
+/** 同步删除视频和音频中的高置信度无效区间，保持后续字幕时间轴一致。 */
+export async function ffmpegRemoveTimeRanges(
+  input: string,
+  output: string,
+  ranges: TimeRangeMs[],
+  timeoutMs = 120_000,
+): Promise<void> {
+  const durationMs = await probeDurationMs(input)
+  if (!durationMs || ranges.length === 0) throw new Error('没有可删除的音画区间')
+  const removed = mergeTimeRanges(ranges, durationMs)
+  const kept: TimeRangeMs[] = []
+  let cursor = 0
+  for (const range of removed) {
+    if (range.startMs - cursor >= 100) kept.push({ startMs: cursor, endMs: range.startMs })
+    cursor = Math.max(cursor, range.endMs)
+  }
+  if (durationMs - cursor >= 100) kept.push({ startMs: cursor, endMs: durationMs })
+  if (!kept.length) throw new Error('无效区间覆盖了整段素材')
+  const filters: string[] = []
+  const concatInputs: string[] = []
+  kept.forEach((range, index) => {
+    const start = (range.startMs / 1000).toFixed(3)
+    const end = (range.endMs / 1000).toFixed(3)
+    filters.push(`[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS[v${index}]`)
+    filters.push(`[0:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS[a${index}]`)
+    concatInputs.push(`[v${index}][a${index}]`)
+  })
+  filters.push(`${concatInputs.join('')}concat=n=${kept.length}:v=1:a=1[v][a]`)
+  await runFfmpeg([
+    '-i', input,
+    '-filter_complex', filters.join(';'),
+    '-map', '[v]', '-map', '[a]',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-movflags', '+faststart',
+    '-y', output,
+  ], timeoutMs)
 }
 
 /**
@@ -332,8 +474,81 @@ export async function ffmpegApplyColor(
   await runFfmpeg(buildApplyColorArgs(input, output, color, encode), timeoutMs)
 }
 
-/** 硬切拼接（无转场）。所有片段编码参数一致，直接 copy 不重编码 */
+/**
+ * 逐输入的「复位」滤镜：把每一路画面的时间基和 PTS 都归零、帧率统一，音轨同理。
+ *
+ * ★ 抽成一处出处，是因为它**必须**在多条拼接路径上保持一致：不一致就会重新长出
+ *   「某条路径复位了、另一条没复位」这种接缝丢帧 bug（2026-09-24 就是这么炸的）。
+ */
+function perInputResetFilter(index: number, fps: number): string {
+  return `[${index}:v]settb=AVTB,setpts=PTS-STARTPTS,fps=${fps},setsar=1,format=yuv420p[v${index}];` +
+    `[${index}:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a${index}];`
+}
+
+/**
+ * 片段的「帧率|时间基」签名，用于判断能否安全地 `-c copy` 拼接。
+ * 取不到返回 null，调用方按「不确定」处理（不敢 copy）。
+ */
+async function probeVideoSignature(file: string): Promise<string | null> {
+  try {
+    const { stdout } = await execFileP(ffprobeBin(), [
+      '-v', 'error', '-select_streams', 'v:0',
+      '-show_entries', 'stream=r_frame_rate,time_base',
+      '-of', 'default=nw=1', file,
+    ], { timeout: 30_000, maxBuffer: 1 * 1024 * 1024 })
+    const text = String(stdout)
+    const rate = /r_frame_rate=(\S+)/.exec(text)?.[1]
+    const base = /time_base=(\S+)/.exec(text)?.[1]
+    return rate && base ? `${rate}|${base}` : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 逐输入复位 PTS + 统一帧率后再 concat 重编码 —— 接缝不安全时的兜底路径。
+ *
+ * ★ 实测（2026-09-24，任务 32 的 6 段缓存片段，第 4 段是 29.644fps/1-15000）：
+ *     走 `-c copy`            → 15.664→16.073 丢约 12 帧（0.4s 定住）+ 一处 `-0.066602s` 负间隔 + 一处重复帧
+ *     走这条逐输入复位后拼接   → 帧间隔 496×0.033333 + 248×0.033334，**零异常**
+ *   ⚠ 只在外层加一条 `fps=30` 是修不掉的（实测仍有 0.400000s×1 空洞）—— 必须逐输入复位。
+ * ⚠ 代价是整段重编码，比 `-c copy` 慢，所以只在判据命中时才走这里。
+ */
+async function concatWithPtsReset(inputs: string[], output: string, timeoutMs: number, fps = 30): Promise<void> {
+  const filters = inputs.map((_, index) => perInputResetFilter(index, fps)).join('')
+  const labels = inputs.map((_, index) => `[v${index}][a${index}]`).join('')
+  await runFfmpeg([
+    ...inputs.flatMap((input) => ['-i', input]),
+    '-filter_complex', `${filters}${labels}concat=n=${inputs.length}:v=1:a=1[v][a]`,
+    '-map', '[v]', '-map', '[a]',
+    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-movflags', '+faststart',
+    '-y', output,
+  ], timeoutMs)
+}
+
+/**
+ * 硬切拼接（无转场）。默认 `-f concat -c copy`（流拷贝，不重编码，快）。
+ *
+ * ★★ 但 `-c copy` **有前提**：各片段的帧率与时间基必须一致。这个前提原来只写在注释里、
+ *   没有任何检查，而生产上真的不成立 —— 小程序自建相机录出来的片段帧率可能是 29.644 这种
+ *   非 30 值（见 ffmpegNormalize 的注释），concat demuxer 会按第一段的时间基错位挂上去，
+ *   接缝处丢帧、画面定住，就是用户反馈的「中间卡顿」。
+ *   所以这里补一条判据：签名不一致（或取不到）就不敢 copy，改走逐输入复位的重编码路径。
+ *   代价只在真正异质时才付，同质的正常单还是会走 `-c copy`。
+ */
 export async function ffmpegConcat(inputs: string[], output: string, timeoutMs = 120_000): Promise<void> {
+  const signatures = await Promise.all(inputs.map((input) => probeVideoSignature(input)))
+  const first = signatures[0]
+  const homogeneous = Boolean(first) && signatures.every((signature) => signature === first)
+  if (!homogeneous) {
+    console.warn(
+      `[ffmpeg] 片段帧率/时间基不一致（${signatures.map((s) => s ?? '未知').join(', ')}），` +
+      `改用逐输入复位的重编码拼接，避免接缝丢帧`,
+    )
+    await concatWithPtsReset(inputs, output, timeoutMs)
+    return
+  }
   const listPath = `${output}.list.txt`
   const listText = inputs.map((f) => `file '${f.replace(/'/g, "'\\''")}'`).join('\n')
   await writeFile(listPath, listText, 'utf8')
@@ -378,10 +593,9 @@ export async function ffmpegConcatWithTransitions(
   // files normally do, but concat/cache paths and container edit lists can
   // still carry a non-zero timestamp. Reset both streams explicitly so a
   // transition cannot repeat or stall a short section at a seam.
-  let filter = inputs.map((_, index) =>
-    `[${index}:v]settb=AVTB,setpts=PTS-STARTPTS,fps=30,setsar=1,format=yuv420p[v${index}];` +
-    `[${index}:a]aresample=async=1:first_pts=0,aformat=sample_fmts=fltp:sample_rates=44100:channel_layouts=stereo,asetpts=PTS-STARTPTS[a${index}];`,
-  ).join('')
+  // ★ 复位滤镜与 concatWithPtsReset 共用同一个出处（perInputResetFilter）：
+  //   两处写法一旦漂移，就会重新长出「某条路径没复位 ⇒ 接缝丢帧」的 bug。
+  let filter = inputs.map((_, index) => perInputResetFilter(index, 30)).join('')
   let videoLabel = 'v0'
   let audioLabel = 'a0'
   let timelineSec = (durations[0] as number) / 1000
