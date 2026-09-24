@@ -360,15 +360,7 @@
     letter-spacing: -0.01em;
     color: var(--td-text-color-primary);
   }
-  // 说明贴右对齐、字号比标题小两档：它说的是「这组选项管什么」，
-  // 是注解不是正文，与标题同行之后视线不会被多出来的一行灰字打断。
-  &__spec-note {
-    flex: 1;
-    min-width: 0;
-    text-align: right;
-    font-size: 22rpx;
-    color: var(--td-text-color-placeholder);
-  }
+  // 原来标题右侧那行小字说明（&__spec-note）已收进「?」（components/section-help）。
 
   // 合并成一张卡后，两组规格之间的细分隔线。
   // 上下留白刻意偏大：上面那块最后一行是描边选项条，线贴太近会被读成某一项的底边。

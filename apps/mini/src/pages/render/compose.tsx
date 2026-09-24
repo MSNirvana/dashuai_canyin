@@ -17,6 +17,7 @@ import { readRouteId, isNumericId } from '../../utils/route-id'
 // 时间一律走这里：接口给的是 UTC 的 ISO 串（…T…Z），直接渲染/截串都会露 T、Z 且差 8 小时
 import { formatMinute } from '../../utils/time'
 import ProgressLine from '../../components/progress-line'
+import SectionHelp from '../../components/section-help'
 import './compose.scss'
 
 const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
@@ -288,6 +289,18 @@ export default function RenderCompose() {
   const [taskNotices, setTaskNotices] = useState<string[]>([])
   const [pollRetry, setPollRetry] = useState(0)
   const [refreshingHistory, setRefreshingHistory] = useState(false)
+  /**
+   * 「历史里要自动播放」的标记：只在成片记录里点「播放」时置位（点完滚上去就直接开播），
+   * 其他展示路径（load 自动展示、RECOLOR 完成展示）不置位。
+   * ★ 回前台会复位（见 useDidShow）：不复位的话「点过一次播放」
+   *   会变成「以后每次回到本页都自动播」。
+   */
+  const [autoplayOn, setAutoplayOn] = useState(false)
+  /**
+   * 成片记录默认只展开最近 3 条：记录会越攒越多，全部铺开会把「发布素材」等
+   * 后面的模块顶到很深 —— 而用户绝大多数时候只关心最近这几次。
+   */
+  const [historyOpen, setHistoryOpen] = useState(false)
   // P0-5：不可用档位 → 原因文案。空对象表示「都可用」（含能力接口拉取失败时的保守放行）
   const [gradeIssues, setGradeIssues] = useState<Partial<Record<RenderGrade, string>>>({})
   /**
@@ -521,6 +534,8 @@ export default function RenderCompose() {
 
   useDidShow(() => {
     setVisible(true)
+    // 自动播放只在「成片记录里点播放」那一次生效，回到本页一律复位
+    setAutoplayOn(false)
     // ★ 编号要在页面**每次显示时重新确认**，不能渲染期读一次就定终身：
     //   冷启动恢复时 Taro 重建页面组件，渲染期的 current.router 可能还没挂上，
     //   读到空编号就把页面判成「编号丢失」；而此后若没有任何 state 变化触发重渲染，
@@ -918,6 +933,33 @@ export default function RenderCompose() {
   }
 
   /**
+   * 滚动到页面顶部的播放器（成片记录里点「播放」之后用）。
+   * rect.top 是相对**视口**的坐标，要加上当前滚动偏移换算回页面绝对位置，
+   * 再往上留 90rpx 的呼吸空间，别让播放器贴着屏幕上沿。
+   */
+  const scrollToPlayer = () => {
+    const query = Taro.createSelectorQuery()
+    query.select('.rcompose__preview').boundingClientRect()
+    query.selectViewport().scrollOffset()
+    query.exec((res) => {
+      const rect = res?.[0] as { top?: number } | null
+      const offset = res?.[1] as { scrollTop?: number } | null
+      if (!rect || typeof rect.top !== 'number' || !offset || typeof offset.scrollTop !== 'number') return
+      void Taro.pageScrollTo({
+        scrollTop: Math.max(0, offset.scrollTop + rect.top - 90),
+        duration: 300,
+      })
+    })
+  }
+
+  /** 成片记录的「播放」：翻开自动播放标记 → 顶部播放器换成这条 → 滚到播放器 */
+  const onPlayInPage = (task: RenderTask) => {
+    setAutoplayOn(true)
+    void showResult(task)
+    scrollToPlayer()
+  }
+
+  /**
    * 底部「?」：把结算口径一次说清。
    * 档位系数直接从 GRADE_RATIO 生成，**不在文案里另写一份数字** —— 费率改了这里跟着变，
    * 不会出现「弹窗写着 1.5×、卡片上却是别的数」。
@@ -1160,8 +1202,10 @@ export default function RenderCompose() {
     <View className='rcompose'>
       <View className='rcompose__stage'>
         <Text className='rcompose__stage-kicker'>STEP 3 OF 3 · FINISH</Text>
-        <Text className='rcompose__stage-title'>把素材剪成一条能发布的视频</Text>
-        <Text className='rcompose__stage-desc'>选择生成方式，确认预计消耗后提交。失败会全额返还积分。</Text>
+        <View className='rcompose__stage-row'>
+          <Text className='rcompose__stage-title'>把素材剪成一条能发布的视频</Text>
+          <SectionHelp title='这一步做什么' text='选择生成方式，确认预计消耗后提交。失败会全额返还积分。' />
+        </View>
       </View>
       <View className='rcompose__head'>
         <View className='rcompose__headmain'>
@@ -1256,7 +1300,7 @@ export default function RenderCompose() {
             <View className='rcompose__stillo'>{stillLabel}</View>
           </>
         ) : playUrl ? (
-          <Video className='rcompose__video' src={playUrl} controls autoplay={false} onError={() => setResultError('播放失败，请重试获取地址')} />
+          <Video className='rcompose__video' src={playUrl} controls autoplay={autoplayOn} onError={() => setResultError('播放失败，请重试获取地址')} />
         ) : (
           <View className='rcompose__placeholder'>
             {selectedResult ? '成片地址暂不可用，请稍后重试' : '生成成片后在这里播放（素材在展开后点一下就地放大）'}
@@ -1343,21 +1387,33 @@ export default function RenderCompose() {
 
       {grade === 'AI' && (
         <View className='rcompose__card rcompose__card--ai'>
-          <Text className='rcompose__sectitle'>AI 自动剪辑</Text>
-          <Text className='rcompose__optiondesc'>服务器会分析素材内容、画面质量和口播关系，自动选择镜头与节奏。</Text>
+          <View className='rcompose__titlerow'>
+            <Text className='rcompose__sectitle'>AI 自动剪辑</Text>
+            <SectionHelp
+              title='AI 自动剪辑'
+              text='服务器会分析素材内容、画面质量和口播关系，自动选择镜头与节奏。'
+            />
+          </View>
           <View className='rcompose__choice'>
-            <Text className='rcompose__fieldlabel'>剪辑模式</Text>
+            <View className='rcompose__fieldrow'>
+              <Text className='rcompose__fieldlabel'>剪辑模式</Text>
+              <SectionHelp
+                title='剪辑模式'
+                text='AI 默认模式：不添加 AI 配音，保留素材原声并自动生成字幕；系统会识别镜头类型、语音节奏和转场，优先保证语句完整与音画同步。高级模式：可自选配音、字幕样式、节奏与转场等细节。'
+              />
+            </View>
             <View className='rcompose__choices'>
               <Text className={`rcompose__choiceitem ${chatcut.editMode === 'AUTO' ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((value) => ({ ...value, editMode: 'AUTO' }))}>AI 默认模式</Text>
               <Text className={`rcompose__choiceitem ${chatcut.editMode === 'ADVANCED' ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((value) => ({ ...value, editMode: 'ADVANCED' }))}>高级模式</Text>
             </View>
           </View>
-          {chatcut.editMode === 'AUTO' ? (
-            <View className='ds-notice ds-notice--info'>默认不添加 AI 配音，保留素材原声并自动生成字幕；系统会识别镜头类型、语音节奏和转场，优先保证语句完整与音画同步。</View>
-          ) : (
+          {chatcut.editMode === 'AUTO' ? null : (
             <>
           <View className='rcompose__choice'>
-            <Text className='rcompose__fieldlabel'>剪辑内容类型</Text>
+            <View className='rcompose__fieldrow'>
+              <Text className='rcompose__fieldlabel'>剪辑内容类型</Text>
+              <SectionHelp title='剪辑内容类型' text='不确定时选择自动识别，系统会根据整组素材判断。' />
+            </View>
             <View className='rcompose__choices'>
               {AUTO_EDIT_PROFILE_OPTIONS.map((option) => (
                 <Text
@@ -1369,9 +1425,14 @@ export default function RenderCompose() {
                 </Text>
               ))}
             </View>
-            <Text className='rcompose__optiondesc'>不确定时选择自动识别，系统会根据整组素材判断。</Text>
           </View>
-          <Text className='rcompose__fieldlabel'>配音音色</Text>
+          <View className='rcompose__fieldrow'>
+            <Text className='rcompose__fieldlabel'>配音音色</Text>
+            <SectionHelp
+              title='配音音色'
+              text='系统音色即选即用；选「自定义」可用自己的录音或音频文件，自定义配音会优先于服务器音色，并作为整条旁白使用。'
+            />
+          </View>
           <View className='rcompose__voicegrid'>
             {CHATCUT_VOICES.map((voice) => (
               <View
@@ -1390,7 +1451,6 @@ export default function RenderCompose() {
           </View>
           {chatcut.voiceId === 'custom' && (
             <View className='rcompose__customvoice'>
-              <Text className='rcompose__optiondesc'>自定义配音会优先于服务器音色，并作为整条旁白使用。</Text>
               <View className='rcompose__voiceactions'>
                 <Button size='mini' loading={customVoiceUploading} onClick={() => void chooseCustomVoice()}>选择音频</Button>
                 <Button size='mini' type={recording ? 'warn' : 'default'} onClick={recording ? stopCustomVoice : () => void recordCustomVoice()}>
@@ -1479,7 +1539,13 @@ export default function RenderCompose() {
       {grade !== 'PREMIUM' && (
         <View className='rcompose__card rcompose__card--color'>
           <View className='rcompose__colorhead'>
-            <Text className='rcompose__sectitle rcompose__sectitle--flush'>整片调色</Text>
+            <View className='rcompose__titlerow'>
+              <Text className='rcompose__sectitle rcompose__sectitle--flush'>整片调色</Text>
+              <SectionHelp
+                title='整片调色'
+                text='拖动时画面只是近似示意（锐化在拖动中不体现）。松手约 1 秒后生成整片精确预览，免费。'
+              />
+            </View>
             {!colorUnsupported && !isNoopColor(color) && (
               <Text className='rcompose__colorreset' onClick={resetColor}>重置</Text>
             )}
@@ -1508,11 +1574,10 @@ export default function RenderCompose() {
                   />
                 </View>
               ))}
-              <Text className='rcompose__colorhint'>
-                {materialsReady
-                  ? '拖动时画面只是近似示意（锐化在拖动中不体现）。松手约 1 秒后生成整片精确预览，免费。'
-                  : '补齐全部分镜素材后即可生成整片调色预览。'}
-              </Text>
+              {/* 素材不齐时的那句是「现在该做什么」的引导，保留常驻；机制说明已收进标题旁的「?」 */}
+              {!materialsReady && (
+                <Text className='rcompose__colorhint'>补齐全部分镜素材后即可生成整片调色预览。</Text>
+              )}
             </>
           )}
         </View>
@@ -1562,14 +1627,23 @@ export default function RenderCompose() {
         </View>
       )}
 
-      {/* ── 成片记录 ── */}
+      {/* ── 成片记录 ──
+          ★ 默认只展示最近 3 条（新任务在数组头部，unshift + 按时间倒序），
+            更早的折叠在一行「展开」后面 —— 记录会越攒越多，全部铺开会把
+            「发布素材」等后续模块顶到很深。 */}
       {renders.length > 0 && (
         <View className='rcompose__card rcompose__card--history'>
           <View className='rcompose__history-heading'>
-            <Text className='rcompose__sectitle'>成片记录</Text>
+            <View className='rcompose__titlerow'>
+              <Text className='rcompose__sectitle'>成片记录</Text>
+              <SectionHelp
+                title='成片记录'
+                text='每次提交生成都会留下一条记录（含积分结算）。点左侧描述可进详情页；成功的成片点「播放」直接在本页顶部播放。'
+              />
+            </View>
             <Button size='mini' loading={refreshingHistory} disabled={refreshingHistory} onClick={() => void reloadHistory()}>刷新</Button>
           </View>
-          {renders.map((task) => (
+          {(historyOpen ? renders : renders.slice(0, 3)).map((task) => (
             <View className='rcompose__history' key={task.id}>
               {/* ── 可点区域 = 左半边的「描述块」，里面**不含任何按钮** ──
                   ★ 为什么不把整行做成可点：行里还有「在本页播放」按钮，而小程序里
@@ -1609,10 +1683,21 @@ export default function RenderCompose() {
                 </Text>
               </View>
               {task.status === 'SUCCESS' && (
-                <Button className='rcompose__action' size='mini' onClick={() => void showResult(task)}>在本页播放</Button>
+                <Button className='rcompose__action rcompose__action--play' size='mini' onClick={() => onPlayInPage(task)}>播放</Button>
               )}
             </View>
           ))}
+          {/* 折叠开关只在真有多余记录时出现；文案给出确切条数，让「展开」有预期 */}
+          {renders.length > 3 && (
+            <View
+              className='rcompose__history-toggle'
+              hoverClass='ds-hover'
+              onClick={() => setHistoryOpen((v) => !v)}
+            >
+              {historyOpen ? '收起记录' : `展开其余 ${renders.length - 3} 条`}
+              <Text className='rcompose__history-toggle-arrow'>{historyOpen ? '▲' : '▼'}</Text>
+            </View>
+          )}
         </View>
       )}
 
@@ -1622,7 +1707,13 @@ export default function RenderCompose() {
             与档位、调色都无关 —— 所以没有必要跟三档/调色并排挤在一起。 */}
       <View className='rcompose__card rcompose__card--publish'>
         <View className='rcompose__history-heading'>
-          <Text className='rcompose__sectitle'>发布素材</Text>
+          <View className='rcompose__titlerow'>
+            <Text className='rcompose__sectitle'>发布素材</Text>
+            <SectionHelp
+              title='发布素材'
+              text='按这条视频的口播文案，生成可以直接发布的三样东西：标题、3:4 竖版封面、发布文案。'
+            />
+          </View>
           {!!publishMat && !publishLoading && (
             <Button size='mini' onClick={() => void doGeneratePublish('ALL')}>重新生成</Button>
           )}
@@ -1630,9 +1721,6 @@ export default function RenderCompose() {
 
         {!publishMat && !publishLoading && (
           <>
-            <Text className='rcompose__pubhint'>
-              按这条视频的口播文案，生成可以直接发布的三样东西：标题、3:4 竖版封面、发布文案。
-            </Text>
             {publishEstimate && (
               <Text className='rcompose__pubcost'>
                 预计消耗：标题与文案最多 {publishEstimate.textBeanCap} 积分（按实际用量结算）

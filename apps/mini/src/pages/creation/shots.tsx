@@ -13,6 +13,7 @@ import { listShotLibrary, getShotDemoPlayUrl, type ShotLibraryItem } from '../..
 import { uploadVideoFile, UploadAbortedError } from '../../services/upload'
 import { readRouteId } from '../../utils/route-id'
 import ProgressLine from '../../components/progress-line'
+import SectionHelp from '../../components/section-help'
 import './shots.scss'
 
 /** 时长格式化：83.4s → 1:23 */
@@ -352,20 +353,26 @@ export default function CreationShots() {
     <View className='cshots'>
       <View className='cshots__stage'>
         <Text className='cshots__stage-kicker'>STEP 2 OF 3 · SHOOTING</Text>
-        <Text className='cshots__stage-title'>照着分镜，一条一条拍</Text>
-        <Text className='cshots__stage-desc'>不必一次拍完，已上传的素材会自动保存。每个镜头都有现场拍摄提示。</Text>
+        <View className='cshots__stage-row'>
+          <Text className='cshots__stage-title'>照着分镜，一条一条拍</Text>
+          {/* 原来常驻在标题下的那句说明收进「?」：讲的是「不必一次拍完」这种按需了解的事，
+              常驻只会把真正的拍摄指引（竖屏提醒）往下推。 */}
+          <SectionHelp title='拍摄说明' text='不必一次拍完，已上传的素材会自动保存。每个镜头都有现场拍摄提示。' />
+        </View>
         {/* ★★ 全局拍摄方向提示（2026-09-22 加）。
             成片画布固定 9:16，而云端适配用的是 `fit:"cover"`（填满画布、不留黑边）——
             横屏素材想填满竖屏画布只能**放大 3.5 倍再裁掉左右两侧**，只剩画面正中一条。
             线上真实事故：用户交上来的是「只剩一张脸的特写」。
             而 18 条镜头提示里**只有 2 条**提到竖拍 ⇒ 用户老老实实照着提示拍完，素材还是横的。
             ★ 方向这件事必须在**开拍之前**说，而且只在页面顶部说一次：
-              每条卡片都重复一遍就成了噪音，重复的警示等于没有警示。 */}
+              每条卡片都重复一遍就成了噪音，重复的警示等于没有警示。
+            ★ 详细原因收进「?」：警示句本身（竖着拿）常驻，为什么竖着拿点开再看。 */}
         <View className='cshots__orient'>
           <Text className='cshots__orient-title'>全程竖屏拍摄（手机竖着拿）</Text>
-          <Text className='cshots__orient-desc'>
-            成片是 9:16 竖屏。横着拍的素材只能裁掉左右两边来填满画面，人会变成大特写。
-          </Text>
+          <SectionHelp
+            title='为什么要竖屏拍'
+            text='成片是 9:16 竖屏。横着拍的素材只能裁掉左右两边来填满画面，人会变成大特写。'
+          />
         </View>
       </View>
 

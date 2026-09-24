@@ -25,6 +25,7 @@ import { useMerchantStore } from '../../store/merchant'
 import StoreSwitcher from '../../components/store-switcher'
 import Segmented from '../../components/segmented'
 import Steps from '../../components/steps'
+import SectionHelp from '../../components/section-help'
 import { splitCopyParagraphs, copyTextParagraphs } from '../../utils/copy-text'
 import { isNumericId, readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './edit.scss'
@@ -950,8 +951,8 @@ export default function CreationEdit() {
         <View className='cedit__card'>
           <View className='cedit__spec-head'>
             <Text className='cedit__spec-title'>文案款式</Text>
-            {/* 原来的「决定 AI 写文案的侧重点」去掉了「AI」：同一页里只说一次「谁在写」就够了 */}
-            <Text className='cedit__spec-note'>决定文案的侧重点</Text>
+            {/* 标题旁的小字说明收进「?」（各款的差异在下方选项行里，仍常驻可见） */}
+            <SectionHelp title='文案款式' text='决定这条文案的侧重点：讲人、讲知识、讲产品，还是老板视角的真实推荐。' />
           </View>
           <OptionList options={DISH_TRACK_OPTIONS} value={track} onChange={onPickTrack} />
 
@@ -960,7 +961,7 @@ export default function CreationEdit() {
 
           <View className='cedit__spec-head'>
             <Text className='cedit__spec-title'>镜头复杂度</Text>
-            <Text className='cedit__spec-note'>自动决定分镜数量</Text>
+            <SectionHelp title='镜头复杂度' text='自动决定分镜数量：简单版 2~3 个，复杂版 5~6 个，精细版 6~9 个。' />
           </View>
           <OptionList options={COMPLEXITY_OPTIONS} value={complexity} onChange={onPickComplexity} />
         </View>

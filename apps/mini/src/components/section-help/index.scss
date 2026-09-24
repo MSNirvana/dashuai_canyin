@@ -1,0 +1,16 @@
+// 与创作页页脚那个「?」同一套观感（cedit__help 的缩小版）：
+// 灰底圆 + secondary 文字，直径 32rpx —— 标题行高的一小半，不抢标题的视觉。
+.section-help {
+  flex: none;
+  width: 32rpx;
+  height: 32rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 20rpx;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--td-text-color-secondary);
+  background: var(--td-bg-color-secondary);
+}
