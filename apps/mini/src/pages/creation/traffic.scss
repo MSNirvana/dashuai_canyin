@@ -11,20 +11,19 @@
     padding: 8rpx 8rpx 20rpx;
   }
 
+  // 标题 + 问号一行：原来标题下那行小字说明已收进「?」（components/section-help）
+  &__hero-row {
+    display: flex;
+    align-items: center;
+    gap: 10rpx;
+  }
+
   &__hero-title {
     display: block;
     font-size: 34rpx;
     font-weight: 700;
     letter-spacing: -0.02em;
     color: var(--td-text-color-primary);
-  }
-
-  &__hero-desc {
-    display: block;
-    margin-top: 8rpx;
-    font-size: 23rpx;
-    line-height: 1.55;
-    color: var(--td-text-color-secondary);
   }
 
   &__card {

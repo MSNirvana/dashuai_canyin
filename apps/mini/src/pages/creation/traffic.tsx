@@ -26,6 +26,7 @@ import {
   type ShotItem,
 } from '../../services/creation'
 import Segmented from '../../components/segmented'
+import SectionHelp from '../../components/section-help'
 import { splitCopyParagraphs, copyTextParagraphs } from '../../utils/copy-text'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './traffic.scss'
@@ -188,10 +189,11 @@ export default function CreationTraffic() {
   return (
     <View className='ctraffic'>
       <View className='ctraffic__hero'>
-        <Text className='ctraffic__hero-title'>流量款 · 跟热点</Text>
-        <Text className='ctraffic__hero-desc'>
-          跟着今天的话题、节气、节日出稿，拍完就能发。
-        </Text>
+        <View className='ctraffic__hero-row'>
+          <Text className='ctraffic__hero-title'>流量款 · 跟热点</Text>
+          {/* 与创作/拍摄/合成三页同款：标题下那行小字说明收进标题右侧的「?」 */}
+          <SectionHelp title='流量款 · 跟热点' text='跟着今天的话题、节气、节日出稿，拍完就能发。' />
+        </View>
       </View>
 
       {/* 镜头复杂度：话题稿唯一需要用户决定的参数 */}

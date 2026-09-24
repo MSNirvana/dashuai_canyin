@@ -787,7 +787,8 @@
   letter-spacing: 0;
 }
 
-.rcompose__stage-desc { margin-top: 8rpx; }
+// 原来这里还有一条 `.rcompose__stage-desc { margin-top: 8rpx; }` —— stage 那行小字说明
+// 已收进标题右侧的「?」，tsx 里不再渲染这个类，留着会让人以为版面上还有一行说明。
 
 .rcompose__head {
   align-items: center;

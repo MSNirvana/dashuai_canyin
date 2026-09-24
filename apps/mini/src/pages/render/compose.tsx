@@ -32,6 +32,11 @@ function newRequestId() {
 }
 const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3 }
 /**
+ * 顶部播放器的 video id：成片记录里点「播放」后要用 `VideoContext.play()` 兜一手
+ * （`autoplay` 属性在动态换源时不一定肯自己播），必须与下面 `<Video id>` 一致。
+ */
+const PLAYER_VIDEO_ID = 'rcompose-player'
+/**
  * AI 档的 6 项选项（2026-09-21 已全部接到真实原语，面板放回）。
  *
  * ★ 面板文案与**服务端能力**的对应关系（改文案前先看这里，别让两边说法不一致）：
@@ -820,6 +825,34 @@ export default function RenderCompose() {
   }, [visible, id, materialsReady, color, previewedSignature, requestColorPreview])
 
   /**
+   * 成片记录里点「播放」之后，**真正把片子放起来**的那一下。
+   *
+   * 为什么不能只靠 `<Video autoplay={autoplayOn}>`：`autoplay` 是个**状态属性**，在
+   * 「同一个 video 节点动态换源」这条路径上不保证肯自己播（组件已经在场且处于暂停态）。
+   * 所以地址就绪后再显式 `play()` 一次兜底 —— 已经在播时它是幂等的空操作，
+   * 而 `onPlay` 会把标记放掉，所以本 effect 不会反复触发。
+   *
+   * ★★ 两处位置约束，改这个文件时别挪：
+   *   ① 依赖必须是 `videoUrl` / `colorPreviewUrl` 这两个 **state**，不能写渲染期拼出来的
+   *      `playUrl` —— 那个 const 声明在 `if (!detail) return` **之后**，进依赖数组 = 渲染期 TDZ。
+   *   ② 本 effect 必须待在提前 return **之前**，否则 detail 从 null 变有值时就成了条件 Hook
+   *      （"Rendered more hooks than during the previous render"）。
+   */
+  useEffect(() => {
+    if (!autoplayOn || (!videoUrl && !colorPreviewUrl)) return
+    // 留一小段：原生 video 节点由 Taro 在本次渲染后创建，取 context 需要它已经在场。
+    // 300ms 与上面 pageScrollTo 的滚动时长同量级，观感上是「滚到就开播」。
+    const timer = setTimeout(() => {
+      try {
+        Taro.createVideoContext(PLAYER_VIDEO_ID).play()
+      } catch {
+        // 取不到 context（节点还没挂上）：不补救，autoplay 属性仍是第一道
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [autoplayOn, videoUrl, colorPreviewUrl])
+
+  /**
    * Slider 的取值入口。分两个相位，这是本功能的核心约定：
    *   · dragging（onChanging，拖动过程中）—— 只更新本地数值，让静帧跟手变色，**不发请求**。
    *   · settled（onChange，松手或点一下）—— 清掉拖动标记，防抖后请求整片精确预览。
@@ -1300,7 +1333,19 @@ export default function RenderCompose() {
             <View className='rcompose__stillo'>{stillLabel}</View>
           </>
         ) : playUrl ? (
-          <Video className='rcompose__video' src={playUrl} controls autoplay={autoplayOn} onError={() => setResultError('播放失败，请重试获取地址')} />
+          /* ★ `autoplay` 是**状态**，不是一次性事件：所以播起来就把标记放掉（见 onPlay）
+             —— 不清的话「点过一次播放」会退化成「此后每条新地址都自动播」（调色预览完成、
+             回本页重新展示都会自己响起来）。清掉还顺带修好「再点同一条」：标记 false→true
+             的跳变会重新触发，而 `showResult` 每次都先置空地址再换新地址，也带同一个跳变。 */
+          <Video
+            id={PLAYER_VIDEO_ID}
+            className='rcompose__video'
+            src={playUrl}
+            controls
+            autoplay={autoplayOn}
+            onPlay={() => setAutoplayOn(false)}
+            onError={() => setResultError('播放失败，请重试获取地址')}
+          />
         ) : (
           <View className='rcompose__placeholder'>
             {selectedResult ? '成片地址暂不可用，请稍后重试' : '生成成片后在这里播放（素材在展开后点一下就地放大）'}
@@ -1468,9 +1513,11 @@ export default function RenderCompose() {
           )}
 
           <View className='rcompose__optionrow'>
-            <View>
+            <View className='rcompose__titlerow'>
               <Text className='rcompose__optiontitle'>显示字幕</Text>
-              <Text className='rcompose__optiondesc'>字幕独立于配音，可识别视频原声。</Text>
+              {/* 说明收进「?」：这一行右列是 Switch，常驻的小字会把开关和它自己的
+                  间距一起撑高，而「字幕能不能认原声」是按需了解的事。 */}
+              <SectionHelp title='显示字幕' text='字幕独立于配音，可识别视频原声。' />
             </View>
             <Switch checked={chatcut.subtitleMode !== 'OFF'} onChange={(event) => setChatcut((value) => ({ ...value, subtitles: event.detail.value, subtitleMode: event.detail.value ? (voiceOff ? 'SOURCE_AUDIO' : 'VOICE') : 'OFF' }))} color='#e1251b' />
           </View>
@@ -1520,11 +1567,11 @@ export default function RenderCompose() {
             </View>
           </View>
           <View className='rcompose__optionrow'>
-            <View><Text className='rcompose__optiontitle'>统一音量</Text><Text className='rcompose__optiondesc'>统一原声和配音的响度，减少忽大忽小</Text></View>
+            <View className='rcompose__titlerow'><Text className='rcompose__optiontitle'>统一音量</Text><SectionHelp title='统一音量' text='统一原声和配音的响度，减少忽大忽小。' /></View>
             <Switch checked={chatcut.normalizeAudio} onChange={(event) => setChatcut((value) => ({ ...value, normalizeAudio: event.detail.value }))} color='#e1251b' />
           </View>
           <View className='rcompose__optionrow'>
-            <View><Text className='rcompose__optiontitle'>清理停顿</Text><Text className='rcompose__optiondesc'>压缩过长静音，保留正常语句节奏</Text></View>
+            <View className='rcompose__titlerow'><Text className='rcompose__optiontitle'>清理停顿</Text><SectionHelp title='清理停顿' text='压缩过长静音，保留正常语句节奏。' /></View>
             <Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' />
           </View>
 
@@ -1646,7 +1693,7 @@ export default function RenderCompose() {
           {(historyOpen ? renders : renders.slice(0, 3)).map((task) => (
             <View className='rcompose__history' key={task.id}>
               {/* ── 可点区域 = 左半边的「描述块」，里面**不含任何按钮** ──
-                  ★ 为什么不把整行做成可点：行里还有「在本页播放」按钮，而小程序里
+                  ★ 为什么不把整行做成可点：行里还有「播放」按钮，而小程序里
                     子元素的 tap 会冒泡到父节点（stopPropagation 不可靠），
                     整行可点 = 点播放会顺带跳走。把点击区与按钮区做成**兄弟**节点，
                     结构上就没有冒泡关系。 */}
