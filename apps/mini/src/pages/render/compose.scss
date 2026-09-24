@@ -12,11 +12,8 @@
     font-size: 26rpx;
   }
 
-  &__stage { margin-bottom: 24rpx; padding: 30rpx 28rpx; border-radius: var(--td-radius-large); background: #211514; }
-  &__stage-kicker { display: block; color: #ffaaa3; font-size: 20rpx; font-weight: 700; letter-spacing: .1em; }
-  // 标题 + 问号成行（原 stage-desc 已收进问号）
-  &__stage-row { display: flex; align-items: center; gap: 12rpx; margin-top: 12rpx; }
-  &__stage-title { display: block; color: #fff; font-size: 36rpx; font-weight: 700; line-height: 1.3; letter-spacing: -.025em; }
+  /* ★ 2026-09-24：页面顶部的深色框体（__stage / __stage-row / __stage-title）随改版删除，
+      tsx 不再渲染。 */
 
   &__head {
     display: flex;
@@ -758,7 +755,7 @@
   padding-top: 16rpx;
 }
 
-.rcompose > .rcompose__stage { order: 1; }
+/* ★ 2026-09-24：`.rcompose > .rcompose__stage { order: 1 }` 随顶部深色框体一起删除。 */
 .rcompose > .rcompose__head { order: 2; }
 .rcompose > .rcompose__preview { order: 3; }
 .rcompose > .rcompose__previewtip { order: 4; }
@@ -775,20 +772,8 @@
 .rcompose > .rcompose__lightbox { order: 20; }
 .rcompose > .ds-footer { order: 30; }
 
-.rcompose__stage {
-  margin-bottom: 14rpx;
-  padding: 26rpx 24rpx;
-  border-radius: var(--td-radius-large);
-  background: #191a1d;
-}
-
-.rcompose__stage-title {
-  font-size: 34rpx;
-  letter-spacing: 0;
-}
-
-// 原来这里还有一条 `.rcompose__stage-desc { margin-top: 8rpx; }` —— stage 那行小字说明
-// 已收进标题右侧的「?」，tsx 里不再渲染这个类，留着会让人以为版面上还有一行说明。
+// ★ 2026-09-24：`.rcompose__stage` / `.rcompose__stage-title` 随顶部深色框体一起删除
+// （更早的 `.rcompose__stage-desc` 已先一步下线）。tsx 里不再渲染这些类。
 
 .rcompose__head {
   align-items: center;

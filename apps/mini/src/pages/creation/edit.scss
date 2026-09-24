@@ -208,8 +208,7 @@
   &__help-line + &__help-line {
     margin-top: 8rpx;
   }
-  &__stage { margin-top: 22rpx; padding: 22rpx 24rpx; border-radius: var(--td-radius-default); background: var(--td-brand-color-light); }
-  &__stage-title { display: block; margin-top: 8rpx; color: var(--td-text-color-primary); font-size: 27rpx; font-weight: 600; }
+  /* ★ 2026-09-24：`&__stage` / `&__stage-title` 随顶部深色框体一起删除（tsx 不再渲染）。 */
 
   /* ── 同款配方提示（来自优秀作品） ── */
   &__recipe {
@@ -688,8 +687,7 @@
 
 /* 最终产品化尺寸覆写（放在组件覆写之后，确保构建顺序稳定）。 */
 .cedit { padding: 16rpx 32rpx calc(148rpx + env(safe-area-inset-bottom)); }
-.cedit__stage { padding: 24rpx; border-radius: var(--td-radius-large); background: #191a1d; }
-.cedit__stage-title { font-size: 32rpx; letter-spacing: 0; }
+/* ★ 2026-09-24：`.cedit__stage` / `.cedit__stage-title` 随顶部深色框体一起删除。 */
 .cedit__head { padding: 18rpx 4rpx; }
 .cedit__htitle { font-size: 30rpx; letter-spacing: 0; }
 .cedit__card { padding: 24rpx; margin-bottom: 16rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-large); box-shadow: none; }

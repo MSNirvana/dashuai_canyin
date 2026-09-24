@@ -1233,13 +1233,8 @@ export default function RenderCompose() {
   const colorUnsupported = false
   return (
     <View className='rcompose'>
-      <View className='rcompose__stage'>
-        <Text className='rcompose__stage-kicker'>STEP 3 OF 3 · FINISH</Text>
-        <View className='rcompose__stage-row'>
-          <Text className='rcompose__stage-title'>把素材剪成一条能发布的视频</Text>
-          <SectionHelp title='这一步做什么' text='选择生成方式，确认预计消耗后提交。失败会全额返还积分。' />
-        </View>
-      </View>
+      {/* ★ 2026-09-24 按需求删除页面顶部的深色框体（rcompose__stage）：框内标题与
+          「这一步做什么」问号一起下线。 */}
       <View className='rcompose__head'>
         <View className='rcompose__headmain'>
           <Text className='rcompose__title'>{detail.title || '未命名创作'}</Text>

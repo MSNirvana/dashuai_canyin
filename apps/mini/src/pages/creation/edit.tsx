@@ -1100,10 +1100,8 @@ export default function CreationEdit() {
     <View className='cedit'>
       <View className='cedit__steps-wrap'>
         <Steps steps={STEP_LABELS} current={step} />
-        <View className='cedit__stage'>
-          <Text className='cedit__stage-kicker'>STEP 1 OF 3 · CREATE</Text>
-          <Text className='cedit__stage-title'>{step === 0 ? '先把文案和分镜准备好' : '文案和分镜已就绪，去拍摄吧'}</Text>
-        </View>
+        {/* ★ 2026-09-24 按需求删除页面顶部的深色框体（cedit__stage）：
+            原来框里那行「先把文案和分镜准备好 / 文案和分镜已就绪，去拍摄吧」一并下线 */}
       </View>
 
       <View className='cedit__head'>

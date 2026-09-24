@@ -11,19 +11,8 @@
     font-size: 26rpx;
   }
 
-  &__stage { margin-bottom: 24rpx; padding: 28rpx 28rpx 30rpx; border-radius: var(--td-radius-large); background: #211514; }
-  &__stage-kicker { display: block; color: #ffaaa3; font-size: 20rpx; font-weight: 700; letter-spacing: .1em; }
-  // 标题 + 问号一行：说明文字收进问号后，标题行自己排
-  &__stage-row { display: flex; align-items: center; gap: 12rpx; margin-top: 12rpx; }
-  &__stage-title { display: block; color: #fff; font-size: 38rpx; font-weight: 700; letter-spacing: -.025em; }
-  /**
-   * 全局拍摄方向提示（落在 stage 卡片内）。
-   * ★ 用暖色描边 + 半透明底把它从 stage 的其他文字里挑出来：这是一条「不做就会毁片」的硬要求，
-   *   读起来不能像又一句介绍。★ 颜色沿用 stage 已有的强调色 #ffaaa3，不新引入色值。
-   * ★ 原因说明收进「?」后只剩一行警示句，flex 排标题与问号。
-   */
-  &__orient { margin-top: 20rpx; padding: 18rpx 20rpx; border: 2rpx solid rgba(255,170,163,.45); border-radius: 14rpx; background: rgba(255,170,163,.1); display: flex; align-items: center; gap: 12rpx; }
-  &__orient-title { display: block; color: #ffd9d5; font-size: 25rpx; font-weight: 700; }
+  /* ★ 2026-09-24：页面顶部的深色框体（__stage / __stage-row / __stage-title）与
+     其内的拍摄方向提示（__orient / __orient-title）随改版一起删除，tsx 不再渲染。 */
 
   /* ── 整体进度 ── */
   &__progress {
@@ -280,8 +269,6 @@
 
 /* 分镜页：用缩略图承担主视觉，上传动作固定在每个分镜的上下文里。 */
 .cshots { padding: 16rpx 32rpx calc(190rpx + env(safe-area-inset-bottom)); }
-.cshots__stage { padding: 24rpx; margin-bottom: 16rpx; border-radius: var(--td-radius-large); background: #191a1d; }
-.cshots__stage-title { font-size: 32rpx; letter-spacing: 0; }
 .cshots__card { padding: 22rpx; margin-bottom: 14rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-large); box-shadow: none; }
 .cshots__type { font-size: 27rpx; }
 .cshots__thumb { border-radius: var(--td-radius-default); }
