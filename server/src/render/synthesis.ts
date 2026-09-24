@@ -31,7 +31,35 @@ const execFileP = promisify(execFile)
 
 // Fixed against the actual 1080x1920 output canvas. ASS must declare the same
 // PlayRes or libass interprets these values against its legacy 384x288 canvas.
-const SUBTITLE_FONT_SIZE = 52
+/**
+ * 字幕字号倍率 —— **只改这一个数**。
+ *
+ * ★ 基准 52px 是历史值；2026-09-25 用户要求「字幕大小放大两倍」⇒ 2。
+ * ★★ 字号**不是孤立常量**。下面这些全部由它推导，改字号时不要各路径各改一处
+ *   （本项目在「字幕底边距」上已经吃过一次「散成三处」的亏）：
+ *   · `SUBTITLE_MAX_WIDTH`      —— 像素预算固定 ⇒ 字大了每行就只能少放几个字，否则冲出画布；
+ *   · `SUBTITLE_OUTLINE` / `SUBTITLE_BORDER_WIDTH` —— 描边等比放大，否则字越大黑边越细，
+ *     而描边存在的唯一理由就是可读性；
+ *   · `SUBTITLE_CAPTION_SVG_*`  —— Sharp 回退路径的**画布尺寸**，不跟着走会把字形裁掉。
+ */
+const SUBTITLE_FONT_SCALE = 2
+// ★ 下面带 `export` 的几个常量是**故意导出**的：守护脚本要断言「字号 ↔ 每行字数 ↔ SVG 画布」
+//   这组耦合关系（见 scripts/verify-auto-edit.ts）。别把 export 去掉、改成在脚本里写死数字 ——
+//   那正是这套耦合过去悄悄失效的原因。
+export const SUBTITLE_FONT_SIZE = 52 * SUBTITLE_FONT_SCALE
+/** ASS 的 `Outline` 与 Sharp SVG 的 `stroke-width`（52px 基准时是 3）。 */
+export const SUBTITLE_OUTLINE = 3 * SUBTITLE_FONT_SCALE
+/** drawtext 的 `borderw`（52px 基准时是 2，本来就比另外两条路径细一档，这里保持这个比例）。 */
+const SUBTITLE_BORDER_WIDTH = 2 * SUBTITLE_FONT_SCALE
+/**
+ * Sharp 回退路径的 SVG 画布高度与文字基线（52px 基准时是 82 / 56）。
+ *
+ * ⚠ 这是**画布**不是样式：字号放大而画布不动 ⇒ 字形被 sharp 直接裁掉，而且**不报错**，
+ *   成片里只是「字少了半个」。这是「放大字幕」最容易漏的一处，所以让它由字号推导，
+ *   并由 `verify-auto-edit.ts` 断言「画布装得下字号」。
+ */
+export const SUBTITLE_CAPTION_SVG_HEIGHT = 82 * SUBTITLE_FONT_SCALE
+const SUBTITLE_CAPTION_SVG_BASELINE = 56 * SUBTITLE_FONT_SCALE
 /**
  * 字幕底边距（相对 PlayResY=1920 的像素）。
  *
@@ -44,19 +72,24 @@ const SUBTITLE_FONT_SIZE = 52
  *     不要再各路径各改一处。
  * ★ 该常量在每条烧字幕路径上生效（ASS 的 MarginV、drawtext 的 y=h-text_h-…、
  *   overlay 的 y=main_h-overlay_h-… 三处共用），所以只改这一行即可。
- * ⚠ `MarginV` 与字幕**墨迹底边并不重合**（libass 行盒含 descent，实测差约 31px）⇒
- *   上面那串「y≈…」是**量出来的**（叠彩色横尺抽帧），不要用旧值去反推像素位置。
+ * ⚠ `MarginV` 与字幕**墨迹底边并不重合**（libass 行盒含 descent，实测差约 31px；字号翻倍后
+ *   这个差值也会同步变大）⇒ 上面那串「y≈…」是**量出来的**，不要用旧值去反推像素位置。
+ * ★★ 2026-09-25 用户要求**换回 116**（与上面 09-24 的判断相反，属按用户意愿覆盖）。
+ *   ⚠ 同时字号已放大到 104px ⇒ 墨迹带落在画面高度的 87~92% 一带，比 09-24 用 116 时略高
+ *     （字更高），但仍在平台底部叠加层可能够到的范围。真机若被压住，只改这一个值。
  */
-const SUBTITLE_BOTTOM_MARGIN = 640
+export const SUBTITLE_BOTTOM_MARGIN = 116
 /**
- * 单条字幕的安全显示宽度（CJK 按 1、ASCII 按 0.55 计）。
+ * 字幕块的**像素宽上限**（相对 1080 的画布宽）。
  *
- * ★ 17 → 14 是**对齐仓库自己的定义**：`scripts/verify-auto-edit.ts` 里那条
- *   `subtitleDisplayWidth(text) <= 14` 的断言，注释写的就是「每条字幕必须在竖屏安全宽度内」。
- *   常量比自家断言还宽 3，等于把「安全宽度」写成了两套；这里收回成 14。
- * ★ 14 × 52px = 728px / 1080 = 67% 宽，两侧留白才是竖屏字幕该有的呼吸感。
+ * ★ 832px ≈ 画布宽的 77%，两侧各留 ~124px 白 —— 这个「呼吸感」是刻意保留的，不是随手取的数。
+ * ★ 为什么不再写成「最多 14 个字」：字数与字号是同一件事的两种说法，**写死字数会在改字号时
+ *   悄悄失效** —— 14 字 × 104px = 1456px，直接冲出 1080 画布（被裁掉、或被 libass 强制折成
+ *   两行，而本模块专门在避免折行）。所以这里固定**像素**、由字号推字数。
  */
-const SUBTITLE_MAX_WIDTH = 14
+const SUBTITLE_BLOCK_WIDTH_PX = 832
+/** 单条字幕的安全显示宽度（CJK 按 1、ASCII 按 0.55 计）；字号 104px 时推得 8。 */
+export const SUBTITLE_MAX_WIDTH = Math.floor(SUBTITLE_BLOCK_WIDTH_PX / SUBTITLE_FONT_SIZE)
 
 export interface SynthesisShot {
   /** 口播文案（Shot.line） */
@@ -194,33 +227,50 @@ function hardSplitSubtitle(text: string, maxWidth: number): string[] {
   return chunks.filter(Boolean)
 }
 
-/** 先按完整句拆，再按逗号等语义停顿拆；最后才按安全宽度硬切。 */
+/**
+ * 去掉字幕块**末尾**的标点。
+ *
+ * ★★ 2026-09-25 用户要求「每句字幕去除所有末尾的标点符号」。
+ * ★ 放在 `splitSubtitleText` 的**出口**统一做，而不是在几个 push 点各做一次：句末切分
+ *   （。！？；）与从句切分（，、：）都会把标点留在块尾，四个 push 点各写一遍迟早漏一个；
+ *   出口做一次，之后新增任何切分分支都自动被覆盖。
+ * ★★ 只吃「标点 + 紧随其后的收尾符号」，**不动单独出现的引号/括号** —— 这条边界是刻意的：
+ *   · 「他说“没问题”。」→ 只掉「。」，保留成对的收尾引号（那是对的）；
+ *   · 「今天真好（笑）」→ 末尾不是标点，整个「（笑）」保留；若只砍掉「）」会留下不成对的「（笑」。
+ *   别为了「更彻底」把引号括号也一律砍掉。
+ */
+const TRAILING_PUNCTUATION = /[\s。．，、；：！？…⋯·,;:!?.～~]+[”’」』》】）)\]]*$/u
+
+export function stripTrailingPunctuation(text: string): string {
+  return text.replace(TRAILING_PUNCTUATION, '').trim()
+}
+
+/** 先按完整句拆，再按逗号等语义停顿拆；最后才按安全宽度硬切。每块末尾不留标点。 */
 export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): string[] {
   const clean = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
   if (!clean) return []
   const sentences = clean.match(/[^。！？!?；;]+[。！？!?；;]?/g) ?? [clean]
   const result: string[] = []
   for (const sentence of sentences) {
-    const normalizedSentence = sentence.trim()
-    if (!normalizedSentence) continue
-    if (subtitleDisplayWidth(normalizedSentence) <= maxWidth) {
-      result.push(normalizedSentence)
-      continue
-    }
-    const clauses = normalizedSentence.match(/[^，、,:：]+[，、,:：]?/g) ?? [normalizedSentence]
+    // ★ 切分子句**必须带着标点**（标点就是边界依据），但切完立刻去掉块尾标点再量宽度：
+    //   「第一句话完整显示。」去标点后是 8 个字、能整块显示；若带着「。」去量就会多出 1 个字
+    //   而被硬切一刀，白白把一句完整的话劈成两半。
+    const clauses = (sentence.trim().match(/[^，、,:：]+[，、,:：]?/g) ?? [sentence.trim()])
+      .map(stripTrailingPunctuation)
+      .filter(Boolean)
     let current = ''
     for (const clause of clauses) {
-      const candidate = `${current}${clause}`.trim()
-      if (current && subtitleDisplayWidth(candidate) > maxWidth) {
+      if (current && subtitleDisplayWidth(`${current}${clause}`) > maxWidth) {
         result.push(...hardSplitSubtitle(current, maxWidth))
-        current = clause.trim()
+        current = clause
       } else {
-        current = candidate
+        current += clause
       }
     }
     if (current) result.push(...hardSplitSubtitle(current, maxWidth))
   }
-  return result.filter(Boolean)
+  // ★ 出口再兜一次：硬切是按字数切的，理论上不会重新引入标点，但兜底无害。
+  return result.map(stripTrailingPunctuation).filter(Boolean)
 }
 
 /** 将字幕归一为单行、非重叠、连续替换的 cue，避免 libass 自动换成多行。 */
@@ -313,7 +363,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${fontFamily},${SUBTITLE_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,3,0,2,72,72,${SUBTITLE_BOTTOM_MARGIN},1
+Style: Default,${fontFamily},${SUBTITLE_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,${SUBTITLE_OUTLINE},0,2,72,72,${SUBTITLE_BOTTOM_MARGIN},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
@@ -551,7 +601,7 @@ async function muxWithDrawtext(
     const enable = `between(t\\,${(segment.startMs / 1000).toFixed(3)}\\,${(segment.endMs / 1000).toFixed(3)})`
     filters.push(
       `[${current}]drawtext=fontfile='${escapeDrawtextPath(font.file!)}':text='${escapeDrawtextText(segment.text)}':` +
-      `fontcolor=white:fontsize=${SUBTITLE_FONT_SIZE}:borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-text_h-${SUBTITLE_BOTTOM_MARGIN}:enable='${enable}'[${next}]`,
+      `fontcolor=white:fontsize=${SUBTITLE_FONT_SIZE}:borderw=${SUBTITLE_BORDER_WIDTH}:bordercolor=black:x=(w-text_w)/2:y=h-text_h-${SUBTITLE_BOTTOM_MARGIN}:enable='${enable}'[${next}]`,
     )
     current = next
   })
@@ -578,6 +628,23 @@ function escapeXml(value: string): string {
 }
 
 /**
+ * Sharp 回退路径用的单行字幕 SVG。
+ *
+ * ★ 抽成导出函数只为一个理由：它的**画布尺寸必须跟着字号走**，而那是「放大字号」时最容易
+ *   漏掉、且**不会报错**的一处（字形被 sharp 裁掉，成片里只是字少了半个）。
+ *   抽出来之后 `verify-auto-edit.ts` 才能断言「画布装得下字号」。
+ */
+export function buildCaptionSvg(text: string, fontFamily: string, width = 1080): string {
+  return `
+      <svg width="${width}" height="${SUBTITLE_CAPTION_SVG_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
+        <text x="${Math.round(width / 2)}" y="${SUBTITLE_CAPTION_SVG_BASELINE}" text-anchor="middle"
+          font-family="${escapeXml(fontFamily)}" font-size="${SUBTITLE_FONT_SIZE}" font-weight="600"
+          fill="white" stroke="black" stroke-width="${SUBTITLE_OUTLINE}" paint-order="stroke fill"
+          letter-spacing="0">${escapeXml(text)}</text>
+      </svg>`
+}
+
+/**
  * 最终字幕回退：用 Sharp 将每个单行 cue 渲染成透明 PNG，再用 FFmpeg overlay。
  * 这条路径不需要 FFmpeg 编译 libass 或 freetype，适用于精简发行版。
  */
@@ -597,13 +664,7 @@ async function muxWithCaptionOverlays(
   for (let index = 0; index < normalized.length; index += 1) {
     const segment = normalized[index]!
     const captionPath = join(workDir, `caption-${index}.png`)
-    const svg = `
-      <svg width="1080" height="82" xmlns="http://www.w3.org/2000/svg">
-        <text x="540" y="56" text-anchor="middle"
-          font-family="${escapeXml(font.family)}" font-size="${SUBTITLE_FONT_SIZE}" font-weight="600"
-          fill="white" stroke="black" stroke-width="3" paint-order="stroke fill"
-          letter-spacing="0">${escapeXml(segment.text)}</text>
-      </svg>`
+    const svg = buildCaptionSvg(segment.text, font.family)
     await sharp(Buffer.from(svg)).png().toFile(captionPath)
     captionPaths.push(captionPath)
   }
