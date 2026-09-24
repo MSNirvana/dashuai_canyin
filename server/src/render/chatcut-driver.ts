@@ -1461,7 +1461,16 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
       safePhase(input, 0.16 + 0.34 * ((index + 1) / clips.length), `配音 ${index + 1}/${clips.length}`)
 
       // ── 剪辑节奏的「配音下界」：镜头可以缩，但不能缩到比这句话还短
-      if (pacePlan.shotScale < 1) {
+      // ★★ 判据必须**包含**「这个镜头被 EDL 缩短了」这一种情况：
+      //    EDL 的逐镜头时长与用户选的节奏档位**彼此独立** —— 用户完全可能选 NATURAL
+      //    （shotScale=1，下面这个条件原本不成立），而 AI 把某个镜头砍到 2 秒。
+      //    漏掉它 ⇒ 那句台词会被 `synthesizeNarration` 的 `-t` 参数**静默截断**
+      //    （它是「apad 补静音 + 硬截断」，从中间切掉，日志里没有任何提示）。
+      // ★ 无 EDL 时 `scaledShotMs(index) === rawShotMs(index)` ⇒ `wantedShorter` 恒为 false
+      //    ⇒ 本条件与引入 EDL 之前**完全等价**（不是「近似等价」）。
+      //    `-1` 是毫秒容差：`Math.round` 之后可能差 1ms，不该因此多跑一轮变速。
+      const wantedShorter = scaledShotMs(index) < rawShotMs(index) - 1
+      if (pacePlan.shotScale < 1 || wantedShorter) {
         // 尾部静音就是 `apad` 补出来的那段 ⇒ 它能告诉我们语音真正在哪里结束
         const speechMs = await probeSpeechEndMs(outPath).catch(() => null)
         if (speechMs !== null && speechMs > 0) {
@@ -1630,7 +1639,7 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
   // ── 7) BGM：这一步只**提交生成**；真正排轨要等生成就绪（分钟级），在 PREPARE 阶段做
   //        （见 placeChatCutBgm / pollChatCutRender）。
   //    默认关闭：生成音乐是**消耗 ChatCut 额度**的调用，留作运维开关 `CHATCUT_BGM_ENABLED`。
-  const bgmChoice = input.options.bgm
+  const bgmChoice = options.bgm
   let bgmJobId: string | undefined
   if (bgmChoice !== 'NONE') {
     if (!chatCutBgmEnabled()) {
@@ -1663,7 +1672,7 @@ export async function startChatCutRender(input: ChatCutJobInput): Promise<ChatCu
     transcriptionAssetIds: voiceSources.filter((source) => source.startTranscription).map((source) => assetIdOf(source.filename)),
     phase: 'PREPARE',
     prepareStartedAtMs: Date.now(),
-    subtitleStyle: input.options.subtitleStyle,
+    subtitleStyle: options.subtitleStyle,
     removeSilence: input.options.removeSilence,
     notices,
     ...(bgmJobId ? { bgmJobId, bgmStartedAtMs: Date.now() } : {}),

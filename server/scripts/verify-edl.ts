@@ -534,7 +534,38 @@ console.log('\n⑧ 跨文件契约与结构约束（单改一边就静默退化�
   )
   ok(
     '  └ 且 plan.edl 为 null 时 options 就是 input.options（同引用，逐字段一致）',
-    /const options: ChatCutOptions = plan\.edl\s*\?/.test(drvSrc) && drvSrc.includes(': input.options'),
+    /const options: ChatCutOptions = plan\.edl\s*\?/.test(drvSrc) &&     drvSrc.includes(': input.options'),
+  )
+  // ── ⑧-9 「有效选项」的**其余两个出口**：上面那条只盯了 PACING/TRANSITION ──
+  //    ★★ 这三条是事后补的，起因是一次真实漏判：守则写着「档位只读 options」，
+  //       而 chatcut-driver 里读档位的地方其实有**四处**（节奏、转场、BGM、字幕样式）
+  //       —— 断言只覆盖前两处 ⇒ 后两处漏接线时守护照样全绿，
+  //       而漏接线的后果是「AI 选了 UPBEAT、面板是 NONE」安静地出成没有 BGM 的片子，
+  //       一个报错都没有。凡是「一条断言 + 多个同类读取点」的形状，都要逐个点名。
+  ok(
+    '★★ BGM 的取值点读 `options.bgm`（不是 input.options.bgm）—— 漏了就是「AI 选的 BGM 静默不生效」',
+    drvSrc.includes('const bgmChoice = options.bgm'),
+  )
+  ok(
+    '★★ 字幕样式的取值点同样读 `options.subtitleStyle`',
+    drvSrc.includes('subtitleStyle: options.subtitleStyle'),
+  )
+  const preferSubIdx = drvSrc.indexOf('subtitleStyle: input.options.subtitleStyle')
+  // ★ 边界不能用 `planIdx`："喂给模型的偏好"正是 `generateEditPlan({ …, prefer: {…} })` 的**实参**，
+  //   所以合法位置在 planIdx **之后**。真正的上界是「决策拿回来、开始覆盖档位」那一步。
+  const optionsIdx = drvSrc.indexOf('const options: ChatCutOptions')
+  ok(
+    '  └ 而 `subtitleStyle: input.options.subtitleStyle` 只允许作为**喂给模型**的用户倾向存在（即 generateEditPlan 的入参区间内），且只有一处',
+    preferSubIdx > planIdx && preferSubIdx < optionsIdx && drvSrc.lastIndexOf('subtitleStyle: input.options.subtitleStyle') === preferSubIdx,
+  )
+  // ── ⑧-10 配音下界与 EDL 的关系 ──
+  //    ★★ EDL 的逐镜头时长与用户选的节奏档**彼此独立**：用户可能选 NATURAL（shotScale=1，
+  //       原条件不成立）而 AI 把某镜头砍到 2 秒 ⇒ 漏判会让 `synthesizeNarration` 用
+  //       `-t` 把台词**从中间截断**，日志里没有任何提示。
+  ok(
+    '★★★ 配音下界的判据必须包含「该镜头被 EDL 缩短了」（只判 shotScale < 1 会漏掉 NATURAL + AI 砍短 ⇒ 台词静默截断）',
+    drvSrc.includes('const wantedShorter = scaledShotMs(index) < rawShotMs(index) - 1') &&
+      /if \(pacePlan\.shotScale < 1 \|\| wantedShorter\)/.test(drvSrc),
   )
 }
 
