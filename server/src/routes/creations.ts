@@ -24,10 +24,12 @@ function mediaBaseUrl(req: import('express').Request): string {
 }
 
 /**
- * 菜品稿可选的文案款式（入参用的全集）。
- * ★ 流量款**不在其中** —— 它已从「四款文案」拆成独立功能（话题稿 `mode='TOPIC'`），
- *   只走 `copy_traffic` 那份不喂门店/菜品的模板。放进这个枚举，后台手填或旧客户端传
- *   `track='TRAFFIC'` 就会创建出一条「菜品稿却挂着流量款」的创作，而它生成时会用话题模板
+ * **菜品稿**可选的文案款式（入参用的全集）。
+ * ★ 「流量型」（`TRAFFIC`）**不在其中** —— 它是话题稿（`mode='TOPIC'`）专属的一款，
+ *   只走 `copy_traffic` 那份不喂门店/菜品的模板。所以它**不走这个字段**下达：
+ *   小程序端选中「流量型」时发的是 `mode:'TOPIC'`（且不带 storeId / dishId），不传 track。
+ *   一旦把它放进这个枚举，后台手填或旧客户端传 `track='TRAFFIC'` 就会创建出一条
+ *   「菜品稿却挂着流量型」的创作，而它生成时会用话题模板
  *   —— 文案里既没门店也没菜品，且不报错。旧客户端若传 TRAFFIC 会拿到 400 而不是静默变味。
  *
  * ★★ 2026-09-21 四款改型：这里**刻意同时收下老值** INTRO / QUALITY。
@@ -100,7 +102,7 @@ const creationPatch = z.object({
   title: requiredText(255).optional(),
   // 口播文案会作为 {{copyText}} 喂给分镜提示词，纯空白值同样要 trim
   copyText: optionalText(20000),
-  // 同 createInput：菜品稿三款；流量款属话题稿，不在枚举里（传了会 400）
+  // 同 createInput：菜品稿四款；流量型属话题稿，不在枚举里（传了会 400）
   track: dishTrackField,
   complexity: z.enum(['SIMPLE', 'COMPLEX', 'FINE']).optional(),
   // ⚠ 同上：`topicCity` 也**不在**这个 patch 里（2026-09-21 移除）。

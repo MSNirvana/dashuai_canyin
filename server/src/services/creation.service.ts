@@ -20,7 +20,7 @@ export const SCENE_COPY = SCENE.copy_generate
 export const SCENE_STORYBOARD = SCENE.storyboard_generate
 
 /**
- * 文案五款：流量款 + 四款菜品文案（人设型 / 干货型 / 产品型 / 种草型），
+ * 文案五款：流量型 + 四款菜品文案（人设型 / 干货型 / 产品型 / 种草型），
  * 各对应一个可在后台配置提示词的 AI 场景。
  *
  * ★ 2026-09-21 四款改型：删掉「介绍款（INTRO）」与「质量款（QUALITY）」，
@@ -31,14 +31,29 @@ export const SCENE_STORYBOARD = SCENE.storyboard_generate
  *   看到代码里的 `RECOMMEND`、`copy_recommend`，界面上就是「种草型」。
  *   四型的分界线是**内容重点**：人设讲老板真实做事方式／干货讲有依据的行业知识／
  *   产品讲清在售内容／种草型由老板讲一个有依据的推荐理由。
+ * ★ 2026-09-24 同日第二次只改名：`TRAFFIC` 的中文名「流量款」→「流量型」，
+ *   同样是**只动 label**（`TRAFFIC` / `copy_traffic` 一个都没动）。
+ *   它仍然只属于 `mode='TOPIC'` 的话题稿 —— 小程序端已取消独立的「跟热点」页，
+ *   把这一款并进创作页的「文案款式」当第一项，选中它就不选菜品、按 `mode='TOPIC'` 创建。
  */
 export const COPY_TRACKS = {
-  TRAFFIC: { label: '流量款', scene: SCENE.copy_traffic, desc: '同城引流 / 话题热度' },
-  PERSONA: { label: '人设型', scene: SCENE.copy_persona, desc: '讲人：立场 / 经历 / 情绪' },
-  KNOWLEDGE: { label: '干货型', scene: SCENE.copy_knowledge, desc: '这行的知识：怎么做 / 怎么挑' },
-  PRODUCT: { label: '产品型', scene: SCENE.copy_product, desc: '有什么 / 多少钱 / 值不值' },
-  RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '老板视角 / 讲一个有依据的推荐理由' },
+  TRAFFIC: { label: '流量型', scene: SCENE.copy_traffic, desc: '跟热点 / 话题共鸣' },
+  PERSONA: { label: '人设型', scene: SCENE.copy_persona, desc: '立场 / 经历 / 情绪' },
+  KNOWLEDGE: { label: '干货型', scene: SCENE.copy_knowledge, desc: '怎么做 / 怎么挑' },
+  PRODUCT: { label: '产品型', scene: SCENE.copy_product, desc: '老板视角 / 真实内在' },
+  RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '达人素人视角 / 推荐理由' },
 } as const
+/**
+ * ⚠⚠ 上表里的 `desc` 是**死字段**：全仓没有任何读取点，服务端只取 `.label`（下发
+ *   `trackLabel`）与 `.scene`（选提示词模板）。**真源在小程序端**
+ *   `apps/mini/src/services/creation.ts` 的 `COPY_TRACK_OPTIONS` —— 那份会被创作页
+ *   渲染成每个款式下方的小字。
+ *
+ * 2026-09-24 实测到的跑偏（本次已手工拉齐）：本表写「同城引流 / 话题热度」
+ * 而小程序写「跟热点 / 话题共鸣」；本表写「讲一个**有依据的**推荐理由」
+ * 而小程序写「讲一个**真实**推荐理由」。**两份定义必然跑偏**，只是这次碰巧被翻出来。
+ * ⇒ 下次动这块直接**删掉 `desc`**，只留小程序那一份，不要再手工同步。
+ */
 export type CopyTrack = keyof typeof COPY_TRACKS
 
 /**
@@ -91,8 +106,8 @@ export const DEFAULT_COPY_TRACK: CopyTrack = 'PRODUCT'
 /**
  * 内容模式：这条创作是**菜品驱动**还是**话题驱动**。
  *
- * · `DISH`  —— 选门店（+可选菜品），走四款里除流量款外的三款。
- * · `TOPIC` —— 「流量款」独立功能：不选门店、不选菜品，只靠节气/节日/时令与生活共识出稿。
+ * · `DISH`  —— 选门店（+可选菜品），走四款**菜品文案**（人设型 / 干货型 / 产品型 / 种草型）。
+ * · `TOPIC` —— 「流量型」：不选门店、不选菜品，只靠节气/节日/时令与生活共识出稿。
  *
  * ★ 为什么不靠「track='TRAFFIC' 且 dishId 为空」推断：那个组合在**存量数据里已经存在**
  *   （老用户建过没选菜品的流量款创作），推断会把它们误判成话题稿；
@@ -110,7 +125,7 @@ export function isContentMode(v: unknown): v is ContentMode {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(CONTENT_MODES, v)
 }
 
-/** 话题稿只允许这一款（它就是要走流量款那份纯话题模板） */
+/** 话题稿只允许这一款（它就是要走「流量型」那份纯话题模板） */
 export const TOPIC_TRACK: CopyTrack = 'TRAFFIC'
 
 /** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜 */
@@ -178,7 +193,7 @@ export class TopicCreationStoreForbiddenError extends Error {
 /** 商户一家门店都没有，话题稿没有宿主可挂 —— 提示去建店，而不是报一个看不懂的 500 */
 export class TopicHostStoreMissingError extends Error {
   constructor() {
-    super('请先添加门店，再使用流量款')
+    super('请先添加门店，再使用流量型')
     this.name = 'TopicHostStoreMissingError'
   }
 }
@@ -236,7 +251,7 @@ async function resolveTopicHostStore(
 
 export interface CreateCreationInput {
   /**
-   * ★ 话题稿（`mode='TOPIC'`）**不需要**传它 —— 流量款独立功能刻意不选门店，
+   * ★ 话题稿（`mode='TOPIC'`，界面上就是「流量型」）**不需要**传它 —— 这一款刻意不选门店，
    *   由服务端解析一家「宿主门店」只为让媒体归属/拍摄/合成这些下游照旧成立（见 resolveTopicHostStore）。
    *   菜品稿（`DISH`）则必填。
    */
@@ -353,7 +368,7 @@ export async function listCreations(
       storeId: true,
       dishId: true,
       track: true,
-      // 列表要据此决定「点进去是创作页还是流量款页」，并在卡片上打「话题」标记
+      // 列表要据此决定卡片的标记（「话题稿」），并让前端知道这条不能用菜品稿的那套款式
       mode: true,
       complexity: true,
       copyText: true,
@@ -927,10 +942,10 @@ export async function generateCopy(
       : (() => {
           const want = track ?? normalizeCopyTrack(current?.track) ?? DEFAULT_COPY_TRACK
           /**
-           * ★★ 菜品稿**永远不许**走流量款。
+           * ★★ 菜品稿**永远不许**走「流量型」（`TRAFFIC`）。
            *
-           * 流量款的模板已经改成纯话题版：不喂门店、不喂菜品，而且明确要求「不要报店名」。
-           * 但菜品稿走流量款这件事在**存量数据里是真实存在的**：
+           * 流量型的模板已经改成纯话题版：不喂门店、不喂菜品，而且明确要求「不要报店名」。
+           * 但菜品稿挂着 TRAFFIC 这件事在**存量数据里是真实存在的**：
            *   · 25 条 `track='TRAFFIC'` 的创作（都是 mode='DISH'）
            *   · 前端「同款配方」会把优秀作品的款式原样带过来，其中就可能带 TRAFFIC
            * 不兜这一下，用户点「重新生成」会拿到一条**既不提门店也不提菜品**的稿子，
