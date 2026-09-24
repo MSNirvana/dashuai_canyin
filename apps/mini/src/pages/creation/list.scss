@@ -16,29 +16,9 @@
     font-size: 23rpx;
   }
 
-  // 右上角圆形新建按钮
-  &__new {
-    width: 64rpx;
-    height: 64rpx;
-    border-radius: 50%;
-    background: var(--td-brand-color);
-    color: #fff;
-    box-shadow: var(--ds-glow-red);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-  }
-
-  // 页面第一行：门店筛选 pill 在左、新建按钮在右，两者同行垂直居中。
-  // 门店名很长时 pill 会自己省略号，`&__new` 有 flex:none 不会被挤掉。
-  &__bar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16rpx;
-    margin-bottom: 10rpx;
-  }
+  /* ★ 2026-09-24 按需求：`&__new`（右上角圆形新建按钮）与它的定位行 `&__bar` 一并删除 ——
+     tsx 里那个 `clist__bar` 容器也随之移除（该行原有两个子项：门店切换器与新建按钮，
+     两者都已下线，留着就是空盒子）。 */
 
   // ── 流量款独立入口卡 ──
   // 与下面的创作卡片刻意长得不一样：它不是一个内容项，而是一个「另外一件事」的入口，
@@ -140,8 +120,7 @@
 
 /* 创作列表：让状态先于操作，卡片只保留一个主要点击目标。 */
 .clist { padding: 12rpx 32rpx calc(48rpx + env(safe-area-inset-bottom)); }
-.clist__bar { margin-bottom: 6rpx; }
-.clist__new { width: 56rpx; height: 56rpx; box-shadow: none; }
+/* ★ 2026-09-24 按需求：`.clist__bar` / `.clist__new`（右上角「+」新建按钮及其定位行）删除。 */
 .clist__intro { margin-bottom: 12rpx; font-size: 21rpx; }
 .clist__filter { margin-bottom: 14rpx; }
 .clist__swipe { margin-bottom: 12rpx; box-shadow: none; border: 1rpx solid var(--td-component-stroke); }

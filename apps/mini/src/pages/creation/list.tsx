@@ -9,7 +9,6 @@ import {
   type CreationItem,
 } from '../../services/creation'
 import { useMerchantStore } from '../../store/merchant'
-import StoreSwitcher from '../../components/store-switcher'
 import Segmented from '../../components/segmented'
 import ProgressLine from '../../components/progress-line'
 import SwipeActions, { type SwipeAction } from '../../components/swipe-actions'
@@ -276,16 +275,10 @@ export default function CreationList() {
 
   return (
     <View className='clist'>
-      {/* ── 第一行：门店筛选（左） + 新建（右）──
-          门店是最高层（下面的内容全跟门店走），所以选门店排在第一个。
-          原先左边是「PROJECTS」eyebrow + 「创作项目」大标题，两行都已按需求下线
-          （2026-09-16）⇒ 这行只剩 pill，新建按钮与它同行、垂直居中对齐。 */}
-      <View className='clist__bar'>
-        <StoreSwitcher />
-        <View className='clist__new' hoverClass='ds-hover' onClick={onCreate}>
-          <t-icon name='add' size='40rpx' />
-        </View>
-      </View>
+      {/* ★ 2026-09-24 按需求：右上角那个「+」新建按钮已删除。
+          它原先待在 `clist__bar` 这一行里，同行的另一个子项是门店切换器（已在同一轮单店模型
+          改造里下线）——行内再无子项，留着就是一个空盒子，于是连定位行一起删除。
+          本页现在唯一的新建入口是下面空态里的「新建创作」；列表非空时本页不再提供新建入口。 */}
 
       {/* 这句话紧跟门店筛选，作为当前门店内容区的说明 */}
       <Text className='clist__intro'>每一条视频，都是一次客流机会</Text>
@@ -293,8 +286,8 @@ export default function CreationList() {
       {/* ⚠ 流量款入口卡 2026-09-21 已挪到**创作页**（`pages/creation/edit`）的标题下面：
           那一页的标题就是「每天5分钟坚持同城曝光！」，入口摆在它下面语义才对得上；
           留在列表页会变成「一进创作 tab 就先看到一条不属于当前门店的东西」。
-          本页仍有两条去话题稿的路：下面列表里 mode=TOPIC 的卡片（onOpen 分流）、
-          以及右上角「+」进创作页后的那张卡。这里不要再加回来。 */}
+          本页去话题稿的路只剩下面列表里 mode=TOPIC 的卡片（onOpen 分流）——
+          原本还有一条「右上角『+』进创作页」，那个按钮已按需求删除（2026-09-24）。这里不要再加回来。 */}
 
       {currentStoreId && (
         <Segmented
@@ -329,7 +322,7 @@ export default function CreationList() {
         <View className='ds-empty'>
           <Text className='ds-empty__text'>
             {filter === 'ALL'
-              ? `「${storeNameOf(currentStoreId)}」还没有创作，点右上角开始`
+              ? `「${storeNameOf(currentStoreId)}」还没有创作`
               : filter === 'DOING'
                 ? '没有进行中的创作'
                 : filter === 'READY'
