@@ -35,7 +35,6 @@ export default function Profile() {
 
   const [nickname, setNickname] = useState('')
   const [phone, setPhone] = useState('')
-  const [hasAvatar, setHasAvatar] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -60,7 +59,6 @@ export default function Profile() {
       .then((p) => {
         setNickname(p.nickname ?? '')
         setPhone(p.phone)
-        setHasAvatar(!!p.avatarKey)
         // 顺手刷新 store：直接进本页（非从「我的」页跳来）时 store 里可能还是空的
         setProfile({ nickname: p.nickname, avatarUrl: p.avatarUrl })
       })
@@ -78,7 +76,6 @@ export default function Profile() {
       const p = await profileApi.pickAndUploadAvatar()
       // 用户取消选图不是失败，直接静默返回（否则每次点开选择器再退出都弹一次错误）
       if (!p) return
-      setHasAvatar(!!p.avatarKey)
       setProfile({ nickname: p.nickname, avatarUrl: p.avatarUrl })
       Taro.showToast({ title: '头像已更新', icon: 'success' })
     } catch (e) {
@@ -120,7 +117,6 @@ export default function Profile() {
   }
 
   const letter = (nickname || merchant?.nickname || phone || '客').slice(0, 1)
-  const avatarTip = uploading ? '上传中…' : hasAvatar ? '点击更换头像' : '点击上传头像'
 
   return (
     <View className='profile'>
@@ -139,7 +135,8 @@ export default function Profile() {
             <t-icon name='camera' size='26rpx' color='#ffffff' />
           </View>
         </View>
-        <Text className='profile__avatar-tip'>{avatarTip}</Text>
+        {/* 只留「上传中…」这个状态；「点击更换/上传头像」是解释性小字，已删 */}
+        {uploading && <Text className='profile__avatar-tip'>上传中…</Text>}
       </View>
 
       {/* ── 表单 ── */}
@@ -160,7 +157,7 @@ export default function Profile() {
           <Text className='profile__readonly'>{phone || '—'}</Text>
         </View>
       </View>
-      <Text className='profile__hint'>手机号是账号身份，不支持在这里修改。</Text>
+      {/* 原「手机号是账号身份，不支持在这里修改。」已删（解释性小字） */}
 
       {/* ── 积分卡（自「我的」页整体搬来：余额概览 + 充值与续费入口） ── */}
       <View className='ds-label'>我的积分</View>

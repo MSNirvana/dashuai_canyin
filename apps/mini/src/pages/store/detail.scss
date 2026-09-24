@@ -32,9 +32,6 @@
     color: rgba(255,255,255,.66);
     font-size: 26rpx;
   }
-  &__hero-caption { position: absolute; left: 36rpx; right: 36rpx; bottom: 28rpx; padding-top: 72rpx; background: linear-gradient(transparent, rgba(20,8,7,.72)); }
-  &__hero-kicker { display: block; color: #ffb2ab; font-size: 20rpx; font-weight: 700; letter-spacing: .12em; }
-  &__hero-tip { display: block; margin-top: 8rpx; color: #fff; font-size: 22rpx; }
 
   &__body {
     margin: 24rpx 36rpx;
@@ -57,18 +54,8 @@
     letter-spacing: -0.025em;
   }
 
-  &__tag {
-    padding: 4rpx 16rpx;
-    border-radius: 999rpx;
-    background: var(--td-bg-color-secondary);
-    color: var(--td-text-color-secondary);
-    font-size: 22rpx;
-
-    &--current {
-      background: var(--td-brand-color-light);
-      color: var(--td-brand-color);
-    }
-  }
+  /* ★ 2026-09-24 单店模型：`&__tag` / `&__tag--current`（门店名旁的「默认」「当前」标签）随
+     多门店下线一起删除 —— tsx 里那两处 `store-detail__tag` 是本轮唯一引用，已一并移除。 */
 
   /* ★ 2026-09-24：`&__meta`（门店名下的「品类 · 省市县」）随该行删除，tsx 不再渲染。 */
 
@@ -183,12 +170,7 @@
       font-weight: 500;
     }
 
-    // 危险操作：边框与文字都用品牌红，背景透明，整体仍是「次要按钮」以让编辑门店的红底主按钮独占
-    &--danger {
-      background: transparent;
-      color: var(--td-brand-color);
-      border: 1rpx solid var(--td-brand-color);
-      font-weight: 500;
-    }
+    /* ★ 2026-09-24 单店模型：`&--danger`（「删除」按钮样式）随删除按钮一起下线 ——
+       账号唯一门店删不掉，页脚只剩「管理菜品 / 编辑门店」两个操作。 */
   }
 }

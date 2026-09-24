@@ -2,7 +2,8 @@
 export default defineAppConfig({
   pages: [
     'pages/home/index',
-    'pages/store/list',
+    // ★ 2026-09-24 单店模型：「门店资料」列表页（pages/store/list）已删除 ——
+    //   一个账号只有一家门店，没有可切换/可并列的列表。入口直接进 store/detail（门店信息）。
     'pages/store/edit',
     'pages/store/detail',
     'pages/dish/list',
@@ -11,8 +12,8 @@ export default defineAppConfig({
     'pages/persona/index',
     'pages/creation/list',
     'pages/creation/edit',
-    // 流量款 · 跟热点（话题稿）：不选门店菜品，靠节气/节日/时令出稿的独立链路
-    'pages/creation/traffic',
+    // ★ 2026-09-24：「流量款 · 跟热点」独立页（pages/creation/traffic）已删除 ——
+    //   流量型并入创作页的「文案款式」当第一项（选中它就不选菜品），一行代码两条链路反而分叉。
     'pages/creation/shots',
     'pages/render/compose',
     // 成片记录详情（?id=创作编号&task=成片任务编号）：视频 + 封面 + 标题 + 文案，视频可存相册
@@ -104,7 +105,8 @@ export default defineAppConfig({
   // 不是「取消注释」那么轻。届时按下面结构搬：
   //
   //   src/pages/            只留主包：home、creation/list、mine
-  //   src/packageStore/     root: 'packageStore'  → ['list/index','edit/index','detail/index']
+  //   src/packageStore/     root: 'packageStore'  → ['edit/index','detail/index']
+  //       （原 list/index 即「门店资料」列表页，已随单店模型于 2026-09-24 删除）
   //   src/packageDish/      root: 'packageDish'   → ['list/index','edit/index','detail/index']
   //   src/packageRender/    root: 'packageRender' → ['compose/index']
   //   src/packageMisc/      root: 'packageMisc'   → ['persona/index','work/detail/index','recharge/index']

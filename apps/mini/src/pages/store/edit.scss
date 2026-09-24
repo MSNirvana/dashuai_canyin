@@ -64,11 +64,9 @@
     gap: 24rpx;
   }
 
-  &--switch {
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
-  }
+  /* ★ 2026-09-24 单店模型：`&--switch`（「设为默认门店」那一行的横排布局）随该开关一起删除。
+     注：上面的 `&--row` 在本文件内已无引用，但它不是本轮改动造成的（HEAD 里也没人用），
+     属于既有遗留，未一并处理。 */
 
   &__label {
     font-size: 26rpx;

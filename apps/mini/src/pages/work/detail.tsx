@@ -37,12 +37,17 @@ export default function WorkDetailPage() {
       .finally(() => setLoading(false))
   }, [id])
 
-  const goStores = () => Taro.navigateTo({ url: '/pages/store/list' })
+  /**
+   * 账号还没有门店时的唯一出路：去**创建门店**。
+   * ★ 单店模型（2026-09-24）：原来跳「门店列表」页，该页已删除 —— 有店就直接进门店详情，
+   *   没店才来这儿建（一个账号只能一家门店，建第二家会被服务端拒绝）。
+   */
+  const goNewStore = () => Taro.navigateTo({ url: '/pages/store/edit' })
 
   /**
    * 未登录时点「套用配方 / AI 直接生成」的引导。
    *
-   * 原来这两种情况都只会走 goStores()：用户被送到门店页，门店页的请求再吃一个 401，
+   * 原来这两种情况都只会走门店页（那时的门店列表页）：用户被送到门店页，门店页的请求再吃一个 401，
    * 请求层才把他 switchTab 到「我的」并弹登录框 —— 结果是
    * 「点了按钮 → 闪两下 → 落在『我的』」，用户根本不知道中间发生了什么，
    * 甚至以为按钮坏了。这里直接说清楚，一步到位。
@@ -62,7 +67,7 @@ export default function WorkDetailPage() {
       return
     }
     if (!currentStoreId) {
-      goStores()
+      goNewStore()
       return
     }
     void markWorkClone(id).catch(() => undefined)
@@ -85,7 +90,7 @@ export default function WorkDetailPage() {
       return
     }
     if (!currentStoreId) {
-      goStores()
+      goNewStore()
       return
     }
     const shotCount = (work?.recipeJson?.shotSkeleton ?? []).length
@@ -130,7 +135,6 @@ export default function WorkDetailPage() {
         ) : (
           <View className='work-detail__placeholder'>
             <Text>该作品暂未上传视频</Text>
-            <Text className='work-detail__placeholder-sub'>下面的配方仍可直接套用</Text>
           </View>
         )}
       </View>

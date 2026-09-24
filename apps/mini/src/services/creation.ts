@@ -8,23 +8,54 @@ import { http } from './request'
  *   `RECOMMEND`（种草型）保留。
  * ★ 仍要认得出老值：**存量数据里有**（`INTRO`/`QUALITY`，以及更早的 `track='NORMAL'`）。
  *   展示与收敛都必须走下面的 `normalizeTrack`，否则老创作在界面上会显示成空标签。
+ * ★ 2026-09-24：「流量型」（`TRAFFIC`）不再是独立页面，它就是创作页款式选择器的**第一项** ——
+ *   选中它时不选菜品，创建时按 `mode='TOPIC'` 走话题模板（见创作页的 onCreate 分流）。
  */
 export type CopyTrack = 'TRAFFIC' | 'PERSONA' | 'KNOWLEDGE' | 'PRODUCT' | 'RECOMMEND'
 /** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜 */
 export type Complexity = 'SIMPLE' | 'COMPLEX' | 'FINE'
 /**
- * 内容模式：`DISH` = 菜品稿（选门店+菜品）；`TOPIC` = 话题稿（流量款独立功能，不选门店菜品）。
+ * 内容模式：`DISH` = 菜品稿（选门店+菜品）；`TOPIC` = 话题稿（流量型，不选门店菜品）。
  * 服务端有同名枚举，这里是它的下达形态。
  */
 export type ContentMode = 'DISH' | 'TOPIC'
 
-/** 各款的中文名（含流量款）—— **只作展示与兜底**，不要拿它做款式选择器 */
+/**
+ * 各款的中文名。★ 创作页「文案款式」的五个选项就是它（`DISH_TRACK_OPTIONS` 是它的四款子集）。
+ *
+ * ★ 2026-09-24 第二次只改名：`TRAFFIC` 的中文名「流量款」→「流量型」，
+ *   **标识符与场景码一个都没动**（`TRAFFIC` / `copy_traffic` 仍是原值），
+ *   与同日「真诚推荐型 → 种草型」同一口径。看到代码里的 `TRAFFIC`，界面上就是「流量型」。
+ * ★ 2026-09-24 第三次改的是 `desc`（侧重点），**又一次只动文案**：
+ *   人设型「讲人：立场 / 经历 / 情绪」→「立场 / 经历 / 情绪」、
+ *   干货型「这行的知识：怎么做 / 怎么挑」→「怎么做 / 怎么挑」、
+ *   产品型「有什么 / 多少钱 / 值不值」→「老板视角 / 真实内在」、
+ *   种草型「老板视角 / 讲一个真实推荐理由」→「达人素人视角 / 推荐理由」。
+ *   ⚠ 注意「老板视角」这一次是**换了归属**（原属种草型、现属产品型），不是纯措辞微调。
+ * ★★ `desc` 在本端**只有一个消费点**：创作页 `TrackPicker` 把每款渲染成选项下方的侧重点小字
+ *   （见 `pages/creation/edit.tsx`）。所以它有一条硬约束 ——
+ *   **必须能在半宽格子的一行内放下**：格子内宽约 **267rpx**
+ *   （750 − 页 32×2 − 卡 24×2 = 638 ⇒ 卡内容 638rpx，格宽 `calc(50% - 12rpx)` = 307rpx，
+ *   再减格内距 20×2），22rpx 字号下 ≈ **12 个全角字**（「 / 」这类半角组合更窄）。
+ *   超了就会折成两行、把同排另一格一起顶高 —— 改词条前先按这个账算一遍。
+ *   ▲▲ 这里的「页 32 / 卡 24」是**覆写后**的值，不是 `edit.scss` 里 `&__card` 写的 32rpx：
+ *     `.cedit__card` 编译出来是**单类名**（`&__card` 是拼接、不是后代选择器），
+ *     所以文件末尾那条同权重的 `.cedit__card { padding: 24rpx }` 生效。
+ *     按 32rpx 算会得出 622rpx / 格内宽 259rpx —— 差 16rpx，正好是「放得下 / 放不下」的边界。
+ *   ★★ 余量已实测，且**不宽裕**：2026-09-24 无头浏览器按同字体同内距重建后量得
+ *     最长一条「达人素人视角 / 推荐理由」= **245.7rpx**，对格内宽 266~267rpx
+ *     ⇒ 余量约 **20rpx / 7.5%**。**再加两三个字就会折行**，改词条必须重量。
+ *     复现件：`outputs/creation-track-desc-fit.html`（+ 同名 `.png`）。
+ * ⚠ 服务端 `creation.service.ts` 的 `COPY_TRACKS` **也带一份 `desc`，但全仓无消费点**
+ *   （只取 `.label` 与 `.scene`），且早已与本表跑偏（它写「同城引流 / 话题热度」「讲一个有依据的推荐理由」）。
+ *   本次已手工同步，但它仍是**重复定义**，建议哪天删掉只留这一份真源。
+ */
 export const COPY_TRACK_OPTIONS: { value: CopyTrack; label: string; desc: string }[] = [
-  { value: 'TRAFFIC', label: '流量款', desc: '跟热点 / 话题共鸣' },
-  { value: 'PERSONA', label: '人设型', desc: '讲人：立场 / 经历 / 情绪' },
-  { value: 'KNOWLEDGE', label: '干货型', desc: '这行的知识：怎么做 / 怎么挑' },
-  { value: 'PRODUCT', label: '产品型', desc: '有什么 / 多少钱 / 值不值' },
-  { value: 'RECOMMEND', label: '种草型', desc: '老板视角 / 讲一个真实推荐理由' },
+  { value: 'TRAFFIC', label: '流量型', desc: '跟热点 / 话题共鸣' },
+  { value: 'PERSONA', label: '人设型', desc: '立场 / 经历 / 情绪' },
+  { value: 'KNOWLEDGE', label: '干货型', desc: '怎么做 / 怎么挑' },
+  { value: 'PRODUCT', label: '产品型', desc: '老板视角 / 真实内在' },
+  { value: 'RECOMMEND', label: '种草型', desc: '达人素人视角 / 推荐理由' },
 ]
 
 /**
@@ -59,21 +90,38 @@ export function normalizeTrack(v: unknown): CopyTrack | null {
 }
 
 /**
- * ★ 创作页「文案款式」选择器用这一份：**不含流量款**。
+ * 创作页「文案款式」里的四款**菜品文案**（不含流量型）。
  *
- * 流量款已从「四款文案」拆成独立功能（`mode='TOPIC'`，见 pages/creation/traffic）：
- * 它不选门店、不选菜品，只用节气/节日/时令出稿。还把它挂在创作页的款式里，
- * 用户会选到一条「明明有门店菜品、却生成出一条不提门店的稿子」——而且**不报错**。
- * （服务端也同步把 `track='TRAFFIC'` 排除在菜品稿的枚举外，旧客户端传了会拿到 400。）
+ * 流量型（`TRAFFIC`）现在也在同一张选择器里，但它**不是**菜品稿的一款：
+ * 选中它就不选菜品，创建时走 `mode='TOPIC'`（见 `TRAFFIC_TRACK`）。
+ * 所以「五选一」与「四款菜品文案」必须是**两份常量**：编辑态「换一款」只换这四款
+ * —— 话题稿的款式服务端不许改（`updateCreation` 对 TOPIC 行直接丢弃 track），
+ * 把它列出来就是一个点了没反应的选项。
+ * （服务端同样把 `track='TRAFFIC'` 排除在**菜品稿**的入参枚举外：`mode='DISH'` 传它会 400。）
  */
 export const DISH_TRACK_OPTIONS = COPY_TRACK_OPTIONS.filter((o) => o.value !== 'TRAFFIC')
 
 /**
- * 把「服务端 / 同款配方给来的 track」收敛成**菜品稿可用的四款**；不是这四款（含流量款、认不出的值）就返回 null。
+ * 「流量型」这一款。创作页拿它做三件事，全部是**判值**而不是判位置：
+ *   ① 款式网格里独占第一行；
+ *   ② 选中时把「菜品」那一行置灰（它不拍菜）；
+ *   ③ `onCreate` 据此分流成 `mode='TOPIC'` 的创建请求。
  *
- * 用途：创作页的款式选择器已经不含流量款，但下面两个来源仍可能给出 `'TRAFFIC'`
- * （甚至是更早的 `'NORMAL'`，以及改型前的 `'INTRO'` / `'QUALITY'`）：
- *   · 存量创作的 `track`
+ * ★ 不要退回字面量 `'TRAFFIC'`：这几处一旦有一处拼错，表现是「选项选不中」或
+ *   「菜品悄悄没被提交」—— 两种都不报错。
+ */
+export const TRAFFIC_TRACK: CopyTrack = 'TRAFFIC'
+
+/**
+ * 把「服务端 / 同款配方给来的 track」收敛成**菜品稿可用的四款**；不是这四款（含流量型、认不出的值）就返回 null。
+ *
+ * ★ 用途在 2026-09-24 收窄了：**话题稿的款式改由 `mode` 判定**，不再经过这里
+ *   （见创作页 loadDetail：`mode === 'TOPIC'` ⇒ 恒为 `TRAFFIC_TRACK`）。
+ *   反过来，「库里是菜品稿、track 却是 `'TRAFFIC'`」在**存量数据里真实存在**
+ *   （25 条），而服务端对它们一律改回默认款式（`generateCopy` 的兜底）。所以这里必须继续收敛：
+ *   不收敛就会对着一条菜品稿把「流量型」显示成选中，而实际生成的是产品型 —— 不报错，只是错配。
+ * 其余来源仍可能给出认不出的值（更早的 `'NORMAL'`、改型前的 `'INTRO'` / `'QUALITY'`）：
+ *   · 存量菜品稿的 `track`
  *   · `excellent_work.recipe_json.track`（优秀作品的款式会被原样带到创作页）
  * 直接 `setTrack(r.track)` 会让选择器**一项都不选中**（用户以为没选款式）；
  * 返回 null 则保持默认款式态（见 `DEFAULT_DISH_TRACK`）—— 这也正是服务端对菜品稿的收敛结果，两端一致。

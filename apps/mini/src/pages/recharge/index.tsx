@@ -226,7 +226,7 @@ export default function Recharge() {
       {tab === 'subscribe' && (
         <View className='recharge__list'>
           {isMember && (
-            <View className='recharge__hint'>已订阅 · 至 {formatDay(memberEndAt)}，续费可叠加时长与赠积分</View>
+            <View className='recharge__hint'>已订阅 · 至 {formatDay(memberEndAt)}</View>
           )}
           {plans.length === 0 && <View className='recharge__empty'>暂无订阅套餐（后台未配置）</View>}
           {plans.map((p, idx) => {
@@ -295,13 +295,6 @@ export default function Recharge() {
           ))}
         </View>
       )}
-
-      <View className='recharge__footer'>
-        <Text className='recharge__rule'>· 订阅是文案、分镜、合成能力的前置条件</Text>
-        <Text className='recharge__rule'>· 1 元 = 100 积分，加油包仅订阅用户可购买</Text>
-        <Text className='recharge__rule'>· 机器合成按素材有效时长计费，失败全额返还</Text>
-        <Text className='recharge__rule'>· 支付以服务端订单状态为准，重复下载不扣积分</Text>
-      </View>
     </View>
   )
 }

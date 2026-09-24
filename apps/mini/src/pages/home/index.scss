@@ -1,18 +1,18 @@
 // 首页 · 今日创作台
-// 结构：口号横幅 → 创作入口（轮播）→ 最近创作 → 优秀作品
-// ⚠ 这里原来还有一条顶栏（左：门店切换 pill；右：圆形头像按钮），已按需求去掉，
-//   理由写在 index.tsx 的 home__top 上。相关的 &__topbar / &__brand / &__logo /
-//   &__appname / &__icon-btn 一并清掉 —— 留着会是没人引用的死样式。
+// 结构：创作入口（轮播 + 下方的「开始创作」主按钮）→ 最近创作 → 优秀作品
+// ★ 2026-09-24：口号横幅整块下线（连它的数据线一起），首页第一屏直接从轮播开始。
+// ⚠ 两处「空位」不是漏写，都是按需求删掉的，别再加回来：
+//   ① 顶栏（左：门店切换 pill；右：圆形头像按钮）—— 相关 &__topbar / &__brand / &__logo /
+//      &__appname / &__icon-btn 已一并清掉；
+//   ② 口号海报 &__top / &__slogan-banner / &__slogan-image（2026-09-24）。
 .home {
   min-height: 100vh;
   background: var(--td-bg-color-page);
   padding-bottom: 60rpx;
 
-  // ─────────── 顶部（只剩口号海报） ───────────
-  &__top {
-    position: relative;
-    padding: 24rpx 36rpx 0;
-  }
+  // ─────────── 顶部 ───────────
+  // ★ 2026-09-24：口号海报（&__top / &__slogan-banner / &__slogan-image）整块下线，
+  //   第一屏直接从下面的轮播开始 —— 原来 &__top 提供的那 24rpx 上边距移到了 &__body 上。
   // 手绘字标：只保留一句品牌主张，用楷体字形 + 墨迹划线营造绘画感
   &__hero-mark {
     display: none;
@@ -102,26 +102,8 @@
   }
 
   // ─────────── 产品级首页首屏 ───────────
-  &__slogan-banner {
-    margin: 0 0 28rpx;
-    overflow: hidden;
-    border-radius: 36rpx;
-    // 纯白：口号海报本身是**不透明纯白底**（见 src/assets/home/README.md）。
-    // 容器跟着用纯白，是为了让 aspectFit 的极小留白与圆角处不露出暖色底 ——
-    // 图微宽于容器（678/248 = 2.734 < 1125/411 = 2.737），按宽贴合后上下各差不到 1rpx。
-    background: #fff;
-  }
-  &__slogan-image {
-    display: block;
-    width: 100%;
-    // 高度按图片自身宽高比钉死：卡片内宽 678rpx(=750-36×2) ÷ (1125/411) ≈ 248rpx。
-    // ★ 不能写 height:auto —— 图在 CDN 上，加载完成前高度是 0，
-    //   图一到位整个首屏会往下跳一截（原来那张 1.2KB 的内联 SVG 没这个问题）。
-    // ⚠ 换图必须同步改这个数，比例见 src/assets/home/README.md
-    // 2026-09-16 由 252rpx 改为 248rpx：海报重裁了垂直构图（1125×419 → 1125×411），
-    // 裁的是**图片下方的空白**，卡片高度几乎没变，但文字块在卡片里上下居中了。
-    height: 248rpx;
-  }
+  // ★ 2026-09-24：&__slogan-banner / &__slogan-image 两条样式随口号图下线一起删除
+  //   （含底部那条「高度按图比例钉死 248rpx」的覆盖规则）。
   &__create-kicker {
     display: block;
     color: var(--td-brand-color);
@@ -158,29 +140,40 @@
   &__create-shade {
     background: linear-gradient(90deg, rgba(32, 10, 8, 0.88) 0%, rgba(32, 10, 8, 0.48) 56%, rgba(32, 10, 8, 0.08) 100%);
   }
-  &__create-copy,
-  &__create-action {
+  &__create-copy {
     position: relative;
     z-index: 1;
-  }
-  &__create-copy {
     padding: 42rpx 38rpx 0;
     max-width: 500rpx;
   }
   &__create-kicker { color: rgba(255, 231, 223, 0.8); }
   &__create-title {
-    /* 固定高度（376rpx）的轮播卡片撑不住任意长度的标题：限两行，
-       超出的省略。运营写长标题时至少不会把「开始创作」挤出去。 */
+    /* ★ 2026-09-24 首屏主标题：按需求做**两行**、加大、提质感。
+       ⚠ 「两行」不能靠数据里写换行符 —— 标题是**运营在后台配的内容**
+         （`system_setting.home.carousel[].title`），换一句文案就散了。
+         这里用 `max-width` 限制**每行 5 个字**：
+           `让餐饮门店轻松拍视频`(10 字) ⇒ 「让餐饮门店」/「轻松拍视频」
+       ★ em 相对 font-size ⇒ 以后调字号，**换行位置不会跟着变**。
+         文案换成别的字数时，改这个 `5em` 里的数字即可（6 字一行就写 6em）。
+       ★ 兜底 `-webkit-line-clamp` 保留，但**从 2 放宽到 3**：
+         `max-width: 5em` 把每行容量从「约 11 字」压到 5 字，限 2 行时 11 字以上的标题会被**悄悄吃掉尾巴**
+         （例：14 字 ⇒ 「让餐饮门店轻松」/「拍视频来引…」）。3 行能容纳 15 字，
+         而我们的 10 字标题在 5em 下本来就只排 2 行 ⇒ 放宽对本次需求零影响，只是不再截断运营的长文案。
+         高度账：16rpx 顶距 + 小字一行 + 8rpx 间距 + 3×52rpx×1.22 ≈ 269rpx < 卡片 336rpx ✅（4 行就要 333rpx，贴顶了，所以停在 3）。 */
     display: -webkit-box;
     -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
+    -webkit-line-clamp: 3;
     overflow: hidden;
-    margin-top: 18rpx;
+    max-width: 5em;
+    margin-top: 16rpx;
     color: #fff;
-    font-size: 42rpx;
-    font-weight: 700;
-    line-height: 1.25;
-    letter-spacing: -0.035em;
+    /* 原 36rpx（被文件末尾那条覆盖压下来过）⇒ 首屏主标题必须够看 */
+    font-size: 52rpx;
+    font-weight: 800;
+    line-height: 1.22;
+    letter-spacing: -0.02em;
+    /* 卡面是深色图 + 右亮左暗的渐变：加一层柔和投影，让字在渐变过渡处也不糊 */
+    text-shadow: 0 2rpx 14rpx rgba(28, 10, 8, 0.42);
   }
   &__create-desc {
     display: -webkit-box;
@@ -192,21 +185,6 @@
     font-size: 24rpx;
     line-height: 1.6;
   }
-  &__create-action {
-    position: absolute;
-    left: 38rpx;
-    bottom: 34rpx;
-    display: inline-flex;
-    align-items: center;
-    gap: 18rpx;
-    padding: 18rpx 24rpx;
-    border-radius: 18rpx;
-    background: #fff;
-    color: var(--td-brand-color);
-    font-size: 26rpx;
-    font-weight: 700;
-  }
-  &__create-arrow { font-size: 32rpx; line-height: 1; }
   // ─────────── 积分卡 ───────────
   &__bean {
     margin-top: 36rpx;
@@ -248,16 +226,19 @@
     flex: 1;
   }
 
-  // ─────────── 唯一主按钮 ───────────
+  // ─────────── 唯一主按钮：轮播下方那颗「开始创作」 ───────────
+  // ★ 2026-09-24：这颗按钮原来长在轮播卡片里（&__create-action，绝对定位在卡片左下角、
+  //   26rpx 字、18rpx 24rpx 内边距），现按需求**摘出来放到轮播下面并放大**。
+  //   尺寸不再自己写：交给 .ds-btn--lg（104rpx 高 / 34rpx 字）+ .ds-btn--primary（品牌红底 +
+  //   反白字 + 红晕）+ .ds-btn--block（通栏、文字水平居中），这里只管它跟轮播之间的距离。
+  //   ⚠ 旧写法把高度/字号又写了一遍（与 .ds-btn--lg 同值），已去掉 —— 同值两处写迟早会走散。
   &__create {
     margin-top: 28rpx;
-    height: 104rpx;
-    font-size: 34rpx;
   }
-  &__create-plus {
-    font-size: 40rpx;
-    font-weight: 400;
-    margin-right: 10rpx;
+  // 按钮里的箭头：.ds-btn 是 flex 居中但没有 gap，所以间距补在箭头上
+  &__create-arrow {
+    margin-left: 14rpx;
+    font-size: 34rpx;
     line-height: 1;
   }
   &__error {
@@ -331,19 +312,6 @@
     display: flex;
     align-items: center;
     gap: 14rpx;
-  }
-  &__sec-ai {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 36rpx;
-    padding: 0 14rpx;
-    background: var(--td-brand-color);
-    color: #fff;
-    font-size: 22rpx;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    border-radius: var(--td-radius-pill);
   }
   &__sec-more {
     font-size: 24rpx;
@@ -710,10 +678,10 @@
   padding-bottom: calc(40rpx + env(safe-area-inset-bottom));
 }
 
-.home__top { padding: 16rpx 32rpx 0; }
-.home__slogan-banner { margin-bottom: 20rpx; border-radius: var(--td-radius-large); }
-.home__slogan-image { height: 226rpx; }
-.home__body { padding: 0 32rpx; }
+/* ★ 2026-09-24：`.home__top` / `.home__slogan-banner` / `.home__slogan-image` 三条随口号图一起删除。
+   原 &__top 提供的首屏上边距（这里本来是 16rpx）改由 .home__body 的 padding-top 承担，
+   否则删掉口号图后第一屏会直接贴到导航栏底下。 */
+.home__body { padding: 24rpx 32rpx 0; }
 .home__banner,
 .home__create-card { height: 336rpx; border-radius: var(--td-radius-large); }
 .home__banner { box-shadow: 0 10rpx 28rpx rgba(17, 17, 20, 0.12); }
@@ -734,8 +702,9 @@
 .home__setup-action { display: flex; align-items: center; justify-content: space-between; height: 76rpx; margin-top: 22rpx; padding: 0 24rpx; border-radius: var(--td-radius-default); color: #fff; background: var(--td-brand-color); font-size: 26rpx; font-weight: 600; }
 .home__setup-arrow { font-size: 34rpx; font-weight: 400; }
 .home__create-copy { padding: 32rpx 30rpx 0; }
-.home__create-title { margin-top: 14rpx; font-size: 36rpx; }
-.home__create-action { left: 30rpx; bottom: 26rpx; height: 60rpx; padding: 0 20rpx; border-radius: var(--td-radius-default); }
+/* ★ 2026-09-24：`.home__create-title` 的 margin-top / font-size **已收回基类 `&__create-title`**。
+   原来这条覆盖把字号从 42rpx 压到 36rpx，改基类完全看不到效果（同选择器、后写的赢）——
+   首屏主标题的排版只留基类一处出处，别再在这里写第二份。 */
 .home__sec { padding: 32rpx 4rpx 14rpx; }
 .home__sec-title { font-size: 29rpx; letter-spacing: 0; }
 .home__sec-desc { margin-top: 4rpx; font-size: 21rpx; }

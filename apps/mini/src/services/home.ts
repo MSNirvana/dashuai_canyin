@@ -27,7 +27,7 @@ export type CarouselLink =
   | 'CREATE'
   /** 全部创作（tabBar） */
   | 'CREATIONS'
-  /** 门店列表 */
+  /** 门店：有门店 → 进那家店的详情（门店信息）；还没有门店 → 去创建门店（单店模型 2026-09-24） */
   | 'STORES'
   /** 订阅与积分 */
   | 'MEMBER'
@@ -47,12 +47,20 @@ export interface HomeCarouselSlide {
   workId: string
 }
 
-/** 没有任何后台配置时用的兜底单张：与改造前的静态卡片逐字一致 */
+/**
+ * 没有任何后台配置时用的兜底单张。
+ *
+ * ★ 2026-09-24：**这条兜底才是线上真正在渲染的标题** —— 线上库的 `system_setting`
+ *   里没有 `home` 分组（实测 groupBy 只有 bean/render/storage/subscription），
+ *   所以 getHomeLayout() 拿不到 carousel 配置、直接回落到这里。
+ *   改文案时**必须先改这里**，只改数据库/seed 在线上是不生效的。
+ *   ⚠ 标题已按需求改为「让餐饮门店轻松拍视频」（原「做一条能带来客人的视频」）。
+ */
 export const FALLBACK_SLIDE: HomeCarouselSlide = {
   id: 'fallback',
   image: HOME_CREATE_HERO,
   kicker: '从一道菜开始',
-  title: '做一条能带来客人的视频',
+  title: '让餐饮门店轻松拍视频',
   // 副标题已按需求下线（2026-09-16）。置空即可 —— home/index.tsx 对 desc 是
   // 条件渲染（`{!!s.desc && ...}`），不会留下空隙。
   desc: '',

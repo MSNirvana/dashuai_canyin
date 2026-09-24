@@ -119,21 +119,14 @@
   }
 
   &__new-head { padding: 10rpx 4rpx 30rpx; }
-  &__new-kicker, &__stage-kicker { display: block; color: var(--td-brand-color); font-size: 20rpx; font-weight: 700; letter-spacing: .12em; }
   &__new-title { display: block; margin-top: 14rpx; color: var(--td-text-color-primary); font-size: 46rpx; font-weight: 750; line-height: 1.25; letter-spacing: -.035em; }
 
-  // ── 流量款入口卡（2026-09-21 从创作列表页挪到标题下面）──
-  // 与下面那张表单卡之间留一道明显间距：两者**不是同一件事**，
-  // 贴在一起会被读成「表单的第一项」，那就又回到了「以为要选菜」的误解。
-  &__topic { display: flex; align-items: center; gap: 16rpx; padding: 22rpx 24rpx; margin-bottom: 22rpx; border-radius: var(--td-radius-large); background: var(--td-bg-color-container); border: 1rpx solid var(--td-brand-color-light); box-shadow: var(--ds-shadow-card); }
-  &__topic-icon { width: 68rpx; height: 68rpx; border-radius: 20rpx; background: var(--td-brand-color-light); color: var(--td-brand-color); display: flex; align-items: center; justify-content: center; flex: none; }
-  &__topic-main { flex: 1; min-width: 0; }
-  &__topic-head { display: flex; align-items: center; gap: 10rpx; }
-  &__topic-title { font-size: 29rpx; font-weight: 650; letter-spacing: -.015em; color: var(--td-text-color-primary); }
-  // 「新」角标：这个功能刚上线，给一个视觉动因让人点进去
-  &__topic-new { font-size: 19rpx; line-height: 1.5; padding: 0 8rpx; border-radius: 8rpx; background: var(--td-brand-color); color: #fff; flex: none; }
-  // 说明只允许一行（超出省略）：卡片是**入口**不是说明区，两行会把标题挤下去
-  &__topic-desc { display: block; margin-top: 6rpx; font-size: 22rpx; color: var(--td-text-color-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  // ⚠ 「流量款 · 跟热点」**入口卡**已于 2026-09-24 删除：流量型现在是「文案款式」网格里的
+  //   第一项，样式走下面的 `&__tracks` / `&__track--lead`。
+  //   ★ 但入口卡上有**两个原子**被那一行原样继承了 —— 图标块（`&__topic-icon`）与「新」角标
+  //     （`&__topic-new`）。它们仍叫 topic 这个名字（不改名：改名要动 edit.tsx，且这两个类
+  //     现在只服务流量型那一行，语义没跑偏），定义也跟着搬到 `&__track--lead` 旁边，
+  //     与使用处贴在一起，避免有人以为它们已经随入口卡一起没了。
   // 原页顶那行副标题（new-desc）的最终归宿 = 页脚「?」的气泡（见下面的 `&__help-bubble`）。
   // 它中间当过一版页脚常驻小字，后来判定它讲的是「填完这几项会发生什么」，
   // 属于**按需了解**的信息 —— 常驻只会占掉按按钮前最后一眼的注意力。
@@ -256,17 +249,8 @@
     color: var(--td-brand-color);
   }
 
-  /* 左上角门店上下文：创作归属门店，默认跟随当前门店 */
-  &__bar {
-    display: flex;
-    align-items: center;
-    gap: 16rpx;
-    margin-bottom: 24rpx;
-  }
-  &__barhint {
-    font-size: 22rpx;
-    color: var(--td-text-color-placeholder);
-  }
+  /* ★ 2026-09-24 单店模型：`&__bar`（左上角门店切换器的容器）与其 `&__barhint`
+     一并删除 —— tsx 里那两处 `cedit__bar` 是本轮唯一引用，已随切换器一起移除。 */
 
   /* ── 步骤条 ── */
   &__steps-wrap {
@@ -338,28 +322,54 @@
     color: var(--td-brand-color);
   }
 
-  /* ── 规格块（文案款式 / 镜头复杂度）的标题行 ──
-     原来这里是「34rpx 粗体标题独占一行 + 一行灰说明 + 分段控件」，
-     也就是全站「卡内小节标题」的写法。反馈「看着像分类，下面没有东西」的症结就在这：
-     标题被读成分类名，而下面的控件没被看成它的内容。所以：
-     ① 标题降到 30rpx（明确轻于真正的小节标题 `&__sectitle` 的 34rpx）；
-     ② 说明挪到同一行右侧 —— 标题不再独占一行，整块收成「标题行 + 选项组」一个紧凑单元；
-     ③ 控件本身换成描边容器 + 选中项实心品牌红（见文件末尾 `.cedit .cedit__seg`）。 */
+  /* ── 卡内小节标题行（「文案款式」/「镜头复杂度」）──
+     ★★ 2026-09-24 统一：这两个标题过去各写一套规格（34rpx/700 与 30rpx/650），
+     但它们在同一张卡里、是**同级**的两组选项（不是父子）—— 4rpx 字号差 + 50 字重差，
+     读起来是「没整齐」而不是「有层级」。现在两者**共用** `&__spec-title`。
+     ★ 「先定款式、再定复杂度」的先后**不再靠字号表达**，改由①上下位置②中间的 `&__split`
+     分隔线来说；字号只用来分「卡内标题 / 页面标题」。
+     ★ 2026-09-24 二次收口：标题旁的说明「?」（components/section-help）按用户要求**整块删除**，
+     这一行现在只剩「竖条 + 标题」两件东西，`flex-start` + `gap:12rpx` 就是把它们**成组**。 */
   &__spec-head {
     display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 16rpx;
+    /* ★ 从 baseline 改成 center：行内现在是两个不同高度的东西（30rpx 竖条 / 34rpx 文字），
+       baseline 只对齐文字基线，竖条会明显偏上。
+       （原来行内还有第三个东西 —— 32rpx 的圆形「?」，2026-09-24 已删。） */
+    align-items: center;
+    /* ★ 从 space-between 改成 flex-start：这一行右侧**没有**操作项，
+       space-between 会把这一行唯一的两个元素（竖条 + 标题）硬撕到两端 ——
+       「镜头复杂度」才 5 个字，标题离竖条将近一整行，看着像三段东西。
+       改成紧跟在一起，「竖条 + 标题」收成一个紧凑单元。 */
+    justify-content: flex-start;
+    gap: 12rpx;
     margin-bottom: 18rpx;
   }
+  /* 标题左侧的品牌色锚点：6rpx × 30rpx 圆角竖条。
+     两个标题都是纯黑字时视线没有落点，容易把下面的选项组读成一张独立的表；
+     竖条把「标题 → 它的选项组」连成一对。两处**都加**，规格完全一致。 */
+  &__spec-bar {
+    flex: none;
+    width: 6rpx;
+    height: 30rpx;
+    border-radius: 3rpx;
+    background: var(--td-brand-color);
+  }
+  /* ★★ 两个标题**共用这一条**（2026-09-24 统一）：34rpx / 700 / -0.02em，
+     与编辑态 `&__sectitle` 的**源码规格**同一档（那条被文件末尾覆写成 27rpx，见 `.cedit__sectitle`；
+     两处不在同一屏出现，不算冲突，但以后改标题字号要知道有这个覆写）。
+     ⚠ 不要只给其中一个改字号 —— 那正是这次要修的问题。 */
   &__spec-title {
     flex: none;
-    font-size: 30rpx;
-    font-weight: 650;
-    letter-spacing: -0.01em;
+    font-size: 34rpx;
+    font-weight: 700;
+    letter-spacing: -0.02em;
     color: var(--td-text-color-primary);
   }
-  // 原来标题右侧那行小字说明（&__spec-note）已收进「?」（components/section-help）。
+  // 原来标题右侧那行小字说明（&__spec-note）曾被收进「?」里（components/section-help）。
+  // ★ 2026-09-24：三处标题旁的「?」**已整块删除**（用户要求）—— 说明里的信息都已在版面上
+  //   有更直接的落点（款式侧重点逐款常驻在选项下、分镜数量直接印在每个选项右边、
+  //   菜品约束在为空时出行内提示），「?」只剩「要点一下才知道」的坏处。
+  //   组件 `components/section-help` 本身**保留**：`pages/render/compose.tsx` 还有 11 处在用。
 
   // 合并成一张卡后，两组规格之间的细分隔线。
   // 上下留白刻意偏大：上面那块最后一行是描边选项条，线贴太近会被读成某一项的底边。
@@ -368,6 +378,10 @@
     background: var(--td-component-border);
     margin: 36rpx 0 32rpx;
   }
+  // ⚠ `&__lead-title`（「文案款式」专用的那套 34rpx/700 标题）已于 2026-09-24 删除：
+  //   它与 `&__spec-title` **合并** —— 两个同级标题各写一套规格，正是这次要修的「不整齐」。
+  //   现在两处都用 `&__spec-title`（含新增的 `&__spec-bar` 锚点）。
+  //   这里不留空壳：留着会让人以为页面上还有第三种标题规格。
 
   /* ── 竖排选项列表（文案款式 / 镜头复杂度）──
      一行一个选项、右侧一句小字说明、选中时**整条**飘红。
@@ -425,34 +439,212 @@
   &__opt--on &__opt-desc {
     color: var(--td-brand-color);
   }
+  /* ── 「文案款式」网格：流量型独占一行，其余四款两两一行 ──
+     为什么不是 `&__opts` 那种竖排一行一个：五条竖排会把首屏占满，而这一屏要的是
+     「一眼看全五个款」—— 款式是本页第一个、也是最大的决定，看不见就谈不上先选它。
+     ★★ 两列**必须留余量**：`(50% − 8rpx) × 2 + 16rpx` 恰好等于 100%，一格余量都没有 ——
+       而 rpx→px 换算与亚像素（1/64px）取整只在部分屏宽整除（390pt 整除、440pt 不整除），
+       误差没地方消化时「两格 + 中缝」就被顶过行宽 ⇒ 第二格换行，
+       线上表现就是「iPhone 12 两个、iPhone 16 Pro Max 一个」。
+       所以这里走「宽度取百分比（留 24rpx 余量）+ 中缝交给 justify-content」，见下面两条规则。 */
+  &__tracks {
+    display: flex;
+    flex-wrap: wrap;
+    /* ★★ 中缝必须由 justify-content 让出来，列方向的 `gap` 只能是 0：
+       写成 `gap: 16rpx` 时它就成了**强制最小间距**，余量当场归零，取整误差照样把第二格
+       顶到下一行 —— 与「不留余量」是同一个错，只是换了个位置犯。 */
+    justify-content: space-between;
+    gap: 24rpx 0;
+  }
+  &__track {
+    // 88rpx ≈ 44px：与 `&__opt` 同一套点击高度
+    min-height: 88rpx;
+    /* ★★ 50%−12rpx，**不是** 50%−8rpx：后者配 `gap: 16rpx` 恰好等于 100%，零余量。
+       两格实占 100%−24rpx（卡片内宽 ≈638rpx ⇒ 余量约 3.8%），足以消化 rpx→px 换算与
+       亚像素（1/64px）取整 —— 论证与逐屏宽实测复算见 compose.scss 的 `&__clip` 那一段。 */
+    width: calc(50% - 12rpx);
+    /* ★ 从 `0 20rpx` 改成 `18rpx 20rpx`：格子里现在是**两行**（款式名 + 侧重点小字），
+       横向内距不变，纵向得让出呼吸 —— 原来那版只有一行标题，靠 min-height 撑高就够。 */
+    padding: 18rpx 20rpx;
+    display: flex;
+    align-items: center;
+    /* ★ 这里只对「独占一行」那一项（见 `&__track--lead` 的 flex-start）有实际意义：
+       四款两列格子只有一个子元素 `__track-main` 且它 `flex: 1`，居不居中都一样 ——
+       留着 center 是为了让「不写 lead 覆写时」的行为有确定答案，不是死配置。 */
+    justify-content: center;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+  }
+  /* 独占一行的那一项（流量型）：**逐字沿用原「流量款 · 跟热点」入口卡**的观感 ——
+     图标块 + 标题 + 「新」角标 + 右箭头 + 品牌浅描边 + 卡片投影。
+     ★ 只写**与 `&__track` 的差异项**（宽度 / 内距 / 圆角 / 描边色 / 投影 / 图标与文字间距 /
+       起点对齐），底色与选中态继续走 `&__track` / `&__track--on` —— 两套规则各说一半，
+       以后改选中态只需改一处。
+     ★★ 本块必须写在 `&__track--on` **之前**：两者都是单类选择器（同为 0-1-0），
+       流量型那一格身上同时挂 `--lead` 与 `--on`，同权重下**靠源序决胜** ——
+       顺序一颠倒，选中态的 `border-color`/`background` 就会被这里的 `border-color` 压掉，
+       表现为「选了流量型但描边还是浅的」。 */
+  &__track--lead {
+    width: 100%;
+    gap: 16rpx;
+    padding: 22rpx 24rpx;
+    justify-content: flex-start;
+    border-radius: var(--td-radius-large);
+    border-color: var(--td-brand-color-light);
+    box-shadow: var(--ds-shadow-card);
+  }
+  // 原入口卡的图标块（68rpx ≈ 34px 方形块 + 浅红底 + 品牌色云图标）
+  &__topic-icon {
+    width: 68rpx;
+    height: 68rpx;
+    border-radius: 20rpx;
+    background: var(--td-brand-color-light);
+    color: var(--td-brand-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+  }
+  // 「新」角标：流量型刚并入款式网格，给一个视觉动因说明它跟另外四款不是一回事
+  &__topic-new {
+    font-size: 19rpx;
+    line-height: 1.5;
+    padding: 0 8rpx;
+    border-radius: 8rpx;
+    background: var(--td-brand-color);
+    color: #fff;
+    flex: none;
+  }
+  // 内容列：`flex: 1` 把右箭头推到最右；`min-width: 0` 让里面的 `__track-desc` 省略号生效
+  &__track-main {
+    flex: 1;
+    min-width: 0;
+  }
+  // 标题行（款式名 + 「新」角标）：`.cedit__topic-new` 是它的子元素，两者必须同一行
+  &__track-head {
+    display: flex;
+    align-items: center;
+    gap: 10rpx;
+  }
+  // 侧重点小字：**常驻**在每款下面（不藏进页脚「?」—— 五款的分界线就是这一屏的决策依据）
+  &__track-desc {
+    display: block;
+    margin-top: 6rpx;
+    font-size: 22rpx;
+    line-height: 1.4;
+    color: var(--td-text-color-secondary);
+  }
+  /* ★ 只有流量型那一行沿用原入口卡的「单行 + 省略号」：它在整行里横向宽裕，也**必须**只占一行
+     （卡片是入口不是说明区，两行会把标题挤下去）。
+     ★★ 四款两列格子**故意不加** nowrap：格子内宽约 **267rpx**
+        （750 − 页 32×2 − 卡 24×2 = 638 ⇒ 格宽 `calc(50% - 12rpx)` = 307 ⇒ 再减格内距 20×2），
+        22rpx 字号下 ≈ 12 个全角字。硬套 nowrap 会把超出的后半截**直接吃掉且不报错**
+        （没有省略号提示，用户会以为这条就是这几个字）。宁可折行。
+        ▲ 内距取的是**文件末尾覆写后**的值，不是 `&__card` 里写的 32rpx ——
+          `.cedit__card` 是单类名（`&__card` 是拼接、不是后代选择器），
+          所以末尾那条同权重的 `.cedit__card { padding: 24rpx }` 把它压掉了。
+          按 32rpx 算会得出 622rpx，差 16rpx，够不够放下就被算反了。
+        ★ 五条 `desc` 现在都按「能单行放下」写 —— 最长「达人素人视角 / 推荐理由」
+          **实测 245.7rpx**（无头浏览器按同字体、同内距重建后量得，复现件
+          `outputs/creation-track-desc-fit.html` + 同名 `.png`），余量约 **20rpx / 7.5%**。
+          ★★ 余量已经**不宽裕**：再加两三个字就会折行。改词条前必须重算这个账，
+          账本与量法在 `services/creation.ts` 的同名注释里。
+        ⚠ 但**折行的能力要留着**：它是「文案哪天写长了」的兜底，不是现在没触发就能删的东西。 */
+  &__track--lead &__track-desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* ★ 名称排版也逐项沿回原入口卡（29rpx / 650 / 收紧字距）：共用 `&__track-label`
+     的后果是流量型那行从「一整张入口卡」降级成「五分之一张格子」，而用户要的正是
+     「流量型那一行还是原来那张卡」—— 图标块与「新」角标还不够，字号也得跟回来。
+     本块同样必须写在 `&__track--on ...` 两处之前：同权重（0-2-0）靠源序决胜，
+     这里不写 color，选中态的 `color: 品牌红` 才能照常生效。 */
+  &__track--lead &__track-label {
+    font-size: 29rpx;
+    font-weight: 650;
+    letter-spacing: -.015em;
+  }
+  &__track--hover {
+    opacity: 0.6;
+  }
+  // 选中 = **整格**：底色 + 描边 + 文字一起转品牌红。
+  // 只用浅红底、不填充实心红：同屏最多 5 格，实心块会把整张卡刷成一片红，反而分不出选了哪个。
+  &__track--on {
+    background: var(--td-brand-color-light);
+    border-color: var(--td-brand-color);
+  }
+  &__track-label {
+    font-size: 28rpx;
+    font-weight: 500;
+    color: var(--td-text-color-primary);
+    /* ★ 这里**不写 text-align**：款式名和它下面的侧重点小字是同一条内容列（`__track-main`），
+       两行必须同一个起点 —— 标题居中、小字左对齐会看起来像两件事。
+       起点由父级 `__track-head` 的 flex 起点决定（两列格子默认左、`--lead` 行也是左）。 */
+  }
+  // 两级类名（`.cedit__track--on .cedit__track-label`）：同 `&__opt` 那两处，多一级祖先就不赌书写顺序
+  &__track--on &__track-label {
+    font-weight: 650;
+    color: var(--td-brand-color);
+  }
+  // 选中时小字一起转红：与 `&__opt--on &__opt-desc` 同一套反馈（整格选中，不是只染色标题）
+  &__track--on &__track-desc {
+    color: var(--td-brand-color);
+  }
 
-  /* ── 表单行（新建创作） ── */
+  /* ── 「菜品」选择行 ──
+     ★ 2026-09-24：从「表单行（左标签 + 右值）」改成**整行选择器（描边容器）**。两个原因：
+       ① 菜品补上了与「文案款式 / 镜头复杂度」同款的标题行（红条 + 34rpx 粗体）⇒
+          行内再写一遍「菜品」就是同一个词说了两遍；
+       ② 卡内其他控件（款式格子、复杂度选项）都是描边容器，这里跟上才是一套。
+     ⚠ `.cedit__field` 只服务这一行（grep 可验），所以改它不波及其他字段。
+     ⚠ 下面 `&__input` / `&__ph` 两条是**已删的标题输入框留下的死样式**：
+       `.cedit__input` 在本页产物里只出现在 `.wxss`、不出现在 `.js`（无 DOM）。没有顺手删。 */
   &__field {
     display: flex;
     align-items: center;
-    padding: 24rpx 0;
-    border-bottom: 1rpx solid var(--td-component-border);
-
-    &--last {
-      border-bottom: none;
-      padding-bottom: 4rpx;
-    }
-  }
-  &__label {
-    width: 140rpx;
-    flex: none;
-    font-size: 28rpx;
-    color: var(--td-text-color-secondary);
+    // 88rpx ≈ 44px：与 `&__opt` / `&__track` 同一套点击高度
+    min-height: 88rpx;
+    padding: 0 24rpx;
+    background: var(--td-bg-color-container);
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
   }
   &__picker {
     flex: 1;
-    font-size: 30rpx;
+    min-width: 0;
+    font-size: 29rpx;
     font-weight: 500;
     color: var(--td-text-color-primary);
-    text-align: right;
-  }
-  &__picker--action {
+    /* ★ 从 `text-align: right` 改成左对齐：这一行现在**没有左侧标签**，取值就是整行的起点。
+       还按右对齐的话，「请选择菜品」会贴在最右边、左边空一整行，看着像漏了东西。 */
     text-align: left;
+  }
+  // 可点开选择器的那一支：取值与右箭头分居两端
+  &__picker--select {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16rpx;
+  }
+  &__picker-value {
+    flex: 1;
+    min-width: 0;
+    // 菜名可能很长 ⇒ 单行省略，别把右箭头挤出容器
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  // 右箭头：只作「这里点得开」的可供性提示，颜色比正文浅一档
+  &__picker-arrow {
+    flex: none;
+    display: flex;
+    align-items: center;
+    color: var(--td-text-color-placeholder);
+  }
+  // 没得选 / 加载失败时这一行是「去别处办事」的入口 ⇒ 下划线 + 品牌色（沿用原写法）
+  &__picker--action {
     color: var(--td-brand-color);
     text-decoration: underline;
     text-decoration-color: rgba(225, 37, 27, 0.35);
@@ -461,6 +653,31 @@
   &__picker--retry {
     color: var(--td-text-color-secondary);
     text-decoration: none;
+  }
+  /* 选了流量型 ⇒「菜品」整块作废（这一款不拍菜）。
+     ★ 置灰而不是隐藏：整块消失时，用户分不清是「这一款不要菜」还是页面坏了。
+     ★ 标题与竖条一起转灰 —— 它们与下面置灰的取值是**同一个信号**，只有标题还黑着会互相打架。
+     ★ 两级类名（`.cedit__field--off .cedit__picker`）：同文件，这里不赌书写顺序。 */
+  &__field--off &__picker {
+    color: var(--td-text-color-placeholder);
+    font-weight: 400;
+  }
+  &__spec-head--off &__spec-title {
+    color: var(--td-text-color-placeholder);
+  }
+  &__spec-head--off &__spec-bar {
+    background: var(--td-text-color-placeholder);
+  }
+
+  /* 「链接编号有误」那一屏的说明段落。
+     ★★ 原来复用的是 `.cedit__label`（表单标签：`width: 140rpx; flex: none`）⇒
+        整段话被塞进 **70px 宽的窄柱**里逐字折行 —— `idBroken` 那条路径上一直是坏的。
+        表单标签这个角色随「菜品」行改造一起消失，所以这里给它自己的类，并删掉 `&__label`。 */
+  &__errtext {
+    display: block;
+    font-size: 28rpx;
+    line-height: 1.7;
+    color: var(--td-text-color-secondary);
   }
   // 标题行：文字与占位提示**左对齐**（原来跟上面两行一样右对齐）。
   // 门店/菜品的值是短词，贴右更好扫；标题的占位提示是一整句话（「选填，默认门店+菜品名」），

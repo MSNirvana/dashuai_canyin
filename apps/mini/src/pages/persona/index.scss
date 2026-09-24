@@ -1,7 +1,9 @@
 .persona {
   min-height: 100vh;
   background: var(--td-bg-color-page);
-  padding: 0 24rpx 200rpx;
+  /* ★ 2026-09-24 单店模型：原来的顶部 24rpx 间距由门店切换器那一行（`&__bar` 的 padding-top）
+     提供，切换器删掉后把它移到页面容器上，视觉结果完全一致（页面顶 → 24rpx → `&__intro` 的 28rpx）。 */
+  padding: 24rpx 24rpx 200rpx;
   box-sizing: border-box;
 
   &--loading {
@@ -12,18 +14,8 @@
     font-size: 28rpx;
   }
 
-  /* 左上角门店上下文：人设归属当前门店 */
-  &__bar {
-    display: flex;
-    align-items: center;
-    gap: 16rpx;
-    padding-top: 24rpx;
-  }
-
-  &__barhint {
-    font-size: 22rpx;
-    color: var(--td-text-color-placeholder);
-  }
+  /* ★ 2026-09-24 单店模型：`&__bar`（左上角门店切换器的容器）与其 `&__barhint`
+     一并删除 —— 人设恒属于账号唯一门店，tsx 里那两处 `{bar}` 是本轮唯一引用，已移除。 */
 
   &__intro {
     margin: 28rpx 0 24rpx;
@@ -31,15 +23,6 @@
     border-radius: var(--td-radius-large);
     background: var(--td-brand-color-soft);
     border: 1rpx solid var(--td-brand-color-light);
-  }
-
-  &__eyebrow {
-    display: block;
-    margin-bottom: 14rpx;
-    color: var(--td-brand-color);
-    font-size: 20rpx;
-    font-weight: 700;
-    letter-spacing: 0.12em;
   }
 
   &__title {
@@ -70,16 +53,13 @@
 
   &__voice-card { margin-bottom: 20rpx; }
   &__voice-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 18rpx; }
-  &__voice-kicker, &__preview-kicker { display: block; color: var(--td-brand-color); font-size: 20rpx; font-weight: 700; letter-spacing: .1em; }
+  &__voice-kicker { display: block; color: var(--td-brand-color); font-size: 20rpx; font-weight: 700; letter-spacing: .1em; }
   &__voice-title { display: block; margin-top: 10rpx; color: var(--td-text-color-primary); font-size: 29rpx; font-weight: 650; }
   &__voice-mark { color: var(--td-text-color-disabled); font-size: 24rpx; font-weight: 700; }
   &__presets { display: flex; flex-wrap: wrap; gap: 14rpx; margin-top: 26rpx; }
   &__preset { padding: 14rpx 20rpx; border-radius: 999rpx; background: var(--td-bg-color-secondary); color: var(--td-text-color-secondary); font-size: 23rpx; border: 1rpx solid transparent; }
   &__preset--active { color: var(--td-brand-color); background: var(--td-brand-color-light); border-color: rgba(225, 37, 27, .2); font-weight: 600; }
   &__preview { margin-top: 20rpx; background: #211514; border-color: #211514; }
-  &__preview-head { display: flex; align-items: baseline; gap: 14rpx; }
-  &__preview-kicker { color: #ffaaa3; }
-  &__preview-label { color: rgba(255,255,255,.62); font-size: 21rpx; }
   &__preview-copy { display: block; margin-top: 20rpx; color: #fff; font-size: 28rpx; line-height: 1.7; }
   &__meta {
     margin-top: 24rpx;

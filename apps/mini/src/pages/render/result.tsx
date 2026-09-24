@@ -228,7 +228,7 @@ export default function RenderResult() {
             <Text className='rresult__emptytitle'>还没有生成发布素材</Text>
             <Text className='rresult__emptytext'>
               在「合成成片」页点「生成发布素材」，会按口播文案给出标题、封面与文案
-              {estimate ? `（标题/文案最多 ${estimate.textBeanCap} 积分，封面固定 ${estimate.coverBeans} 积分）` : ''}。
+              {estimate ? `（标题/文案最多 ${estimate.textBeanCap} 积分，封面选帧最多 ${estimate.pickBeans} 积分，封面固定 ${estimate.coverBeans} 积分）` : ''}。
             </Text>
             <Button
               className='ds-btn ds-btn--primary'

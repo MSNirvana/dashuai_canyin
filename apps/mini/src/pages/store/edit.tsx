@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { View, Text, Input, Textarea, Switch, Picker, Image, Video } from '@tarojs/components'
+import { View, Text, Input, Textarea, Picker, Image, Video } from '@tarojs/components'
 import Taro from '@tarojs/taro'
 import { useRouter } from '@tarojs/taro'
 import { createStore, updateStore, getStore, getStoreMediaUrl, type StoreInput, type StoreItem } from '../../services/store'
@@ -16,7 +16,6 @@ interface FormState {
   city: string
   district: string
   address: string
-  isDefault: boolean
   coverKey: string
   intro: string
   videoKey: string
@@ -29,7 +28,6 @@ const EMPTY: FormState = {
   city: '',
   district: '',
   address: '',
-  isDefault: false,
   coverKey: '',
   intro: '',
   videoKey: '',
@@ -46,7 +44,9 @@ export default function StoreEditPage() {
   const id = readRouteId(router.params) ?? undefined
   /**
    * 带了编号但不合法。
-   * ★ 不能当成「新建」：用户以为在改 A 店，保存后却**新建出 B 店**，而 A 店原样没动。
+   * ★ 不能当成「新建」：多门店时代保存会**新建出另一家门店**，而用户以为在改的那家原样没动；
+   *   单店模型（2026-09-24）下服务端会直接拒绝（一个账号只能一家门店），用户拿到的
+   *   只是一句看不懂的「门店数量已达上限」。
    *   所以这种链接必须拦住，而不是静默退化成另一种合法语义。
    */
   const idBroken = isBrokenRouteId(router.params)
@@ -80,7 +80,6 @@ export default function StoreEditPage() {
           city: area.city,
           district: area.district,
           address: s.address ?? '',
-          isDefault: s.isDefault,
           coverKey: s.coverKey ?? '',
           intro: s.intro ?? '',
           videoKey: s.videoKey ?? '',
@@ -186,8 +185,8 @@ export default function StoreEditPage() {
         district: form.district || undefined,
         address: form.address || undefined,
         intro: form.intro.trim() || null,
-        // ★ 如实传 boolean（服务端已支持）：false 用来「取消默认」，传 undefined 服务端会当成「没提这件事」
-        isDefault: form.isDefault,
+        // ★ 2026-09-24 单店模型：**不再传 isDefault**。账号只有一家门店，它必然是默认门店，
+        //   没有「设/取消默认」这回事（路由层也已不再接受该字段）。
       }
       if (storeId) {
         if (pendingImage) {
@@ -236,7 +235,7 @@ export default function StoreEditPage() {
         }
       }
       Taro.showToast({ title: '已保存', icon: 'success' })
-      // 刷新全局门店缓存：切换器/各页立即看到新门店或新名称
+      // 刷新全局门店缓存：各页立即看到新门店或新名称（原「门店切换器」已随单店模型删除）
       await loadStores(true).catch(() => undefined)
       Taro.navigateBack()
     } catch {
@@ -258,20 +257,19 @@ export default function StoreEditPage() {
     return (
       <View className='store-edit store-edit--loading'>
         <View style={{ padding: '80rpx 40rpx', textAlign: 'center' }}>
-          <Text style={{ display: 'block', marginBottom: '16rpx' }}>门店加载失败，请检查网络后重试。</Text>
-          <Text style={{ display: 'block', marginBottom: '32rpx' }}>失败时不显示表单，避免误保存清空原有数据。</Text>
+          <Text style={{ display: 'block', marginBottom: '32rpx' }}>门店加载失败，请检查网络后重试。</Text>
           <View className='ds-btn ds-btn--primary' style={{ display: 'inline-flex' }} onClick={() => { setLoaded(false); loadDetail() }}><Text>重新加载</Text></View>
         </View>
       </View>
     )
   }
 
-  // 坏编号：既不能请求，也不能退化成「新建」（那会凭空多出一家门店）。
-  // 唯一的真出路是回门店列表重新进入。
+  // 坏编号：既不能请求，也不能退化成「新建」（单店模型下会被服务端直接拒绝）。
+  // 唯一的真出路是回「我的 → 门店资料」重新进入。
   if (idBroken) {
     return (
       <View className='store-edit store-edit--loading'>
-        链接里的门店编号有误，继续保存会新建出一家新门店。请回到门店列表重新进入。
+        链接里的门店编号有误，请回到「我的 → 门店资料」重新进入。
       </View>
     )
   }
@@ -311,7 +309,6 @@ export default function StoreEditPage() {
               <Text>{uploadingVideo ? '上传中…' : '上传门店视频（选填）'}</Text>
             </View>
           )}
-          <Text className='field__hint'>用于门店详情页展示，最长 60 秒，不会混入创作素材</Text>
         </View>
 
         <View className='field'>
@@ -391,10 +388,8 @@ export default function StoreEditPage() {
           />
         </View>
 
-        <View className='field field--switch'>
-          <Text className='field__label'>设为默认门店</Text>
-          <Switch checked={form.isDefault} onChange={(e) => set('isDefault', e.detail.value)} color='#e1251b' />
-        </View>
+        {/* ★ 2026-09-24 单店模型：原「设为默认门店」开关删除 ——
+            账号只有一家门店，它必然是默认门店，开关开到哪一边都不改变任何事。 */}
       </View>
 
       <View className='store-edit__footer'>

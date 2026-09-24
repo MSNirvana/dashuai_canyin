@@ -13,7 +13,7 @@
   }
 
   /* ★ 2026-09-24：页面顶部的深色框体（__stage / __stage-row / __stage-title）随改版删除，
-      tsx 不再渲染。 */
+     tsx 不再渲染。 */
 
   &__head {
     display: flex;
@@ -241,18 +241,35 @@
   &__choiceitem--on { color: var(--td-brand-color); border-color: var(--td-brand-color); background: var(--td-brand-color-soft); }
   &__note { width: 100%; min-height: 120rpx; box-sizing: border-box; padding: 18rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-default); font-size: 24rpx; }
 
-  /* ── 调色 ── */
+  /* ── 调色 ──
+     ★ 整块默认收起（见 compose.tsx 的 `colorOpen`）：标题行本身就是展开开关。
+       所以这里**不**给 head 留 margin-bottom —— 收起时那 24rpx 会变成卡片底部一截空白，
+       间距改由 `&__colorbody` 的 margin-top 承担（只在展开时存在）。 */
   &__colorhead {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 16rpx;
-    margin-bottom: 24rpx;
+  }
+  &__colorheadright {
+    display: flex;
+    align-items: center;
+    gap: 20rpx;
+    flex: none;
   }
   &__colorreset {
     flex: none;
     font-size: 24rpx;
     color: var(--td-brand-color);
+  }
+  &__colorchevron {
+    flex: none;
+    font-size: 24rpx;
+    font-weight: 600;
+    color: var(--td-text-color-placeholder);
+  }
+  &__colorbody {
+    margin-top: 24rpx;
   }
   &__slider {
     display: flex;
@@ -328,11 +345,21 @@
     gap: 16rpx;
     .rcompose__sectitle { margin-bottom: 0; }
   }
+  /* ★ 微信原生 button 自带 `margin-left/right: auto`：放进 flex 行里，两侧 auto 会
+     **平分剩余空间 ⇒ 按钮居中**，`justify-content: space-between` 会被顶掉（不生效）。
+     所以标题行里的动作（刷新 / 重新生成）必须显式 `margin-left: auto` 才真的靠右。 */
+  &__headbtn {
+    flex: none;
+    width: auto;
+    margin: 0 0 0 auto;
+  }
+  /* 状态标签（已完成/失败…）紧跟标题右侧，**不**推到行末。
+     用户要求「标识放在标题右边，字体大小一样」⇒ 去掉 space-between，并让 pill 与标题同级字号。 */
   &__history-top {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 16rpx;
+    gap: 12rpx;
+    .ds-pill { font-size: 25rpx; }
   }
   &__history-title {
     font-size: 28rpx;
@@ -572,16 +599,6 @@
     color: rgba(255, 255, 255, 0.85);
   }
 
-  &__recolor {
-    margin-top: 24rpx;
-    background: transparent;
-    color: var(--td-brand-color);
-    border: 1rpx solid var(--td-brand-color);
-    font-size: 26rpx;
-    font-weight: 600;
-    border-radius: var(--td-radius-default);
-  }
-
   /* ── 发布素材（标题 / 封面 / 文案） ── */
   &__pubhint {
     display: block;
@@ -768,7 +785,6 @@
 .rcompose > .rcompose__card--active { order: 11; }
 .rcompose > .rcompose__card--history { order: 12; }
 .rcompose > .rcompose__card--publish { order: 13; }
-.rcompose > .rcompose__recolor { order: 14; }
 .rcompose > .rcompose__lightbox { order: 20; }
 .rcompose > .ds-footer { order: 30; }
 

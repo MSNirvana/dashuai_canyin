@@ -269,8 +269,7 @@ export default function DishEditPage() {
   // ★ 加载失败：整页只给重试，绝不渲染空表单（空表单保存 = 清空原有数据，见 loadFailed）
   if (loadFailed) return <View className='dish-edit dish-edit--loading'>
     <View style={{ padding: '80rpx 40rpx', textAlign: 'center' }}>
-      <Text style={{ display: 'block', marginBottom: '16rpx' }}>菜品加载失败，请检查网络后重试。</Text>
-      <Text style={{ display: 'block', marginBottom: '32rpx' }}>失败时不显示表单，避免误保存清空原有数据。</Text>
+      <Text style={{ display: 'block', marginBottom: '32rpx' }}>菜品加载失败，请检查网络后重试。</Text>
       <View className='ds-btn ds-btn--primary' style={{ display: 'inline-flex' }} onClick={() => { setLoaded(false); loadDetail() }}><Text>重新加载</Text></View>
     </View>
   </View>
@@ -287,9 +286,8 @@ export default function DishEditPage() {
         value={form.kind}
         onChange={(v) => void onKindChange(v as DishKind)}
       />
-      <Text className='field__hint'>{isCombo ? '套餐由本门店已有的单菜组成，创作时可直接选用' : '一道独立的菜，可以单独被选进创作'}</Text>
     </View>
-    <View className='field'><Text className='field__label'>{noun}图片（最多 3 张）</Text><View className='media-grid'>{form.images.map((m, index) => <View className='media-card' key={m.cosKey}>{m.url ? <Image className='media-card__image' src={m.url} mode='aspectFill' onClick={() => previewImages(index)} /> : <View className='media-card__placeholder'>图片</View>}{index === 0 && <Text className='media-card__cover'>封面</Text>}<Text className='media-card__remove' onClick={() => removeImage(index)}>删除</Text></View>)}{form.images.length < 3 && <View className='media__button media__button--add' onClick={pickImage}>{uploading ? '上传中…' : '+ 图片'}</View>}</View><Text className='field__hint'>第一张图片自动作为{noun}封面</Text></View>
+    <View className='field'><Text className='field__label'>{noun}图片（最多 3 张）</Text><View className='media-grid'>{form.images.map((m, index) => <View className='media-card' key={m.cosKey}>{m.url ? <Image className='media-card__image' src={m.url} mode='aspectFill' onClick={() => previewImages(index)} /> : <View className='media-card__placeholder'>图片</View>}{index === 0 && <Text className='media-card__cover'>封面</Text>}<Text className='media-card__remove' onClick={() => removeImage(index)}>删除</Text></View>)}{form.images.length < 3 && <View className='media__button media__button--add' onClick={pickImage}>{uploading ? '上传中…' : '+ 图片'}</View>}</View></View>
     <View className='field'><Text className='field__label'>{noun}视频（最多 3 个）</Text><View className='media-grid'>{form.videos.map((m, index) => <View className='media-card media-card--video' key={m.cosKey}>{m.url ? <Video className='media-card__video' src={m.url} controls={false} showCenterPlayBtn={false} /> : <View className='media-card__placeholder'>视频</View>}<Text className='media-card__play'>视频 {index + 1}</Text><Text className='media-card__remove' onClick={() => removeVideo(index)}>删除</Text></View>)}{form.videos.length < 3 && <View className='media__button media__button--add' onClick={pickVideo}>{uploading ? '上传中…' : '+ 视频'}</View>}</View></View>
     <View className='field'><Text className='field__label'>{noun}名称<Text className='field__req'>*</Text></Text><Input className='field__input' placeholder={isCombo ? '如：双人套餐' : '如：秘制烤羊排'} value={form.name} onInput={(e) => set('name', e.detail.value)} maxlength={128} /></View>
 

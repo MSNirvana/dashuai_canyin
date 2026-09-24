@@ -126,12 +126,20 @@
     transition: width 0.3s ease-out;
   }
 
-  // ─────────── 学习中心（四宫格）───────────
-  // 与下面「我的资料」那个 iOS 列表刻意不同：这一块是**入口宫格**（图标在上、文字在下），
-  // 参考样式里四个图标都是**无底色的线性图标**，所以这里不套彩色圆角底（别跟 __item-icon 混了）。
+  // ─────────── 我的资料（三入口宫格）───────────
+  // 与下面「学习中心」那个 iOS 列表刻意不同：这一块是**入口宫格**（图标在上、文字在下、三格横排）。
+  // ★ 2026-09-24：这两个模块整块互换 —— 宫格样式现在归「我的资料」（三个入口横排），
+  //   「学习中心」改用下面的 iOS 列表。宫格里的图标复用列表那枚圆角图标（__item-icon）：
+  //   红/绿/金仍是「门店 / 菜品 / 订阅」的颜色语义，但卡片改红浅底后底色必须改白（见下方 __learn-item）。
   &__learn {
     margin: 24rpx 36rpx 0;
-    background: var(--td-bg-color-container);
+    // ★ 2026-09-24：整块改**品牌红浅底**，在「白卡片 + 浅灰页底」的一屏里当视觉落点。
+    //   文字仍是深色（--td-text-color-primary）；白字方案会跟头部红胶囊/退出登录挤成一团，故不采用。
+    //   ★ 2026-09-24（二次）：按需求**再压深一档** —— #fdecea（--td-brand-color-light）→ #fadcdb。
+    //     ★ 这里**故意不写回令牌**：--td-brand-color-light 全仓 34 处在用（图标底 / 选中态 / 描边），
+    //     动令牌会连带改一大片；本卡片只是它的一处「加深」用例，所以就地覆盖。
+    //     #fadcdb = 把品牌红 #e1251b 以约 16% 混进白底（原来约 9%），色相不变、只加深度。
+    background: #fadcdb;
     border-radius: var(--td-radius-large);
     padding: 28rpx 16rpx 22rpx;
     box-shadow: var(--ds-shadow-card);
@@ -140,8 +148,9 @@
     display: block;
     margin: 0 12rpx;
     padding-bottom: 20rpx;
-    // 标题与四宫格之间的细分割线（参考样式里有）
-    border-bottom: 1rpx solid var(--td-component-border);
+    // 标题与下面三格之间的细分割线：卡片是红浅底，冷灰细线（--td-component-border）压在上面发闷，
+    // 换成同色系的半透明红（与 --td-brand-color #e1251b 同源）。
+    border-bottom: 1rpx solid rgba(225, 37, 27, 0.16);
     font-size: 30rpx;
     font-weight: 700;
     letter-spacing: -0.01em;
@@ -157,29 +166,34 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    // 上下各 8rpx：加上图标 88rpx，点按高度 ≥ 88rpx（微信建议的最小可点尺寸）
+    // 宫格里的图标有两条**必须**的覆盖（都是因为换了容器/换了底色，不是额外装饰）：
+    //  ① 居中：清掉列表那枚图标的 margin-right（22rpx），否则纵向 flex 里图标整体右偏、跟文字对不齐；
+    //  ② 改白底：卡片现在是红浅底，而「门店资料」那枚图标底色**也是**红浅底（同 #fdecea）⇒ 会糊在底上。
+    //     底色统一改白，红/绿/金只留在字形上（color 不被覆盖）。
+    .mine__item-icon {
+      margin-right: 0;
+      background: var(--td-bg-color-container);
+    }
+    // 上下各 8rpx：图标 64rpx + 文字，点按高度 ≥ 88rpx（微信建议的最小可点尺寸）
     padding: 8rpx 0;
-  }
-  &__learn-icon {
-    width: 88rpx;
-    height: 88rpx;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--td-text-color-primary);
   }
   &__learn-label {
     margin-top: 10rpx;
     font-size: 24rpx;
     color: var(--td-text-color-primary);
   }
+  // 列表行右侧的「N 节」计数（来自 listTutorialStats，拿不到就不渲染）。
+  // ★ 2026-09-24：随模块互换从宫格搬到了列表行 —— 行内是横向 flex，所以去掉 margin-top、
+  //   加 flex:none 免得被标题挤扁；与右侧 › 的间距交给 __arrow 自己的 margin-left。
   &__learn-count {
-    margin-top: 4rpx;
-    font-size: 20rpx;
+    flex: none;
+    margin-left: 12rpx;
+    font-size: 22rpx;
     color: var(--td-text-color-placeholder);
+    font-variant-numeric: tabular-nums;
   }
 
-  // ─────────── 菜单（iOS 分组列表） ───────────
+  // ─────────── 学习中心（iOS 分组列表） ───────────
   &__menu {
     margin: 0 36rpx;
     background: var(--td-bg-color-container);
@@ -235,11 +249,6 @@
     letter-spacing: -0.01em;
     color: var(--td-text-color-primary);
     flex: none;
-  }
-  &__item-desc {
-    font-size: 22rpx;
-    color: var(--td-text-color-placeholder);
-    line-height: 1.45;
   }
   &__arrow {
     color: var(--td-text-color-disabled);
@@ -438,5 +447,4 @@
 .mine__menu { margin: 0 32rpx; border-radius: var(--td-radius-large); box-shadow: none; border: 1rpx solid var(--td-component-stroke); }
 .mine__item { padding: 22rpx 20rpx; }
 .mine__item-title { font-size: 26rpx; }
-.mine__item-desc { font-size: 21rpx; }
 .mine__login-modal { border-radius: var(--td-radius-extra); }

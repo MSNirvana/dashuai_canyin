@@ -7,7 +7,6 @@ import { guideLogin } from '../../utils/login-guide'
 import { listCreations, type CreationItem } from '../../services/creation'
 import { getWork, listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
 import {
-  DEFAULT_SLOGAN_BANNER,
   FALLBACK_SLIDE,
   getHomeLayout,
   type HomeCarouselSlide,
@@ -15,8 +14,10 @@ import {
 // 展示图走 CDN（见 src/constants/static-assets.ts 的说明）：它们不需要跟版本走，
 // 留在包里会白占 2MB 主包额度、并踩「图片资源超过 200K」的代码质量建议项。
 // 图片源文件仍在 src/assets/home/ 下，改图后跑 `npm run assets:upload` 重新上传即可。
-// ⚠ 轮播与口号图这两张**不再由页面直接引用 static-assets**：它们改由后台配置，
+// ⚠ 轮播这张**不再由页面直接引用 static-assets**：它改由后台配置，
 //   取值与兜底都在 services/home.ts（页面只拿解析好的地址）。
+// ★ 2026-09-24 按需求：**口号图整块下线**（连它那条数据线一起）——
+//   页面不再渲染，也不再读 getHomeLayout() 里的 sloganBanner 字段。
 import {
   HOME_WORK_FOOD as workFoodPng,
   HOME_WORK_EDUCATION as workEducationPng,
@@ -45,7 +46,7 @@ const WORK_PLAY_URL_TTL_MS = 45 * 60 * 1000
 /** 分类横滑的「全部」选项：接口只返回有作品的分类 */
 const WORK_CATEGORY_ALL = ''
 
-/** 首页 · 创作工作台：顶部只有口号海报（原顶栏的门店切换与头像按钮已去掉），全页只有一个红色实心主按钮 */
+/** 首页 · 创作工作台：第一屏是轮播（运营在后台配）+ 轮播下方那颗「开始创作」主按钮；全页只有一个红色实心主按钮 */
 export default function HomePage() {
   const token = useMerchantStore((s) => s.token)
   const hydrate = useMerchantStore((s) => s.hydrate)
@@ -75,10 +76,10 @@ export default function HomePage() {
   // 首页轮播（运营在后台配）：初值直接给兜底单张，首屏立刻有内容，不等接口回来才画
   const [banners, setBanners] = useState<HomeCarouselSlide[]>([FALLBACK_SLIDE])
   const bannerKeyRef = useRef('')
-  // 口号图：初值同样是**内置默认图**（首屏立刻有内容），拉到运营配置后原地换 src。
-  // 这里不需要 bannerKeyRef 那种去重 ref：值是个字符串，setState 同值 React 会直接跳过；
-  // 而轮播是数组，每次都是新引用，不去重就会让 Swiper 重挂载、跳回第一张。
-  const [sloganBanner, setSloganBanner] = useState(DEFAULT_SLOGAN_BANNER)
+  // ★ 2026-09-24：原来这里还有一个 sloganBanner 状态（口号图）。口号图整块下线后一并删除 ——
+  //   留着它等于每次 useDidShow 都把一个没人看的字符串 setState 一遍。
+  //   注意 getHomeLayout() 仍然会返回 sloganBanner 字段：它的下线属于 services/home.ts 那条线
+  //   （同一个 getPublicSettings 请求，不额外发请求），这里先只摘页面的消费端。
   // 优秀作品：分类来自接口，列表按页拉取（真分页，不再本地切片）
   const [workCats, setWorkCats] = useState<WorkCategory[]>([])
   const [workCategory, setWorkCategory] = useState(WORK_CATEGORY_ALL)
@@ -157,11 +158,11 @@ export default function HomePage() {
   }
 
   /**
-   * 拉首页的运营配置：轮播 + 口号图（公开接口，免登录；失败一律走兜底，见 services/home.ts）。
+   * 拉首页的运营配置：**只剩轮播**（公开接口，免登录；失败一律走兜底，见 services/home.ts）。
+   * ★ 2026-09-24：口号图整块下线后，这里不再有第二个字段要写。
    *
    * 轮播内容没变就不 setState：换一个全新的数组会让 Swiper 重挂载、把当前页跳回第一张，
    * 而 useDidShow 每次回到首页都会跑一遍，运营没改配置时不该有这种跳动。
-   * （口号图是字符串，同值 setState 本身就不会触发重渲染，不用额外去重。）
    */
   const loadHomeLayout = async () => {
     const cfg = await getHomeLayout()
@@ -170,7 +171,6 @@ export default function HomePage() {
       bannerKeyRef.current = key
       setBanners(cfg.slides)
     }
-    setSloganBanner(cfg.sloganBanner)
   }
 
   const refresh = async () => {
@@ -209,7 +209,7 @@ export default function HomePage() {
 
   useDidShow(() => {
     void refresh()
-    // 轮播与口号图都是运营内容，每次回首页重拉一遍（内容没变时上面会跳过 setState）
+    // 轮播是运营内容，每次回首页重拉一遍（内容没变时上面会跳过 setState）
     void loadHomeLayout()
     // ★ 作品是**公开内容**（服务端 routes/works.ts 故意不鉴权），所以这里**不看登录态**：
     //   未登录也照样拉、照样渲染 —— 作品区就是给未登录用户的引流素材。
@@ -248,19 +248,32 @@ export default function HomePage() {
   // 未登录时它是「登录后开始创作」那张引导卡上的按钮（原来首页未登录是整页早退，现在只换这一块）
   const goMine = () => Taro.switchTab({ url: '/pages/mine/index' })
 
-  const goStores = () => Taro.navigateTo({ url: '/pages/store/list' })
+  /**
+   * 账号还没有门店时的唯一出路：去**创建门店**。
+   * ★ 单店模型（2026-09-24）：原来这里跳的是「门店列表」页，该页已删除 ——
+   *   一个账号只有一家门店，没有列表可看，有店就直接进详情，没店才来这儿建。
+   */
+  const goNewStore = () => Taro.navigateTo({ url: '/pages/store/edit' })
+  /**
+   * 「门店」这个入口（首页轮播的 STORES 项等）。
+   * ★ 单店模型下它有两义，必须分开：有门店 → 进那家店的**详情**（门店信息）；
+   *   还没有门店 → 去创建页。原来两种都跳「门店列表」，该页已删除。
+   */
+  const goStoreEntry = () => currentStoreId
+    ? Taro.navigateTo({ url: `/pages/store/detail?id=${currentStoreId}` })
+    : goNewStore()
   const goDishes = () => currentStoreId
     ? Taro.navigateTo({ url: `/pages/dish/list?storeId=${currentStoreId}` })
-    : goStores()
+    : goNewStore()
   const goCreations = () => Taro.switchTab({ url: '/pages/creation/list' })
-  const goCreate = () => (currentStoreId ? Taro.navigateTo({ url: '/pages/creation/edit' }) : goStores())
+  const goCreate = () => (currentStoreId ? Taro.navigateTo({ url: '/pages/creation/edit' }) : goNewStore())
   const openCreation = (id: string) => Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
   // 点卡片进详情（看视频 + 配方说明）；点「生成同款」直接带着配方进创作流
   const openWork = (work: WorkItem) => Taro.navigateTo({ url: `/pages/work/detail?id=${work.id}` })
   const goCloneWork = (work: WorkItem) => {
     // 未登录先给一句解释，别把用户丢去门店页吃一个 401、再被请求层弹到「我的」（见 utils/login-guide.ts）
     if (!isLoggedIn) { guideLogin({ reason: '生成同款需要先登录' }); return }
-    if (!currentStoreId) { goStores(); return }
+    if (!currentStoreId) { goNewStore(); return }
     void markWorkClone(work.id).catch(() => undefined)
     Taro.navigateTo({ url: `/pages/creation/edit?workId=${work.id}` })
   }
@@ -309,7 +322,7 @@ export default function HomePage() {
     switch (s.link) {
       case 'CREATE': goCreate(); break
       case 'CREATIONS': goCreations(); break
-      case 'STORES': goStores(); break
+      case 'STORES': goStoreEntry(); break
       case 'MEMBER': void Taro.navigateTo({ url: '/pages/recharge/index' }); break
       case 'WORK':
         // 没填作品 id 时当作纯展示，别跳一个必然不存在的详情页
@@ -319,19 +332,11 @@ export default function HomePage() {
     }
   }
   return <View className='home'>
-    {/* ── 顶部：只留口号海报 ──
-        原来这里还有一条顶栏（左侧门店切换 pill + 右侧圆形头像按钮），已按需求去掉：
-        首页是「看内容、点创作」的台子，门店是创作上下文但不是首页的入口，
-        头像更是与底部「我的」tab 重复；两者都在别的页面/底部 tab 有入口。 */}
-    <View className='home__top'>
-      {/* 品牌口号海报：运营可在后台「首页口号图」上传替换（services/home.ts）。
-          没配时用的是内置那张红/白/黑三色海报 —— 它由代码合成，别手工改 PNG
-          （源码 scripts/slogan-banner.html，见 src/assets/home/README.md）。
-          src 变化时会自动换图，不用 key 或强制刷新。 */}
-      <View className='home__slogan-banner'>
-        <Image className='home__slogan-image' src={sloganBanner} mode='aspectFit' />
-      </View>
-    </View>
+    {/* ── 口号图整块下线（2026-09-24 按需求）──
+        原来这里是一张「顶部口号海报」：运营可在后台「首页口号图」上传替换，
+        没配时用内置那张红/白/黑海报（代码合成，源码 scripts/slogan-banner.html）。
+        它现在连同 sloganBanner 那条数据线一起删掉了，首页第一屏直接从轮播开始。
+        原顶栏（门店切换 pill + 圆形头像按钮）更早之前已去掉，理由见 git 历史。 */}
 
     <View className='home__body'>
       {isLoggedIn && setupStage !== 'READY' ? (
@@ -349,21 +354,21 @@ export default function HomePage() {
               <View className='home__setup-index'><Text>2</Text></View>
               <View className='home__setup-step-copy'>
                 <Text className='home__setup-step-title'>添加菜品</Text>
-                <Text className='home__setup-step-desc'>至少添加一道招牌菜，创作才有内容依据</Text>
               </View>
             </View>
           </View>
           <View
             className='home__setup-action'
             hoverClass='ds-hover--press'
-            onClick={setupStage === 'STORE' ? goStores : goDishes}
+            onClick={setupStage === 'STORE' ? goNewStore : goDishes}
           >
             <Text>{setupStage === 'STORE' ? '去创建' : '去添加'}</Text>
             <Text className='home__setup-arrow'>→</Text>
           </View>
         </View>
       ) : (
-        /* ── 创作入口：完成门店与菜品准备后再开放 ── */
+        <>
+        {/* ── 创作入口：完成门店与菜品准备后再开放 ── */}
         <Swiper
           className='home__banner'
           // 只有一张时不轮播、也不显示圆点：一个孤零零的圆点看着像出错
@@ -385,13 +390,30 @@ export default function HomePage() {
                   <Text className='home__create-title'>{s.title}</Text>
                   {!!s.desc && <Text className='home__create-desc'>{s.desc}</Text>}
                 </View>
-                {!!s.actionText && (
-                  <View className='home__create-action'><Text>{s.actionText}</Text><Text className='home__create-arrow'>→</Text></View>
-                )}
               </View>
             </SwiperItem>
           ))}
         </Swiper>
+
+        {/* ── 主按钮「开始创作」──
+            ★ 2026-09-24 按需求：从轮播卡片里**摘出来**放到轮播下面、并放大。
+              原来它长在卡片里（绝对定位在左下角、26rpx 字），跟着 336rpx 的卡片一起变小，
+              还得跟标题抢地盘；现在尺寸交给 .ds-btn--lg（104rpx 高 / 34rpx 字）+ 通栏白字红底。
+            ⚠ 只给**已登录**用户：未登录时下面那张「登录后开始创作 / 去登录」卡才是本页唯一的
+              主按钮 —— 两颗通栏红按钮叠在一起既重复、也违反「一屏只有一个红色实心主按钮」的约定，
+              而未登录点它只会被 401 弹到「我的」（正是 utils/login-guide.ts 想避免的连锁）。
+              若要未登录也展示，去掉 isLoggedIn、把 onClick 换成 guideLogin 引导即可。 */}
+        {isLoggedIn && (
+          <View
+            className='ds-btn ds-btn--primary ds-btn--lg ds-btn--block home__create'
+            hoverClass='ds-hover'
+            onClick={goCreate}
+          >
+            <Text>开始创作</Text>
+            <Text className='home__create-arrow'>→</Text>
+          </View>
+        )}
+        </>
       )}
 
       {!!error && (
@@ -406,7 +428,6 @@ export default function HomePage() {
            对未登录用户同样是有效内容，尤其作品区：那才是给未登录用户的引流素材。 */
         <View className='ds-card home__guest home__guest--inline'>
           <Text className='home__guest-title'>登录后开始创作</Text>
-          <Text className='home__guest-desc'>进入「我的」完成微信一键登录</Text>
           <View className='ds-btn ds-btn--primary ds-btn--block' hoverClass='ds-hover' onClick={goMine}>去登录</View>
         </View>
       ) : setupStage === 'READY' ? (
@@ -415,7 +436,6 @@ export default function HomePage() {
           <View className='home__sec'>
             <View>
               <Text className='home__sec-title'>接着上次拍</Text>
-              <Text className='home__sec-desc'>未完成的灵感，不用从头再来</Text>
             </View>
             <View className='home__sec-more' onClick={goCreations}><Text>全部创作 ›</Text></View>
           </View>
@@ -459,7 +479,6 @@ export default function HomePage() {
       {/* ── 优秀作品：分类横滑 + 两列网格 + 上拉加载更多 ── */}
       <View className='home__sec'>
         <View className='home__sec-left'>
-          <Text className='home__sec-ai'>AI</Text>
           <Text className='home__sec-title'>优秀作品</Text>
         </View>
         {workTotal > 0 && <Text className='home__sec-count'>{workTotal} 个作品</Text>}

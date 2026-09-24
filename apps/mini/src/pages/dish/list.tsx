@@ -3,7 +3,6 @@ import { View, Text, Image } from '@tarojs/components'
 import Taro, { useRouter, useDidShow } from '@tarojs/taro'
 import { listDishes, deleteDish, getDishMediaUrl, type DishItem, type DishKind } from '../../services/dish'
 import { useMerchantStore } from '../../store/merchant'
-import StoreSwitcher from '../../components/store-switcher'
 import Segmented from '../../components/segmented'
 import { readRouteId } from '../../utils/route-id'
 import { fenToYuan } from '../../utils/money'
@@ -12,11 +11,10 @@ import './list.scss'
 /** 列表筛选：全部 / 只看单菜 / 只看套餐 */
 type Filter = 'ALL' | DishKind
 
-/** 菜品库：跟随左上角当前门店（门店为最高层，菜品全部跟门店走） */
+/** 菜品库：菜品全部挂在账号唯一的那家门店下（★ 单店模型 2026-09-24，顶部门店切换器已删除） */
 export default function DishListPage() {
   const router = useRouter()
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
-  const stores = useMerchantStore((s) => s.stores)
   const setStore = useMerchantStore((s) => s.setStore)
   const loadStores = useMerchantStore((s) => s.loadStores)
   const [list, setList] = useState<DishItem[]>([])
@@ -41,6 +39,9 @@ export default function DishListPage() {
   // ★ 必须过 readRouteId：`?storeId=undefined` 会让这里把全局门店**真的切到 'undefined'**，
   //   之后 listDishes('undefined') 吃一个 4000，页面显示「这家店没有菜品」——
   //   而用户明明有菜，看起来就像数据丢了（详见 utils/route-id.ts）。
+  // ★ 单店模型（2026-09-24）下这个参数恒等于账号唯一门店（调用方传的就是 currentStoreId / 详情页的 id），
+  //   保留它是为了让首屏少等一次 loadStores 就能开始请求；即便传进来一个陌生的 id，
+  //   loadStores（本页 useDidShow 会调）也会把全局门店钉回账号唯一门店，下一轮 load 自然纠正。
   const paramStoreId = readRouteId(router.params, 'storeId')
   useEffect(() => {
     if (paramStoreId && paramStoreId !== currentStoreId) setStore(paramStoreId)
@@ -102,9 +103,11 @@ export default function DishListPage() {
       firstRun.current = false
       return
     }
-    // ★ 换店后筛选回到「全部」：在 A 店选了「只看套餐」，切到 B 店时筛选还生效，
-    //   而 B 店恰好没有套餐 —— 用户看到的是「还没有套餐」，很容易以为 B 店的菜丢了
+    // ★ 门店上下文一变，筛选就回到「全部」：在 A 店选了「只看套餐」，切到 B 店的菜品列表时
+    //   筛选若还生效，而 B 店恰好没有套餐 —— 用户看到的是「还没有套餐」，很容易以为 B 店的菜丢了
     //   （他不知道筛选器还停在上一次的选择上）。
+    //   ★ 单店模型（2026-09-24）下 currentStoreId 只会在「换账号登录 / 首次拉到门店」时变化，
+    //   正常使用不会触发；但这道重置仍然必要，删了就会在换账号时串上一次的筛选。
     setFilter('ALL')
     void load()
   }, [currentStoreId])
@@ -127,8 +130,6 @@ export default function DishListPage() {
 
   const onAdd = () => Taro.navigateTo({ url: '/pages/dish/edit' })
   const onDetail = (d: DishItem) => Taro.navigateTo({ url: '/pages/dish/detail?id=' + d.id })
-  const storeName = stores.find((s) => s.id === currentStoreId)?.name || ''
-
   const singleCount = list.filter((d) => d.kind !== 'COMBO').length
   const comboCount = list.filter((d) => d.kind === 'COMBO').length
   const visible = filter === 'ALL' ? list : list.filter((d) => (filter === 'COMBO' ? d.kind === 'COMBO' : d.kind !== 'COMBO'))
@@ -137,16 +138,13 @@ export default function DishListPage() {
     <View className='dish-list'>
       <View className='dish-list__head'>
         <View>
-          <Text className='dish-list__eyebrow'>MENU ASSETS</Text>
           <Text className='dish-list__title'>菜品库</Text>
-          <Text className='dish-list__intro'>让每一道招牌菜，都有自己的出镜方式</Text>
         </View>
         {list.length > 0 && <Text className='dish-list__count'>{list.length} 道</Text>}
       </View>
-      <View className='dish-list__bar'>
-        <StoreSwitcher />
-        {storeName && <Text className='dish-list__barhint'>菜品归属该门店</Text>}
-      </View>
+      {/* ★ 2026-09-24 单店模型：这里原来是一行门店切换器（`dish-list__bar` + <StoreSwitcher />），
+          随「切换门店」功能一起下线 —— 一个账号只有一家门店，没有可切换的对象。
+          容器与它的 `&__bar` / `&__barhint` 样式一并删除（留着是没人引用的死样式）。 */}
 
       {/* 有菜才显示筛选器：空列表时它只是一排点了没反应的按钮 */}
       {currentStoreId && !loading && !loadError && list.length > 0 && (
@@ -168,7 +166,7 @@ export default function DishListPage() {
           <Text className='dish-list__empty-kicker'>先有门店，再有招牌菜</Text>
           <Text className='dish-list__empty-title'>建立你的第一份菜单资产</Text>
           <Text className='dish-list__empty-desc'>创建门店后，把菜品照片、卖点和介绍放进来，创作时可以直接选用。</Text>
-          <View className='dish-list__empty-action' onClick={() => Taro.navigateTo({ url: '/pages/store/list' })}>去创建门店</View>
+          <View className='dish-list__empty-action' onClick={() => Taro.navigateTo({ url: '/pages/store/edit' })}>去创建门店</View>
         </View>
       )}
       {currentStoreId && loading && (

@@ -1,5 +1,7 @@
 // 全局商户状态：登录态 / 会员 / 积分余额 / 当前门店
 // 门店是最高层：门店列表与当前门店缓存在这里，全站（菜品/创作/人设）统一跟随
+// ★ 单店模型（2026-09-24）：一个账号只有一家门店，没有「切换门店」；
+//   当前门店由 loadStores 钉在账号唯一门店上，门店切换器组件已删除
 
 import { create } from 'zustand'
 import Taro from '@tarojs/taro'
@@ -45,16 +47,20 @@ interface MerchantState {
   storageUsed: string
   storageQuota: string
   storageSubscribed: boolean
-  /** 当前门店 id（全站唯一上下文，所有内容按它隔离） */
+  /**
+   * 当前门店 id（全站唯一上下文，所有内容按它隔离）。
+   * ★ 单店模型（2026-09-24）下它恒等于账号**唯一**的那家门店，由 loadStores 钉住，
+   *   不再有「用户切换门店」这回事。
+   */
   currentStoreId: string
-  /** 门店列表缓存（切换器与各页共用，避免重复请求） */
+  /** 门店列表缓存（各页共用，避免重复请求）。★ 单店模型下最多一条 */
   stores: StoreItem[]
   storesLoadedAt: number
 
   hydrate: () => void
   setLogin: (res: authApi.LoginResult) => void
   setStore: (storeId: string) => void
-  /** 拉取门店列表（默认 30s 内复用缓存）；当前门店失效时自动回落 */
+  /** 拉取门店列表（默认 30s 内复用缓存）；★ 单店模型：总会把 currentStoreId 钉到账号唯一门店 */
   loadStores: (force?: boolean) => Promise<StoreItem[]>
   currentStore: () => StoreItem | undefined
   refreshBean: () => Promise<void>
@@ -111,7 +117,7 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
       rechargeBalance: res.bean.balance,
       grantBalance: res.bean.grantBalance,
       frozen: res.bean.frozen,
-      // 换账号登录：门店缓存作废，由切换器/首页重新拉取
+      // 换账号登录：门店缓存作废，由首页 / 我的页重新拉取（原「门店切换器」已于 2026-09-24 删除）
       stores: [],
       storesLoadedAt: 0,
     })
@@ -129,13 +135,24 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
     if (!force && stores.length && Date.now() - storesLoadedAt < 30_000) return stores
     const list = await storeApi.listStores()
     set({ stores: list, storesLoadedAt: Date.now() })
-    const cur = get().currentStoreId
-    if (list.length && !list.some((s) => s.id === cur)) {
-      // 当前门店被删或首次进入：回落到默认门店（无默认则第一家）
-      const fallback = list.find((s) => s.isDefault) ?? list[0]
-      if (fallback) get().setStore(fallback.id)
-    } else if (!list.length && cur) {
-      // 门店全被删：清空当前门店，各页显示建店引导
+
+    /**
+     * ★ 单店模型（2026-09-24）：currentStoreId 必须**钉在账号唯一门店上**，
+     *   而不是沿用「上次选中的那家」。
+     *
+     * 旧写法只在「当前门店不在列表里」时才回落，于是本地 storage 里残留的旧 id
+     * （历史第二家店、或曾切过去的店）会一直生效。多门店时代这没问题（那家店还在列表里，
+     * 用户自己会切回来）；**现在没有切换入口了** —— 残留 id 一旦不是默认门店，
+     * 用户就永远看不到自己门店的菜品/创作，且无从自救。
+     *
+     * 口径与服务端 listStores 的排序一致：优先默认门店，无默认则取第一家
+     * （服务端 orderBy: isDefault desc, createdAt asc）。
+     */
+    const primary = list.find((s) => s.isDefault) ?? list[0]
+    if (primary && primary.id !== get().currentStoreId) {
+      get().setStore(primary.id)
+    } else if (!primary && get().currentStoreId) {
+      // 门店被删光：清空当前门店，各页显示建店引导
       Taro.removeStorageSync(STORAGE_KEYS.currentStoreId)
       set({ currentStoreId: '' })
     }

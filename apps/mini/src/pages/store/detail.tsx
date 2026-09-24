@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { View, Text, Image, Video, Button } from '@tarojs/components'
 import Taro, { useDidShow, useRouter } from '@tarojs/taro'
-import { getStore, getStoreMediaUrl, deleteStore, type StoreItem } from '../../services/store'
-import { useMerchantStore } from '../../store/merchant'
+import { getStore, getStoreMediaUrl, type StoreItem } from '../../services/store'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './detail.scss'
 
@@ -20,9 +19,6 @@ export default function StoreDetailPage() {
   const id = readRouteId(router.params)
   /** 带了编号但不合法（例如 `?id=undefined`）：这是坏跳转，得说「链接有问题」，而不是「门店不存在」 */
   const idBroken = isBrokenRouteId(router.params)
-  const currentStoreId = useMerchantStore((s) => s.currentStoreId)
-  const setStore = useMerchantStore((s) => s.setStore)
-  const loadStores = useMerchantStore((s) => s.loadStores)
   const [detail, setDetail] = useState<StoreItem | null>(null)
   const [coverUrl, setCoverUrl] = useState('')
   const [videoUrl, setVideoUrl] = useState('')
@@ -63,34 +59,9 @@ export default function StoreDetailPage() {
   const onEdit = () => Taro.navigateTo({ url: `/pages/store/edit?id=${id}` })
   const onDishes = () =>
     Taro.navigateTo({ url: `/pages/dish/list?storeId=${id}&storeName=${encodeURIComponent(detail?.name ?? '')}` })
-  const onSwitch = () => {
-    if (!detail) return
-    setStore(detail.id)
-    Taro.showToast({ title: `已切换到「${detail.name}」`, icon: 'none' })
-  }
-  const onDelete = () => {
-    if (!detail) return
-    if (detail.isDefault) {
-      Taro.showToast({ title: '默认门店不可删除', icon: 'none' })
-      return
-    }
-    Taro.showModal({
-      title: '删除门店',
-      content: '删除后该门店下的菜品也会一并隐藏',
-      confirmColor: '#e1251b',
-    }).then(async (r) => {
-      if (!r.confirm) return
-      try {
-        await deleteStore(detail.id)
-        Taro.showToast({ title: '已删除', icon: 'success' })
-        // 强制刷新全局门店缓存（若当前门店被删，loadStores 会自动回落到默认门店 / 清空）
-        await loadStores(true).catch(() => undefined)
-        Taro.navigateBack()
-      } catch {
-        /* request 层已 toast */
-      }
-    })
-  }
+  // ★ 2026-09-24 单店模型：原「切换到该门店」与「删除」两个操作已删除 ——
+  //   账号只有一家门店，没有可切换的对象；而那家店也删不掉（服务端 deleteStore 对默认门店一律拒绝，
+  //   而单店模型下唯一门店必然是默认门店），留一个点了必然报错的按钮只会让人以为功能坏了。
   const previewCover = () => {
     if (coverUrl) Taro.previewImage({ current: coverUrl, urls: [coverUrl] })
   }
@@ -99,14 +70,15 @@ export default function StoreDetailPage() {
   if (!detail) {
     return (
       <View className='store-detail store-detail--state'>
-        {idBroken ? '链接里的门店编号有误，请从门店列表重新进入' : '门店不存在'}
-        <Button size='mini' onClick={() => Taro.navigateTo({ url: '/pages/store/list' })}>去门店列表</Button>
+        {idBroken ? '链接里的门店编号有误，请从「我的 → 门店资料」重新进入' : '门店不存在'}
+        {/* ★ 单店模型下没有「门店列表」可回，再建一家也会被服务端拒（一个账号只能一家门店）——
+            唯一总是成立的出路是回「我的」，从门店资料重新进入。 */}
+        <Button size='mini' onClick={() => Taro.switchTab({ url: '/pages/mine/index' })}>返回我的</Button>
       </View>
     )
   }
 
   const location = Array.from(new Set([detail.province, detail.city, detail.district].filter(Boolean))).join(' · ')
-  const isCurrent = detail.id === currentStoreId
   const rows: InfoRow[] = [
     { label: '地址', value: [location, detail.address].filter(Boolean).join(' ') || '未填写' },
     { label: '菜品', value: `${detail._count?.dishes ?? 0} 道` },
@@ -120,17 +92,13 @@ export default function StoreDetailPage() {
         ) : (
           <View className='store-detail__placeholder'>添加一张主图，让顾客先认识你的店</View>
         )}
-        <View className='store-detail__hero-caption'>
-          <Text className='store-detail__hero-kicker'>STORE STORY</Text>
-          <Text className='store-detail__hero-tip'>{coverUrl ? '点击查看门店主图' : '主图会用于门店展示与内容创作'}</Text>
-        </View>
       </View>
 
       <View className='store-detail__body'>
+        {/* ★ 2026-09-24 单店模型：原「默认」「当前」两个标签一并删除 ——
+            账号只有一家门店，它既是默认也永远是当前，两个标签说的都是没有信息量的事。 */}
         <View className='store-detail__title'>
           <Text className='store-detail__name'>{detail.name}</Text>
-          {detail.isDefault && <Text className='store-detail__tag'>默认</Text>}
-          {isCurrent && <Text className='store-detail__tag store-detail__tag--current'>当前</Text>}
         </View>
         {/* ★ 2026-09-24 按需求，门店标题区下面这两块内容一并删除：
             ① 「品类 · 省市县」副标题 —— 地址在下面「到店信息 › 地址」里已完整给过一次；
@@ -138,29 +106,34 @@ export default function StoreDetailPage() {
                是「催你把资料填全」的运营提示，不是门店信息本身。 */}
 
         <View className='store-detail__section-head'>
-          <View><Text className='store-detail__label'>门店视频</Text><Text className='store-detail__section-desc'>让顾客先看到环境、烟火气和真实氛围</Text></View>
+          <View><Text className='store-detail__label'>门店视频</Text></View>
           <Text className='store-detail__section-no'>01</Text>
         </View>
+        {/* ★ 2026-09-24 按需求精简：视频 / 介绍两处空态只留「未上传」「未填写」——
+            原来各带一句「可在编辑页补充」，等于在每个没填的字段下重复同一条指引；
+            去哪儿补是编辑页自己的事，不在这里说。
+            ⚠ 注释必须留在三元**外面**：问号冒号那对括号各自只接受**一个**表达式，
+              往里塞 JSX 块注释会变成两个相邻表达式，直接语法错误（本页踩过）。 */}
         {videoUrl ? (
           <View className='store-detail__video'>
             <Video className='store-detail__video-player' src={videoUrl} controls showCenterPlayBtn />
           </View>
         ) : (
-          <Text className='store-detail__muted'>未上传门店视频，可在编辑页补充（选填）</Text>
+          <Text className='store-detail__muted'>未上传</Text>
         )}
 
         <View className='store-detail__section-head'>
-          <View><Text className='store-detail__label'>门店故事</Text><Text className='store-detail__section-desc'>这段介绍会帮助 AI 写出更像本店的话</Text></View>
+          <View><Text className='store-detail__label'>门店故事</Text></View>
           <Text className='store-detail__section-no'>02</Text>
         </View>
         {detail.intro ? (
           <Text className='store-detail__intro'>{detail.intro}</Text>
         ) : (
-          <Text className='store-detail__muted'>未填写门店介绍，可在编辑页补充</Text>
+          <Text className='store-detail__muted'>未填写</Text>
         )}
 
         <View className='store-detail__section-head'>
-          <View><Text className='store-detail__label'>到店信息</Text><Text className='store-detail__section-desc'>顾客找到你需要的信息</Text></View>
+          <View><Text className='store-detail__label'>到店信息</Text></View>
           <Text className='store-detail__section-no'>03</Text>
         </View>
         <View className='store-detail__rows'>
@@ -174,20 +147,12 @@ export default function StoreDetailPage() {
       </View>
 
       <View className='store-detail__footer'>
-        {!isCurrent && (
-          <View className='store-detail__btn store-detail__btn--ghost' onClick={onSwitch}>
-            <Text>切换到该门店</Text>
-          </View>
-        )}
         <View className='store-detail__btn-row'>
           <View className='store-detail__btn store-detail__btn--ghost' onClick={onDishes}>
             <Text>管理菜品</Text>
           </View>
           <View className='store-detail__btn store-detail__btn--primary' onClick={onEdit}>
             <Text>编辑门店</Text>
-          </View>
-          <View className='store-detail__btn store-detail__btn--danger' onClick={onDelete}>
-            <Text>删除</Text>
           </View>
         </View>
       </View>

@@ -306,6 +306,13 @@ export default function RenderCompose() {
    * 后面的模块顶到很深 —— 而用户绝大多数时候只关心最近这几次。
    */
   const [historyOpen, setHistoryOpen] = useState(false)
+  /**
+   * 整片调色默认**收起**：四根滑块是一屏里最占高度的一块，而多数人录完就出片、
+   * 不进调色 —— 收起后点标题才展开滑块（用户要求「点击了才出现调色滑动栏目」）。
+   * ★ 收起只是不渲染滑块，`color` 状态与预览请求都不受影响：调好的色值仍在，
+   *   顶部播放器照旧显示那条调色预览（见 requestColorPreview 的依赖里没有 colorOpen）。
+   */
+  const [colorOpen, setColorOpen] = useState(false)
   // P0-5：不可用档位 → 原因文案。空对象表示「都可用」（含能力接口拉取失败时的保守放行）
   const [gradeIssues, setGradeIssues] = useState<Partial<Record<RenderGrade, string>>>({})
   /**
@@ -373,12 +380,6 @@ export default function RenderCompose() {
   const activeTasks = renders.filter((task) => ACTIVE_STATUS.includes(task.status))
   const pendingTask = activeTasks.find((task) => task.grade === grade) ?? null
   const lastSuccess = renders.find((task) => task.status === 'SUCCESS') ?? null
-  /**
-   * 「按当前调色重新出片」的判据：必须真有 **BASIC** 成片（RECOLOR 复用的是上一版
-   * BASIC 的归一化缓存，见 server render.service.ts）。只跑过 AI 档的用户没有那份缓存，
-   * 让他看到这个按钮就是放行一次必然失败的提交。
-   */
-  const lastBasicSuccess = renders.find((task) => task.status === 'SUCCESS' && task.grade === 'BASIC') ?? null
   /**
    * 「保存到相册」该下载哪条成片。
    *
@@ -722,11 +723,16 @@ export default function RenderCompose() {
   /**
    * 生成发布素材：标题 + 文案 + 封面（`part='COVER'` 时只重出封面）。
    *
-   * ★ 先弹确认再发请求：封面是**固定价**（当前 300 积分/张，见 prisma/prompts.ts 的
-   *   PUBLISH_SCENES），在不知情的情况下花掉一笔相对大的积分是最容易被投诉的那种体验。
+   * ★ 先弹确认再发请求：这里是**两笔**钱 —— 封面固定价 + 封面选帧（按 token 计费），
+   *   当前配置下合计 900 积分（300 + 600，见 prisma/prompts.ts 的 PUBLISH_SCENES）。
+   *   在不知情的情况下花掉一笔相对大的积分，是最容易被投诉的那种体验。
    *   价格取服务端给的 `estimate`，不在客户端写死 —— 后台改价后这里跟着变。
-   * ★ 不假装进度：服务端是先出文本再出图（约 1 分钟），但那两段没有可订阅的进度事件，
-   *   编一个「进度条」只会让人盯着一个假的百分比。所以只说清"要等多久、在等什么"。
+   * ★ 不假装进度：服务端是「出文本 → 抽帧选帧 → 出图」三步**串行**（约 1~2 分钟），
+   *   三段都没有可订阅的进度事件，编一个「进度条」只会让人盯着一个假的百分比。
+   *   所以只说清「要等多久、在等什么」。
+   * ★ 2026-09-24 起，封面底图改为**从拍摄素材里挑一帧真实画面**再做设计
+   *   （原来是让模型凭空画）。因此多出「封面选帧」这一笔，
+   *   `costText` 与文案都必须把它算进去，否则会出现「说好 480、实扣 1080」。
    */
   const doGeneratePublish = async (part: 'ALL' | 'COVER') => {
     if (!id || publishLoading || publishLock.current) return
@@ -735,14 +741,16 @@ export default function RenderCompose() {
     try {
       const cap = publishEstimate?.textBeanCap
       const cover = publishEstimate?.coverBeans
+      const pick = publishEstimate?.pickBeans
       const costText =
         part === 'COVER'
-          ? `封面固定 ${cover ?? '?'} 积分`
-          : `标题与文案最多 ${cap ?? '?'} 积分 + 封面固定 ${cover ?? '?'} 积分`
+          ? `封面选帧最多 ${pick ?? '?'} 积分 + 封面固定 ${cover ?? '?'} 积分`
+          : `标题与文案最多 ${cap ?? '?'} 积分 + 封面选帧最多 ${pick ?? '?'} 积分 + 封面固定 ${cover ?? '?'} 积分`
       const { confirm } = await Taro.showModal({
         title: part === 'COVER' ? '重新生成封面' : '生成发布素材',
         content:
-          `${costText}。\n大约需要 1 分钟：先出标题与文案，再出封面（3:4 竖版）。\n` +
+          `${costText}。\n大约 1~2 分钟：先从你拍的画面里挑一帧当底图，再出标题与文案，\n` +
+          `最后按抖音封面规范做成封面（3:4 竖版）。\n` +
           (part === 'COVER' ? '标题与文案会沿用已生成的那版，不会重复扣费。' : ''),
         confirmText: '开始生成',
         cancelText: '再想想',
@@ -1349,12 +1357,6 @@ export default function RenderCompose() {
         {!!previewBadge && <Text className='rcompose__preview-badge'>{previewBadge}</Text>}
       </View>
 
-      {showingColorPreview && (
-        <Text className='rcompose__previewtip'>
-          已按当前参数出好整片预览（低码率，仅用于确认效果）。满意后点下方「按当前调色重新出片」得到正式成片。
-        </Text>
-      )}
-
       {previewError && (
         <View className='ds-notice rcompose__notice'>
           <Text>
@@ -1407,7 +1409,6 @@ export default function RenderCompose() {
                 }}
               >
                 <Text className='rcompose__gradetitle'>{option.title}</Text>
-                <Text className='rcompose__gradedesc'>{option.desc}</Text>
                 {off ? (
                   <Text className='rcompose__graderatio'>即将开放</Text>
                 ) : (
@@ -1419,9 +1420,6 @@ export default function RenderCompose() {
         </View>
         {!!gradeIssues[grade] && (
           <View className='ds-notice ds-notice--warn rcompose__premiumtip'>{gradeIssues[grade]}</View>
-        )}
-        {grade === 'PREMIUM' && (
-          <View className='ds-notice ds-notice--warn rcompose__premiumtip'>提交后进入人工队列，可在本页查看进度与交付结果。</View>
         )}
       </View>
 
@@ -1485,7 +1483,6 @@ export default function RenderCompose() {
                 }))}
               >
                 <Text className='rcompose__voicename'>{voice.name}</Text>
-                <Text className='rcompose__voicedesc'>{voice.desc}</Text>
               </View>
             ))}
           </View>
@@ -1577,10 +1574,16 @@ export default function RenderCompose() {
         </View>
       )}
 
-      {/* ── 整片调色 ── */}
+      {/* ── 整片调色 ──
+          默认收起（`colorOpen`）：四根滑块是这一屏里最占高度的一块，而多数人录完就出片。
+          点标题行才展开滑块。★ 收起时仍保留「重置」—— 调过色的用户不必展开就能一键回默认。 */}
       {grade !== 'PREMIUM' && (
         <View className='rcompose__card rcompose__card--color'>
-          <View className='rcompose__colorhead'>
+          <View
+            className='rcompose__colorhead'
+            hoverClass='ds-hover'
+            onClick={() => setColorOpen((value) => !value)}
+          >
             <View className='rcompose__titlerow'>
               <Text className='rcompose__sectitle rcompose__sectitle--flush'>整片调色</Text>
               <SectionHelp
@@ -1588,39 +1591,53 @@ export default function RenderCompose() {
                 text='拖动时画面只是近似示意（锐化在拖动中不体现）。松手约 1 秒后生成整片精确预览，免费。'
               />
             </View>
-            {!colorUnsupported && !isNoopColor(color) && (
-              <Text className='rcompose__colorreset' onClick={resetColor}>重置</Text>
-            )}
-          </View>
-          {colorUnsupported ? (
-            <View className='ds-notice ds-notice--warn'>
-              AI 生成暂不支持整片调色：该档由云端智能剪辑直接出片，调色参数不会被应用。需要调色请改选「基础生成」。
-            </View>
-          ) : (
-            <>
-              {COLOR_AXES.map(([axis, label]) => (
-                <View className='rcompose__slider' key={axis}>
-                  <Text className='rcompose__slabel'>{label}</Text>
-                  <Slider
-                    className='rcompose__sbar'
-                    min={-100}
-                    max={100}
-                    value={color[axis]}
-                    showValue
-                    activeColor='#e1251b'
-                    blockSize={22}
-                    // 拖动中只改本地数值、给静帧上近似滤镜；松手才发请求拿整片精确预览。
-                    // showValue 照旧开着：数值本身就是最准的一档反馈。
-                    onChanging={(event: { detail: { value: number } }) => changeColor(axis, event.detail.value, 'dragging')}
-                    onChange={(event: { detail: { value: number } }) => changeColor(axis, event.detail.value, 'settled')}
-                  />
-                </View>
-              ))}
-              {/* 素材不齐时的那句是「现在该做什么」的引导，保留常驻；机制说明已收进标题旁的「?」 */}
-              {!materialsReady && (
-                <Text className='rcompose__colorhint'>补齐全部分镜素材后即可生成整片调色预览。</Text>
+            {/* ★ 这两个可点项都在「展开开关」里面，各自必须 stopPropagation：
+                weapp 下 View 的 tap 会冒泡，否则点「重置」会顺手把模块收起来。 */}
+            <View className='rcompose__colorheadright'>
+              {!colorUnsupported && !isNoopColor(color) && (
+                <Text
+                  className='rcompose__colorreset'
+                  onClick={(event) => { event.stopPropagation(); resetColor() }}
+                >
+                  重置
+                </Text>
               )}
-            </>
+              <Text className='rcompose__colorchevron'>{colorOpen ? '收起' : '展开'}</Text>
+            </View>
+          </View>
+          {colorOpen && (
+            <View className='rcompose__colorbody'>
+              {colorUnsupported ? (
+                <View className='ds-notice ds-notice--warn'>
+                  AI 生成暂不支持整片调色：该档由云端智能剪辑直接出片，调色参数不会被应用。需要调色请改选「基础生成」。
+                </View>
+              ) : (
+                <>
+                  {COLOR_AXES.map(([axis, label]) => (
+                    <View className='rcompose__slider' key={axis}>
+                      <Text className='rcompose__slabel'>{label}</Text>
+                      <Slider
+                        className='rcompose__sbar'
+                        min={-100}
+                        max={100}
+                        value={color[axis]}
+                        showValue
+                        activeColor='#e1251b'
+                        blockSize={22}
+                        // 拖动中只改本地数值、给静帧上近似滤镜；松手才发请求拿整片精确预览。
+                        // showValue 照旧开着：数值本身就是最准的一档反馈。
+                        onChanging={(event: { detail: { value: number } }) => changeColor(axis, event.detail.value, 'dragging')}
+                        onChange={(event: { detail: { value: number } }) => changeColor(axis, event.detail.value, 'settled')}
+                      />
+                    </View>
+                  ))}
+                  {/* 素材不齐时的那句是「现在该做什么」的引导，保留常驻；机制说明已收进标题旁的「?」 */}
+                  {!materialsReady && (
+                    <Text className='rcompose__colorhint'>补齐全部分镜素材后即可生成整片调色预览。</Text>
+                  )}
+                </>
+              )}
+            </View>
           )}
         </View>
       )}
@@ -1642,9 +1659,6 @@ export default function RenderCompose() {
           />
         </View>
       ))}
-      {activeTasks.length > 0 && (
-        <Text className='rcompose__colorhint'>三个档位互不影响，其他档位现在也可以提交生成。</Text>
-      )}
       {/* 任务收敛失败的通知：与「查询类」的 pollError 分开展示 —— 它们清空的时机不同
           （见 taskNotices 的声明处），合并成一个 state 会让另一档的成功轮询擦掉这一档的失败原因。 */}
       {taskNotices.map((text) => (
@@ -1683,7 +1697,7 @@ export default function RenderCompose() {
                 text='每次提交生成都会留下一条记录（含积分结算）。点左侧描述可进详情页；成功的成片点「播放」直接在本页顶部播放。'
               />
             </View>
-            <Button size='mini' loading={refreshingHistory} disabled={refreshingHistory} onClick={() => void reloadHistory()}>刷新</Button>
+            <Button className='rcompose__headbtn' size='mini' loading={refreshingHistory} disabled={refreshingHistory} onClick={() => void reloadHistory()}>刷新</Button>
           </View>
           {(historyOpen ? renders : renders.slice(0, 3)).map((task) => (
             <View className='rcompose__history' key={task.id}>
@@ -1757,18 +1771,12 @@ export default function RenderCompose() {
             />
           </View>
           {!!publishMat && !publishLoading && (
-            <Button size='mini' onClick={() => void doGeneratePublish('ALL')}>重新生成</Button>
+            <Button className='rcompose__headbtn' size='mini' onClick={() => void doGeneratePublish('ALL')}>重新生成</Button>
           )}
         </View>
 
         {!publishMat && !publishLoading && (
           <>
-            {publishEstimate && (
-              <Text className='rcompose__pubcost'>
-                预计消耗：标题与文案最多 {publishEstimate.textBeanCap} 积分（按实际用量结算）
-                ＋ 封面固定 {publishEstimate.coverBeans} 积分
-              </Text>
-            )}
             <Button
               className='ds-btn ds-btn--primary rcompose__pubbtn'
               onClick={() => void doGeneratePublish('ALL')}
@@ -1781,16 +1789,26 @@ export default function RenderCompose() {
         {publishLoading && (
           <>
             <Text className='rcompose__pubhint'>
-              正在生成：先写标题与文案，再出封面。大约需要 1 分钟，请不要离开本页。
+              正在生成：先从你拍好的画面里挑一帧，再写标题与文案，最后做成封面。大约需要 1~2 分钟，请不要离开本页。
             </Text>
             {/* ★ 这里用「按耗时估算」的进度而不是无反馈的转圈：服务端没有可订阅的进度事件，
-                但它两步耗时稳定（实测文本 9.7s、封面 28~30s），所以估算是有信息量的。
+                但三步耗时量级稳定（实测：文本 ~10s / 选帧 6~20s / 出图 30~85s），所以估算是有信息量的。
                 percent 封顶 95 —— 永远不能显示 100%，那等于在结果回来之前宣称已完成。
-                文案分两段近似服务端的两个阶段（30s 是实测的文本耗时上界，不是精确分界）。 */}
+                ★ 分界是「阶段耗时量级」的近似，不是精确切片；分母取 120s 而不是 60s：
+                  加了「抽帧选帧」这一步之后典型总耗时已到 1~2 分钟，用 60s 会让进度条
+                  在真实完成前就贴住 95% 不动，反而更像卡死。
+                ⚠ 改服务端任一步的超时/耗时，这里的三段分界与分母要跟着看（见 services/publish-material.ts
+                  的 PUBLISH_TIMEOUT_MS 注释，那里是超时的唯一真源）。 */}
             <ProgressLine
-              percent={Math.min(95, (pubElapsed / 60_000) * 100)}
-              label={pubElapsed < 30_000 ? '正在写标题与文案…' : '正在出封面（3:4 竖版）…'}
-              hint='进度按实测耗时估算，通常 1 分钟内完成'
+              percent={Math.min(95, (pubElapsed / 120_000) * 100)}
+              label={
+                pubElapsed < 30_000
+                  ? '正在写标题与文案…'
+                  : pubElapsed < 60_000
+                    ? '正在从你拍的画面里挑封面底图…'
+                    : '正在出封面（3:4 竖版）…'
+              }
+              hint='进度按实测耗时估算，通常 1~2 分钟完成'
             />
           </>
         )}
@@ -1811,7 +1829,6 @@ export default function RenderCompose() {
                   onClick={() => Taro.previewImage({ current: publishMat.coverUrl!, urls: [publishMat.coverUrl!] })}
                   onLongPress={() => void saveCover()}
                 />
-                <Text className='rcompose__pubcoverhint'>点封面可放大查看，长按保存到相册</Text>
               </>
             ) : (
               <View className='rcompose__pubcoverph'>
@@ -1851,20 +1868,6 @@ export default function RenderCompose() {
         {!!publishNotice && !publishLoading && <Text className='rcompose__pubnotice'>{publishNotice}</Text>}
         {!!publishError && <Text className='rcompose__puberr'>{publishError}</Text>}
       </View>
-
-      {/* 「重新导出」入口：复用归一化缓存，只跑「拼接 + 一遍调色」，所以比首次合成便宜。
-          只在已有 BASIC 成片、且当前仍选 BASIC 时出现 —— RECOLOR 的语义是「把上一版成片重调色」，
-          没有可复用的成片时这条路径不成立。 */}
-      {lastBasicSuccess && grade === 'BASIC' && (
-        <Button
-          className='rcompose__recolor'
-          loading={submitting}
-          disabled={submitting || !!pendingTask || !materialsReady}
-          onClick={() => void doRender('RECOLOR')}
-        >
-          按当前调色重新出片（参考 {estimatePoints(detail.shots, grade, true)} 积分）
-        </Button>
-      )}
 
       {/* ── 分镜素材：就地放大播放的浮层 ──
           ★ 结构上刻意分成「背景遮罩」和「视频卡片」两个**兄弟**节点，而不是

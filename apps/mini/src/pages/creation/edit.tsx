@@ -11,6 +11,7 @@ import {
   COPY_TRACK_OPTIONS,
   DISH_TRACK_OPTIONS,
   DEFAULT_DISH_TRACK,
+  TRAFFIC_TRACK,
   COMPLEXITY_OPTIONS,
   toDishTrack,
   type CreationDetail,
@@ -22,10 +23,8 @@ import { type StoreItem } from '../../services/store'
 import { getWork, type WorkRecipe } from '../../services/work'
 import { listDishes, type DishItem } from '../../services/dish'
 import { useMerchantStore } from '../../store/merchant'
-import StoreSwitcher from '../../components/store-switcher'
 import Segmented from '../../components/segmented'
 import Steps from '../../components/steps'
-import SectionHelp from '../../components/section-help'
 import { splitCopyParagraphs, copyTextParagraphs } from '../../utils/copy-text'
 import { isNumericId, readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import './edit.scss'
@@ -101,7 +100,68 @@ function OptionList({
             onClick={() => { if (!on) onChange(o.value) }}
           >
             <Text className='cedit__opt-label'>{o.label}</Text>
+            {/* ★ 右侧的分镜数量（`COMPLEXITY_OPTIONS[].desc`）。
+                2026-09-24 补：这一行**原本漏了** —— 入参类型里有 `desc`、`edit.scss` 里也早有
+                `&__opt-desc` 的整套规则（右对齐 / 23rpx / placeholder 灰，选中转品牌红），
+                只有渲染这一步没写。三缺一 ⇒ **类型检查不报、样式也不报**，
+                表现就是「每条只剩一个名称」，看起来像设计本来就没打算给数量。
+                ⚠ 三条文案等长（都是 6 字）⇒ 右对齐天然成一列数字，别改成左对齐。 */}
             <Text className='cedit__opt-desc'>{o.desc}</Text>
+          </View>
+        )
+      })}
+    </View>
+  )
+}
+
+/**
+ * 「文案款式」选择器：**流量型独占一行，其余四款两两一行**，每款下面一行小字写清侧重点。
+ *
+ * ★ 为什么不复用上面的 `OptionList`（竖排一行一个）：五款竖排会把首屏占满，而款式是这一页
+ *   **第一个、也是最大的决定** —— 五个选项要能一眼全看见、一眼比出来，才谈得上「先定类型」。
+ * ★ 为什么流量型要独占一行：它和另外四款**不是同一类东西**（不拍菜，跟着节气/热点出稿），
+ *   所以它**逐字沿用原来那张入口卡的样式**（图标块 + 「新」角标 + 箭头、品牌色浅描边 + 卡片投影），
+ *   只是本体从「跳转入口」变成「可选中项」。挤在四个格子里会被读成「第五种拍菜的角度」，
+ *   点下去才发现菜品那一行灰了 —— 版面本身先把它分出来，比事后补一句说明更早生效。
+ * ★ 侧重点（`desc`）**逐款常驻在选项下面**，不折叠：五款的分界线如果藏起来，
+ *   用户得先点一下才知道「人设型」和「种草型」差在哪 —— 而这一屏的全部决策就是在这五款里挑一个。
+ */
+function TrackPicker({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: string; label: string; desc: string; lead: boolean }[]
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <View className='cedit__tracks'>
+      {options.map((o) => {
+        const on = o.value === value
+        return (
+          <View
+            key={o.value}
+            className={`cedit__track${o.lead ? ' cedit__track--lead' : ''}${on ? ' cedit__track--on' : ''}`}
+            hoverClass={on ? 'none' : 'cedit__track--hover'}
+            // 同 OptionList：再点一次已选中的那条不做事（没有语义，还会白发一次落库请求）
+            onClick={() => { if (!on) onChange(o.value) }}
+          >
+            {/* 图标块与「新」角标只有流量型那一行有：它们是原来那张入口卡的样式，
+                四款菜品文案本来就是普通选项，套上反而是给两件事长同一张脸 */}
+            {o.lead && (
+              <View className='cedit__topic-icon'>
+                <t-icon name='cloud' size='38rpx' />
+              </View>
+            )}
+            <View className='cedit__track-main'>
+              <View className='cedit__track-head'>
+                <Text className='cedit__track-label'>{o.label}</Text>
+                {o.lead && <Text className='cedit__topic-new'>新</Text>}
+              </View>
+              <Text className='cedit__track-desc'>{o.desc}</Text>
+            </View>
+            {o.lead && <t-icon name='chevron-right' size='36rpx' />}
           </View>
         )
       })}
@@ -118,8 +178,9 @@ export default function CreationEdit() {
    */
   const workId = readRouteId(params, 'workId') ?? ''
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
-  // ⚠ 这里**不再**取 `setStore`：门店的唯一入口是左上角的 StoreSwitcher（2026-09-21）。
-  //   表单里那个「门店」下拉已删掉 —— 同一页两个门店选择器，用户会以为是两件事。
+  // ⚠ 这里不取 `setStore`：门店由全局 `currentStoreId` 单一来源决定，而它已由
+  //   store/merchant 的 loadStores 钉在**账号唯一门店**上（单店模型，2026-09-24）。
+  //   表单里的「门店」下拉与顶上的 StoreSwitcher 都已删除 —— 本页不再有任何选店入口。
   const loadStores = useMerchantStore((s) => s.loadStores)
   /**
    * 本页的创作编号。
@@ -290,10 +351,19 @@ export default function CreationEdit() {
   const loadDetail = useCallback(async (id: string) => {
     const d = await getCreation(id)
     setDetail(d)
-    // toDishTrack：存量创作里可能有 track='TRAFFIC'（25 条）或 'NORMAL'（20 条），
-    // 这两个值都不在选择器里 —— 直接 setTrack 会让选择器一项都不选中。收敛成三款，不是就保持默认。
-    const t = toDishTrack(d.track)
-    if (t) setTrack(t)
+    /**
+     * 款式回填分两路（2026-09-24）：
+     * · 话题稿（`mode='TOPIC'`，界面上就是「流量型」）的款式**恒为它**，服务端也是这么落库的
+     *   ⇒ 直接钉死。不能走 `toDishTrack`：那个函数把 TRAFFIC 判成 null，选择器会一项都不选中。
+     * · 菜品稿才走 `toDishTrack` 收敛成四款：存量里存在「菜品稿 + track='TRAFFIC'」（25 条）
+     *   与更早的 'NORMAL'（20 条），而服务端对前者一律改回默认款式 —— 收敛掉才不会出现
+     *   「界面显示流量型、实际按产品型生成」这种不报错的错配。
+     */
+    if (d.mode === 'TOPIC') setTrack(TRAFFIC_TRACK)
+    else {
+      const t = toDishTrack(d.track)
+      if (t) setTrack(t)
+    }
     if (d.complexity === 'SIMPLE' || d.complexity === 'COMPLEX' || d.complexity === 'FINE') setComplexity(d.complexity)
   }, [])
 
@@ -321,8 +391,8 @@ export default function CreationEdit() {
         const r = w.recipeJson ?? {}
         setWorkTitle(w.title)
         setWorkRecipe(r)
-        // 同 toDishTrack：优秀作品的配方里可能带「流量款」（那是独立功能了），
-        // 带进来会让选择器空着 —— 收敛成菜品稿三款。
+        // 同 toDishTrack：优秀作品的配方里可能带「流量型」（TRAFFIC），带进来会让选择器
+        // 落到一个菜品稿用不上的款式上 —— 收敛成菜品稿那四款。
         const rt = toDishTrack(r.track)
         if (rt) setTrack(rt)
         if (r.complexity === 'SIMPLE' || r.complexity === 'COMPLEX' || r.complexity === 'FINE') setComplexity(r.complexity)
@@ -342,7 +412,7 @@ export default function CreationEdit() {
   /**
    * 拉取某门店的菜品，并且**只接受最新一次请求的响应**。
    *
-   * 切换门店 / 左上角换店 / 首次进入三条路径都走这里：老实现各自
+   * 首次进入 / 重进页面 / 换账号登录几条路径都走这里（原「切换门店 / 左上角换店」已随单店模型下线）：老实现各自
    * `listDishes(sid).then(setDishes)`，谁先回来谁生效 —— 慢的那次（旧门店）
    * 后到就会把新门店的菜品整片覆盖掉。见 `dishesStoreId` 的说明。
    */
@@ -388,12 +458,12 @@ export default function CreationEdit() {
     return () => { cancelled = true }
   }, [localId, reloadDetail])
 
-  // ★ 表单里原来的「门店」下拉已删（2026-09-21）：它和左上角 StoreSwitcher 是同一件事，
-  //   而且两个选择器会各写一次全局门店，谁覆盖谁取决于点的顺序 —— 用户只会觉得「换了一家没生效」。
-  //   现在门店**只能**从 StoreSwitcher 换，本页的 storeIdx / 菜品列表跟着 currentStoreId 走
-  //   （下面那个 useEffect）。所以这里不需要 onStoreChange 了。
+  // ★ 门店选择器在本页已**全部下线**：表单里的「门店」下拉 2026-09-21 删、顶上的 StoreSwitcher
+  //   2026-09-24 随单店模型删。本页的 storeIdx / 菜品列表跟着全局 currentStoreId 走
+  //   （下面那个 useEffect），而 currentStoreId 由 loadStores 钉在账号唯一门店上。
+  //   所以这里不需要 onStoreChange 了。
 
-  // 从左上角切换器换店时，表单里的门店与菜品同步跟随
+  // 全局门店变化时，表单里的门店与菜品同步跟随（单店模型下通常只在首次加载时生效一次）
   useEffect(() => {
     if (localId || !stores.length) return
     const idx = stores.findIndex((s) => s.id === currentStoreId)
@@ -503,56 +573,101 @@ export default function CreationEdit() {
     }
   }
 
+  /**
+   * 是否选了「流量型」。
+   * ★ 这条判据在本页要驱动三处（菜品置灰、onCreate 分流、已生成的稿子不给款式切换），
+   *   所以只在这里算一次 —— 三处各写一遍 `track === 'TRAFFIC'`，就一定会有地方漏改。
+   */
+  const isTraffic = track === TRAFFIC_TRACK
+
+  /**
+   * 「文案款式」的五个选项：流量型独占一行（`lead: true`），其余四款两两一行。
+   * ★ 在页面里现拼而不从 services 导出：**这是版式**，属于这一页。
+   *   服务层只回答「有哪些款、中文名叫什么」；谁占整行、怎么排不该动服务层。
+   * ★ 认不出流量型那一项时（理论上不会）整个选项消失而不是退化成四款 ——
+   *   少一项看起来像「款式就这四款」，而它其实存在、只是没能显示出来，属于静默丢功能。
+   * ★ `lead` 只决定**版式**（整行 + 图标块 + 「新」角标 + 右箭头，见 scss 的 `&__track--lead`），
+   *   不决定创建走哪条路 —— 那条判据是 `isTraffic`（比 `track === TRAFFIC_TRACK`）。
+   */
+  const trafficOpt = COPY_TRACK_OPTIONS.find((o) => o.value === TRAFFIC_TRACK)
+  const trackChoices = [
+    ...(trafficOpt ? [{ ...trafficOpt, lead: true }] : []),
+    ...DISH_TRACK_OPTIONS.map((o) => ({ ...o, lead: false })),
+  ]
+
   const onCreate = async () => {
     const sid = stores[storeIdx]?.id
     if (!sid) {
-      // ★ 文案要指到**唯一**能选门店的地方（本页已没有门店选择器）：
-      //   原来写「请选择门店」，而页面上根本没有那个控件了，用户只会原地找不到北。
-      Taro.showToast({ title: '请先在左上角选择门店', icon: 'none' })
+      // ★ 单店模型（2026-09-24）下本页**没有任何门店选择器**（表单下拉与 StoreSwitcher 都已删除），
+      //   走到这里只有一个原因：账号还没有门店 —— 所以文案要指到**唯一**能建店的地方
+      //   「我的 → 门店资料」，而不是说一句页面上根本找不到的「请选择门店」。
+      Taro.showToast({ title: '还没有门店，请先到「我的 → 门店资料」创建', icon: 'none' })
       return
     }
     /**
-     * ★ 菜品必须**确认属于当前门店**才允许提交。
+     * ★ 菜品校验**只在非流量型时**做（2026-09-24）。
      *
-     * `dishes` 是异步来的，可能还是上一家店的（切换门店的响应还没回来 / 乱序回包）。
-     * 只看 `dishes[dishIdx]` 有没有值是不够的：它可能是别家店的菜，而
-     * `{{dishname}}` 会被填成那道菜，AI 于是写出一条与当前门店无关的文案 ——
-     * 用户要到拍摄页才发现白扣了积分。所以这里比对归属标记。
-     */
-    if (dishesStoreId !== sid) {
-      Taro.showToast({
-        title: dishesFailed ? '菜品列表加载失败，请点「菜品」重试' : '菜品还在加载，请稍候再试',
-        icon: 'none',
-      })
-      return
-    }
-    /**
-     * 菜品必选。取不到时按「列表还没回来 / 该门店真没菜」分别给话，
-     * 但不能放过去 —— 那样 `{{dishname}}` 会渲染成空串（网关对未命中的变量静默填空），
-     * AI 只能凭空写一条跟这家店无关的文案，用户要到拍摄页才发现白扣了积分。
+     * 流量型是话题稿：不发门店、不发菜品（服务端 `mode='TOPIC'` 收到这两个字段会 2002），
+     * 所以这一款根本不该被菜品卡住。★ 必须**整体跳过下面两段**，不能只跳「必选」那一段：
+     * 只跳必选的话，用户选了流量型、菜品列表恰好还在加载中，仍然会拿到
+     * 「菜品还在加载，请稍候再试」—— 而这一款永远不需要菜品，他会一直等一个不必发生的加载。
      */
     const did = dishes[dishIdx]?.id
-    if (!did) {
-      Taro.showToast({
-        title: dishes.length ? '请选择菜品' : '该门店还没有菜品，请先添加',
-        icon: 'none',
-      })
-      return
+    if (!isTraffic) {
+      /**
+       * ★ 菜品必须**确认属于当前门店**才允许提交。
+       *
+       * `dishes` 是异步来的，可能还是上一次请求的（换账号登录 / 重进页面后响应还没回来 / 乱序回包）。
+       * 只看 `dishes[dishIdx]` 有没有值是不够的：它可能是别家店的菜，而
+       * `{{dishname}}` 会被填成那道菜，AI 于是写出一条与当前门店无关的文案 ——
+       * 用户要到拍摄页才发现白扣了积分。所以这里比对归属标记。
+       */
+      if (dishesStoreId !== sid) {
+        Taro.showToast({
+          title: dishesFailed ? '菜品列表加载失败，请点「菜品」重试' : '菜品还在加载，请稍候再试',
+          icon: 'none',
+        })
+        return
+      }
+      /**
+       * 菜品必选。取不到时按「列表还没回来 / 该门店真没菜」分别给话，
+       * 但不能放过去 —— 那样 `{{dishname}}` 会渲染成空串（网关对未命中的变量静默填空），
+       * AI 只能凭空写一条跟这家店无关的文案，用户要到拍摄页才发现白扣了积分。
+       */
+      if (!did) {
+        Taro.showToast({
+          title: dishes.length ? '请选择菜品' : '该门店还没有菜品，请先添加',
+          icon: 'none',
+        })
+        return
+      }
     }
     // 一次点击 = 创建 + 生成文案 + 生成分镜（连续两笔扣积分），连点会重复创建并双扣
     if (createLockRef.current) return
     createLockRef.current = true
     setCreating(true)
     try {
-      const c = await createCreation({
-        storeId: sid,
-        dishId: did,
-        track,
-        complexity,
-        // 同款的分镜骨架：服务端在创建的事务里一并落成分镜。
-        // 空数组不发 —— 服务端对「没传」与「传了空数组」的处理一致，但少发一个字段更省事。
-        ...(recipeSkeleton.length ? { shotSkeleton: recipeSkeleton } : {}),
-      })
+      /**
+       * ★ 两条款式的**创建请求不同构**，别合并成一次调用再靠字段有无区分：
+       * · 流量型 ⇒ `mode:'TOPIC'`，且**不许**带 storeId / dishId（服务端会 2002 拒绝）。
+       *   宿主门店由服务端自己挑（只为媒体归属与地域钩子），用户在界面上没有选过它。
+       * · 其余四款 ⇒ 菜品稿，必须带 storeId + dishId + track。
+       */
+      const c = isTraffic
+        ? await createCreation({
+            mode: 'TOPIC',
+            complexity,
+            // 同款的分镜骨架：服务端在创建的事务里一并落成分镜。
+            // 空数组不发 —— 服务端对「没传」与「传了空数组」的处理一致，但少发一个字段更省事。
+            ...(recipeSkeleton.length ? { shotSkeleton: recipeSkeleton } : {}),
+          })
+        : await createCreation({
+            storeId: sid,
+            dishId: did,
+            track,
+            complexity,
+            ...(recipeSkeleton.length ? { shotSkeleton: recipeSkeleton } : {}),
+          })
       setLocalId(c.id)
       // 创建即生成：款式已选定，直接出文案和分镜，然后进拍摄页。
       // ★ 带着骨架进来时**跳过 AI 分镜**（skipBoard）—— 分镜已经在了，再生成一次
@@ -622,13 +737,6 @@ export default function CreationEdit() {
     }
     Taro.navigateTo({ url: `/pages/creation/shots?id=${targetId}` })
   }
-
-  /**
-   * 流量款入口：跳到独立的「话题稿」页。
-   * ★ 它是**另一条链路**（不选门店、不选菜品），所以不是在本页切个款式的开关，而是换页面。
-   *   把话题稿塞进本页当第四款，用户会以为还得先选菜 —— 那正是要拆掉的东西。
-   */
-  const onOpenTraffic = () => Taro.navigateTo({ url: '/pages/creation/traffic' })
 
   /**
    * 失败后「稍后再说」：只收起悬浮窗，落到编辑视图。
@@ -780,8 +888,9 @@ export default function CreationEdit() {
    */
   const dishPickerText = (() => {
     const cur = stores[storeIdx]
-    // 门店选择器已不在本页 ⇒ 这一句必须说清**去哪儿选**，否则用户在这一屏找不到入口
-    if (!cur) return '请先在左上角选择门店'
+    // ★ 单店模型（2026-09-24）下本页已**没有任何选店入口**，所以这里不再是「去哪儿选店」，
+    //   而是「还没有门店，去哪儿建」—— 必须说清是「我的 → 门店资料」，否则用户在这一屏无从下手。
+    if (!cur) return '还没有门店，请先到「我的 → 门店资料」创建'
     if (dishesFailed) return '菜品加载失败，点此重试'
     if (dishesStoreId !== cur.id) return '菜品加载中…'
     if (!dishes.length) return '该门店还没有菜品，请先添加'
@@ -792,7 +901,7 @@ export default function CreationEdit() {
   const openDishManagement = () => {
     const storeId = stores[storeIdx]?.id || currentStoreId
     if (!storeId) {
-      void Taro.navigateTo({ url: '/pages/store/list' })
+      void Taro.navigateTo({ url: '/pages/store/edit' })
       return
     }
     void Taro.navigateTo({ url: `/pages/dish/list?storeId=${storeId}` })
@@ -816,15 +925,13 @@ export default function CreationEdit() {
   if (idBroken) {
     return (
       <View className='cedit'>
-        <View className='cedit__bar'>
-          <StoreSwitcher />
-        </View>
+        {/* ★ 2026-09-24 单店模型：这一屏原来顶上有一行门店切换器（`cedit__bar`），
+            随「切换门店」功能下线 —— 一个账号只有一家门店，没有可切换的对象。 */}
         <View className='cedit__new-head'>
-          <Text className='cedit__new-kicker'>LINK BROKEN</Text>
           <Text className='cedit__new-title'>链接里的创作编号有误</Text>
         </View>
         <View className='cedit__card'>
-          <Text className='cedit__label'>
+          <Text className='cedit__errtext'>
             这条链接里的编号不是一个有效的创作号，继续操作只会新建出另一条创作。请回到「创作」列表重新进入。
           </Text>
           <Button
@@ -851,55 +958,79 @@ export default function CreationEdit() {
   if (!localId || autoRunning) {
     return (
       <View className='cedit'>
-        <View className='cedit__bar'>
-          <StoreSwitcher />
-          <Text className='cedit__barhint'>创作归属该门店</Text>
-        </View>
-
+        {/* ★ 2026-09-24 单店模型：这一屏原来顶上有一行门店切换器（`cedit__bar`），
+            随「切换门店」功能下线 —— 一个账号只有一家门店，没有可切换的对象。
+            门店上下文改由 `currentStoreId` 单一来源决定（本页 storeIdx 跟随它）。 */}
         <View className='cedit__new-head'>
-          <Text className='cedit__new-kicker'>NEW PROJECT</Text>
           <Text className='cedit__new-title'>每天5分钟坚持同城曝光！</Text>
           {/* 原来这里的副标题（「选好门店、菜品和表达方向，AI 会帮你…」）已挪到页脚做小字提醒。
               它说的是「接下来要做什么」，摆在标题下方会先于表单占掉一屏注意力；
               而且带「AI」的说法在这里是多余的 —— 按钮和页脚已经说清会发生什么。 */}
         </View>
 
-        {/* ── 流量款独立入口（2026-09-21 从创作列表页挪到标题下面）──
-            它是「今天该蹭什么话题」，和下面那张表单（某门店的某道菜）**不是同一类东西**；
-            摆在标题正下方，用户一进创作页就能看到「不拍菜、每天也能发一条」这条路。
-            ⚠ 生成中（autoRunning）不渲染：那时页面正跑着一次生成，点它会把用户带走，
-              只剩一个没人看的等待态（同一段里其他控件之所以能留，是因为它们都不离开本页）。 */}
-        {!autoRunning && (
-          <View className='cedit__topic' hoverClass='ds-hover--press' onClick={onOpenTraffic}>
-            <View className='cedit__topic-icon'>
-              <t-icon name='cloud' size='38rpx' />
-            </View>
-            <View className='cedit__topic-main'>
-              <View className='cedit__topic-head'>
-                <Text className='cedit__topic-title'>流量款 · 跟热点</Text>
-                <Text className='cedit__topic-new'>新</Text>
-              </View>
-              <Text className='cedit__topic-desc'>不用选门店和菜品，跟着节气、节日和当下话题出文案与分镜</Text>
-            </View>
-            <t-icon name='chevron-right' size='36rpx' />
-          </View>
-        )}
-
+        {/* ── 文案款式：本页**第一个**决定，所以排在最前、字号也最大 ──
+            ★ 2026-09-24 起这里是**五个选项**：「流量型」不再单开一页，它就是这个选择器的第一项
+              —— 选中它就不选菜品、按话题稿生成。原来那张「流量款 · 跟热点」跳转卡，
+              连同 `pages/creation/traffic` 整页一起删除。
+            ★ 顺序即需求：**先定类型，再看这个类型拍哪道菜**。款式卡压在菜品卡上面，这个先后
+              关系才在版面上成立；菜品卡放在前面时，用户会先挑菜、再回头改款式。
+            ★ 选项改成网格（见 TrackPicker）：流量型独占一行，其余四款两两一行 ——
+              竖排五条会把首屏占满，而这一屏要的是「一眼看全五个款」。 */}
         <View className='cedit__card'>
-          {/* ★ 这里**没有**「门店」字段（2026-09-21 删）：门店由顶上的 StoreSwitcher 决定，
-              本页只负责「这道菜」。同一页放两个门店选择器，用户会以为是两件事，
-              而且两个都写全局门店时谁生效取决于点的顺序 ⇒ 表现为「换了一家没生效」。 */}
-          <View className='cedit__field cedit__field--last'>
-            <Text className='cedit__label'>菜品</Text>
-            {/* 必选：range 里不再有「不指定」这一项，所以下标与 dishes 一一对应，
-                这里也就不再需要 `- 1` 换算（旧写法是「下标 -1 = 不指定」的约定）。 */}
-            {dishes.length && dishesStoreId === stores[storeIdx]?.id ? (
+          <View className='cedit__spec-head'>
+            {/* 品牌色锚点 + 统一规格标题：这一行与「镜头复杂度」共用 `cedit__spec-title`，
+                两个字号的差异由 `&__split` 与上下位置来表达（见 edit.scss） */}
+            <View className='cedit__spec-bar' />
+            <Text className='cedit__spec-title'>文案款式</Text>
+          </View>
+          <TrackPicker options={trackChoices} value={track} onChange={onPickTrack} />
+
+          {/* 细分隔线：两组选项直接贴在一起会糊成一整块，看不出这是两组独立选项 */}
+          <View className='cedit__split' />
+
+          <View className='cedit__spec-head'>
+            <View className='cedit__spec-bar' />
+            <Text className='cedit__spec-title'>镜头复杂度</Text>
+          </View>
+          <OptionList options={COMPLEXITY_OPTIONS} value={complexity} onChange={onPickComplexity} />
+        </View>
+
+        {/* ── 菜品：跟在款式后面（先定类型，再定这个类型拍哪道菜）──
+            ★ 这里**没有**「门店」字段：门店来自全局 currentStoreId（账号唯一门店，单店模型 2026-09-24），
+              本页只负责「这道菜」。同一页放两个门店来源，用户会以为是两件事，
+              而且两处都写全局门店时谁生效取决于点的顺序 ⇒ 表现为「换了一家没生效」。
+            ★ 选中流量型时整行置灰、不可点 —— 这一款不拍菜。**置灰而不是隐藏**：隐藏会让这一栏
+              凭空消失，用户分不清是「这一款不要菜」还是页面坏了；灰着 + 一句原因才是自解释的。
+            ⚠ 与被删掉的那张跳转卡不同，这一行在生成中（autoRunning）也照常渲染：它不离开本页。 */}
+        <View className='cedit__card'>
+          {/* ★ 2026-09-24：菜品补上与「文案款式 / 镜头复杂度」**同款**的标题行
+              （品牌色竖条 + 34rpx 粗体）。原来这张卡只有一个灰字表单标签「菜品」，
+              与上面两个带标题的块不是一套；三块并排读下来，层级才一致。
+              ★ 选中流量型时整个标题行一起转灰（`--off`）：它和下面置灰的取值是**同一个信号**。 */}
+          <View className={`cedit__spec-head${isTraffic ? ' cedit__spec-head--off' : ''}`}>
+            <View className='cedit__spec-bar' />
+            <Text className='cedit__spec-title'>菜品</Text>
+          </View>
+          {/* 标题已经是「菜品」，行内不再重复这两个字 ⇒ 这一行整行就是选择器（描边容器） */}
+          <View className={`cedit__field${isTraffic ? ' cedit__field--off' : ''}`}>
+            {/* 流量型没有菜品可选；其余四款里菜品必选 —— range 里不再有「不指定」这一项，
+                所以下标与 dishes 一一对应，不再需要 `- 1` 换算（旧写法是「下标 -1 = 不指定」）。 */}
+            {isTraffic ? (
+              <Text className='cedit__picker'>流量型不选菜品，跟着热点出稿</Text>
+            ) : dishes.length && dishesStoreId === stores[storeIdx]?.id ? (
               <Picker
                 mode='selector'
                 range={dishes.map(dishLabel)}
                 onChange={(e: { detail: { value: string | number } }) => setDishIdx(Number(e.detail.value))}
               >
-                <View className='cedit__picker'>{dishPickerText}</View>
+                {/* ★ 右箭头必须在 `Picker` **里面**：放到外面的话点箭头不弹选择器，
+                    热区就被切成两块，用户会觉得「这一行时灵时不灵」。 */}
+                <View className='cedit__picker cedit__picker--select'>
+                  <Text className='cedit__picker-value'>{dishPickerText}</Text>
+                  <View className='cedit__picker-arrow'>
+                    <t-icon name='chevron-right' size='32rpx' />
+                  </View>
+                </View>
               </Picker>
             ) : (
               <View
@@ -929,42 +1060,8 @@ export default function CreationEdit() {
                     : `已预填「${trackLabel}」+「${complexityLabel}」，可自行调整`
                   : '配方读取失败，请手动选择文案款式与镜头复杂度'}
             </Text>
-            {/* 预置分镜这件事必须说清**省了什么**：用户最怕的是白扣积分。
-                所以这里不写「已预置」，而是直接写「这次不再生成分镜、少扣一笔」，
-                并给出换 AI 版的出口（原话：「不满意再点重新生成走 AI，两条路都留着」）。 */}
-            {workLoaded && recipeSkeleton.length > 0 && (
-              <Text className='cedit__recipe-warn'>
-                这次只生成文案，不再生成分镜（少扣一笔）。分镜可逐条改；想换 AI 版就点「重新生成」
-              </Text>
-            )}
           </View>
         )}
-
-        {/* ── 规格：文案款式 + 镜头复杂度（原来两张卡，现合成一张）──
-            拆开时是「标题 + 说明 + 一排控件」各来一套，看起来像两个互不相干的入口；
-            但用户心智里这是同一件事 —— 这条片子要什么调性、拆几个镜头。
-            合成一张、中间一条细线分断，两组各自保留标题行。
-            ★ 选项本身已改成**竖排单列**（见 OptionList）：一行一个、右边带小字说明、选中整条飘红。
-              原来那排并排窄格里放不下说明，说明只能落到控件下方单独占一行、而且只显示选中项的，
-              于是整块看上去「像分类、下面没有东西」。说明进了每一行之后，那一行 `&__desc` 也就撤掉了
-              —— 现在所有选项的解释同时可见，不用来回点着比。 */}
-        <View className='cedit__card'>
-          <View className='cedit__spec-head'>
-            <Text className='cedit__spec-title'>文案款式</Text>
-            {/* 标题旁的小字说明收进「?」（各款的差异在下方选项行里，仍常驻可见） */}
-            <SectionHelp title='文案款式' text='决定这条文案的侧重点：讲人、讲知识、讲产品，还是老板视角的真实推荐。' />
-          </View>
-          <OptionList options={DISH_TRACK_OPTIONS} value={track} onChange={onPickTrack} />
-
-          {/* 细分隔线：两组选项直接贴在一起会糊成一整块，看不出这是两组独立选项 */}
-          <View className='cedit__split' />
-
-          <View className='cedit__spec-head'>
-            <Text className='cedit__spec-title'>镜头复杂度</Text>
-            <SectionHelp title='镜头复杂度' text='自动决定分镜数量：简单版 2~3 个，复杂版 5~6 个，精细版 6~9 个。' />
-          </View>
-          <OptionList options={COMPLEXITY_OPTIONS} value={complexity} onChange={onPickComplexity} />
-        </View>
 
         <View className='ds-footer'>
           {/* 问号与主按钮**成组居中**。
@@ -998,14 +1095,12 @@ export default function CreationEdit() {
             <View className='ds-footer__note'>正在读取同款配方…</View>
           )}
           {/* 点「?」弹出来的说明。.ds-footer 是 position:fixed，所以这里 absolute + bottom:100%
-              就浮在页脚上沿，不会把按钮往下推（展开/收起时页脚高度不变）。
-              两行都是**按需了解**的信息：读一遍就不用再看第二遍，不配常驻抢按按钮前最后一眼的注意力。 */}
+              就浮在页脚上沿，不会把按钮往下推（展开/收起时页脚高度不变）。 */}
           {showHelp && (
             <View className='cedit__help-bubble'>
               <Text className='cedit__help-line'>
                 选好门店、菜品和表达方向，文案与分镜会自动整理好
               </Text>
-              <Text className='cedit__help-line'>生成后会消耗积分，失败全额返还</Text>
             </View>
           )}
         </View>
@@ -1046,9 +1141,6 @@ export default function CreationEdit() {
                   <View className='cedit__gen-spinner' />
                   <Text className='cedit__gen-title'>
                     {recipeSkeleton.length ? '正在生成文案…' : '正在生成文案与分镜…'}
-                  </Text>
-                  <Text className='cedit__gen-sub'>
-                    关闭等待后仍会继续生成，可稍后从「创作」再次进入
                   </Text>
                   <View className='cedit__gen-actions'>
                     <View
@@ -1095,6 +1187,13 @@ export default function CreationEdit() {
   // ⚠ 没生成时那一行必须留着 —— 否则用户没地方选，也就走不到「生成」这个动作。
   const trackPickerVisible = !hasCopy || showTrackPicker
   const complexityPickerVisible = !hasShots || showComplexityPicker
+  /**
+   * 这条是不是「流量型」的话题稿。
+   * ★ 判 `mode` 而**不是**判 `track === 'TRAFFIC'`：库里存在「菜品稿 + track='TRAFFIC'」的存量
+   *   数据（25 条），那些稿子仍然是菜品稿、款式可以换；只有 `mode='TOPIC'` 的才是流量型。
+   *   按 track 判会把那 25 条老稿子也锁住款式 —— 用户点「换一款」会没有任何反应。
+   */
+  const isTopicRow = detail.mode === 'TOPIC'
 
   return (
     <View className='cedit'>
@@ -1106,18 +1205,22 @@ export default function CreationEdit() {
 
       <View className='cedit__head'>
         <Text className='cedit__htitle'>{detail.title || '未命名创作'}</Text>
-        <Text className='cedit__hstore'>{detail.store?.name}</Text>
+        {/* 话题稿（流量型）的门店是服务端挑的**宿主**（只为媒体归属与地域钩子），用户从没选过它
+            ⇒ 不显示，否则用户会以为这条稿子是「按那家店」写的，而文案里其实一个字都没提它。 */}
+        {!isTopicRow && <Text className='cedit__hstore'>{detail.store?.name}</Text>}
       </View>
 
-      {/* ───────────── 口播文案：流量款 / 介绍款 / 质量款 ───────────── */}
+      {/* ───────────── 口播文案（款式见详情里的款式标签；编辑态见下方切换器） ───────────── */}
       <View className='cedit__card'>
         <View className='cedit__secbar'>
           <Text className='cedit__sectitle'>口播文案</Text>
           <View className='cedit__secbadges'>
             {!!detail.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{detail.trackLabel}</Text>}
             {hasCopy && <Text className='ds-pill ds-pill--ghost'>已生成 · {(detail.copyText ?? '').length} 字</Text>}
-            {/* 已生成后这一行默认收起；要换款式时点这里展开，不用时完全不占视觉 */}
-            {hasCopy && (
+            {/* 已生成后这一行默认收起；要换款式时点这里展开，不用时完全不占视觉。
+                ⚠ 话题稿不给这个入口：它的款式服务端不许改（`updateCreation` 对 TOPIC 行直接
+                   丢弃 track），给了就是一个点了没反应的「换一款」。 */}
+            {hasCopy && !isTopicRow && (
               <Text className='cedit__secmore' onClick={() => setShowTrackPicker((v) => !v)}>
                 {showTrackPicker ? '收起' : '换一款'}
               </Text>
@@ -1125,20 +1228,23 @@ export default function CreationEdit() {
           </View>
         </View>
 
-        {trackPickerVisible && (
-          <>
-            {/* 编辑页这两处仍是 `Segmented`（紧凑切换），只是套上本页的观感覆写
-                `.cedit .cedit__seg`（白底描边 + 选中项实心品牌红）。
-                没换成 OptionList 是有意的：这里通常已生成过文案，「换一款」是**快捷替换**，
-                竖排 4 行会把这一屏撑高；初次选择才需要把每条讲清楚。 */}
+        {/* ★ 话题稿（流量型）的款式**不可协商**：它只有一份不喂门店/菜品的模板。
+            所以这里不回选择器 —— 但也不能什么都不说：用户刚在新建页选过「流量型」，
+            进这一页若看不到任何款式痕迹，会以为款式被重置了。给一句「它就是什么」即可。 */}
+        {isTopicRow ? (
+          <View className='cedit__empty'>流量型不选菜品，跟着节气与热点出稿</View>
+        ) : (
+          trackPickerVisible && (
+            /* 编辑页仍是 `Segmented`（紧凑切换），只是套上本页的观感覆写 `.cedit .cedit__seg`
+               （白底描边 + 选中项实心品牌红）。没换成网格是有意的：这里通常已生成过文案，
+               「换一款」是**快捷替换**，网格会把这一屏撑高；初次选择才需要把五个款一次摆全。 */
             <Segmented
               className='cedit__seg'
               options={DISH_TRACK_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
               value={track}
               onChange={onPickTrack}
             />
-            <Text className='cedit__desc'>{DISH_TRACK_OPTIONS.find((o) => o.value === track)?.desc}</Text>
-          </>
+          )
         )}
 
         {editingCopy ? (
@@ -1238,7 +1344,6 @@ export default function CreationEdit() {
               value={complexity}
               onChange={onPickComplexity}
             />
-            <Text className='cedit__desc'>{COMPLEXITY_OPTIONS.find((o) => o.value === complexity)?.desc}</Text>
           </>
         )}
 

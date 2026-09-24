@@ -138,7 +138,7 @@ function fmtRelTime(iso: string): string {
   return formatMinute(iso)
 }
 
-/** 创作列表：跟随左上角当前门店（门店为最高层，内容全部跟门店走） */
+/** 创作列表：内容全部挂在账号唯一的那家门店下（★ 单店模型 2026-09-24，顶上门店切换器已删除） */
 export default function CreationList() {
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const stores = useMerchantStore((s) => s.stores)
@@ -234,15 +234,16 @@ export default function CreationList() {
 
   /**
    * 点开一条创作。
-   * ★ 必须按 `mode` 分流：话题稿（流量款独立功能）没有门店与菜品，
-   *   进创作页会看到一个空的菜品选择器和一套用不上的款式 —— 那一页整块都在讲「选门店菜品」。
-   *   两种稿子本质是两条链路，各自的页面才是完整闭环。
+   * ★ 2026-09-24 起**不再按 mode 分流**：独立的「流量款 · 跟热点」页已删除，流量型并入创作页的
+   *   「文案款式」，所以话题稿与菜品稿都进 `pages/creation/edit`。
+   *   ⚠ 别把分流逻辑再加回来：那个三元一旦指向一个不存在的页面，`navigateTo` 只会**静默失败**
+   *     —— 用户看到的是「点了没反应」，既不报错也没有落点。创作页对话题稿的处理是现成的：
+   *     款式钉成流量型、菜品那一行置灰、不显示服务端挑的宿主门店。
    */
-  const onOpen = (id: string, mode?: string) =>
-    Taro.navigateTo({ url: mode === 'TOPIC' ? `/pages/creation/traffic?id=${id}` : `/pages/creation/edit?id=${id}` })
+  const onOpen = (id: string) => Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
 
-  // ⚠ 原来的 `onOpenTraffic`（列表页的流量款入口）已于 2026-09-21 随卡片一起挪到
-  //   `pages/creation/edit`。列表里 mode=TOPIC 的卡片仍走上面的 `onOpen` 分流。
+  // ⚠ 列表页自己的「流量款」入口卡已于 2026-09-21 挪到创作页，2026-09-24 随独立页一起删除。
+  //   本页去话题稿的路只剩下面列表里 mode=TOPIC 的卡片（走上面的 `onOpen`）。
 
   /** 动作统一收口：成功提示 + 重载。列表是唯一数据源，不在本地增删（避免与服务端不一致） */
   const runAction = async (fn: () => Promise<unknown>, okText: string) => {
@@ -280,13 +281,9 @@ export default function CreationList() {
           改造里下线）——行内再无子项，留着就是一个空盒子，于是连定位行一起删除。
           本页现在唯一的新建入口是下面空态里的「新建创作」；列表非空时本页不再提供新建入口。 */}
 
-      {/* 这句话紧跟门店筛选，作为当前门店内容区的说明 */}
-      <Text className='clist__intro'>每一条视频，都是一次客流机会</Text>
-
-      {/* ⚠ 流量款入口卡 2026-09-21 已挪到**创作页**（`pages/creation/edit`）的标题下面：
-          那一页的标题就是「每天5分钟坚持同城曝光！」，入口摆在它下面语义才对得上；
-          留在列表页会变成「一进创作 tab 就先看到一条不属于当前门店的东西」。
-          本页去话题稿的路只剩下面列表里 mode=TOPIC 的卡片（onOpen 分流）——
+      {/* ⚠ 本页**不再有**「流量款」入口卡：它 2026-09-21 挪到创作页标题下面，
+          2026-09-24 随「流量型并入文案款式」一起删除（独立页 `pages/creation/traffic` 已不存在）。
+          现在新建流量型只有一条路：进创作页，在「文案款式」里选第一项。
           原本还有一条「右上角『+』进创作页」，那个按钮已按需求删除（2026-09-24）。这里不要再加回来。 */}
 
       {currentStoreId && (
@@ -351,7 +348,7 @@ export default function CreationList() {
             actions={actions}
             open={openId === c.id}
             onOpenChange={(o) => setOpenId(o ? c.id : '')}
-            onClick={() => onOpen(c.id, c.mode)}
+            onClick={() => onOpen(c.id)}
           >
             <View className='clist__card' hoverClass='ds-hover--press'>
               <View className='clist__row'>
@@ -368,10 +365,12 @@ export default function CreationList() {
                 <View className='clist__main'>
                   <Text className='clist__name'>{c.title || '未命名创作'}</Text>
                   <View className='clist__tags'>
-                    {/* 话题稿不显示款式：它恒为流量款，而「款式」在话题稿里不是可选项
-                        （服务端也会把话题稿的 track 覆盖成流量款）。显示「话题稿」才有信息量。 */}
+                    {/* 话题稿的款式恒为流量型（服务端也这么落库），所以这一格照样显示款式名。
+                        ★ 2026-09-24 之前这里显示的是「话题稿」并注明「款式在话题稿里不是可选项」——
+                        那句前提已经不成立：流量型就是创作页「文案款式」里的第一项、用户亲手选的。
+                        再显示「话题稿」等于给同一件东西起第二个名字（用户会当成另一类创作）。 */}
                     {c.mode === 'TOPIC' ? (
-                      <Text className='ds-pill ds-pill--red-soft'>话题稿</Text>
+                      <Text className='ds-pill ds-pill--red-soft'>流量型</Text>
                     ) : (
                       !!c.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{c.trackLabel}</Text>
                     )}

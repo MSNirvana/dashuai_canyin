@@ -3,17 +3,15 @@ import { View, Text, Textarea } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import { getPersona, savePersona, type PersonaItem } from '../../services/persona'
 import { useMerchantStore } from '../../store/merchant'
-import StoreSwitcher from '../../components/store-switcher'
 // 时间统一走 utils/time：原来用 toLocaleString('zh-CN')，出来是「2026/9/18 10:59:39」（斜杠 + 秒）
 import { formatMinute } from '../../utils/time'
 import './index.scss'
 
 const VOICE_PRESETS = ['热情实在', '专业懂行', '幽默接地气', '温柔耐心', '爽快直接', '匠人型老板']
 
-/** 门店级人设（跟随左上角当前门店切换，标签按行输入即可） */
+/** 门店级人设（★ 单店模型 2026-09-24：恒等于账号唯一门店，顶上门店切换器已删除） */
 export default function PersonaPage() {
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
-  const stores = useMerchantStore((s) => s.stores)
   const loadStores = useMerchantStore((s) => s.loadStores)
   const [form, setForm] = useState<{ bossTags: string; activity: string }>({ bossTags: '', activity: '' })
   const [loaded, setLoaded] = useState(false)
@@ -21,8 +19,10 @@ export default function PersonaPage() {
   const [updatedAt, setUpdatedAt] = useState<string | null>(null)
   /**
    * 当前表单内容属于哪家门店。只接受「最新一次请求」的响应还不够 ——
-   * 保存时也要再比一次：切店后旧店的慢响应若覆盖表单，用户一点保存，
+   * 保存时也要再比一次：旧响应若晚于新请求覆盖表单，用户一点保存，
    * 就把 A 店的人设写进了 B 店（savePersona 按 currentStoreId 落库）。
+   * ★ 单店模型（2026-09-24）下「切店」这条路径已不存在，但**重进页面 / 换账号登录**
+   *   仍会让两次请求乱序，这道闸门留着依然是对的，不要因为「只有一家店」删掉。
    */
   const [formStoreId, setFormStoreId] = useState('')
   /**
@@ -31,7 +31,7 @@ export default function PersonaPage() {
    * 就把库里真实的人设覆盖成空白。
    */
   const [loadFailed, setLoadFailed] = useState(false)
-  /** 请求代次：切店/重进并发时，只认最后一次请求的响应 */
+  /** 请求代次：重进页面 / 换账号并发时，只认最后一次请求的响应 */
   const reqRef = useRef(0)
 
   const load = () => {
@@ -73,7 +73,8 @@ export default function PersonaPage() {
     load()
   })
 
-  // 门店切换后立即重载（首次挂载由 useDidShow 负责，避免重复请求）
+  // 全局门店变化后立即重载（首次挂载由 useDidShow 负责，避免重复请求）
+  // ★ 单店模型下 currentStoreId 只会在「首次拉到门店」时从空变成唯一门店的值，通常只触发一次
   const firstRun = useRef(true)
   useEffect(() => {
     if (firstRun.current) {
@@ -95,7 +96,7 @@ export default function PersonaPage() {
 
   const onSave = async () => {
     if (!currentStoreId) {
-      Taro.showToast({ title: '请先选择门店（左上角）', icon: 'none' })
+      Taro.showToast({ title: '请先创建门店', icon: 'none' })
       return
     }
     if (loadFailed) {
@@ -122,14 +123,9 @@ export default function PersonaPage() {
     }
   }
 
-  const storeName = stores.find((s) => s.id === currentStoreId)?.name || ''
-
-  const bar = (
-    <View className='persona__bar'>
-      <StoreSwitcher />
-      {storeName && <Text className='persona__barhint'>人设归属该门店</Text>}
-    </View>
-  )
+  // ★ 2026-09-24 单店模型：本页原来顶上有一行门店切换器（`persona__bar` + <StoreSwitcher />），
+  //   随「切换门店」功能下线 —— 一个账号只有一家门店，人设也只属于那一家，没有可切换的对象。
+  //   容器与它的 `&__bar` / `&__barhint` 样式一并删除。
 
   if (!loaded) return <View className='persona persona--loading'>加载中…</View>
 
@@ -143,24 +139,18 @@ export default function PersonaPage() {
   }
 
   if (!currentStoreId) return <View className='persona'>
-    {bar}
     <View className='persona__intro'>
-        <Text className='persona__eyebrow'>BRAND VOICE</Text>
         <Text className='persona__title'>先创建你的门店</Text>
-        <Text className='persona__sub'>有了门店资料，才能让每条视频说出属于你的语气。</Text>
     </View>
     <View className='persona__footer'>
-      <View className='persona__save' onClick={() => Taro.navigateTo({ url: '/pages/store/list' })}><Text>去建店</Text></View>
+      <View className='persona__save' onClick={() => Taro.navigateTo({ url: '/pages/store/edit' })}><Text>去建店</Text></View>
     </View>
   </View>
 
   return (
     <View className='persona'>
-      {bar}
       <View className='persona__intro'>
-        <Text className='persona__eyebrow'>BRAND VOICE</Text>
         <Text className='persona__title'>让顾客记住你的店</Text>
-        <Text className='persona__sub'>把老板的性格、故事和门店活动，变成每条视频里自然说出来的话。</Text>
       </View>
 
       <View className='persona__voice-card'>
@@ -210,10 +200,6 @@ export default function PersonaPage() {
       </View>
 
       <View className='persona__preview'>
-        <View className='persona__preview-head'>
-          <Text className='persona__preview-kicker'>PREVIEW</Text>
-          <Text className='persona__preview-label'>生成出来的语气会像这样</Text>
-        </View>
         <Text className='persona__preview-copy'>“{previewActivity} 我是{previewVoice}的老板，欢迎来店里坐坐。”</Text>
       </View>
 

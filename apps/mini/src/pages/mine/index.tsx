@@ -5,6 +5,7 @@ import * as authApi from '../../services/auth'
 import { pickAndUploadAvatar } from '../../services/profile'
 import { listMembershipReminders, markMembershipReminderRead, type MembershipReminder } from '../../services/account'
 import { TUTORIAL_CATEGORIES, listTutorialStats } from '../../services/tutorial'
+import { type StoreItem } from '../../services/store'
 import { STORAGE_KEYS } from '../../config'
 import { platform } from '../../platform'
 import { useMerchantStore } from '../../store/merchant'
@@ -41,6 +42,7 @@ export default function Mine() {
   const setProfile = useMerchantStore((s) => s.setProfile)
   const avatarUrl = useMerchantStore((s) => s.avatarUrl)
   const token = useMerchantStore((s) => s.token)
+  const loadStores = useMerchantStore((s) => s.loadStores)
   const setLogin = useMerchantStore((s) => s.setLogin)
   const logout = useMerchantStore((s) => s.logout)
 
@@ -242,6 +244,20 @@ export default function Mine() {
     )
 
   /**
+   * 进「门店资料」。
+   * ★ 单店模型（2026-09-24）：门店不再是「列表页 → 进入」，这个入口直接进账号**唯一门店**的
+   *   详情（门店信息）；还没有门店才去创建页（原「门店列表」页已删除）。
+   * ★ 这里现拉一次门店列表，而不是直接读全局 currentStoreId：冷启动 / 刚登录时它可能还是空的，
+   *   拿它判断会把**有门店**的用户误判成「没有门店」，送去创建页 —— 而创建会被服务端拒绝
+   *   （一个账号只能一家门店），用户拿到的只是一句看不懂的报错。
+   */
+  const goStore = async () => {
+    const list = await loadStores().catch(() => [] as StoreItem[])
+    const id = list.find((s) => s.isDefault)?.id ?? list[0]?.id ?? useMerchantStore.getState().currentStoreId
+    go(id ? `/pages/store/detail?id=${id}` : '/pages/store/edit')
+  }
+
+  /**
    * 点头像直接换头像（不跳页）。
    *
    * 与个人主页共用 `pickAndUploadAvatar()`：选图 + multipart 上传 + 服务端写 merchant.avatar_key。
@@ -367,48 +383,48 @@ export default function Mine() {
         </View>
       </View>
 
-      {/* ── 学习中心：四宫格（卡片标题 + 细分割线 + 四个图标项）── */}
-      {/* 图标与文案来自 services/tutorial.ts 的本地常量：教学接口挂了这一块也要照常显示 */}
+      {/* ── 我的资料：卡片 + 横排三入口 ──
+          ★ 2026-09-24：与「学习中心」整块互换 —— 这一块改用原来的「入口宫格」样式
+            （图标在上、文字在下、横排），所以三个入口不再竖着排成列表。
+          图标沿用列表里那枚彩色圆角底：门店=红 / 菜品=绿 / 订阅=金，颜色语义保持不变。 */}
       <View className='mine__learn'>
-        <Text className='mine__learn-title'>学习中心</Text>
+        <Text className='mine__learn-title'>我的资料</Text>
         <View className='mine__learn-grid'>
-          {TUTORIAL_CATEGORIES.map((c) => (
-            <View
-              key={c.code}
-              className='mine__learn-item'
-              hoverClass='ds-hover'
-              onClick={() => go(`/pages/tutorial/index?category=${c.code}`)}
-            >
-              <View className='mine__learn-icon'>
-                <t-icon name={c.icon} size='46rpx' />
-              </View>
-              <Text className='mine__learn-label'>{c.label}</Text>
-              {tutorialCounts[c.code] > 0 && (
-                <Text className='mine__learn-count'>{tutorialCounts[c.code]} 节</Text>
-              )}
-            </View>
-          ))}
+          <View className='mine__learn-item' hoverClass='ds-hover' onClick={() => { void goStore() }}>
+            <View className='mine__item-icon mine__item-icon--red'><t-icon name='shop' size='34rpx' /></View>
+            <Text className='mine__learn-label'>门店资料</Text>
+          </View>
+          <View className='mine__learn-item' hoverClass='ds-hover' onClick={() => go('/pages/dish/list')}>
+            <View className='mine__item-icon mine__item-icon--green'><t-icon name='rice' size='34rpx' /></View>
+            <Text className='mine__learn-label'>菜品管理</Text>
+          </View>
+          <View className='mine__learn-item' hoverClass='ds-hover' onClick={() => go('/pages/recharge/index')}>
+            <View className='mine__item-icon mine__item-icon--gold'><t-icon name='wallet' size='34rpx' /></View>
+            <Text className='mine__learn-label'>订阅与积分</Text>
+          </View>
         </View>
       </View>
 
-      {/* ── 账户与门店资料：这里管理“我是谁”和“我的资产”，不重复首页创作入口 ── */}
-      <View className='ds-label'>我的资料</View>
+      {/* ── 学习中心：分组列表（原「我的资料」的 iOS 列表样式）──
+          图标与文案来自 services/tutorial.ts 的本地常量：教学接口挂了这一块也要照常显示；
+          节数拿不到时只是少一个小字，不影响进入。 */}
+      <View className='ds-label'>学习中心</View>
       <View className='mine__menu'>
-        <View className='mine__item' onClick={() => go('/pages/store/list')}>
-          <View className='mine__item-icon mine__item-icon--red'><t-icon name='shop' size='32rpx' /></View>
-          <View className='mine__item-copy'><Text className='mine__item-title'>门店资料</Text><Text className='mine__item-desc'>门店信息与老板人设</Text></View>
-          <Text className='mine__arrow'>›</Text>
-        </View>
-        <View className='mine__item' onClick={() => go('/pages/dish/list')}>
-          <View className='mine__item-icon mine__item-icon--green'><t-icon name='rice' size='32rpx' /></View>
-          <View className='mine__item-copy'><Text className='mine__item-title'>菜品管理</Text><Text className='mine__item-desc'>维护菜品图片与卖点</Text></View>
-          <Text className='mine__arrow'>›</Text>
-        </View>
-        <View className='mine__item' onClick={() => go('/pages/recharge/index')}>
-          <View className='mine__item-icon mine__item-icon--gold'><t-icon name='wallet' size='32rpx' /></View>
-          <View className='mine__item-copy'><Text className='mine__item-title'>订阅与积分</Text><Text className='mine__item-desc'>管理会员权益与创作额度</Text></View>
-          <Text className='mine__arrow'>›</Text>
-        </View>
+        {TUTORIAL_CATEGORIES.map((c) => (
+          <View
+            key={c.code}
+            className='mine__item'
+            hoverClass='ds-hover'
+            onClick={() => go(`/pages/tutorial/index?category=${c.code}`)}
+          >
+            <View className='mine__item-icon'><t-icon name={c.icon} size='32rpx' /></View>
+            <View className='mine__item-copy'><Text className='mine__item-title'>{c.label}</Text></View>
+            {tutorialCounts[c.code] > 0 && (
+              <Text className='mine__learn-count'>{tutorialCounts[c.code]} 节</Text>
+            )}
+            <Text className='mine__arrow'>›</Text>
+          </View>
+        ))}
       </View>
       {/* ── 退出登录 ── 只在已登录时显示（未登录态本页被登录弹窗覆盖） */}
       {token && <View className='mine__logout' onClick={onLogout}>退出登录</View>}
@@ -420,9 +436,6 @@ export default function Mine() {
           <View className='mine__login-close' onClick={() => setShowLogin(false)}>×</View>
           <Image className='mine__login-logo' src={logoPng} mode='aspectFit' />
           <Text className='mine__login-title'>登录大帅餐饮</Text>
-          <Text className='mine__login-desc'>
-            {mode === 'sms' ? '用手机号验证码登录，可管理他人账号' : '登录后管理门店并开始创作'}
-          </Text>
 
           {mode === 'sms' ? (
             <>
@@ -477,9 +490,6 @@ export default function Mine() {
             </>
           )}
 
-          {devMode && mode === 'wechat' && (
-            <View className='mine__login-devtip'>当前为本地开发账号，不触发微信手机号授权</View>
-          )}
           <Text className='mine__login-tip'>授权即表示同意<Text className='mine__login-link' onClick={() => go('/pages/agreement/index?type=user')}>《用户协议》</Text>和<Text className='mine__login-link' onClick={() => go('/pages/agreement/index?type=privacy')}>《隐私政策》</Text></Text>
         </View>
       </View>}

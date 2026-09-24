@@ -561,7 +561,7 @@ export default function CreationShots() {
             )}
 
             {!!s.assetId && !!s.assetDurationMs && !isUploading && (
-              <Text className='cshots__note'>素材时长 {fmtDuration(s.assetDurationMs)} · 计费按实际时长</Text>
+              <Text className='cshots__note'>素材时长 {fmtDuration(s.assetDurationMs)}</Text>
             )}
           </View>
         )
