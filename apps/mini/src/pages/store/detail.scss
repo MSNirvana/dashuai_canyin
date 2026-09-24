@@ -72,11 +72,8 @@
 
   /* ★ 2026-09-24：`&__meta`（门店名下的「品类 · 省市县」）随该行删除，tsx 不再渲染。 */
 
-  &__health { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; margin-top: 26rpx; padding: 22rpx 24rpx; border-radius: var(--td-radius-default); background: var(--td-brand-color-light); }
-  &__health-copy { min-width: 0; }
-  &__health-title { display: block; color: var(--td-text-color-primary); font-size: 25rpx; font-weight: 600; }
-  &__health-desc { display: block; margin-top: 6rpx; color: var(--td-text-color-secondary); font-size: 21rpx; }
-  &__health-value { color: var(--td-brand-color); font-size: 34rpx; font-weight: 750; }
+  /* ★ 2026-09-24：`&__health` / `-copy` / `-title` / `-desc` / `-value` 整组随
+     「品牌资料完整度」模块一起删除，tsx 不再渲染。 */
   &__section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20rpx; margin-top: 36rpx; }
   &__section-no { padding-top: 4rpx; color: var(--td-text-color-disabled); font-size: 22rpx; font-weight: 700; }
   &__section-desc { display: block; margin-top: 6rpx; color: var(--td-text-color-placeholder); font-size: 21rpx; }

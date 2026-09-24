@@ -132,15 +132,10 @@ export default function StoreDetailPage() {
           {detail.isDefault && <Text className='store-detail__tag'>默认</Text>}
           {isCurrent && <Text className='store-detail__tag store-detail__tag--current'>当前</Text>}
         </View>
-        {/* ★ 2026-09-24 按需求：门店名下面那行「品类 · 省市县」删除 ——
-            地址在下面「到店信息 › 地址」里已经完整给过一次，这里是把同一件事再说一遍。 */}
-        <View className='store-detail__health'>
-          <View className='store-detail__health-copy'>
-            <Text className='store-detail__health-title'>品牌资料完整度</Text>
-            <Text className='store-detail__health-desc'>资料越完整，AI 越懂你的门店</Text>
-          </View>
-          <Text className='store-detail__health-value'>{Math.round(([coverUrl, videoUrl, detail.intro, detail.category, detail.address].filter(Boolean).length / 5) * 100)}%</Text>
-        </View>
+        {/* ★ 2026-09-24 按需求，门店标题区下面这两块内容一并删除：
+            ① 「品类 · 省市县」副标题 —— 地址在下面「到店信息 › 地址」里已完整给过一次；
+            ② 「品牌资料完整度」卡片 —— 它算的是主图/视频/介绍/品类/地址五项资料的填写比例，
+               是「催你把资料填全」的运营提示，不是门店信息本身。 */}
 
         <View className='store-detail__section-head'>
           <View><Text className='store-detail__label'>门店视频</Text><Text className='store-detail__section-desc'>让顾客先看到环境、烟火气和真实氛围</Text></View>
