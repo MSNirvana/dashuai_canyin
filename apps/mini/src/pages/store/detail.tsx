@@ -132,10 +132,8 @@ export default function StoreDetailPage() {
           {detail.isDefault && <Text className='store-detail__tag'>默认</Text>}
           {isCurrent && <Text className='store-detail__tag store-detail__tag--current'>当前</Text>}
         </View>
-        <Text className='store-detail__meta'>
-          {[detail.category, location].filter(Boolean).join(' · ') || '未填写品类/地区'}
-        </Text>
-
+        {/* ★ 2026-09-24 按需求：门店名下面那行「品类 · 省市县」删除 ——
+            地址在下面「到店信息 › 地址」里已经完整给过一次，这里是把同一件事再说一遍。 */}
         <View className='store-detail__health'>
           <View className='store-detail__health-copy'>
             <Text className='store-detail__health-title'>品牌资料完整度</Text>
