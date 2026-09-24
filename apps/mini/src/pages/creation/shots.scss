@@ -257,13 +257,26 @@
     color: var(--td-text-color-placeholder);
   }
 
-  /* ── 暂不上传 ── */
+  /* ── 卡片内的次要出口 ── */
+  /* 「从相册选 / 暂不上传」并到同一行：两个都是次要动作，各靠一端 */
+  &__actsrow {
+    margin-top: 18rpx;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  &__alt {
+    font-size: 24rpx;
+    color: var(--td-text-color-secondary);
+  }
   &__skip {
-    display: block;
-    margin-top: 16rpx;
-    text-align: center;
     font-size: 24rpx;
     color: var(--td-text-color-placeholder);
+  }
+  /* 已上传卡片上的两个动作：重拍（自建拍摄层）/ 从相册换一段 */
+  &__reuserow {
+    display: flex;
+    gap: 16rpx;
   }
 }
 
@@ -274,3 +287,5 @@
 .cshots__thumb { border-radius: var(--td-radius-default); }
 .cshots__drop { height: 168rpx; border-radius: var(--td-radius-default); }
 .cshots__btn { min-height: 72rpx; border-radius: var(--td-radius-default); }
+/* 重拍 / 从相册换一段：两个等宽按钮并排，别各自按文案宽度长短不一 */
+.cshots__reuserow .cshots__btn { flex: 1; }

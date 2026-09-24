@@ -13,6 +13,7 @@ import { listShotLibrary, getShotDemoPlayUrl, type ShotLibraryItem } from '../..
 import { uploadVideoFile, UploadAbortedError } from '../../services/upload'
 import { readRouteId } from '../../utils/route-id'
 import ProgressLine from '../../components/progress-line'
+import ShotCamera, { SHOOT_MAX_SECONDS, type ShotCameraResult } from '../../components/shot-camera'
 import './shots.scss'
 
 /** 时长格式化：83.4s → 1:23 */
@@ -41,6 +42,12 @@ export default function CreationShots() {
   const [lib, setLib] = useState<ShotLibraryItem[]>([])
   /** 刚选完视频、还没拿到服务端封面时的本地缩略图（chooseMedia 的 thumbTempFilePath），用于即时预览 */
   const [localThumb, setLocalThumb] = useState<Record<string, string>>({})
+  /**
+   * 正在给哪个分镜拍摄（非 null 时整页盖上自建拍摄层）。
+   * ★ 刻意**不用** uploadTasks 占位：用户可能在取景页念稿念很久，
+   *   一开相机就把它标成「上传中」会让「下一步」一直灰着。占位推迟到拍完确认之后。
+   */
+  const [cameraShot, setCameraShot] = useState<ShotItem | null>(null)
   const [coverBusy, setCoverBusy] = useState(false)
   // 补生成封面只在每次进入页面时尝试一轮，避免与刷新互相触发
   const coverTried = useRef(false)
@@ -116,61 +123,17 @@ export default function CreationShots() {
     return tipsByType[shot.shotType ?? ''] ?? []
   }
 
-  const onUpload = async (shot: ShotItem) => {
-    // 只锁当前分镜；其他分镜可以继续点「拍摄 / 选择视频」并发上传。
-    // chooseMedia 期间也先占位，避免同一卡片被快速重复点击弹出多个选择器。
+  /**
+   * 取素材的两条入口（自建相机 / 相册）共用的「占位 + 落地 + 收尾」。
+   * ★ 占位要在**打开选择器之前**：否则同一张卡片被快速点两下会弹出两个选择器。
+   */
+  const runShotTask = async (shot: ShotItem, task: () => Promise<void>) => {
     if (uploadTasks.current.has(shot.id)) return
     uploadTasks.current.add(shot.id)
     setUploading((m) => ({ ...m, [shot.id]: true }))
     setProgress((m) => ({ ...m, [shot.id]: 0 }))
     try {
-      const mediaRes = (await Taro.chooseMedia({
-        count: 1,
-        mediaType: ['video'],
-        sourceType: ['album', 'camera'],
-        maxDuration: 60,
-      })) as unknown as {
-        tempFiles: {
-          tempFilePath: string
-          /** 视频封面图临时路径（微信自带抽帧），本地模式不用、COS 模式随视频上报 */
-          thumbTempFilePath?: string
-          duration?: number
-          size?: number
-        }[]
-      }
-      const file = mediaRes.tempFiles[0]
-      if (!file) return
-      // 先本地占位，选完立刻能看到缩略图，不必等上传完成
-      if (file.thumbTempFilePath) {
-        setLocalThumb((m) => ({ ...m, [shot.id]: file.thumbTempFilePath! }))
-      }
-      const storeId = detail?.store?.id || ''
-      const asset = await uploadVideoFile({
-        filePath: file.tempFilePath,
-        storeId,
-        // duration 单位为秒；上报时长供后端按实际时长计价（未 trim 分镜的计费依据）
-        durationMs: file.duration ? Math.round(file.duration * 1000) : undefined,
-        sizeBytes: file.size,
-        thumbFilePath: file.thumbTempFilePath,
-        onProgress: (p) => setProgress((m) => ({ ...m, [shot.id]: p })),
-        onTask: (task) => uploadAborters.current.set(shot.id, task.abort),
-        isCancelled: () => pageGone.current,
-      })
-      const updated = await updateShotAsset(id!, shot.id, { assetId: asset.id })
-      // 并发任务各自只回填自己的分镜，避免多个 load() 返回顺序不同、旧响应覆盖新绑定结果。
-      setDetail((d) => d ? {
-        ...d,
-        shots: d.shots.map((s) => s.id === shot.id ? {
-          ...s,
-          ...updated,
-          assetId: updated.assetId ?? asset.id,
-          assetDurationMs: file.duration ? Math.round(file.duration * 1000) : s.assetDurationMs,
-          coverUrl: file.thumbTempFilePath || s.coverUrl,
-        } : s),
-      } : d)
-      Taro.showToast({ title: `分镜 ${shot.seq} 已绑定`, icon: 'success' })
-      // 重新上传后允许页面下一次刷新时再尝试补封面（服务端抽帧失败时可重试）
-      coverTried.current = false
+      await task()
     } catch (e: unknown) {
       // 页面已卸载导致的中止不算失败：既不该弹 toast，也不该在已卸载的组件上 setState
       if (e instanceof UploadAbortedError) return
@@ -193,6 +156,125 @@ export default function CreationShots() {
         return next
       })
     }
+  }
+
+  /**
+   * 素材落地：上传 → 绑定分镜 → 回填。
+   * ★ 自建相机与相册的差别只在「怎么拿到这个文件」，从这一行往后必须完全一致 ——
+   *   尤其 durationMs：它是「按实际时长计价」的依据，两条路都不能漏。
+   */
+  const uploadPicked = async (shot: ShotItem, file: {
+    tempFilePath: string
+    thumbTempFilePath?: string
+    durationMs?: number
+    sizeBytes?: number
+  }) => {
+    // 先本地占位，拍/选完立刻能看到缩略图，不必等上传完成
+    if (file.thumbTempFilePath) {
+      setLocalThumb((m) => ({ ...m, [shot.id]: file.thumbTempFilePath! }))
+    }
+    const storeId = detail?.store?.id || ''
+    const asset = await uploadVideoFile({
+      filePath: file.tempFilePath,
+      storeId,
+      // duration 单位为秒；上报时长供后端按实际时长计价（未 trim 分镜的计费依据）
+      durationMs: file.durationMs,
+      sizeBytes: file.sizeBytes,
+      thumbFilePath: file.thumbTempFilePath,
+      onProgress: (p) => setProgress((m) => ({ ...m, [shot.id]: p })),
+      onTask: (task) => uploadAborters.current.set(shot.id, task.abort),
+      isCancelled: () => pageGone.current,
+    })
+    const updated = await updateShotAsset(id!, shot.id, { assetId: asset.id })
+    // 并发任务各自只回填自己的分镜，避免多个 load() 返回顺序不同、旧响应覆盖新绑定结果。
+    setDetail((d) => d ? {
+      ...d,
+      shots: d.shots.map((s) => s.id === shot.id ? {
+        ...s,
+        ...updated,
+        assetId: updated.assetId ?? asset.id,
+        assetDurationMs: file.durationMs ?? s.assetDurationMs,
+        coverUrl: file.thumbTempFilePath || s.coverUrl,
+      } : s),
+    } : d)
+    Taro.showToast({ title: `分镜 ${shot.seq} 已绑定`, icon: 'success' })
+    // 重新上传后允许页面下一次刷新时再尝试补封面（服务端抽帧失败时可重试）
+    coverTried.current = false
+  }
+
+  /** 把原生选择器回来的文件接到同一条落地路径上（duration 是秒，这里统一换成毫秒） */
+  const uploadNativeFile = async (shot: ShotItem, file: {
+    tempFilePath: string
+    thumbTempFilePath?: string
+    duration?: number
+    size?: number
+  }) => {
+    await uploadPicked(shot, {
+      tempFilePath: file.tempFilePath,
+      thumbTempFilePath: file.thumbTempFilePath,
+      durationMs: file.duration ? Math.round(file.duration * 1000) : undefined,
+      sizeBytes: file.size,
+    })
+  }
+
+  /**
+   * 从相册选（微信原生选择器）。
+   * ★ sourceType 只给 album：相机那条路已由自建拍摄层接管，混在一起用户又会落回
+   *   「长按录像」的原生相机，等于这次改造白做。
+   */
+  const onPickAlbum = (shot: ShotItem) => runShotTask(shot, async () => {
+    const mediaRes = (await Taro.chooseMedia({
+      count: 1,
+      mediaType: ['video'],
+      sourceType: ['album'],
+      maxDuration: SHOOT_MAX_SECONDS,
+    })) as unknown as {
+      tempFiles: { tempFilePath: string; thumbTempFilePath?: string; duration?: number; size?: number }[]
+    }
+    const file = mediaRes.tempFiles[0]
+    if (!file) return
+    await uploadNativeFile(shot, file)
+  })
+
+  /** 进自建拍摄层：这一层里点一下开始、再点一下停，并显示提词器 */
+  const openCamera = (shot: ShotItem) => setCameraShot(shot)
+
+  /**
+   * 自建相机拍完的那一条。
+   * ★ durationMs 来自拍摄层的计时（自建相机拿不到 duration），它一样是计价依据。
+   */
+  const onShootDone = async (shot: ShotItem, r: ShotCameraResult) => {
+    setCameraShot(null)
+    await runShotTask(shot, () => uploadPicked(shot, {
+      tempFilePath: r.videoPath,
+      thumbTempFilePath: r.thumbPath,
+      durationMs: r.durationMs,
+      sizeBytes: r.sizeBytes,
+    }))
+  }
+
+  /**
+   * 自建相机用不了（没权限 / 没摄像头 / 启动失败）：回落到微信原生选择器。
+   * ★ 这里**故意把 camera 也打开**（与「从相册选」不同）—— 用户本来就是要拍一段，
+   *   只是我们的相机用不了；原生相机至少还能拍（代价是又得长按）。没权限时相册那条仍然通，
+   *   所以这个出口在两种情况下都不会把用户堵死。
+   */
+  const onShootUnavailable = (shot: ShotItem, reason: string) => {
+    setCameraShot(null)
+    Taro.showToast({ title: reason, icon: 'none' })
+    void runShotTask(shot, async () => {
+      const mediaRes = (await Taro.chooseMedia({
+        count: 1,
+        mediaType: ['video'],
+        sourceType: ['album', 'camera'],
+        maxDuration: SHOOT_MAX_SECONDS,
+      })) as unknown as {
+        tempFiles: { tempFilePath: string; thumbTempFilePath?: string; duration?: number; size?: number }[]
+      }
+      const file = mediaRes.tempFiles[0]
+      if (!file) return
+      await uploadNativeFile(shot, file)
+    })
   }
 
   /**
@@ -445,26 +527,34 @@ export default function CreationShots() {
             {!isUploading && (
               <View className='cshots__acts'>
                 {!!s.assetId ? (
-                  <Button className='cshots__btn cshots__btn--ghost' size='mini' onClick={() => onUpload(s)}>
-                    重新拍摄
-                  </Button>
+                  <View className='cshots__reuserow'>
+                    <Button className='cshots__btn cshots__btn--ghost' size='mini' onClick={() => openCamera(s)}>
+                      重拍
+                    </Button>
+                    <Button className='cshots__btn cshots__btn--ghost' size='mini' onClick={() => void onPickAlbum(s)}>
+                      从相册换一段
+                    </Button>
+                  </View>
                 ) : (
                   <>
-                    <View className='cshots__drop' hoverClass='ds-hover' onClick={() => onUpload(s)}>
+                    <View className='cshots__drop' hoverClass='ds-hover' onClick={() => openCamera(s)}>
                       <t-icon name='camera' size='48rpx' />
-                      <Text className='cshots__drop-title'>{s.skipped ? '补拍这个分镜' : '拍摄 / 选择视频'}</Text>
+                      <Text className='cshots__drop-title'>{s.skipped ? '补拍这个分镜' : '拍摄视频'}</Text>
                       <Text className='cshots__drop-sub'>
                         {s.skipped
                           ? '已跳过，不会被合成进成片'
-                          : `时长建议 ${s.durationSuggest ? `${s.durationSuggest} 秒` : '1 分钟以内'}`}
+                          : '点一下开始录 · 台词会显示在取景画面上'}
                       </Text>
                     </View>
-                    <Text
-                      className='cshots__skip'
-                      onClick={() => void (s.skipped ? onUnskip(s) : onSkip(s))}
-                    >
-                      {skipping[s.id] ? '处理中…' : s.skipped ? '撤销跳过 ›' : '暂不上传 ›'}
-                    </Text>
+                    <View className='cshots__actsrow'>
+                      <Text className='cshots__alt' onClick={() => void onPickAlbum(s)}>从相册选一段 ›</Text>
+                      <Text
+                        className='cshots__skip'
+                        onClick={() => void (s.skipped ? onUnskip(s) : onSkip(s))}
+                      >
+                        {skipping[s.id] ? '处理中…' : s.skipped ? '撤销跳过 ›' : '暂不上传 ›'}
+                      </Text>
+                    </View>
                   </>
                 )}
               </View>
@@ -507,6 +597,19 @@ export default function CreationShots() {
                     : '素材已齐，可以合成成片了'}
         </View>
       </View>
+
+      {/* ── 自建拍摄层：点击拍摄 + 提词器（取代微信原生相机的「长按录像」）──
+          挂在根节点最后、整页 fixed 盖上；camera 是原生组件，放这一层而不是塞进分镜卡片，
+          是为了满足微信的硬约束「camera 不能放进 scroll-view 等滚动容器」——
+          本页根节点是普通 View，这一层内部也不再套任何滚动容器。 ── */}
+      <ShotCamera
+        visible={!!cameraShot}
+        shot={cameraShot}
+        tipText={cameraShot ? (tipsFor(cameraShot)[0]?.tips ?? '') : ''}
+        onCancel={() => setCameraShot(null)}
+        onDone={(r) => { if (cameraShot) void onShootDone(cameraShot, r) }}
+        onUnavailable={(reason) => { if (cameraShot) onShootUnavailable(cameraShot, reason) }}
+      />
     </View>
   )
 }

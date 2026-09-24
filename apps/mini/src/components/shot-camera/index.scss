@@ -1,0 +1,233 @@
+// 自建拍摄层：整页 fixed 浮层，画在 <Camera> 取景之上。
+//
+// ★ 层级怎么来的：camera 是原生组件、默认压在所有普通组件之上，要让上面的浮层盖住它，
+//   靠的是**同层渲染**（官方现说明「原生组件均已支持同层渲染，建议使用 view 替代 cover-view」），
+//   所以这一层用普通 View + 完整 CSS，没有走 cover-view 那套老限制。
+// ★ 结构上刻意「浮层 fixed、camera 绝对定位填满」：原生组件本身不支持 position:fixed、
+//   也不吃父级的 overflow 裁剪，把它做成浮层的**子**元素比自己 fixed 稳。
+// ★ 这一层里不出现任何滚动容器 —— camera 不能放进 scroll-view（微信官方硬约束）。
+.shotcam {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  z-index: 900;
+  background: #000;
+  overflow: hidden;
+
+  &__preview {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  /* 控制层：顶栏 / 提词器 / 底部控制，中间整片留给取景 */
+  &__ui {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    padding: calc(20rpx + env(safe-area-inset-top)) 28rpx calc(36rpx + env(safe-area-inset-bottom));
+  }
+
+  /* ── 顶栏 ── */
+  &__top {
+    display: flex;
+    align-items: center;
+    gap: 16rpx;
+  }
+  &__close {
+    flex: none;
+    width: 64rpx;
+    height: 64rpx;
+    line-height: 64rpx;
+    text-align: center;
+    font-size: 34rpx;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.42);
+    border-radius: 50%;
+  }
+  &__seq {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+    font-size: 28rpx;
+    font-weight: 650;
+    color: #fff;
+    text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.55);
+  }
+  /* 顶栏与底部共用的胶囊小按钮（前置/后置、补光） */
+  &__tool {
+    flex: none;
+    min-width: 104rpx;
+    text-align: center;
+    font-size: 24rpx;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.42);
+    border-radius: var(--td-radius-pill);
+    padding: 10rpx 20rpx;
+  }
+  /* 录制中给「前置/后置」留位但不给点：换摄像头要把这一段废掉 */
+  &__tool--off {
+    opacity: 0;
+  }
+
+  /* ── 提词器：贴着上方（靠近镜头），念稿时视线不离取景框 ── */
+  &__prompt {
+    margin-top: 24rpx;
+    padding: 26rpx 28rpx;
+    border-radius: var(--td-radius-large);
+    background: rgba(0, 0, 0, 0.52);
+    max-height: 46vh;
+    overflow: hidden;
+  }
+  &__line {
+    display: block;
+    color: #fff;
+    font-weight: 700;
+    line-height: 1.45;
+    word-break: break-word;
+  }
+  /* 字号按台词长度分三档：分镜台词通常十几字，长台词要主动缩一号才不会吃掉半个屏幕 */
+  &__line--xl { font-size: 52rpx; }
+  &__line--lg { font-size: 42rpx; }
+  &__line--md { font-size: 34rpx; }
+  &__visual {
+    display: block;
+    margin-top: 14rpx;
+    font-size: 26rpx;
+    color: rgba(255, 255, 255, 0.78);
+    line-height: 1.6;
+  }
+  &__tip {
+    display: block;
+    margin-top: 10rpx;
+    font-size: 24rpx;
+    color: rgba(255, 255, 255, 0.6);
+    line-height: 1.6;
+  }
+
+  &__spacer {
+    flex: 1;
+  }
+
+  /* ── 底部控制 ── */
+  &__bottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  &__metarow {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 30rpx;
+  }
+  &__timer {
+    font-size: 30rpx;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.55);
+  }
+  &__shutterwrap {
+    width: 148rpx;
+    height: 148rpx;
+    border-radius: 50%;
+    border: 6rpx solid rgba(255, 255, 255, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 待拍 = 实心圆；录制中 = 收成圆角方块（就是「点一下停止」的那个停止符） */
+  &__shutter {
+    width: 108rpx;
+    height: 108rpx;
+    border-radius: 50%;
+    background: var(--td-brand-color);
+    transition: all 0.18s ease-out;
+  }
+  &__shutter--on {
+    width: 56rpx;
+    height: 56rpx;
+    border-radius: 14rpx;
+  }
+  &__hint {
+    margin-top: 24rpx;
+    font-size: 24rpx;
+    color: rgba(255, 255, 255, 0.82);
+    text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.55);
+  }
+
+  /* ── 面板：拍完确认 / 相机不可用（都用它，位置一致不跳）── */
+  &__panel {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 600rpx;
+    box-sizing: border-box;
+    padding: 40rpx 36rpx 34rpx;
+    background: rgba(20, 21, 24, 0.94);
+    border: 1rpx solid rgba(255, 255, 255, 0.14);
+    border-radius: var(--td-radius-extra);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  &__reviewthumb {
+    width: 100%;
+    height: 420rpx;
+    border-radius: var(--td-radius-default);
+    background: #2a2c31;
+    margin-bottom: 26rpx;
+  }
+  &__reviewthumb--ph {
+    background: #17181b;
+  }
+  &__paneltitle {
+    font-size: 32rpx;
+    font-weight: 700;
+    color: #fff;
+    text-align: center;
+    line-height: 1.5;
+  }
+  &__panelsub {
+    margin-top: 12rpx;
+    font-size: 24rpx;
+    color: rgba(255, 255, 255, 0.62);
+    text-align: center;
+    line-height: 1.6;
+  }
+  &__panelacts {
+    margin-top: 32rpx;
+    width: 100%;
+    display: flex;
+    gap: 20rpx;
+  }
+  &__btn {
+    flex: 1;
+    text-align: center;
+    font-size: 28rpx;
+    font-weight: 650;
+    color: #fff;
+    padding: 24rpx 0;
+    border-radius: var(--td-radius-default);
+    background: rgba(255, 255, 255, 0.12);
+  }
+  &__btn--main {
+    background: var(--td-brand-color);
+  }
+  &__retry {
+    margin-top: 26rpx;
+    font-size: 24rpx;
+    color: rgba(255, 255, 255, 0.6);
+  }
+}
