@@ -336,17 +336,13 @@ export default function HomePage() {
     <View className='home__body'>
       {isLoggedIn && setupStage !== 'READY' ? (
         <View className='home__setup'>
-          <View className='home__setup-head'>
-            <Text className='home__setup-kicker'>开始创作前</Text>
-            <Text className='home__setup-title'>先把你的生意资料准备好</Text>
-            <Text className='home__setup-desc'>门店和菜品会成为后续文案、分镜与成片的真实素材。</Text>
-          </View>
+          {/* ★ 2026-09-24 按需求：卡头整块删除（kicker「开始创作前」+ 标题「先把你的生意资料准备好」），
+              只留下面两条步骤与一个动作按钮 —— 步骤名本身已经说清要做什么，卡头只是把同一件事再说一遍。 */}
           <View className='home__setup-steps'>
             <View className={`home__setup-step ${setupStage === 'STORE' ? 'home__setup-step--active' : 'home__setup-step--done'}`}>
               <View className='home__setup-index'><Text>{setupStage === 'STORE' ? '1' : '✓'}</Text></View>
               <View className='home__setup-step-copy'>
                 <Text className='home__setup-step-title'>创建门店</Text>
-                <Text className='home__setup-step-desc'>{setupStage === 'STORE' ? '先建立你的门店档案' : `已准备好 · ${storeName || '当前门店'}`}</Text>
               </View>
             </View>
             <View className={`home__setup-step ${setupStage === 'DISH' ? 'home__setup-step--active' : 'home__setup-step--locked'}`}>
@@ -362,7 +358,7 @@ export default function HomePage() {
             hoverClass='ds-hover--press'
             onClick={setupStage === 'STORE' ? goStores : goDishes}
           >
-            <Text>{setupStage === 'STORE' ? '创建第一家门店' : '添加第一道菜品'}</Text>
+            <Text>{setupStage === 'STORE' ? '去创建' : '去添加'}</Text>
             <Text className='home__setup-arrow'>→</Text>
           </View>
         </View>
