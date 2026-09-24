@@ -23,7 +23,10 @@ const storeInput = z.object({
   coverKey: z.string().max(512).nullable().optional(),
   intro: nullableText(500),
   videoKey: z.string().max(512).nullable().optional(),
-  isDefault: z.boolean().optional(),
+  // ★ 2026-09-24 单店模型：这里**不再接受 isDefault**（zod 默认丢弃未声明字段）。
+  //   一个账号只有一家门店，它必然是默认门店 —— 允许客户端把它关掉，只会做出
+  //   「有门店但没有默认门店」的畸形数据。多门店时代的「设为默认」开关已从前端下线。
+  //   要恢复多门店时，把这一行加回来即可。
 })
 
 

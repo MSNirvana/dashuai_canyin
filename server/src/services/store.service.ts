@@ -1,19 +1,26 @@
-// 门店服务：多门店模型的核心。创建受 system_setting(store.max_per_merchant) 限制
+// 门店服务：**一个账号只有一家门店**（2026-09-24 起产品收敛，切换门店功能下线）
 import type { PrismaClient } from '@prisma/client'
-import { getNumber } from '../lib/settings.js'
+
+/**
+ * 每个商户可拥有的门店上限，**写死 1**。
+ * ★ 原来读 system_setting(store.max_per_merchant)，默认 10。那一项从未进过 seed、
+ *   后台也没有配置入口 —— 留着只会让人以为上限可调，而实际上永远只会读到 fallback。
+ *   现在单店是产品硬约束，直接写成常量，别再套一层「看似可配」的壳。
+ */
+const MAX_STORES_PER_MERCHANT = 1
 
 export class StoreLimitError extends Error {
   readonly code = 'STORE_LIMIT'
-  constructor(readonly limit: number) {
-    super(`门店数量已达上限（${limit}）`)
+  constructor(readonly limit: number = MAX_STORES_PER_MERCHANT) {
+    super(limit === 1 ? '一个账号只能创建一家门店' : `门店数量已达上限（${limit}）`)
     this.name = 'StoreLimitError'
   }
 }
 
 export class StoreDefaultDeleteError extends Error {
   readonly code = 'STORE_DEFAULT_DELETE'
-  constructor() {
-    super('默认门店不可删除，请先将其它门店设为默认')
+  constructor(message = '门店不可删除') {
+    super(message)
     this.name = 'StoreDefaultDeleteError'
   }
 }
@@ -32,9 +39,10 @@ export interface StoreInput {
   videoKey?: string | null
   /**
    * 是否设为默认门店。
-   * ★ 必须如实处理三态：true = 设为默认（原子取消其它默认）；false = 取消默认；
-   *   不传 = 不动。此前 createStore 完全忽略它、updateStore 只认 true ——
-   *   前端开关「新建时打开无效、编辑时关闭无效」，用户看得见结果却与预期相反且无提示。
+   * ★ 2026-09-24 单店模型下**路由层已不再接受本字段**（见 routes/stores.ts）：
+   *   一个账号只有一家门店，它必然是默认门店，没有「设/取消默认」这回事。
+   *   服务层仍如实处理三态（true = 设为默认并原子取消其它默认；false = 取消默认；
+   *   不传 = 不动），是留给仍直连服务层的脚本 / 后台的——多门店若恢复，把路由那行加回来即可。
    */
   isDefault?: boolean
 }
@@ -75,33 +83,15 @@ export async function getStore(prisma: PrismaClient, merchantId: bigint, storeId
 }
 
 export async function createStore(prisma: PrismaClient, merchantId: bigint, input: StoreInput) {
-  const max = await getNumber(prisma, 'store', 'max_per_merchant', 10)
+  // ★ 单店模型：已经有门店的账号不能再建。这是产品硬约束（一个账号一家门店），
+  //   不是「可配置的上限」—— 存量多门店的账号也同样建不了第二家（多余的那些仍留在库里，
+  //   小程序永远只用默认门店，见 listStores 的排序）。
   const count = await prisma.store.count({ where: { merchantId, deletedAt: null } })
-  if (count >= max) throw new StoreLimitError(Number(max))
+  if (count >= MAX_STORES_PER_MERCHANT) throw new StoreLimitError()
 
-  const isFirst = count === 0
-  // 首店必须是默认（否则全站没有默认门店）；非首店尊重用户的「设为默认」开关
-  const wantDefault = isFirst || input.isDefault === true
-  if (wantDefault) {
-    // 与「取消其它默认」放进同一事务，保证任意时刻最多一家默认（与 updateStore 同一条规则）
-    const [, store] = await prisma.$transaction([
-      prisma.store.updateMany({ where: { merchantId, isDefault: true }, data: { isDefault: false } }),
-      prisma.store.create({
-        data: {
-          merchantId,
-          name: input.name,
-          category: input.category,
-          province: input.province,
-          city: input.city,
-          district: input.district,
-          address: input.address,
-          intro: input.intro ?? null,
-          isDefault: true,
-        },
-      }),
-    ])
-    return store
-  }
+  // 能走到这里说明这是账号的**第一家（也是唯一一家）门店** ⇒ 必然是默认门店。
+  // 旧实现里「非首店尊重 isDefault 开关 / 非默认分支」在多门店下线后已成死代码，一并删掉；
+  // 前端也不再传 isDefault（编辑页的「设为默认门店」开关已随多门店一起移除）。
   return prisma.store.create({
     data: {
       merchantId,
@@ -112,7 +102,7 @@ export async function createStore(prisma: PrismaClient, merchantId: bigint, inpu
       district: input.district,
       address: input.address,
       intro: input.intro ?? null,
-      isDefault: false,
+      isDefault: true,
     },
   })
 }
@@ -199,11 +189,14 @@ export class StoreVideoError extends Error {
 export async function deleteStore(prisma: PrismaClient, merchantId: bigint, storeId: bigint) {
   const store = await prisma.store.findFirst({ where: { id: storeId, merchantId, deletedAt: null } })
   if (!store) return false
+  // ★ 单店模型下账号唯一的那家门店就是默认门店 —— 删了全站就没有门店上下文了，一律拒绝。
+  //   前端已无删除入口（门店详情页的「删除」按钮随多门店一起下线），这里留一道是为了
+  //   挡住绕过界面直接调接口的调用方。
   if (store.isDefault) throw new StoreDefaultDeleteError()
 
-  const remaining = await prisma.store.count({ where: { merchantId, deletedAt: null } })
-  if (remaining <= 1) throw new StoreDefaultDeleteError()
-
+  // 能走到这里的只有**历史遗留**的多门店数据（非默认门店）。保留这条路径是为了还能把
+  // 遗留门店清出去（scripts/e2e-smoke.mjs 的历史数据清理就依赖它）；
+  // 正常账号永远删不掉自己的门店，因为那家店一定是默认门店（上面已拦）。
   await prisma.store.update({ where: { id: storeId }, data: { deletedAt: new Date() } })
   return true
 }
