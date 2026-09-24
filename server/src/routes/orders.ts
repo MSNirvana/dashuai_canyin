@@ -6,8 +6,10 @@ import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import * as orderSvc from '../services/order.service.js'
+import { optionalText } from '../lib/validators.js'
 import * as reconcile from '../services/pay-reconcile.service.js'
 import { PackageNotFoundError, NoOpenidError, PaymentUnavailableError } from '../services/order.service.js'
+import { bindWechatOpenidByLoginCode } from '../auth/auth.service.js'
 import { SubscriptionRequiredError } from '../services/subscription.service.js'
 
 const router = createRouter()
@@ -74,11 +76,50 @@ router.post('/:orderNo([A-Za-z0-9_-]+)/query', async (req, res) => {
   }
 })
 
-const orderInput = z.object({ packageId: z.string().min(1) })
+/**
+ * 下单入参。
+ *
+ * `wxLoginCode` 是**小程序端 `wx.login()` 拿到的 code**，可选：
+ *   · 老客户端不发它 ⇒ 行为与改动前完全一致（账号有 openid 就正常支付，没有就 3007）；
+ *   · 新客户端在支付前发它 ⇒ 服务端换出 openid 并绑定到**当前登录商户**，
+ *     于是「手机号验证码登录的账号」也能付款。
+ *
+ * 为什么做成「下单时补绑」而不是「登录时就绑」：
+ *   登录时绑只对之后的新登录生效，而**已经登录、token 还没过期的存量账号**依然会撞 3007；
+ *   下单时按需补绑把存量账号一起救回来，且不必改动登录契约。
+ */
+const orderInput = z.object({
+  packageId: z.string().min(1),
+  // ★ 用 optionalText 而不是 `z.string().min(1).optional()`：
+  //   · 后者遇到客户端发**空串**会判 400「参数错误」⇒ 把整笔支付挡掉；
+  //   · optionalText 是 `.trim().max(128).optional()` ⇒ 空白串被 trim 成 ''，
+  //     下面 `if (!wxLoginCode) return` 当作「没给」处理，支付照走原路径。
+  //   即：拿不到/给空了都只是「不补绑」，**绝不影响付款本身**。
+  wxLoginCode: optionalText(128),
+})
+
+/**
+ * 下单前按需把 openid 补绑到当前商户。
+ *
+ * ★★ 必须**吞掉失败**，这条是本修复的正确性关键：
+ *   账号本来就有 openid 时（微信一键登录的用户），openid 与绑定的那个是同一个，
+ *   这时**根本不需要**这次绑定 —— 如果让「code 换不出 openid」把请求打成 500，
+ *   就是把一条本来能成的支付路径弄坏了。补绑失败就退回原行为：
+ *   下面的 `createXxxOrder()` 仍会读 `merchant.wechatOpenid`，拿不到才抛 3007。
+ */
+async function bindOpenidBeforeOrder(merchantId: bigint, wxLoginCode?: string): Promise<void> {
+  if (!wxLoginCode) return
+  try {
+    await bindWechatOpenidByLoginCode(prisma, merchantId, wxLoginCode)
+  } catch (e) {
+    console.warn('[orders] 下单前补绑 openid 失败（不阻断，回退原行为）:', (e as Error).message)
+  }
+}
 
 router.post('/recharge/order', async (req, res) => {
   try {
-    const { packageId } = orderInput.parse(req.body)
+    const { packageId, wxLoginCode } = orderInput.parse(req.body)
+    await bindOpenidBeforeOrder(req.merchantId!, wxLoginCode)
     const r = await orderSvc.createBeanOrder(prisma, req.merchantId!, idParam(packageId, 'packageId'))
     ok(res, r)
   } catch (e) {
@@ -98,7 +139,8 @@ router.post('/recharge/order', async (req, res) => {
 
 router.post('/membership/order', async (req, res) => {
   try {
-    const { packageId } = orderInput.parse(req.body)
+    const { packageId, wxLoginCode } = orderInput.parse(req.body)
+    await bindOpenidBeforeOrder(req.merchantId!, wxLoginCode)
     const r = await orderSvc.createMemberOrder(prisma, req.merchantId!, idParam(packageId, 'packageId'))
     ok(res, r)
   } catch (e) {

@@ -136,7 +136,29 @@ export default function Recharge() {
     busyLock.current = true
     setBusy(true)
     try {
-      const r = kind === 'bean' ? await createBeanOrder(packageId) : await createMemberOrder(packageId)
+      // ★ 下单前先取一次 `wx.login()` 的 code。
+      //
+      // 为什么必须这么做：微信 JSAPI 支付要付款人的 `openid`，而**手机号验证码登录**的账号
+      // 在服务端没有 openid（短信登录路径根本不取）⇒ 不带它下单必被服务端以
+      // 3007「账号未绑定微信，无法支付」拒掉，钱根本付不出去。
+      // 服务端拿到这个 code 后会换出 openid 并**按需绑定到当前账号**（幂等：
+      // 微信一键登录的账号 openid 不变，不会写库）。
+      //
+      // 为什么不做成「只有缺 openid 时才取」：前端不知道服务端有没有存 openid，
+      // 为此再加一个接口/字段不值得；`wx.login()` 是本地能力、不弹授权框、通常几十毫秒。
+      //
+      // 取不到（极端异常）就不带，退回改动前的行为 —— **不能因为这一步失败把本来能成的支付挡住**：
+      // 一键登录的账号本来就有 openid，不带 code 照样能付款。
+      let wxLoginCode: string | undefined
+      try {
+        wxLoginCode = (await Taro.login()).code
+      } catch {
+        wxLoginCode = undefined
+      }
+      const r =
+        kind === 'bean'
+          ? await createBeanOrder(packageId, wxLoginCode)
+          : await createMemberOrder(packageId, wxLoginCode)
       if (r.dev) {
         setPendingOrderNo(r.orderNo)
         setConfirming(true)

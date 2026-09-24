@@ -113,6 +113,88 @@ export async function loginByPhone(prisma: PrismaClient, phone: string, code: st
   return buildLoginResult(prisma, merchant)
 }
 
+/**
+ * 该 openid 已经属于**另一个**商户。
+ *
+ * `merchant.wechat_openid` 上是唯一索引（同一微信先后用两个手机号登过就会撞），
+ * 硬写会抛 Prisma 的 P2002 —— 日志里只有一串索引名，排不出「这个微信已经绑过别的号」。
+ * 单独抛一个能自证的错误，调用方与日志都能直接说清原因。
+ *
+ * ⚠ 本错误**只出现在服务端**：orders 路由会吞掉绑定失败（见那里的说明），
+ *   所以 message 里的手机号不会回给客户端。真要回给用户时必须先脱敏。
+ */
+export class OpenidBoundToAnotherAccountError extends Error {
+  readonly otherPhone: string
+  constructor(otherPhone: string) {
+    super(`该微信已绑定到另一个账号（手机号 ${otherPhone}）`)
+    this.name = 'OpenidBoundToAnotherAccountError'
+    this.otherPhone = otherPhone
+  }
+}
+
+/**
+ * 把「已解析出的微信身份」绑定到指定商户。**纯 DB、不联网** ⇒ 可以离线做契约测试
+ * （`code2Session` 要真微信，所以把网络那半边单独拆出去，见下面那个函数）。
+ *
+ * ★ 为什么按 merchantId 而不是按手机号绑：调用方已经用 JWT 证明了「我是这个商户」，
+ *   按 id 写库不会因为手机号匹配错而把 openid 挂到别的账号上。
+ * ★ 幂等：openid 没变就**不写库** —— 每次支付前都会调一次，不该产生无意义的 UPDATE。
+ */
+export async function bindWechatIdentity(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  openid: string,
+  unionid?: string,
+): Promise<void> {
+  const cur = await prisma.merchant.findUnique({
+    where: { id: merchantId },
+    select: { wechatOpenid: true, wechatUnionid: true },
+  })
+  if (!cur) throw new Error(`merchant not found: ${merchantId}`)
+  if (cur.wechatOpenid === openid) return
+
+  // ★ 先查冲突再写：见 OpenidBoundToAnotherAccountError 的说明。
+  const other = await prisma.merchant.findUnique({
+    where: { wechatOpenid: openid },
+    select: { id: true, phone: true },
+  })
+  if (other && other.id !== merchantId) throw new OpenidBoundToAnotherAccountError(other.phone)
+
+  await prisma.merchant.update({
+    where: { id: merchantId },
+    data: { wechatOpenid: openid, wechatUnionid: unionid ?? cur.wechatUnionid },
+  })
+}
+
+/**
+ * `wx.login()` 的 code → openid → 绑定到当前商户。需要微信网络（`code2Session`）。
+ *
+ * ★★ 这是「手机号验证码登录的账号支付不了」这个缺陷的修法。
+ *
+ * 病根：短信登录路径 `loginByPhone()` **根本不取 openid**（它调 `upsertMerchantByPhone(prisma, phone)`，
+ *   第三个参数为空），只有 `loginByWechat()` 会写 `merchant.wechatOpenid`。
+ *   而微信 JSAPI 支付**必须**带付款人 `openid` ⇒ 这类账号一下单就抛 `NoOpenidError`（码 3007
+ *   「账号未绑定微信，无法支付」）。
+ *
+ * 修法**不是**「引导用户改去用一键登录」——那要求用户换登录方式，存量账号也得重登。
+ * 而是在**需要 openid 的那一刻（下单前）按需补绑**：
+ *   · 对「已登录、token 还没过期」的存量账号**立刻生效**，不必重新登录；
+ *   · 对「以后新注册的短信用户」一劳永逸；
+ *   · 一键登录的用户走这里时 openid 不变 ⇒ 幂等不写库，零行为变化。
+ *
+ * ⚠ 调用方必须**吞掉失败**（见 routes/orders.ts）：账号本来就有 openid 时（一键登录用户），
+ *   即使这次 code 换不出来也照样能支付 —— 不能让补绑失败把正常支付路径挡住。
+ */
+export async function bindWechatOpenidByLoginCode(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  wxLoginCode: string,
+): Promise<string> {
+  const s = await code2Session(wxLoginCode)
+  await bindWechatIdentity(prisma, merchantId, s.openid, s.unionid)
+  return s.openid
+}
+
 /** 刷新 token */
 export async function refresh(prisma: PrismaClient, refreshToken: string): Promise<LoginResult> {
   const payload = verifyToken<{ mid: string; typ: string }>(refreshToken)

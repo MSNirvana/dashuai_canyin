@@ -57,8 +57,16 @@ export function listBeanPackages() {
 export function listMemberPlans() {
   return http.get<MemberPlan[]>('/orders/membership/plans')
 }
-export function createBeanOrder(packageId: string) {
-  return http.post<CreateOrderResult>('/orders/recharge/order', { packageId })
+/**
+ * 下单。
+ *
+ * `wxLoginCode` = 支付前 `wx.login()` 拿到的 code，**可选**。
+ * ★ 为什么必须有它：微信 JSAPI 支付要付款人的 `openid`，而**手机号验证码登录**的账号
+ *   在服务端没有 openid（短信登录路径不取）⇒ 不带它就是 3007「账号未绑定微信，无法支付」。
+ *   传上它，服务端会换出 openid 并按需绑定到当前账号；一键登录的账号传了也是幂等无变化。
+ */
+export function createBeanOrder(packageId: string, wxLoginCode?: string) {
+  return http.post<CreateOrderResult>('/orders/recharge/order', { packageId, wxLoginCode })
 }
 export interface OrderStatus {
   orderNo: string
@@ -70,8 +78,8 @@ export interface OrderStatus {
   expireAt: string | null
 }
 
-export function createMemberOrder(packageId: string) {
-  return http.post<CreateOrderResult>('/orders/membership/order', { packageId })
+export function createMemberOrder(packageId: string, wxLoginCode?: string) {
+  return http.post<CreateOrderResult>('/orders/membership/order', { packageId, wxLoginCode })
 }
 
 export function getOrderStatus(orderNo: string) {

@@ -103,6 +103,10 @@ const GUARDED: Array<{ file: string; fields: string[] }> = [
   { file: '../src/routes/persona.ts', fields: ['bossTags', 'activity'] },
   // 昵称是用户可见文本，同样不许退回裸 z.string()；avatarKey 是对象键，**故意**不走工厂函数
   { file: '../src/routes/profile.ts', fields: ['nickname'] },
+  // `wxLoginCode` 不是"用户可见文本"，仍然登记在这里 —— 它必须用 optionalText（trim + 可缺省）
+  // 而不是 `z.string().min(1)`：后者遇到客户端发**空串**会判 400「参数错误」，
+  // 等于把「拿不到 code（只是不补绑 openid）」升级成「整笔支付失败」。两种写法差别就在这条。
+  { file: '../src/routes/orders.ts', fields: ['wxLoginCode'] },
 ]
 const HELPERS = ['requiredText(', 'optionalText(', 'nullableText(']
 
