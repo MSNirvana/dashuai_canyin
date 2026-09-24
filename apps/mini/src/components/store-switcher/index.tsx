@@ -35,7 +35,7 @@ export default function StoreSwitcher({ className = '', emptyText = '选择门�
     if (!list.length) {
       const r = await Taro.showModal({
         title: '还没有门店',
-        content: '先创建一家门店，菜品、创作、老板人设都会挂在门店下',
+        content: '先创建一家门店',
         confirmText: '去建店',
       })
       if (r.confirm) goStores()

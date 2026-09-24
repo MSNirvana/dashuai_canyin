@@ -227,7 +227,7 @@ export default function StoreEditPage() {
       Taro.navigateBack()
     } catch {
       if (!id && storeId) {
-        Taro.showToast({ title: '门店已创建，图片保存失败', icon: 'none' })
+        Taro.showToast({ title: '门店已创建，图片未保存', icon: 'none' })
         Taro.navigateBack()
       }
       else Taro.showToast({ title: '保存失败，请重试', icon: 'none' })

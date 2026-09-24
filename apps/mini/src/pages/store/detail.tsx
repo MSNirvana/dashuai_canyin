@@ -76,7 +76,7 @@ export default function StoreDetailPage() {
     }
     Taro.showModal({
       title: '删除门店',
-      content: `确认删除「${detail.name}」？该门店下的菜品也会一并隐藏。`,
+      content: '删除后该门店下的菜品也会一并隐藏',
       confirmColor: '#e1251b',
     }).then(async (r) => {
       if (!r.confirm) return

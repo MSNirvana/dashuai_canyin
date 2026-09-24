@@ -126,7 +126,7 @@ function guideSubscription() {
   const redirect = `/${route}${query ? `?${query}` : ''}`
   Taro.showModal({
     title: '需要订阅',
-    content: '订阅后才能使用生成能力，前往订阅与积分页面？',
+    content: '订阅后才能使用生成能力',
     confirmText: '去订阅',
     cancelText: '稍后再说',
   }).then((result) => {

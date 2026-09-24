@@ -831,7 +831,7 @@ export default function RenderCompose() {
     try {
       await Taro.authorize({ scope: 'scope.record' })
     } catch {
-      Taro.showToast({ title: '请允许使用麦克风后再录音', icon: 'none' })
+      Taro.showToast({ title: '请允许使用麦克风', icon: 'none' })
       return
     }
     await new Promise<void>((resolve) => {
@@ -921,7 +921,7 @@ export default function RenderCompose() {
       if (!account.isMember || Number(account.available) <= 0) {
         const result = await Taro.showModal({
           title: !account.isMember ? '需要订阅' : '积分不足',
-          content: '订阅后可使用生成能力，积分按实际时长和档位结算。', confirmText: '去订阅充值',
+          content: '订阅或充值后即可使用生成能力', confirmText: '去订阅充值',
         })
         if (result.confirm) await Taro.navigateTo({ url: '/pages/recharge/index' })
         return
@@ -929,7 +929,7 @@ export default function RenderCompose() {
       const cost = estimatePoints(detail.shots, grade, mode === 'RECOLOR')
       const confirmed = await Taro.showModal({
         title: '确认生成',
-        content: `参考预估 ${cost} 积分，可用 ${account.available} 积分。按实际时长及后台费率结算，失败后的积分以账户记录为准。`,
+        content: `参考预估 ${cost} 积分，可用 ${account.available} 积分，按实际结算。`,
         confirmText: '确认提交',
       })
       if (!confirmed.confirm) return
@@ -985,7 +985,7 @@ export default function RenderCompose() {
     const cost = estimatePoints(detail?.shots ?? [], grade, true)
     const { confirm } = await Taro.showModal({
       title: '调色还没出片',
-      content: `画面里的调色效果是低码率预览，不能存进相册。先按当前调色重新出片（参考 ${cost} 积分，按实际时长结算），出片完成后回到本页即可保存。`,
+      content: `低码率预览不能存进相册，请先按当前调色出片（约 ${cost} 积分）。`,
       confirmText: '去出片',
       cancelText: '知道了',
     })
@@ -1055,7 +1055,7 @@ export default function RenderCompose() {
       await Taro.saveImageToPhotosAlbum({ filePath: file.tempFilePath })
       void Taro.showToast({ title: '已保存到相册', icon: 'success' })
     } catch {
-      void Taro.showToast({ title: '保存失败：请允许「保存到相册」', icon: 'none', duration: 2500 })
+      void Taro.showToast({ title: '请允许「保存到相册」', icon: 'none', duration: 2500 })
     }
   }
 

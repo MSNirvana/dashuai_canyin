@@ -257,7 +257,7 @@ export default function CreationList() {
   const onDelete = async (id: string) => {
     const r = await Taro.showModal({
       title: '删除创作',
-      content: '删除后无法恢复，确定删除这条创作吗？',
+      content: '删除后无法恢复',
       confirmText: '删除',
       confirmColor: '#d54941',
       cancelText: '取消',

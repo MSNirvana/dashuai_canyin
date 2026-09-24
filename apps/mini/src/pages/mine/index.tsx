@@ -282,7 +282,7 @@ export default function Mine() {
     // 二次确认：退出不可逆（要重新走微信授权或短信验证码），误触代价明显
     Taro.showModal({
       title: '退出登录',
-      content: '退出后需要重新登录才能继续使用 AI 创作。',
+      content: '退出后需重新登录',
       confirmText: '退出',
       confirmColor: '#c21b12',
       success: (r) => {

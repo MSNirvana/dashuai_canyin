@@ -143,7 +143,7 @@ export default function CreationTraffic() {
         // 没有分镜就没法拍摄，停在本页让用户重试，别把他送进一个空的拍摄列表
         setErr('分镜没解析出来，点「重新生成」再试一次')
       } else if (copy.isFallbackTemplate || board.isFallbackTemplate) {
-        Taro.showToast({ title: 'AI 繁忙，这次用了兜底内容', icon: 'none', duration: 2500 })
+        Taro.showToast({ title: 'AI 繁忙，已用兜底内容', icon: 'none', duration: 2500 })
       }
     } catch (e) {
       const msg = (e as { message?: string })?.message ?? '生成失败，请重试'

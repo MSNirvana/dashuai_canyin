@@ -29,7 +29,7 @@ interface LoginGuideOptions {
 export function guideLogin(options: LoginGuideOptions): void {
   void Taro.showModal({
     title: '登录后可用',
-    content: `${options.reason}。现在进入「我的」完成微信一键登录？`,
+    content: options.reason,
     confirmText: options.confirmText ?? '去登录',
     cancelText: options.cancelText ?? '再逛逛',
     confirmColor: '#e1251b',

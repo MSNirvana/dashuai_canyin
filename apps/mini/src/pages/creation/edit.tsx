@@ -439,7 +439,7 @@ export default function CreationEdit() {
       //   —— 明明内容早就在库里（实测：同一条创作白扣了两笔分镜积分）。
       failing = ''
       if (usedFallback) {
-        Taro.showToast({ title: 'AI 繁忙，部分内容用了兜底', icon: 'none' })
+        Taro.showToast({ title: 'AI 繁忙，已用兜底内容', icon: 'none' })
       }
       // 编号必须落到 URL 里：拿不到就不跳，否则会跳到 `?id=undefined`，
       // 合成页拿这个字符串当编号去查，只会得到一句「参数不合法」。
@@ -535,7 +535,7 @@ export default function CreationEdit() {
    */
   const onCancelGenerate = async () => {
     autoExitRef.current = 'cancel'
-    Taro.showToast({ title: '已取消生成，已完成的文案会保留', icon: 'none' })
+    Taro.showToast({ title: '已取消生成', icon: 'none' })
     // 先把详情拉回来再收悬浮窗：否则 detail 仍是 null，页面会闪一下「加载中…」
     if (autoIdRef.current) await loadDetail(autoIdRef.current).catch(() => undefined)
     if (mountedRef.current) setAutoRunning(false)
@@ -544,7 +544,7 @@ export default function CreationEdit() {
   /** 关闭等待：生成继续在后台跑完并落库，本页离开，之后从「创作」再次进入 */
   const onBackgroundGenerate = () => {
     autoExitRef.current = 'background'
-    Taro.showToast({ title: '已转入后台生成，可从「创作」再次进入', icon: 'none' })
+    Taro.showToast({ title: '已转入后台生成', icon: 'none' })
     // 拿不到上一页（从分享/扫码直达）时兜到「创作」列表，不让用户卡在原地
     Taro.navigateBack({ fail: () => Taro.switchTab({ url: '/pages/creation/list' }) })
   }
@@ -572,7 +572,7 @@ export default function CreationEdit() {
    */
   const navToShots = (targetId: string | undefined) => {
     if (!isNumericId(targetId)) {
-      Taro.showToast({ title: '编号丢失，请回到「创作」重新进入', icon: 'none' })
+      Taro.showToast({ title: '编号丢失，请重新进入', icon: 'none' })
       return
     }
     Taro.navigateTo({ url: `/pages/creation/shots?id=${targetId}` })

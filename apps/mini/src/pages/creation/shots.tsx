@@ -212,7 +212,7 @@ export default function CreationShots() {
     if (!id || skipping[shot.id]) return
     const r = await Taro.showModal({
       title: '跳过这个分镜',
-      content: `分镜 ${shot.seq} 不会出现在成片里，也不会计费。之后想补拍，随时可以回来撤销。`,
+      content: '不会出现在成片里，也不会计费。',
       confirmText: '确定跳过',
       confirmColor: '#8e939a',
     })
@@ -291,7 +291,7 @@ export default function CreationShots() {
       return
     }
     if (!id) {
-      Taro.showToast({ title: '编号丢失，请回到「创作」重新进入', icon: 'none' })
+      Taro.showToast({ title: '编号丢失，请重新进入', icon: 'none' })
       return
     }
     Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
@@ -304,7 +304,7 @@ export default function CreationShots() {
    */
   const navToCompose = () => {
     if (!id) {
-      Taro.showToast({ title: '编号丢失，请回到「创作」重新进入', icon: 'none' })
+      Taro.showToast({ title: '编号丢失，请重新进入', icon: 'none' })
       return
     }
     Taro.navigateTo({ url: `/pages/render/compose?id=${id}` })

@@ -90,7 +90,7 @@ export default function Recharge() {
       }
       if (['CANCELLED', 'EXPIRED', 'REFUNDED'].includes(order.status)) {
         setConfirming(false)
-        Taro.showToast({ title: '订单未完成，请勿重复支付', icon: 'none' })
+        Taro.showToast({ title: '请勿重复支付', icon: 'none' })
         return
       }
       if (attempt < MAX_CONFIRM_ATTEMPTS) {
@@ -98,7 +98,7 @@ export default function Recharge() {
       } else {
         // 已经反复向微信查过单仍未支付成功：交给后台对账兜底，别让用户一直盯着「确认中」
         setConfirming(false)
-        Taro.showToast({ title: '暂未查到支付结果，到账后会自动开通', icon: 'none' })
+        Taro.showToast({ title: '支付确认中，到账后自动开通', icon: 'none' })
       }
     }).catch(() => {
       if (gen !== confirmGen.current) return
@@ -189,7 +189,7 @@ export default function Recharge() {
         setPendingOrderNo(r.orderNo)
         setConfirming(true)
         confirmOrder(r.orderNo)
-        Taro.showToast({ title: '支付完成，订单确认中', icon: 'none' })
+        Taro.showToast({ title: '支付确认中', icon: 'none' })
       }
     } catch {
       /* 2005/3006/3007 已 toast */

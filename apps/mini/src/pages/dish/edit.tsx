@@ -100,7 +100,7 @@ export default function DishEditPage() {
     if (next === 'SINGLE' && hasComboData) {
       const r = await Taro.showModal({
         title: '改成单菜？',
-        content: '套餐价、原价和已挑选的菜品会被清空，改回套餐时需要重新填写。',
+        content: '套餐价、原价和已选菜品会被清空',
         confirmText: '改成单菜',
         confirmColor: '#e1251b',
       })
