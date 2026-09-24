@@ -31,7 +31,7 @@ export default function DishListPage() {
   /**
    * 加载失败的原因。
    * ★ 与「这家店真的没有菜品」必须分开：旧实现把失败静默吞成空列表，
-   *   页面于是显示「添加第一道菜」—— 用户有菜也会以为没有，跑去重复添加。
+   *   页面于是落进「没有菜品」的空态文案 —— 用户有菜也会以为没有，跑去重复添加。
    */
   const [loadError, setLoadError] = useState('')
   /** 请求代次：切店 / 重复显示并发时，乱序回包只认最后一次（否则旧店的菜覆盖新店的列表） */
@@ -79,8 +79,8 @@ export default function DishListPage() {
       /**
        * ★ 原来这里只有 `finally`、没有 `catch`：两个后果一起发生 ——
        *   ① 请求失败变成**未处理的 Promise rejection**（调用点写的是 `void load()`）；
-       *   ② `list` 保持原样、`loading` 转 false，界面落进「把招牌菜变成创作素材 / 添加第一道菜」
-       *      那个**空态** —— 用户明明有菜，看到的却是「你还没有菜品」，
+       *   ② `list` 保持原样、`loading` 转 false，界面落进「菜品列表空空如也」那个**空态** ——
+       *      用户明明有菜，看到的却是「你还没有菜品」，
        *      于是去重复添加，或者以为数据丢了。
        *   失败必须与「真没有数据」长得不一样，并给一个原地重试的出口。
        */
@@ -175,24 +175,24 @@ export default function DishListPage() {
         <View className='dish-list__loading'><Text>加载中…</Text></View>
       )}
       {/* 失败态必须排在空态**前面**：加载失败时 list 也是空的，
-          若让空态先命中，用户看到的仍然是「添加第一道菜」 */}
+          若让空态先命中，用户看到的仍然是「菜品列表空空如也」 */}
       {currentStoreId && !loading && !!loadError && (
         <View className='dish-list__empty' onClick={() => void load()}>
           <Text className='dish-list__empty-title'>{loadError}</Text>
         </View>
       )}
+      {/* ★ 2026-09-24 按需求精简：空态只留一句提示。
+          原先的 kicker / title / desc 三段「怎么建第一道菜」教学与「添加第一道菜」按钮全部下线 ——
+          添加入口是页脚那个常驻的「+ 添加菜品」，空态里再放一个按钮等于给同一动作开两个入口。 */}
       {currentStoreId && !loading && !loadError && list.length === 0 && (
         <View className='dish-list__empty'>
-          <Text className='dish-list__empty-kicker'>从一道最拿手的开始</Text>
-          <Text className='dish-list__empty-title'>把招牌菜变成创作素材</Text>
-          <Text className='dish-list__empty-desc'>上传一张好看的菜品图，再写下顾客最容易被打动的卖点。</Text>
-          <View className='dish-list__empty-action' onClick={onAdd}>添加第一道菜</View>
+          <Text className='dish-list__empty-title'>菜品列表空空如也，尽快添加吧～</Text>
         </View>
       )}
       {/*
         ★ 「筛完之后什么都没有」必须与「这家店真的没有菜」分开说。
           两者共用同一套空态文案的话，用户在「套餐」筛选下会看到
-          「把招牌菜变成创作素材 / 添加第一道菜」—— 他明明有 8 道菜，
+          「菜品列表空空如也，尽快添加吧～」—— 他明明有 8 道菜，
           只会以为数据丢了，或者跑去再建一道已经有的菜。
       */}
       {currentStoreId && !loading && !loadError && list.length > 0 && visible.length === 0 && (
