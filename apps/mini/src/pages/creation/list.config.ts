@@ -1,3 +1,3 @@
 export default {
-  navigationBarTitleText: '我的创作',
+  navigationBarTitleText: '大帅餐饮助手',
 }

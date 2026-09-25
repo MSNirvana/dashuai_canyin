@@ -43,7 +43,7 @@ export default defineAppConfig({
   window: {
     backgroundTextStyle: 'dark',
     navigationBarBackgroundColor: '#ffffff',
-    navigationBarTitleText: '大帅餐饮',
+    navigationBarTitleText: '大帅餐饮助手',
     navigationBarTextStyle: 'black',
     backgroundColor: '#f5f6f8',
   },

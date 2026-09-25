@@ -153,7 +153,7 @@ export interface CreationItem {
   copyText: string | null
   status: string
   createdAt: string
-  /** 归档时间（ISO 字符串）。非 null 即在「归档」分类里；默认列表不含它 */
+  /** 归档时间（ISO 字符串）。非 null 即在「垃圾桶」分类里；默认列表不含它。字段名保持 archivedAt 不变 */
   archivedAt?: string | null
   /** 分镜总数 */
   shotsTotal: number
@@ -227,8 +227,10 @@ export interface Balance {
 
 /**
  * 创作列表。
- * 不传 archived 就是默认列表 —— 服务端会排除已归档的，「归档后不出现在全部/进行中/已就绪」
- * 由服务端保证。前端**不要**再做一次本地过滤：两边判断不一致时，会出现"刚归档的又冒出来"。
+ * 不传 archived 就是默认列表 —— 服务端会排除已归档的，「扔掉后不出现在全部/进行中/已完成」
+ * 由服务端保证。前端**不要**再做一次本地过滤：两边判断不一致时，会出现"刚扔掉的又冒出来"。
+ * ★ 对外文案 2026-09-25 起把「归档」叫「垃圾桶」，但**接口一律不动**：
+ *   `?archived=1`、`/archive`、`/unarchive`、字段 `archivedAt` 全部保持原名。
  */
 export function listCreations(storeId?: string, opts: { archived?: boolean } = {}) {
   const query: Record<string, string> = {}
@@ -237,12 +239,12 @@ export function listCreations(storeId?: string, opts: { archived?: boolean } = {
   return http.get<CreationItem[]>('/creations', Object.keys(query).length ? query : undefined)
 }
 
-/** 归档：从「全部 / 进行中 / 已就绪」移出，只在「归档」分类可见 */
+/** 扔进垃圾桶：从「全部 / 进行中 / 已完成」移出，只在「垃圾桶」分类可见（可逆） */
 export function archiveCreation(id: string) {
   return http.post<{ id: string; archived: boolean }>(`/creations/${id}/archive`)
 }
 
-/** 恢复：把归档的创作放回默认列表 */
+/** 恢复：把垃圾桶里的创作放回默认列表 */
 export function unarchiveCreation(id: string) {
   return http.post<{ id: string; archived: boolean }>(`/creations/${id}/unarchive`)
 }

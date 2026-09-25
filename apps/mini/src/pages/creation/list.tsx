@@ -18,11 +18,18 @@ import './list.scss'
 
 type Filter = 'ALL' | 'DOING' | 'READY' | 'ARCHIVED'
 
+/**
+ * ★★ 2026-09-25 按需求改的是**对外文案**，枚举值一律不动：
+ *   「已就绪」→「已完成」只换 label，`value` 仍是 `READY`；
+ *   「归档」→「垃圾桶」只换 label，`value` 仍是 `ARCHIVED`（服务端的 `?archived=1`、
+ *   接口字段 `archivedAt`、`archiveCreation()` 全部保持原样）。
+ *   ⚠ 别顺手把 `value` 也改掉 —— 它直接参与服务端的分类过滤，改了就是两端不匹配。
+ */
 const FILTERS: { value: Filter; label: string }[] = [
   { value: 'ALL', label: '全部' },
   { value: 'DOING', label: '进行中' },
-  { value: 'READY', label: '已就绪' },
-  { value: 'ARCHIVED', label: '归档' },
+  { value: 'READY', label: '已完成' },
+  { value: 'ARCHIVED', label: '垃圾桶' },
 ]
 
 /**
@@ -87,9 +94,9 @@ interface Progress {
   /** 紧跟百分数的短状态：一眼看出卡在哪一步 */
   label: string
   /**
-   * 「进行中 / 已就绪」分类的边界 = **文案与分镜都已生成**（= 已进入可传素材/合成阶段）。
+   * 「进行中 / 已完成」分类的边界 = **文案与分镜都已生成**（= 已进入可传素材/合成阶段）。
    * 刻意与改造前保持一致，不让它跟着 pct 的粒度一起变 ——
-   * 否则所有老项目会从「已就绪」集体掉进「进行中」，分类计数也跟着全变。
+   * 否则所有老项目会从「已完成」集体掉进「进行中」，分类计数也跟着全变。
    */
   renderReady: boolean
 }
@@ -143,9 +150,9 @@ export default function CreationList() {
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const stores = useMerchantStore((s) => s.stores)
   const loadStores = useMerchantStore((s) => s.loadStores)
-  /** 未归档列表：「全部 / 进行中 / 已就绪」都从它派生 */
+  /** 不在垃圾桶里的列表：「全部 / 进行中 / 已完成」都从它派生 */
   const [list, setList] = useState<CreationItem[]>([])
-  /** 已归档列表：「归档」分类专用。服务端按 archived=1 单独下发 */
+  /** 垃圾桶列表：「垃圾桶」分类专用。服务端按 archived=1 单独下发 */
   const [archived, setArchived] = useState<CreationItem[]>([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -189,7 +196,8 @@ export default function CreationList() {
   useDidShow(() => { void load() })
 
   useEffect(() => {
-    Taro.setNavigationBarTitle({ title: '我的创作' })
+    // ★ 与 `list.config.ts` 的 `navigationBarTitleText` 必须同值（两处都生效，这里会覆盖 config）。
+    Taro.setNavigationBarTitle({ title: '大帅餐饮助手' })
   }, [])
 
   // 门店切换后立即重载（首次挂载由 useDidShow 负责，避免重复请求）
@@ -212,8 +220,8 @@ export default function CreationList() {
     return { ALL: items.length, DOING: doing, READY: items.length - doing, ARCHIVED: archivedItems.length }
   }, [items, archivedItems])
 
-  // 「归档后不出现在全部/进行中/已就绪」由**服务端**保证（默认列表已排除已归档的），
-  // 这里不再叠加本地过滤 —— 两处判断一旦不一致就会出现「刚归档的又冒出来」。
+  // 「扔进垃圾桶后不出现在全部/进行中/已完成」由**服务端**保证（默认列表已排除已归档的），
+  // 这里不再叠加本地过滤 —— 两处判断一旦不一致就会出现「刚扔掉的又冒出来」。
   const visible = useMemo(() => {
     if (filter === 'ARCHIVED') return archivedItems
     if (filter === 'DOING') return items.filter((i) => !i.renderReady)
@@ -256,8 +264,8 @@ export default function CreationList() {
     }
   }
 
-  /** 归档不需要二次确认：它是可逆的（归档分类里能恢复） */
-  const onArchive = (id: string) => void runAction(() => archiveCreation(id), '已归档')
+  /** 扔进垃圾桶不需要二次确认：它是可逆的（垃圾桶分类里能恢复） */
+  const onArchive = (id: string) => void runAction(() => archiveCreation(id), '已放入垃圾桶')
 
   const onUnarchive = (id: string) => void runAction(() => unarchiveCreation(id), '已恢复')
 
@@ -323,22 +331,25 @@ export default function CreationList() {
               : filter === 'DOING'
                 ? '没有进行中的创作'
                 : filter === 'READY'
-                  ? '还没有已就绪的创作'
-                  : '归档里还没有创作'}
+                  ? '还没有已完成的创作'
+                  : '垃圾桶里还没有创作'}
           </Text>
           {filter === 'ALL' && <View className='ds-empty__action' hoverClass='ds-hover' onClick={onCreate}>新建创作</View>}
         </View>
       )}
 
       {visible.map(({ c, pct, label }) => {
-        // 归档分类下左滑是「恢复 / 删除」，其余分类是「归档 / 删除」
+        // 垃圾桶分类下左滑是「恢复 / 删除」，其余分类是「🗑 / 删除」
+        // ★ 2026-09-25 按需求：非垃圾桶分类的「归档」两字换成**垃圾桶图标**。
+        //   动作本身没变（仍是可逆的 archive，服务端 /archive），只是不再用文字 ——
+        //   它和下面红色的「删除」是两件事：这个进垃圾桶可以恢复，那个是真删。
         const actions: SwipeAction[] = filter === 'ARCHIVED'
           ? [
               { key: 'unarchive', label: '恢复', onClick: () => onUnarchive(c.id) },
               { key: 'delete', label: '删除', danger: true, onClick: () => void onDelete(c.id) },
             ]
           : [
-              { key: 'archive', label: '归档', onClick: () => onArchive(c.id) },
+              { key: 'archive', icon: 'delete', onClick: () => onArchive(c.id) },
               { key: 'delete', label: '删除', danger: true, onClick: () => void onDelete(c.id) },
             ]
         return (

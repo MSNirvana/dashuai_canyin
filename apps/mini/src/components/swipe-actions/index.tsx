@@ -1,4 +1,6 @@
-// 列表项左滑操作：内容区左滑后右侧露出操作按钮（归档/删除、恢复/删除）。
+// 列表项左滑操作：内容区左滑后右侧露出操作按钮（垃圾桶/删除、恢复/删除）。
+// ★ 「垃圾桶」= 业务上的 archive（可逆），与红色的「删除」（不可逆）是两件事；
+//   它按 2026-09-25 的需求**只显示图标、不显示文字**，见 `SwipeAction.icon`。
 //
 // 为什么不引 tdesign 的 swipe-cell：
 //   它需要往产物 npm/ 里补一个组件目录（连带依赖闭包），而本项目对 npm 依赖是**按需逐目录
@@ -9,7 +11,7 @@
 //
 // 用法：
 //   <SwipeActions
-//     actions={[{ key: 'archive', label: '归档', onClick: () => onArchive(c.id) }]}
+//     actions={[{ key: 'archive', icon: 'delete', onClick: () => onArchive(c.id) }]}
 //     open={openId === c.id}
 //     onOpenChange={(o) => setOpenId(o ? c.id : '')}
 //     onClick={() => onOpen(c.id)}
@@ -24,7 +26,24 @@ import './index.scss'
 
 export interface SwipeAction {
   key: string
-  label: string
+  /** 按钮文字。与 `icon` 二选一；给了 `icon` 就不显示文字 */
+  label?: string
+  /**
+   * TDesign 图标名（如 `'delete'` = 垃圾桶）。★ 图标比两个字更省横向空间 ——
+   * 按钮宽度是固定的 `ACTION_W`（下方常量），「垃圾桶」这种三字词会挤到换行。
+   *
+   * ⚠ 这里用 `<t-icon>`（全局组件，声明在 `app.config.ts` 的 `usingComponents`）。
+   *   ★ 本项目此前只在**页面**里用过 t-icon ⇒ 改完必须回读编译产物确认。判据（已实测）：
+   *     ① `dist/weapp/pages/creation/list.js` 里出现
+   *        `jsx("t-icon",{className:"swipe__action-icon",name:…,size:"40rpx"})`；
+   *     ② `dist/weapp/pages/creation/list.wxss` 里有 `.swipe__action-icon` 规则。
+   *   ★★ 别去找 `dist/weapp/components/swipe-actions/index.wxml` —— **没有这个文件**：
+   *      Taro 4 把本目录的组件**内联进使用它的页面**（产物顶层压根没有 `components/`），
+   *      所以它的模板与样式分别并进那个页面的 `.js` 和 `.wxss`，页面 `.wxml` 只是
+   *      `<import src="../../base.wxml"/>` + `<template is="taro_tmpl">` 的空壳。
+   *      weapp 的失败模式是「构建成功但图标不显示」，不会报错，只能靠上面两条判据。
+   */
+  icon?: string
   /** 危险操作（删除）标红 */
   danger?: boolean
   onClick: () => void
@@ -53,7 +72,7 @@ export default function SwipeActions({ actions, open, onOpenChange, onClick, cla
   // 必须在 touchStart 重置：滑动后不一定再收到 click，留 true 会把下一次正常点击吞掉。
   const swiped = useRef(false)
 
-  // 动作是**上下堆叠的一列**（归档在上、删除在下），露出的宽度就是单个按钮宽度，
+  // 动作是**上下堆叠的一列**（垃圾桶在上、删除在下），露出的宽度就是单个按钮宽度，
   // 不是 count × 宽度 —— 后者是横向并排时的算法。
   const width = ACTION_W
 
@@ -93,7 +112,9 @@ export default function SwipeActions({ actions, open, onOpenChange, onClick, cla
               a.onClick()
             }}
           >
-            <Text className='swipe__action-text'>{a.label}</Text>
+            {a.icon
+              ? <t-icon className='swipe__action-icon' name={a.icon} size='40rpx' />
+              : <Text className='swipe__action-text'>{a.label}</Text>}
           </View>
         ))}
       </View>

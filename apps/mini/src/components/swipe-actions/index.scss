@@ -5,7 +5,7 @@
   position: relative;
   overflow: hidden;
 
-  // 下层：操作按钮，贴在右侧**上下堆叠**（归档在上、删除在下），整列撑满卡片高度
+  // 下层：操作按钮，贴在右侧**上下堆叠**（垃圾桶在上、删除在下），整列撑满卡片高度
   &__actions {
     position: absolute;
     top: 0;
@@ -23,6 +23,11 @@
     align-items: center;
     justify-content: center;
     background: var(--td-bg-color-secondarycontainer, #f3f3f3);
+    // ★ 颜色兜在**父级**：`<t-icon>` 只有在**传了 `color` 属性**时才写 inline style，
+    //   不传就吃外层 `color`（图标内层节点靠 CSS 继承拿色）。本项目里
+    //   `pages/mine` 的 `.mine__item-icon--red{color:…}` + `<t-icon>` 不传 color
+    //   就是同一套写法、线上早已跑通。
+    color: var(--td-text-color-primary, #222);
 
     &--hover {
       opacity: 0.86;
@@ -30,6 +35,7 @@
 
     &--danger {
       background: var(--td-error-color, #d54941);
+      color: #fff;
 
       .swipe__action-text {
         color: #fff;
@@ -40,6 +46,17 @@
   &__action-text {
     font-size: 26rpx;
     color: var(--td-text-color-primary, #222);
+  }
+
+  // 图标版动作（垃圾桶）。★ 颜色靠 CSS `color` 继承 —— `<t-icon>` 只有在传了 `color` 属性时
+  // 才写 inline style，没传就吃外层 color。所以这里别再给 t-icon 传 color 属性，否则覆盖不掉。
+  &__action-icon {
+    color: var(--td-text-color-primary, #222);
+  }
+
+  // 危险动作若改用图标，必须跟着文字一起转白（否则红底上的深色图标几乎看不见）
+  &__action--danger &__action-icon {
+    color: #fff;
   }
 
   // 上层：内容体，靠 transform 平移露出下层按钮
