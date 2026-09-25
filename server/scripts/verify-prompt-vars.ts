@@ -27,6 +27,12 @@
  * 用法：npm run ai-prompts:verify
  * 用一个一次性手机号造临时商户/门店/菜品/创作，跑完硬删；不动任何真实商户数据。
  * 未配置数据库时只跑 ①②③（纯离线），仍然有意义。
+ *
+ * ★ 2026-09-25：菜品从「创建时必选」改成**可选项**（可以不选、默认不选）⇒ `{{dishName}}`
+ *   为空变成**预期状态**。新增 ⑦ 段与 4.2b：三处会因此**静默**出问题的地方逐个钉住 ——
+ *   ① 提示词那一行空着（模型以为资料漏了，自己编一道菜）
+ *   ② 兜底模板里的 `{{storeName}}的{{dishName}}，…` 渲染成「大帅餐饮的，…」这种病句
+ *   ③ 创建标题落 undefined ⇒ 前端 4 处 `title || '未命名创作'` 全显示「未命名创作」
  */
 import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
@@ -466,6 +472,57 @@ if (dbReady) {
     const rendered2 = renderTemplate(COPY_PRODUCT_PROMPT, v2 as unknown as Record<string, string>)
     check(!rendered2.includes('老板人设标签：') && !rendered2.includes('最近想重点告诉顾客：'), '渲染后不出现空的人设标签')
     check(!rendered2.includes('{{'), '未填内容的门店渲染后同样无残留占位符')
+
+    // ── 4.2b ★★ 「无菜品」的真实链路（2026-09-25 菜品改成可选项）──
+    //   这一段是本次改动在服务端的验收核心，要同时证明五件事：
+    //     ① 不传 dishId 就能创建（`mode='DISH'` 不再要求菜品）
+    //     ② 菜品四项变量确实是空串 —— 关键在「没有拿菜单里的菜顶替」
+    //     ③ 渲染后的文案与分镜提示词里**不出现这家店的任何菜名**（=「按无菜品的方式生成」）
+    //     ④ 提示词里带着「这次没选具体菜品」的空值说明（模型看得见，而不是以为资料漏了）
+    //     ⑤ 标题退回门店名，不是 undefined（否则前端 4 处兜底全显示「未命名创作」）
+    //   ③ 是这里唯一有份量的断言：前四条「代码没崩」，只有③能证明 AI 不会编出一道菜。
+    const noDishStore = await prisma.store.create({
+      data: {
+        merchantId,
+        name: '契约测试门店-没选菜',
+        category: '川菜',
+        city: '济南',
+        intro: '开了十二年的老川菜馆，招牌是每天现炒的辣子鸡。',
+      },
+    })
+    // ★ 这家店**有菜**，而创作不引用它 —— 这样才能验「没选菜时不会拿菜单里的菜顶替」
+    //   （没有这道菜的话，③ 就是一条永远为真的假断言）。
+    await prisma.dish.create({ data: { storeId: noDishStore.id, name: '不该被写进文案的菜-麻婆豆腐' } })
+    const noDish = await createCreation(prisma, merchantId, {
+      storeId: noDishStore.id,
+      track: 'PRODUCT',
+      complexity: 'COMPLEX',
+    })
+    check(noDish.dishId === null, '★ 不选菜品也能创建（dishId 落 null，不是报错）', `dishId=${noDish.dishId}`)
+    check(
+      noDish.title === '契约测试门店-没选菜',
+      '★ 没选菜品时标题退回门店名（留 undefined 会让前端显示「未命名创作」）',
+      `title=${JSON.stringify(noDish.title)}`,
+    )
+    const vNoDish = await buildVariables(prisma, noDish.id, { track: 'PRODUCT' })
+    check(
+      vNoDish.dishName === '' && vNoDish.dishIntro === '' && vNoDish.sellingPoints === '' && vNoDish.comboInfo === '',
+      '★ 没选菜品时菜品四项变量全为空串（不是那家店菜单里的第一道菜）',
+      `dishName=${JSON.stringify(vNoDish.dishName)} comboInfo=${JSON.stringify(vNoDish.comboInfo)}`,
+    )
+    check(vNoDish.storeName === '契约测试门店-没选菜', '没选菜品不影响门店信息仍然喂进提示词')
+    const rdCopy = renderTemplate(COPY_PRODUCT_PROMPT, vNoDish as unknown as Record<string, string>)
+    const rdStory = renderTemplate(STORY_PROMPT, vNoDish as unknown as Record<string, string>)
+    check(!rdCopy.includes('{{') && !rdStory.includes('{{'), '没选菜品的提示词渲染后无残留占位符')
+    check(
+      !rdCopy.includes('不该被写进文案的菜') && !rdStory.includes('不该被写进文案的菜'),
+      '★★「无菜品方式」：文案与分镜提示词里都不出现这家店的任何菜名（没选菜 ≠ 默认第一道菜）',
+    )
+    check(rdCopy.includes('这次没选具体菜品'), '渲染后的文案提示词带着「这次没选具体菜品」的空值说明')
+    check(rdStory.includes('这次没选具体菜品'), '渲染后的分镜提示词同样带着空值说明')
+    // 反向：这条创作**没选菜**，但门店本身有介绍 —— 门店资料该留着（别把「没选菜」当成
+    // 「整条不涉及门店」处理，那样生出来的稿子会连自家店名都不提）。
+    check(rdCopy.includes('开了十二年的老川菜馆'), '没选菜品 ≠ 不涉及门店：门店介绍仍然进提示词')
 
     // 4.3 后台保存场景的闸门：非法模板必须被拒，且库里内容不变
     const scene = await prisma.aiScene.findUnique({ where: { code: 'copy_traffic' } })
@@ -1071,6 +1128,80 @@ check(
   ti('2026-09-20T09:00:00+08:00', '河北省廊坊市固安县').includes('主力方向') &&
     !ti('2026-09-20T09:00:00+08:00', '河北省廊坊市固安县').includes('{{'),
   '带位置时「主力方向」标注同样在，且无残留占位符',
+)
+
+// ───────── ⑦ 菜品可选项：不选菜品时提示词与兜底都必须成立（2026-09-25） ─────────
+section('⑦ 菜品可选项：空菜名的提示词契约与兜底渲染')
+
+/**
+ * ★ 背景：菜品从「创建时必选」改成「可选、默认不选」。于是 `{{dishName}}` 为空
+ *   从「数据缺失」变成了**预期状态**，而这条链路上有三处会因此静默出问题：
+ *     ① 提示词那一行变成「【菜品】」后面空着 —— 模型会以为资料漏了，自己编一道菜补上
+ *     ② 兜底文案（AI 挂了时渲染）里 `{{storeName}}的{{dishName}}，…` 渲染成
+ *        「大帅餐饮的，具体信息以门店当前介绍为准。」—— 断在「的」后面的病句
+ *     ③ 创建标题落 undefined ⇒ 前端 4 处 `title || '未命名创作'` 全显示「未命名创作」
+ *   三处都**不报错、不提示降级**：②③ 用户直接看得到，① 要等成片出来才发现。
+ *   所以这一段的断言都是「不许静默失效」型的，不是风格偏好。
+ */
+
+// 7.1 提示词必须写明空值语义 —— 六份共用上下文块的模板（含分镜）逐份断言。
+//     用**同一句子串**断言是刻意的：两个块（CONTEXT_BLOCK 与分镜手写的那份）必须说同一件事，
+//     各改各的措辞就会让「同一份资料、两个模型看到不同的空值含义」。
+for (const t of dishTemplates) {
+  check(t.tpl.includes('这次没选具体菜品'), `${t.label} 写明了空菜品语义（这次没选具体菜品）`)
+}
+// 7.2 分镜还要额外区分「门店有、菜品空」与「两样都空」这两种情况：前者的画面里
+//     **不该出现某道菜**，后者才是「纯话题视频」（不许出现店名/招牌）。
+//     旧的注释只写了后者，而菜品可选之后前者成了最常见的一种。
+check(
+  storyTpl.includes('菜品为空') && storyTpl.includes('不要出现某道菜的特写或菜名'),
+  '★ 分镜区分了「门店有、菜品为空」：不给某道菜特写或菜名',
+)
+check(
+  storyTpl.includes('都为空') && storyTpl.includes('纯话题视频'),
+  '分镜仍保留「两样都空 = 纯话题视频」那一档（别为新情况把它删掉）',
+)
+
+// 7.3 兜底模板**不许**引用 {{dishName}}。
+//     模板没有条件语法（网关只做字符串替换），一份兜底要同时服务「选了菜」与「没选菜」；
+//     引用它的那份在没选菜时必然渲染成病句。这条同时是「以后别再加回来」的闸门。
+for (const t of TEMPLATES) {
+  check(!t.fallback.includes('{{dishName}}'), `${t.label} 兜底不引用 {{dishName}}`)
+}
+
+/**
+ * 「悬空搭配」判据：某个词后面紧跟「的」再接标点（或整句以「的」收尾）。
+ * 这正是 `{{storeName}}的{{dishName}}，…` 空菜名时的形态。
+ * ⚠ 它是个**启发式**判据，不是语法分析 —— 但这一档的兜底都是短句，正常写法不会触发。
+ */
+const DANGLING = /的[，。、；：！？·|｜]|的$/
+/** 兜底渲染用的门店名：与下面 ④ 段的临时门店刻意不同名，避免误判成「读到了真门店」 */
+const FB_STORE = '契约测试门店-兜底渲染'
+
+// 7.4 真渲染一遍：不只查模板字符串，而是查**渲染结果**。
+//     只查模板「有没有 {{dishName}}」是不够的 —— 那样断言窄于标题，未来有人在别处
+//     拼一个同形的病句（比如 `{{storeName}}的，`）也照样全绿。这里断言的是用户会念到的那句话。
+for (const t of TEMPLATES) {
+  const out = renderTemplate(t.fallback, { storeName: FB_STORE, dishName: '', copyText: '测试口播文案' })
+  check(!out.includes('{{'), `${t.label} 兜底渲染后无残留占位符`, out)
+  check(!DANGLING.test(out), `${t.label} 兜底在「没选菜」时渲染不出悬空的「的，」`, out)
+}
+// 7.5 正向：菜品稿的三条兜底仍然带着门店名（不是把变量删光换来的「不悬空」）。
+//     没有这条的话，把模板改成一句完全静态的话也能全绿 —— 而那丢掉了门店身份。
+for (const code of ['copy_generate', 'copy_product', 'copy_recommend']) {
+  const t = TEMPLATES.find((x) => x.code === code)!
+  const out = renderTemplate(t.fallback, { storeName: FB_STORE, dishName: '' })
+  check(out.includes(FB_STORE), `${t.label} 兜底在没选菜时仍带着门店名`, out)
+  check(out.length >= 12, `${t.label} 兜底仍是一句能念的话（非空验证）`, `${out.length} 字`)
+}
+
+// 7.6 ★ 反向复现：把**旧**模板喂进判据必须被判为病句。
+//     没有这条，「DANGLING 根本挡不住这次要修的东西」也会全绿（断言窄于标题）。
+check(
+  DANGLING.test(
+    renderTemplate('{{storeName}}的{{dishName}}，具体信息以门店当前介绍为准。', { storeName: FB_STORE, dishName: '' }),
+  ),
+  '★ 复现：旧兜底在没选菜时确实渲染成病句（反证上面那条判据有效）',
 )
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)

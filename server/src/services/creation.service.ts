@@ -545,9 +545,16 @@ export async function createCreation(
         // 话题稿永远没有菜品（上面已经拒绝传入），显式写 undefined 而不是 input.dishId
         dishId: mode === 'TOPIC' ? undefined : input.dishId,
         // 菜品创作默认使用稳定、可读的标题；保留旧调用方传入标题的兼容性。
+        /**
+         * ★ 2026-09-25：菜品改成可选项 ⇒「菜品稿 + 一道菜都没选」成了一条**正常**路径。
+         *   这时标题退回**门店名**，不能留 undefined：前端有 4 处 `title || '未命名创作'`
+         *   兜底（首页近期作品 / 创作列表 / 创作编辑页 / 合成页），落 undefined 就会全部显示
+         *   「未命名创作」—— 看起来像「这条创作坏了」，而用户只是没选菜。
+         *   （话题稿那一侧不走这里，它由文案模型顺便取名，见 generateCopy 的 parseTopicCopy。）
+         */
         title: input.title?.trim() || (
-          mode === 'DISH' && dishName
-            ? `${store.name}+${dishName}`
+          mode === 'DISH'
+            ? (dishName ? `${store.name}+${dishName}` : store.name)
             : undefined
         ),
         // ★ 话题稿**强制**用流量款：它是唯一一份不喂门店/菜品的文案模板。
