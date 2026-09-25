@@ -37,7 +37,8 @@ const execFileP = promisify(execFile)
  * ★ 基准 52px 是历史值；2026-09-25 用户要求「字幕大小放大两倍」⇒ 2。
  * ★★ 字号**不是孤立常量**。下面这些全部由它推导，改字号时不要各路径各改一处
  *   （本项目在「字幕底边距」上已经吃过一次「散成三处」的亏）：
- *   · `SUBTITLE_MAX_WIDTH`      —— 像素预算固定 ⇒ 字大了每行就只能少放几个字，否则冲出画布；
+ *   · `SUBTITLE_MAX_WIDTH` / `SUBTITLE_BLOCK_WIDTH_PX` / `SUBTITLE_SIDE_MARGIN`
+ *     —— 每行字数 ↔ 像素宽 ↔ 左右边距三者连动，改一个必须一起看；
  *   · `SUBTITLE_OUTLINE` / `SUBTITLE_BORDER_WIDTH` —— 描边等比放大，否则字越大黑边越细，
  *     而描边存在的唯一理由就是可读性；
  *   · `SUBTITLE_CAPTION_SVG_*`  —— Sharp 回退路径的**画布尺寸**，不跟着走会把字形裁掉。
@@ -80,16 +81,26 @@ const SUBTITLE_CAPTION_SVG_BASELINE = 56 * SUBTITLE_FONT_SCALE
  */
 export const SUBTITLE_BOTTOM_MARGIN = 116
 /**
- * 字幕块的**像素宽上限**（相对 1080 的画布宽）。
+ * 每行最多几个 CJK 字（ASCII 按 0.55 个算，见 `subtitleDisplayWidth`）。
  *
- * ★ 832px ≈ 画布宽的 77%，两侧各留 ~124px 白 —— 这个「呼吸感」是刻意保留的，不是随手取的数。
- * ★ 为什么不再写成「最多 14 个字」：字数与字号是同一件事的两种说法，**写死字数会在改字号时
- *   悄悄失效** —— 14 字 × 104px = 1456px，直接冲出 1080 画布（被裁掉、或被 libass 强制折成
- *   两行，而本模块专门在避免折行）。所以这里固定**像素**、由字号推字数。
+ * ★ 17 → 14 是 2026-09-24 对齐自家断言的结果；09-25 字号翻倍后按像素预算曾推得 8，
+ *   用户看过成片后要求**放宽到 10**（8 个字会把「欢迎」这类词劈开）。
+ * ★★ 这里**直接写字数**、由它推像素宽，而不是反过来：用户是按「几个字」提要求的，
+ *   而字数↔字号是同一件事的两面，分开写就会在改字号时悄悄失效。
+ * ⚠⚠ 10 × 104px = **1040px**，已经吃掉 1080 画布宽的 96%，两侧只剩 20px。
+ *   这是「字大 + 每行 10 字」两条要求叠加后的必然结果，**不要再往上加**：
+ *   守护脚本守着「字数 × 字号 ＋ 描边 ≤ 1080」这条线，超了就会被裁边
+ *   （`WrapStyle: 2` 不自动折行，所以不会有第二行来救，只会切掉两头的字）。
  */
-const SUBTITLE_BLOCK_WIDTH_PX = 832
-/** 单条字幕的安全显示宽度（CJK 按 1、ASCII 按 0.55 计）；字号 104px 时推得 8。 */
-export const SUBTITLE_MAX_WIDTH = Math.floor(SUBTITLE_BLOCK_WIDTH_PX / SUBTITLE_FONT_SIZE)
+export const SUBTITLE_MAX_WIDTH = 10
+/** 字幕块像素宽 —— 由字数与字号推出（10 × 104 = 1040）。 */
+export const SUBTITLE_BLOCK_WIDTH_PX = SUBTITLE_MAX_WIDTH * SUBTITLE_FONT_SIZE
+/**
+ * ASS 的 `MarginL` / `MarginR`：画布宽减去字幕块宽再对半分（1040 时是 20）。
+ * ★ 与 `SUBTITLE_BLOCK_WIDTH_PX` 连动，别写死 —— 用 `Alignment=2` 居中时左右对称，
+ *   居中点恒在画布中线，所以它只影响「换行判定」，不影响字幕实际落点。
+ */
+export const SUBTITLE_SIDE_MARGIN = Math.round((1080 - SUBTITLE_BLOCK_WIDTH_PX) / 2)
 
 export interface SynthesisShot {
   /** 口播文案（Shot.line） */
@@ -231,8 +242,11 @@ function hardSplitSubtitle(text: string, maxWidth: number): string[] {
  * 去掉字幕块**末尾**的标点。
  *
  * ★★ 2026-09-25 用户要求「每句字幕去除所有末尾的标点符号」。
- * ★ 放在 `splitSubtitleText` 的**出口**统一做，而不是在几个 push 点各做一次：句末切分
- *   （。！？；）与从句切分（，、：）都会把标点留在块尾，四个 push 点各写一遍迟早漏一个；
+ * ★★ 同一天用户又补了一条，两条必须一起读才完整：
+ *   「一行里面要有标点符号，只是末尾没有，中间还是要有」
+ *   ⇒ **行内标点必须原样保留**，只有每一行**最末**那个标点被吃掉。
+ *   所以本函数只作用在「整行/整句」上，**绝不能拿去洗行内的字** —— 那样标点会全没。
+ * ★ 放在 `splitSubtitleText` 的**出口**统一做，而不是在几个 push 点各做一次：
  *   出口做一次，之后新增任何切分分支都自动被覆盖。
  * ★★ 只吃「标点 + 紧随其后的收尾符号」，**不动单独出现的引号/括号** —— 这条边界是刻意的：
  *   · 「他说“没问题”。」→ 只掉「。」，保留成对的收尾引号（那是对的）；
@@ -245,31 +259,26 @@ export function stripTrailingPunctuation(text: string): string {
   return text.replace(TRAILING_PUNCTUATION, '').trim()
 }
 
-/** 先按完整句拆，再按逗号等语义停顿拆；最后才按安全宽度硬切。每块末尾不留标点。 */
+/** 先按**完整句**拆（。！？；），再按安全宽度**均衡**切；只在每行**行末**不留标点。 */
 export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): string[] {
   const clean = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
   if (!clean) return []
   const sentences = clean.match(/[^。！？!?；;]+[。！？!?；;]?/g) ?? [clean]
   const result: string[] = []
-  for (const sentence of sentences) {
-    // ★ 切分子句**必须带着标点**（标点就是边界依据），但切完立刻去掉块尾标点再量宽度：
-    //   「第一句话完整显示。」去标点后是 8 个字、能整块显示；若带着「。」去量就会多出 1 个字
-    //   而被硬切一刀，白白把一句完整的话劈成两半。
-    const clauses = (sentence.trim().match(/[^，、,:：]+[，、,:：]?/g) ?? [sentence.trim()])
-      .map(stripTrailingPunctuation)
-      .filter(Boolean)
-    let current = ''
-    for (const clause of clauses) {
-      if (current && subtitleDisplayWidth(`${current}${clause}`) > maxWidth) {
-        result.push(...hardSplitSubtitle(current, maxWidth))
-        current = clause
-      } else {
-        current += clause
-      }
-    }
-    if (current) result.push(...hardSplitSubtitle(current, maxWidth))
+  for (const rawSentence of sentences) {
+    // ★★ 这里**只按整句拆，不再按逗号/顿号断句** —— 这是用户那条「中间还是要有（标点）」
+    //   的直接结果。旧写法把子句当原子单位逐个塞进一行，逗号于是永远落在行尾，
+    //   再被「行末不留标点」吃掉 ⇒ 成片里一个标点都看不到。改成连续填字后逗号自然留在行内。
+    // ★ 先去掉**句末**标点再量宽度：「第一句话完整显示。」是 8 个字而不是 9，
+    //   带着句号量会把它误判成超宽、白切一刀。
+    const sentence = stripTrailingPunctuation(rawSentence)
+    if (!sentence) continue
+    // ★★ 「一句话要完整」：不超宽时 hardSplitSubtitle 原样返回整句，不做任何切分。
+    // ★★ 「不要剩一个字留在下一句开头」：交给 hardSplitSubtitle 的**先算块数再均分** ——
+    //   它当初正是为「贪心填满会把余数全甩给最后一行、产生 2 字孤儿 cue（『吃呢』）」而写的；
+    //   构造上每行长度≈总量÷行数，不会出现只剩 1 个字的孤儿行。
+    result.push(...hardSplitSubtitle(sentence, maxWidth))
   }
-  // ★ 出口再兜一次：硬切是按字数切的，理论上不会重新引入标点，但兜底无害。
   return result.map(stripTrailingPunctuation).filter(Boolean)
 }
 
@@ -363,7 +372,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Default,${fontFamily},${SUBTITLE_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,${SUBTITLE_OUTLINE},0,2,72,72,${SUBTITLE_BOTTOM_MARGIN},1
+Style: Default,${fontFamily},${SUBTITLE_FONT_SIZE},&H00FFFFFF,&H000000FF,&H00101010,&H00000000,-1,0,0,0,100,100,0,0,1,${SUBTITLE_OUTLINE},0,2,${SUBTITLE_SIDE_MARGIN},${SUBTITLE_SIDE_MARGIN},${SUBTITLE_BOTTOM_MARGIN},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`

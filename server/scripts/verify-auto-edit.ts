@@ -23,6 +23,7 @@ import {
   SUBTITLE_FONT_SIZE,
   SUBTITLE_MAX_WIDTH,
   SUBTITLE_OUTLINE,
+  SUBTITLE_SIDE_MARGIN,
 } from '../src/render/synthesis.js'
 import type { RenderClip } from '../src/services/render.service.js'
 
@@ -79,28 +80,45 @@ const aligned = fitShotDurationsToTimeline([
 assert.deepEqual(aligned.map((item) => item.durationMs), [2_650, 3_650, 5_000])
 assert.equal(aligned.reduce((sum, item) => sum + item.durationMs, 0), 11_300)
 
-// ── 字幕：末端标点、安全宽度、以及字号与各烧录路径的耦合 ────────────────────────
+// ── 字幕：行内标点 / 行末无标点 / 每行字数 / 整句优先 / 不留孤字 ──────────────────
+const stripAllPunctuation = (value: string) => value.replace(/[。．，、；：！？…⋯·,;:!?.～~]/gu, '')
 const SUBTITLE_SAMPLE = '第一句话完整显示。第二句话也要单独出现，而且这一句很长不能超出屏幕。'
 const subtitleChunks = splitSubtitleText(SUBTITLE_SAMPLE)
-assert.ok(subtitleChunks.length >= 5, '这段文案必须被切成多条字幕')
+assert.ok(subtitleChunks.length >= 3, '这段文案必须被切成多条字幕')
 assert.ok(
   subtitleChunks.every((text) => stripTrailingPunctuation(text) === text),
-  '★ 每句字幕末尾不得留标点（用户 2026-09-25 明确要求）',
+  '★ 每行**末尾**不得留标点（用户 2026-09-25 要求①）',
+)
+// ★★ 用户同一天又补了「中间还是要有」⇒ 必须**正面**断言行内标点被保留。
+//    只断言「末尾没有标点」会漏掉「实现把标点全删了」这种错法 —— 它同样能满足末尾无标点。
+assert.ok(
+  splitSubtitleText('大家好，今天带大家看看我们店里最受欢迎的招牌菜').some((text) => /[，、：]/.test(text)),
+  '★★ 行内标点必须保留（用户 2026-09-25 要求②）—— 改成「只按整句拆」就是为这条',
 )
 assert.equal(
-  subtitleChunks.join(''),
-  SUBTITLE_SAMPLE.replace(/[。．，、；：！？…⋯·,;:!?.～~]/gu, ''),
-  '★★ 切分只允许去掉标点，不得丢字、不得重复 —— 比「等于某个写死的数组」耐用得多',
+  stripAllPunctuation(subtitleChunks.join('')),
+  stripAllPunctuation(SUBTITLE_SAMPLE),
+  '★★ 切分不得丢字、不得重复（标点不计）—— 比「等于某个写死的数组」耐用得多',
 )
 assert.ok(
   subtitleChunks.every((text) => subtitleDisplayWidth(text) <= SUBTITLE_MAX_WIDTH),
   '每条字幕必须在竖屏安全宽度内',
 )
-// ★★ 字号与「每行放几个字」是同一件事的两面：字号翻倍而这里不跟着收紧，字幕就会冲出
-//    1080 画布（被裁掉、或被 libass 折成两行）。这条断言专防「只改字号、忘了改宽度」。
+// ★★ 「不要剩一个字留在下一句的开头」：均衡切分（先算块数再均分）从构造上不产生孤儿行。
 assert.ok(
-  SUBTITLE_MAX_WIDTH * SUBTITLE_FONT_SIZE <= 1080 - 72 * 2,
-  '字幕块像素宽不得超过画布可用宽（ASS 左右各留 72px）',
+  subtitleChunks.every((text) => subtitleDisplayWidth(text) >= 2),
+  '★ 不得出现只剩 1 个字的孤儿行',
+)
+// ★★ 「一句话要完整」：整句不超宽时必须原样一行、不得被切。
+assert.deepEqual(splitSubtitleText('这句话本身就很完整'), ['这句话本身就很完整'], '★ 整句不超宽时不得被切分')
+// ★★ 「每行 10 个字」：刚好 10 字放得下、11 字要折两行。用**行为**钉住，不写死常量。
+assert.deepEqual(splitSubtitleText('一二三四五六七八九十'), ['一二三四五六七八九十'], '10 个字必须能放下一行')
+assert.equal(splitSubtitleText('一二三四五六七八九十一').length, 2, '11 个字必须折成两行')
+// ★★ 字数 × 字号 ＋ 描边 必须留在画布内。`WrapStyle: 2` 不自动折行 ⇒ 超了不会被折到第二行，
+//    只会把两头的字裁掉（静默、且只在成片里看得见）。
+assert.ok(
+  SUBTITLE_MAX_WIDTH * SUBTITLE_FONT_SIZE + 2 * SUBTITLE_OUTLINE <= 1080,
+  '★★ 字幕块像素宽 ＋ 描边不得超过 1080 画布（超了不会折行，只会被裁边）',
 )
 const subtitleCues = normalizeSubtitleSegments([
   { startMs: 0, endMs: 5_000, text: '第一句话完整显示。第二句话也要单独出现。' },
@@ -116,8 +134,8 @@ assert.match(ass, /WrapStyle: 2/)
 assert.match(ass, new RegExp(`Style: Default,Noto Sans CJK SC,${SUBTITLE_FONT_SIZE},`))
 assert.match(
   ass,
-  new RegExp(`,1,${SUBTITLE_OUTLINE},0,2,72,72,${SUBTITLE_BOTTOM_MARGIN},1`, 'm'),
-  'ASS 样式里的描边与底边距必须由常量拼出，不能写死',
+  new RegExp(`,1,${SUBTITLE_OUTLINE},0,2,${SUBTITLE_SIDE_MARGIN},${SUBTITLE_SIDE_MARGIN},${SUBTITLE_BOTTOM_MARGIN},1`, 'm'),
+  'ASS 样式里的描边、左右边距与底边距必须由常量拼出，不能写死',
 )
 assert.ok(ass.split('\n').filter((line) => line.startsWith('Dialogue:')).every((line) => !line.includes('\\N')), 'ASS 字幕必须保持单行')
 // ★★ 放大字号最容易漏、而且**不会报错**的一处：Sharp 回退路径的 SVG 画布尺寸。
