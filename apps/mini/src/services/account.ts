@@ -111,6 +111,14 @@ export function listShotLibrary(category?: string) {
   return http.get<ShotLibraryItem[]>('/shot-library', category ? { category } : undefined)
 }
 
+/**
+ * 镜头库示范视频的播放地址。
+ * ★ 2026-09-25：拍摄页那块「怎么拍」卡片（连同「看示范 ›」）已按用户要求删除
+ *   ⇒ **本函数在客户端已无调用点**。服务端接口 `/shot-library/:id/demo-play-url`
+ *   仍然存在，所以这里**保留**，以便哪天要恢复「看示范」不必重写。
+ * ⚠ 同理，`ShotLibraryItem.demoVideoKey` 现在客户端也没人读了（类型字段保留）。
+ *   删这个函数/字段前先确认没有新调用点，别只按「没人用」就清。
+ */
 export function getShotDemoPlayUrl(id: string) {
   return http.get<{ url: string | null; dev: boolean }>(`/shot-library/${id}/demo-play-url`)
 }

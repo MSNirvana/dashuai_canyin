@@ -1,4 +1,8 @@
-// 拍摄上传素材：整体进度 + 每镜「怎么拍」指导 + 已上传缩略图 / 未上传虚线框
+// 拍摄上传素材：整体进度 + 每镜台词/画面要求 + 已上传缩略图 / 未上传虚线框
+// ★ 2026-09-25 按用户要求**删掉了卡片里那块「怎么拍 · <手法名>」面板**（含它的「看示范 ›」链接）
+//   ⇒ 原 `&__tips` / `&__tipshead` / `&__tipslabel` / `&__demo` / `&__tipstext` 五条规则一并删除。
+//   ⚠ 别混淆：**拍摄取景画面里的提词器仍在显示同一句 tip**
+//     （`shots.tsx` 的 `tipText` → `components/shot-camera`），那是另一处、这次没动。
 .cshots {
   min-height: 100vh;
   background: var(--td-bg-color-page);
@@ -113,41 +117,6 @@
     font-size: 24rpx;
     color: var(--td-text-color-placeholder);
     line-height: 1.7;
-  }
-
-  /* ── 怎么拍 ── */
-  &__tips {
-    margin-top: 22rpx;
-    padding: 22rpx 24rpx;
-    border-radius: var(--td-radius-default);
-    background: var(--td-brand-color-soft);
-    border: 1rpx solid var(--td-brand-color-light);
-  }
-  &__tipshead {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16rpx;
-  }
-  &__tipslabel {
-    font-size: 24rpx;
-    font-weight: 700;
-    color: var(--td-brand-color);
-    flex: 1;
-    min-width: 0;
-  }
-  &__demo {
-    font-size: 24rpx;
-    font-weight: 600;
-    color: var(--td-brand-color);
-    flex: none;
-  }
-  &__tipstext {
-    display: block;
-    margin-top: 10rpx;
-    font-size: 24rpx;
-    color: var(--td-text-color-secondary);
-    line-height: 1.75;
   }
 
   &__uploading {

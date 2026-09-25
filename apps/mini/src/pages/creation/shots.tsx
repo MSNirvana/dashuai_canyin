@@ -9,7 +9,7 @@ import {
   type CreationDetail,
   type ShotItem,
 } from '../../services/creation'
-import { listShotLibrary, getShotDemoPlayUrl, type ShotLibraryItem } from '../../services/account'
+import { listShotLibrary, type ShotLibraryItem } from '../../services/account'
 import { uploadVideoFile, UploadAbortedError } from '../../services/upload'
 import { readRouteId } from '../../utils/route-id'
 import ProgressLine from '../../components/progress-line'
@@ -346,20 +346,6 @@ export default function CreationShots() {
     }
   }
 
-  const playDemo = async (item: ShotLibraryItem) => {
-    if (!item.demoVideoKey) return
-    try {
-      const r = await getShotDemoPlayUrl(item.id)
-      if (!r.url) {
-        Taro.showToast({ title: '演示环境暂无示范视频', icon: 'none' })
-        return
-      }
-      await Taro.previewMedia({ sources: [{ url: r.url, type: 'video' }] })
-    } catch {
-      Taro.showToast({ title: '播放失败', icon: 'none' })
-    }
-  }
-
   /**
    * 上一步：回「创作」页重新生成文案与分镜。
    * 按视图栈里的创作页实例回退（同一创作可能在栈中间：创作 → 拍摄 → 成片 → 拍摄），
@@ -466,7 +452,6 @@ export default function CreationShots() {
       </View>
 
       {detail.shots.map((s) => {
-        const tips = tipsFor(s)
         const thumbSrc = localThumb[s.id] || s.coverUrl || ''
         const isUploading = !!uploading[s.id]
         const state = cardState(s)
@@ -491,18 +476,6 @@ export default function CreationShots() {
 
             {!!s.line && <Text className='cshots__line'>{s.line}</Text>}
             {!!s.visualReq && <Text className='cshots__visual'>画面：{s.visualReq}</Text>}
-
-            {tips.length > 0 && (
-              <View className='cshots__tips'>
-                <View className='cshots__tipshead'>
-                  <Text className='cshots__tipslabel'>怎么拍 · {tips[0].name}</Text>
-                  {tips[0].demoVideoKey && (
-                    <Text className='cshots__demo' onClick={() => playDemo(tips[0])}>看示范 ›</Text>
-                  )}
-                </View>
-                <Text className='cshots__tipstext'>{tips[0].tips}</Text>
-              </View>
-            )}
 
             {isUploading && (
               <View className='cshots__uploading'>
