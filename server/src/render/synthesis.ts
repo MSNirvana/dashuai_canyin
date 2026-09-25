@@ -205,15 +205,16 @@ export function subtitleDisplayWidth(text: string): number {
 }
 
 /**
- * 无标点长句的兜底切分（标点可用时轮不到它）。
+ * 单个**词**本身就超过一行时的兜底：纯按宽度硬切。
  *
- * ★ 为什么改成「先算块数再均分」，而不是原来的「填满一行再换行」：
- *   贪心填满会把余数全甩到**最后一块**。实测生产成片（task 32）尾部因此出现
- *   只有 **2 个字、停留 0.37s** 的孤儿 cue「吃呢」—— 一闪而过，观感就是「分段不好」。
- *   现在先算需要几块 `n = ceil(总宽 / 单块上限)`，再按 `总宽 / n` 均匀切：
- *   构造上每块仍 ≤ maxWidth，但不会再留孤儿块。
+ * ★ 正常情况下轮不到它 —— 分词后每个原子都是「一个词 + 它后面的标点」，
+ *   只有长串数字/字母/整段无标点的口语才会触发。
+ * ★ 这里保留「先算块数 `n = ceil(总宽 / 上限)` 再按 `总宽 / n` 均分」的写法：
+ *   对一个**不可再分**的长串来说，均分是唯一能避免「最后一块只剩一两个字」的办法
+ *   （贪心会把余数全甩到最后一块；实测生产成片 task 32 尾部出现过 **2 个字、停留 0.37s**
+ *   的孤儿 cue「吃呢」）。
  */
-function hardSplitSubtitle(text: string, maxWidth: number): string[] {
+function hardSplitByWidth(text: string, maxWidth: number): string[] {
   if (maxWidth <= 0) return text.trim() ? [text.trim()] : []
   const chars = [...text]
   const widths = chars.map(subtitleDisplayWidth)
@@ -239,6 +240,131 @@ function hardSplitSubtitle(text: string, maxWidth: number): string[] {
 }
 
 /**
+ * 中文分词器：Node 内置 ICU 词典（**无需新依赖**）。
+ *
+ * ★ 只用来**决定在哪里断行**，绝不改动文本本身 —— 切完拼回去必须逐字相等。
+ * ★★ 为什么必须有它（2026-09-25 拿用户成片实测）：
+ *   按「第 N 个字」硬切时，切点完全不认识词，实测把
+ *   `千万` 劈成 `千 | 万`、`香油` 劈成 `香 | 油`、`七上八下` 劈成 `七上 | 八下`，
+ *   用户的评价是「**一句话的最后一个字跑到下一行字幕的第一个字了**，这种情况肯定不行」。
+ * ★ 类型用局部 interface 而不是 `lib.dom` 的 `Intl.Segmenter`：
+ *   tsconfig 只开 `lib: ["ES2022"]`，直接引用会编译不过。
+ */
+interface SubtitleWordSegmenter {
+  segment(input: string): Iterable<{ segment: string }>
+}
+
+const SUBTITLE_WORD_SEGMENTER: SubtitleWordSegmenter | null =
+  typeof (Intl as unknown as { Segmenter?: unknown }).Segmenter === 'function'
+    ? new (
+        Intl as unknown as {
+          Segmenter: new (locale: string, options: { granularity: string }) => SubtitleWordSegmenter
+        }
+      ).Segmenter('zh', { granularity: 'word' })
+    : null
+
+/** 纯标点/空白（自成一词的标点）。 */
+const SUBTITLE_PUNCT_ONLY =
+  /^[\s。．，、；：！？…⋯·,;:!?.～~“”‘’"'（）()「」『』【】《》〈〉—\-]+$/
+
+/**
+ * 把整句切成「**词 + 紧随其后的标点**」原子。
+ *
+ * ★★ 标点一律挂到**前一个词**的尾巴上 ⇒ 它永远不会成为某一行的第一个字符。
+ *    这是「行首冒出逗号」（实测成片出现过 `，我敢说不是动货`）的**根治**做法 ——
+ *    在切点处就杜绝，而不是事后把行首标点再挪回去。
+ * ★ 分词器不可用时退化成逐字，行为等价于「只按宽度切」，不会比旧实现更差。
+ */
+export function toSubtitleAtoms(text: string): string[] {
+  const atoms: string[] = []
+  const push = (value: string): void => {
+    if (!value) return
+    if (SUBTITLE_PUNCT_ONLY.test(value) && atoms.length) {
+      atoms[atoms.length - 1] += value
+      return
+    }
+    atoms.push(value)
+  }
+  if (!SUBTITLE_WORD_SEGMENTER) {
+    for (const char of text) push(char)
+    return atoms
+  }
+  for (const part of SUBTITLE_WORD_SEGMENTER.segment(text)) push(part.segment)
+  return atoms
+}
+
+/** 末行短于这个宽度就要从上一行搬词下来；上一行搬空到这个宽度以下就停手。 */
+export const SUBTITLE_MIN_TAIL_WIDTH = 4
+export const SUBTITLE_MIN_PREV_WIDTH = 5
+
+/**
+ * 末尾残行收口。
+ *
+ * ★★ 贪心填满的固有毛病：**末行可能只剩两三个字**，一闪而过就是「残句」，
+ *    历史上那条 0.37s 的「吃呢」就是这么来的。这里从上一行搬**整个词**下来，
+ *    搬到末行不再过短为止；搬不动就算了（整段本来就短）。
+ * ★ 搬的是**词**不是字 ⇒ 不会把词劈开；搬完还要保证两行都不超上限。
+ */
+function balanceSubtitleTail(lines: string[][], maxWidth: number): void {
+  if (lines.length < 2) return
+  for (let guard = 0; guard < 16; guard += 1) {
+    const last = lines[lines.length - 1]
+    const previous = lines[lines.length - 2]
+    if (!last || !previous) return
+    const lastWidth = subtitleDisplayWidth(last.join(''))
+    if (lastWidth >= SUBTITLE_MIN_TAIL_WIDTH) return
+    if (previous.length < 2) return
+    const moved = previous[previous.length - 1]
+    if (moved === undefined) return
+    if (lastWidth + subtitleDisplayWidth(moved) > maxWidth) return
+    if (subtitleDisplayWidth(previous.slice(0, -1).join('')) < SUBTITLE_MIN_PREV_WIDTH) return
+    previous.pop()
+    last.unshift(moved)
+  }
+}
+
+/**
+ * 把整句**装箱**成行：贪心填满到 `maxWidth`，且**只在词边界换行**。
+ *
+ * ★★ 这里替代了旧的「先算块数 `n = ceil(总宽 / 上限)`、再按 `总宽 / n` 均分」：
+ *    那套是按**算术**把整段平均分，于是 24 字必然切成 `8+8+8`、22 字切成 `8+8+7`、
+ *    19 字切成 `10+9`……用户看到的就是「**还是 8 个字不是 10 个字**」。
+ *    而它的切点也不认识词和标点，所以 `千万` 被劈开、逗号被甩到行首。
+ * ★ 现在的边界：① 行宽 ≤ `maxWidth`；② 只在词边界断；③ 标点永远不在行首；
+ *    ④ 行末标点由出口的 `stripTrailingPunctuation` 吃掉（用户要求「末尾没有」）；
+ *    ⑤ 末行不留残句（见 `balanceSubtitleTail`）。
+ */
+function packSubtitleLines(text: string, maxWidth: number): string[] {
+  const atoms = toSubtitleAtoms(text)
+  const lines: string[][] = []
+  let current: string[] = []
+  let width = 0
+  for (const atom of atoms) {
+    const atomWidth = subtitleDisplayWidth(atom)
+    if (current.length && width + atomWidth > maxWidth) {
+      lines.push(current)
+      current = []
+      width = 0
+    }
+    if (!current.length && atomWidth > maxWidth) {
+      // 单个「词」就超一行（长串数字/字母/无标点长句）：按宽度硬切，
+      // 末块留给后面继续拼，避免它自己又变成一个残行。
+      const pieces = hardSplitByWidth(atom, maxWidth)
+      for (let index = 0; index < pieces.length - 1; index += 1) lines.push([pieces[index] ?? ''])
+      const tail = pieces[pieces.length - 1] ?? ''
+      current = tail ? [tail] : []
+      width = subtitleDisplayWidth(tail)
+      continue
+    }
+    current.push(atom)
+    width += atomWidth
+  }
+  if (current.length) lines.push(current)
+  balanceSubtitleTail(lines, maxWidth)
+  return lines.map((line) => line.join('')).filter(Boolean)
+}
+
+/**
  * 去掉字幕块**末尾**的标点。
  *
  * ★★ 2026-09-25 用户要求「每句字幕去除所有末尾的标点符号」。
@@ -259,7 +385,10 @@ export function stripTrailingPunctuation(text: string): string {
   return text.replace(TRAILING_PUNCTUATION, '').trim()
 }
 
-/** 先按**完整句**拆（。！？；），再按安全宽度**均衡**切；只在每行**行末**不留标点。 */
+/**
+ * 先把整段按**完整句**拆（`。！？；`），再把每句**按词装箱**成行；
+ * 只在每行**行末**不留标点，行内标点原样保留。
+ */
 export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): string[] {
   const clean = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
   if (!clean) return []
@@ -273,11 +402,14 @@ export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): 
     //   带着句号量会把它误判成超宽、白切一刀。
     const sentence = stripTrailingPunctuation(rawSentence)
     if (!sentence) continue
-    // ★★ 「一句话要完整」：不超宽时 hardSplitSubtitle 原样返回整句，不做任何切分。
-    // ★★ 「不要剩一个字留在下一句开头」：交给 hardSplitSubtitle 的**先算块数再均分** ——
-    //   它当初正是为「贪心填满会把余数全甩给最后一行、产生 2 字孤儿 cue（『吃呢』）」而写的；
-    //   构造上每行长度≈总量÷行数，不会出现只剩 1 个字的孤儿行。
-    result.push(...hardSplitSubtitle(sentence, maxWidth))
+    // ★★ 「一句话要完整」：不超宽时 `packSubtitleLines` 原样返回整句，不做任何切分。
+    // ★★ 「不要剩一个字留在下一句开头」＝两层保障：
+    //   ① 切点只落在**词边界**（分词器给），不会把 `千万` 劈成 `千|万`；
+    //   ② 标点挂在词尾 ⇒ 绝不会成为行首；末行过短还会从上一行搬词下来（`balanceSubtitleTail`）。
+    // ★★ 2026-09-25 实测修正：旧的「先算块数再均分」**正是「还是 8 个字」的原因** ——
+    //   合并后的单元常见 17~25 字，均分出来的行必然落在 7~9 字；且切点按算术落，
+    //   与词、标点完全无关。已换成词边界贪心装箱。
+    result.push(...packSubtitleLines(sentence, maxWidth))
   }
   return result.map(stripTrailingPunctuation).filter(Boolean)
 }

@@ -22,6 +22,7 @@ import {
   SUBTITLE_CAPTION_SVG_HEIGHT,
   SUBTITLE_FONT_SIZE,
   SUBTITLE_MAX_WIDTH,
+  SUBTITLE_MIN_TAIL_WIDTH,
   SUBTITLE_OUTLINE,
   SUBTITLE_SIDE_MARGIN,
 } from '../src/render/synthesis.js'
@@ -104,7 +105,7 @@ assert.ok(
   subtitleChunks.every((text) => subtitleDisplayWidth(text) <= SUBTITLE_MAX_WIDTH),
   '每条字幕必须在竖屏安全宽度内',
 )
-// ★★ 「不要剩一个字留在下一句的开头」：均衡切分（先算块数再均分）从构造上不产生孤儿行。
+// ★★ 「不要剩一个字留在下一句的开头」＝ 切点必须落在**词边界**上（见下面的真机回归块）。
 assert.ok(
   subtitleChunks.every((text) => subtitleDisplayWidth(text) >= 2),
   '★ 不得出现只剩 1 个字的孤儿行',
@@ -114,6 +115,70 @@ assert.deepEqual(splitSubtitleText('这句话本身就很完整'), ['这句话�
 // ★★ 「每行 10 个字」：刚好 10 字放得下、11 字要折两行。用**行为**钉住，不写死常量。
 assert.deepEqual(splitSubtitleText('一二三四五六七八九十'), ['一二三四五六七八九十'], '10 个字必须能放下一行')
 assert.equal(splitSubtitleText('一二三四五六七八九十一').length, 2, '11 个字必须折成两行')
+
+// ── ★★ 2026-09-25 第二轮：真机回归 ────────────────────────────────────────────────
+// 下面这段 ASR 原文**就是用户成片里出问题的那一版**：在服务器上用项目自己的
+// `transcribeAudio` 对成片音轨实跑得到，逐条与成片字幕一致。
+// 旧实现（先算块数 n=ceil(总宽/10) 再按 总宽/n 均分）在这段文本上的产出是：
+//   `廊坊想吃火锅的千 / 万别划走这盘牛肚 / ，我敢说不是动货`   ← 千万被劈开、逗号跑到行首
+//   `沾上老板这个秘制香 / 油啊，又脆又爆汁`                    ← 香油被劈开
+//   `那个部分红油七上 / 八下只涮15秒`                          ← 七上八下被劈开
+// 用户原话：「一句话的最后一个字跑到下一行字幕的第一个字了，类似这样的情况肯定是不行的。」
+const REAL_ASR_SEGMENTS = [
+  { startMs: 1_300, endMs: 6_050, text: '廊坊想吃火锅的千万别划走这盘牛肚，' },
+  { startMs: 6_050, endMs: 7_700, text: '我敢说不是动货。' },
+  { startMs: 8_000, endMs: 9_350, text: '6小时到店，' },
+  { startMs: 9_500, endMs: 10_650, text: '0°锁鲜，' },
+  { startMs: 12_050, endMs: 13_150, text: '只取牛胃，' },
+  { startMs: 13_150, endMs: 18_150, text: '最后的那个部分红油七上八下只涮15秒。' },
+  { startMs: 18_750, endMs: 19_350, text: '哎呀，' },
+  { startMs: 19_350, endMs: 20_225, text: '卷边了，' },
+  { startMs: 20_225, endMs: 21_650, text: '卷边就捞出来，' },
+  { startMs: 23_250, endMs: 25_350, text: '沾上老板这个秘制香油啊，' },
+  { startMs: 25_350, endMs: 26_500, text: '又脆又爆汁，' },
+  { startMs: 27_450, endMs: 28_175, text: '哎呀，' },
+  { startMs: 28_175, endMs: 29_150, text: '太香了，' },
+  { startMs: 29_300, endMs: 31_550, text: '想听这个脆的有多脆的，' },
+  { startMs: 31_550, endMs: 32_700, text: '评论区扣一。' },
+]
+const realLines = normalizeSubtitleSegments(REAL_ASR_SEGMENTS).map((cue) => cue.text)
+assert.ok(realLines.length >= 8, '真机回归样本必须确实被切成多条字幕')
+
+// ★★ 行首绝不能是标点 —— 旧实现正是在这里产出过「，我敢说不是动货」。
+assert.ok(
+  realLines.every((line) => !/^[，、。！？；：,.;:!?]/.test(line)),
+  '★★ 行首绝不能是标点（旧实现产出过「，我敢说不是动货」）',
+)
+
+// ★★ 「断行不得落在词中间」。**不能**用 `join('')` 去查子串来验这条 —— 劈开再拼回去
+//    照样相等，那种写法对这个问题是**假绿**。必须检查**每一对相邻行的接缝**：
+//    接缝两侧的字如果正好是一个词，就说明这个词被劈开了。
+const seamPairs = realLines.slice(1).map((line, index) => {
+  const previous = [...(realLines[index] ?? '')]
+  return `${previous[previous.length - 1] ?? ''}${[...line][0] ?? ''}`
+})
+for (const word of ['千万', '香油', '七上', '八下', '火锅', '划走', '部分', '评论', '牛肚']) {
+  assert.ok(
+    !seamPairs.includes(word),
+    `★★ 断行不得把词劈开：${word}（用户原话「最后一个字跑到下一行字幕的第一个字了」）`,
+  )
+}
+
+assert.ok(
+  realLines.every((line) => subtitleDisplayWidth(line) <= SUBTITLE_MAX_WIDTH),
+  '★ 每行都必须在竖屏安全宽度内',
+)
+// ★★ 「不要剩残句」：末行也要够长（旧实现里末行常常只有 2~3 个字，一闪而过）。
+assert.ok(
+  realLines.every((line) => subtitleDisplayWidth(line) >= SUBTITLE_MIN_TAIL_WIDTH),
+  '★★ 不得留残句：每行宽度不得低于 SUBTITLE_MIN_TAIL_WIDTH',
+)
+// ★★ 「还是 8 个字不是 10 个字」：必须真的出现「填满 10 字」的行。
+//    旧实现按 总宽/n 均分 ⇒ 常见单元（17~25 字）算出来每行 7~9 字，一行都填不满。
+assert.ok(
+  realLines.filter((line) => subtitleDisplayWidth(line) >= SUBTITLE_MAX_WIDTH).length >= 3,
+  '★★ 必须出现多行「填满 10 字」—— 旧实现按 总宽/n 均分，一行都填不满',
+)
 // ★★ 字数 × 字号 ＋ 描边 必须留在画布内。`WrapStyle: 2` 不自动折行 ⇒ 超了不会被折到第二行，
 //    只会把两头的字裁掉（静默、且只在成片里看得见）。
 assert.ok(
