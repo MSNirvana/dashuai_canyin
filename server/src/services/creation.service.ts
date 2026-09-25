@@ -927,7 +927,8 @@ export async function generateCopy(
   //   把一条质量款老稿重新生成成产品型 —— 而且不报错。
   const current = await prisma.creation.findUnique({
     where: { id: creationId },
-    select: { track: true, mode: true },
+    // ★ title 也要读：话题稿回写标题前要判「现在有没有名字」（用户手改过的不能被覆盖）
+    select: { track: true, mode: true, title: true },
   })
   /**
    * ★ 话题稿的款式**不可协商**：它只有一份不喂门店/菜品的模板（copy_traffic）。
@@ -967,11 +968,34 @@ export async function generateCopy(
     variables: vars,
     bizId: String(creationId),
   })
-  if (!r.isFallbackTemplate && r.text) {
-    await prisma.creation.update({ where: { id: creationId }, data: { copyText: r.text } })
+  /**
+   * ★ 话题稿的返回是 `{"title":"…","copy":"…"}`，但**所有调用方要的都是正文**：
+   *   前端拿 `text` 直接填进文案编辑框，分镜提示词又把它当 `{{copyText}}` 喂进去。
+   *   所以在最前面解析一次，落库与返回统一用解析后的正文
+   *   （解析失败时 `picked` 为 null，`copyText` 就是原文本，行为与改造前一致）。
+   */
+  const picked = mode === 'TOPIC' && r.text ? parseTopicCopy(r.text) : null
+  // ★ 收窄成 string：`r.text` 在类型上是 `string | undefined`，而落库字段不接受 undefined
+  const copyText: string = picked ? picked.copy : (r.text ?? '')
+  /**
+   * ★「有结构、没正文」时**不写库**（见 `parseTopicCopy` 的最后一个分支）：
+   *   写一条空文案等于把用户原来那份稿子清掉，比什么都不做更糟。
+   *   正常返回永远是 `copy` 有内容，这里只兜住损坏输出。
+   */
+  const brokenTopic = picked !== null && !copyText
+  if (!r.isFallbackTemplate && r.text && !brokenTopic) {
+    const data: { copyText: string; title?: string | null } = { copyText }
+    /**
+     * ★ 话题稿没有门店/菜品可拼名字（见 `createCreation` 的 title 兜底），所以让这次文案调用
+     *   顺便取一个 ≤8 字标题（模板见 `COPY_TRAFFIC_PROMPT` 的【输出格式】）。
+     * ★ 只在当前没有标题时才写 —— 用户手动改过的名字不能被一次「重新生成」抹掉。
+     */
+    if (picked && !current?.title?.trim()) data.title = picked.title || null
+    await prisma.creation.update({ where: { id: creationId }, data })
   }
   return {
-    text: r.text,
+    // 损坏输出时回原文本：让问题在编辑框里**可见**，而不是静默给一个空文案
+    text: copyText || r.text,
     beanCharged: r.beanCharged,
     balance: r.balance,
     duplicated: r.duplicated,
@@ -1049,6 +1073,90 @@ function extractJson(text: string): string {
   const objE = text.lastIndexOf('}')
   if (objS >= 0 && objE > objS) return text.slice(objS, objE + 1)
   return text
+}
+
+/**
+ * 话题稿短标题的字数上限。
+ * 提示词里写的是「最多 8 个字」，但那只是**请求**不是保证 —— 模型偶尔会写长，
+ * 所以这里再截一刀。（这个 8 与 `COPY_TRAFFIC_PROMPT` 的【输出格式】必须同值。）
+ */
+const TOPIC_TITLE_MAX = 8
+
+/** 去掉空白与模型自作主张加的包裹引号，再截到上限 */
+function clipTopicTitle(raw: string): string {
+  return raw
+    .replace(/\s+/g, '')
+    .replace(/^["'「『]+|["'」』]+$/g, '')
+    .slice(0, TOPIC_TITLE_MAX)
+}
+
+/**
+ * 没有可用的模型标题时，用正文开头的短句拼一个标题 —— 生硬也好过一个「未命名创作」。
+ *
+ * ★ 只取「第一句」是不够的：话题稿常以很短的句子开头（真实输出是「中秋了，咱福建的，你老家那口吃的…」），
+ *   只取第一句会得到「中秋了」这种 3 字标题。所以按句读切分后**贪心往里拼**，
+ *   拼到「再加一句就超上限」为止（与字幕切分的思路一致，见 `packSubtitleLines`）。
+ * ★ 分隔符必须含中文逗号：口播稿几乎句句用逗号，不切它就会把一整串逗号连读进标题。
+ * ★ 导出是给 `scripts/backfill-traffic-title.ts` 用的：存量回填要在**脚本里**用同一条规则，
+ *   复制一份过去迟早会与服务端漂移（改了这里、忘了那里）。
+ */
+export function localTopicTitle(copyText: string): string {
+  const segs = copyText
+    .split(/[。！？!?；;，,\n]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+  if (!segs.length) return ''
+  let out = ''
+  for (const s of segs) {
+    if ((out + s).length > TOPIC_TITLE_MAX) break
+    out += s
+    if (out.length >= TOPIC_TITLE_MAX) break
+  }
+  // 第一句本身就超长（整段没有逗号的长句）⇒ 退回截断它
+  // ★ `segs[0] ?? ''`：本仓开了 noUncheckedIndexedAccess，上面的 length 检查**不能**让 TS 收窄下标访问
+  const head = segs[0] ?? ''
+  return clipTopicTitle(out || head)
+}
+
+/**
+ * 解析话题稿（流量型）的模型返回：期望 `{"title":"≤8字","copy":"正文"}`。
+ *
+ * ★ 这个函数**绝不抛错**。模型没守 JSON 格式是常事，此时退化成
+ *   「整段当正文 + 标题取正文第一句」—— 用户拿到的是一条有名字、能念的稿子，
+ *   而不是一个报错，也不是「未命名创作」。与 `publish-material` 的 `parseMaterial`
+ *   同一策略（那边解析不出来也是走 `localTitle` / `localCaption`）。
+ *
+ * ★ 不复用上面的 `extractJson`：它**优先抠 `[]`**（那是为分镜数组写的），
+ *   而这里的正文一旦出现方括号（例如 `[话题]`）就会被切错位置。
+ *   本函数只要对象，就只找最外层的一对花括号。
+ */
+export function parseTopicCopy(raw: string): { title: string; copy: string } {
+  const s = raw.trim()
+  const objS = s.indexOf('{')
+  const objE = s.lastIndexOf('}')
+  const candidates = objS >= 0 && objE > objS ? [s, s.slice(objS, objE + 1)] : [s]
+  /** 见过「是 JSON、但 copy 是空的」—— 见下面的分支，它**不能**退化成「把 JSON 壳当正文」 */
+  let sawJsonWithoutCopy = false
+  for (const c of candidates) {
+    let o: Record<string, unknown>
+    try {
+      o = JSON.parse(c) as Record<string, unknown>
+    } catch {
+      continue // 换下一个候选
+    }
+    const copy = typeof o.copy === 'string' ? o.copy.trim() : ''
+    const title = typeof o.title === 'string' ? o.title.trim() : ''
+    if (copy) return { title: title ? clipTopicTitle(title) : localTopicTitle(copy), copy }
+    sawJsonWithoutCopy = true
+  }
+  /**
+   * ★ 结构对、正文缺（模型回了 `{"title":…,"copy":""}`）⇒ 返回**空正文**，
+   *   交给 `generateCopy` 走「不写库」的分支。若这里退回 `copy: s`，
+   *   落进库的就是那串 JSON 壳 —— 用户会在文案编辑框里看到 `{"title":…}`，比留空更糟。
+   */
+  if (sawJsonWithoutCopy) return { title: '', copy: '' }
+  // 整段就不是 JSON（模型没守格式）⇒ 当纯文本用，标题从它开头取
+  return { title: localTopicTitle(s), copy: s }
 }
 
 export async function generateShots(

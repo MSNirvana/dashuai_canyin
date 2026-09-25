@@ -18,7 +18,7 @@ import { prisma, redis } from '../src/db.js'
 import { CircuitBreaker } from '../src/ai/circuit-breaker.js'
 import { AiGateway } from '../src/ai/gateway.js'
 import { formatTopicInfo } from '../src/lib/topic.js'
-import { storeLocationOf, formatPersona, formatComboInfo } from '../src/services/creation.service.js'
+import { storeLocationOf, formatPersona, formatComboInfo, parseTopicCopy } from '../src/services/creation.service.js'
 import { formatDateInfo } from '../src/lib/festival.js'
 
 const sceneArg = process.argv[2] ?? 'copy_traffic'
@@ -98,7 +98,18 @@ async function pickStore() {
     process.exit(1)
   }
 
-  const text = r.text.trim()
+  /**
+   * ★ 话题稿的返回是 `{"title":"…","copy":"…"}`（见 `COPY_TRAFFIC_PROMPT` 的【输出格式】）。
+   *   下面的核对必须盯着 **copy** 那段正文：拿整串 JSON 去数字数会多算十来个字，
+   *   而且在 title 里出现禁词时会把「标题没写好」误报成「正文违规」。
+   *   解析不出来（模型没守格式）时 `parseTopicCopy` 会把整段当正文，这里照样能核。
+   */
+  let text = r.text.trim()
+  if (sceneArg === 'copy_traffic') {
+    const parsed = parseTopicCopy(r.text)
+    text = parsed.copy
+    console.log(`短标题：「${parsed.title}」（${parsed.title.length} 字，上限 8${parsed.title.length > 8 ? ' ★ 超了' : ''}）`)
+  }
   const chars = text.replace(/\s/g, '').length
   console.log(`✓ ${sceneArg} 用时 ${secs}s｜通道 ${r.modelCode}${r.usedFallback ? '（降级）' : ''}｜attempts=${r.attempts}`)
   console.log(`\n${text}\n`)
