@@ -4,7 +4,7 @@ import Taro, { useDidShow, useDidHide } from '@tarojs/taro'
 import { getCreation, type CreationDetail } from '../../services/creation'
 import {
   getPublishMaterial, generatePublishMaterial,
-  type PublishMaterial, type PublishMaterialEstimate,
+  type PublishMaterial,
 } from '../../services/publish-material'
 import {
   submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl, getGradeCapabilities, previewColor,
@@ -290,7 +290,7 @@ export default function RenderCompose() {
    * 所以它是「这条创作的发布包装」，与具体某个档位的成片无关。
    */
   const [publishMat, setPublishMat] = useState<PublishMaterial | null>(null)
-  const [publishEstimate, setPublishEstimate] = useState<PublishMaterialEstimate | null>(null)
+  // ★ 2026-09-28：`publishEstimate` 随「生成一次最多 X 积分」那行小字一起删除（见卡片里的说明）
   const [publishLoading, setPublishLoading] = useState(false)
   const [publishError, setPublishError] = useState('')
   /** 服务端给的一句补充说明（封面失败 / 文本降级 / 重复提交），与 publishError 分开：它是提示不是错误 */
@@ -500,7 +500,7 @@ export default function RenderCompose() {
       setDetail(creation)
       if (publishRes) {
         setPublishMat(publishRes.material)
-        setPublishEstimate(publishRes.estimate)
+        // 原先这里还有 setPublishEstimate(publishRes.estimate)，随那行积分小字一起删除
       }
       const sorted = [...tasks].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       setRenders(sorted)
@@ -728,9 +728,11 @@ export default function RenderCompose() {
    *   「确定生成？」/「确定重新生成？」。原来这里塞了金额（标题与文案最多 180 +
    *   封面选帧最多 300 + 封面固定 300）加三步流程说明，超过四行 ——
    *   手机原生弹窗里这段话几乎没人读完，读不完就等于没提示。
-   *   ⇒ 只把**总额**搬到卡片上那行常驻小字（`rcompose__pubcost`，见那段注释）；原先挂在
+   *   ⇒ 当时只把**总额**搬到卡片上那行常驻小字（`rcompose__pubcost`）；原先挂在
    *     「发布素材」问号上的**明细**（三项拆分、只重出封面的价）**故意不补落点**：
    *     2026-09-25 用户要求「把系统的所有问号解释的问号都删了」，并明确选择「直接删，不补」。
+   * ⚠★ 2026-09-28：那行常驻小字**本身也按用户要求删掉**了 ⇒ 至此价格在**前端一处不留**，
+   *   确认弹窗只有「确定生成？」/「确定重新生成？」。要恢复见卡片的注释。
    * ★ title 跟着**按下去的那个按钮**走：首次是「生成发布素材」，已经有素材了就是「重新生成发布素材」
    *   —— 原来不看状态、恒为「生成发布素材」，而按钮写的是「重新生成」，同一件事两个说法。
    * ★ 不假装进度：服务端是「出文本 → 抽帧选帧 → 出图」三步**串行**（约 1~2 分钟），
@@ -1112,22 +1114,12 @@ export default function RenderCompose() {
       </View>
     )
   }
-  // 底部条那个「约 X 积分」——**视频合成**的价，随档位与分镜数变，与发布素材那一行无关
+  // 底部条那个「约 X 积分」——**视频合成**的价，随档位与分镜数变，与发布素材无关
   const cost = estimatePoints(detail.shots, grade)
-  /**
-   * 发布素材这一步的价格上限（标题与文案上限 + 封面选帧上限 + 封面固定价）——
-   * 给卡片上那行常驻小字用。null = 还没拿到服务端报价，此时不显示金额。
-   *
-   * ★ 是**上限**（前两项是上限、第三项是固定价），所以文案里必须带「最多」二字：
-   *   写成「需要 X 积分」会和实际结算对不上。
-   * ★ 与 `publishEstimate` 同一真源（服务端 `estimate`）：后台改价后小字跟着变。
-   * ★ 2026-09-25：标题旁的「?」按用户要求**全系统删除** ⇒ 原来挂在「发布素材」问号上的
-   *   金额明细（三项拆分、只重出封面的价）一并去掉，只留这一行总额。
-   *   同一次删除里底部条「积分怎么算」那个问号也没补落点（用户明确选择「直接删，不补」）。
-   */
-  const pubCost = publishEstimate
-    ? publishEstimate.textBeanCap + publishEstimate.pickBeans + publishEstimate.coverBeans
-    : null
+  // ★ 2026-09-28：原来这里还有一条 `pubCost`（发布素材的价格上限，给卡片上那行常驻小字用），
+  //   随那行小字一起删掉了，见 `rcompose__card--publish` 里的说明。
+  //   ⚠ 服务端 `getPublishMaterial` 的返回值里仍有 `estimate` 字段（路由没动），
+  //     只是前端不再读它 —— 别以为「前端还在拿报价」，它已经没有任何落点了。
   const previewedGrade = selectedResult ? gradeTitle(selectedResult.grade) : ''
   // 拖动中的近似预览需要一张静帧来承载 CSS 滤镜，取第一张有封面的分镜。
   // 用静帧而不是「当前正在播的某一帧」，是因为 video 是原生组件、内部渲染吃不到样式 ——
@@ -1328,11 +1320,14 @@ export default function RenderCompose() {
                 }}
               >
                 <Text className='rcompose__gradetitle'>{option.title}</Text>
-                {off ? (
-                  <Text className='rcompose__graderatio'>即将开放</Text>
-                ) : (
-                  <Text className='rcompose__graderatio'>{GRADE_RATIO[option.key].toFixed(1)}×</Text>
-                )}
+                {/* ★ 2026-09-28：这里原来是「1.5× / 3.0×」的**倍率行**（按需求删掉）。
+                    删掉后每格只剩一行标题，格子从 154rpx 收到 132rpx、两行垂直居中。
+                    ★ 但「即将开放」不能跟着一起删：它是「服务端说这一档现在不可用」的唯一提示，
+                      原来只是**借住在**倍率行那个位置。现在它接管第二行（`--off` 时顶掉 desc）。
+                    ★ 顺带把 `desc` 接上——它从定义那天起就没被渲染过。
+                      倍率没了之后，两条选项只剩名字，「自动识别 + 智能剪辑 / 剪辑师人工精剪」
+                      才是用户真正用来区分这两档的信息。 */}
+                <Text className='rcompose__gradedesc'>{off ? '即将开放' : option.desc}</Text>
               </View>
             )
           })}
@@ -1537,17 +1532,11 @@ export default function RenderCompose() {
           )}
         </View>
 
-        {/* ── 价格常驻在按钮这一屏（2026-09-25）──
-            ★ 为什么必须有这一行：原来金额**只**出现在确认弹窗里（`costText`）。
-              弹窗按用户要求收成一句「确定重新生成？」之后，金额就没有落点了 ——
-              那等于「点下去之前看不到价」。而这里是**两笔**钱（封面固定 + 按 token 的选帧），
-              当前配置合计可到 900 积分量级，属于「不知情花掉就会被投诉」的那一档。
-            ★ 为什么是小字而不是再加一句弹窗话：小字不占一次点击、不挤压布局，
-              弹窗只回答「要不要做」。（明细原来挂在标题旁那个问号上，2026-09-25 连同问号一起删了。）
-            ⚠ 与底部条那个「约 X 积分」**不是一回事**：那条是**视频合成**的价（随档位/时长变），
-              这一行是**发布素材**的价（与档位无关）。两者并排出现时字面很容易混，别合并。 */}
-        {pubCost !== null && <Text className='rcompose__pubcost'>生成一次最多 {pubCost} 积分</Text>}
-
+        {/* ★ 2026-09-28：原来这里有一行常驻小字「生成一次最多 X 积分」（`rcompose__pubcost`），
+            按用户要求**删除**。连带删掉了 `pubCost` / `publishEstimate` 这条**只为它服务**的取数链 ——
+            留着它就是「代码看起来还在替用户把关价、其实没有任何地方显示」。
+            ⚠ 现状：点「生成发布素材」之前，**页面上不再有任何金额提示**（确认弹窗也只有一句
+              「确定生成？」）。若哪天要恢复「点下去之前看得到价」，从这条注释查起。 */}
         {!publishMat && !publishLoading && (
           <>
             <Button
@@ -1569,6 +1558,8 @@ export default function RenderCompose() {
                   在真实完成前就贴住 95% 不动，反而更像卡死。
                 ⚠ 改服务端任一步的超时/耗时，这里的三段分界与分母要跟着看（见 services/publish-material.ts
                   的 PUBLISH_TIMEOUT_MS 注释，那里是超时的唯一真源）。 */}
+            {/* ★ 2026-09-28：原来这里还传了一句 hint「进度按实测耗时估算，通常 1~2 分钟完成」，
+                按用户要求**删除**。上面的估算逻辑没有变，只是不再把这句解释摆在用户面前。 */}
             <ProgressLine
               percent={Math.min(95, (pubElapsed / 120_000) * 100)}
               label={
@@ -1578,7 +1569,6 @@ export default function RenderCompose() {
                     ? '正在从你拍的画面里挑封面底图…'
                     : '正在出封面（3:4 竖版）…'
               }
-              hint='进度按实测耗时估算，通常 1~2 分钟完成'
             />
           </>
         )}

@@ -193,7 +193,11 @@
   &__grade {
     flex: 1;
     min-width: 0;
-    padding: 26rpx 16rpx 22rpx;
+    /* ★ 2026-09-28：倍率行（1.5× / 3.0×）按需求删掉 ⇒ 每格只剩「标题 + 说明」两行，
+       高度跟着从 154rpx 收到 132rpx，并补上 `justify-content: center`：
+       原来靠 min-height 撑出来的余量**全落在底部**（内容靠上、格子空空），看着不平衡。 */
+    min-height: 132rpx;
+    padding: 22rpx 16rpx;
     border: 2rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-default);
     background: var(--td-bg-color-container);
@@ -201,6 +205,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
+    justify-content: center;
 
     &--on {
       border-color: var(--td-brand-color);
@@ -218,10 +223,9 @@
   &__grade--off &__gradedesc {
     color: var(--td-text-color-disabled);
   }
-  &__grade--off &__graderatio {
-    color: var(--td-text-color-placeholder);
-    font-weight: 600;
-  }
+  /* ★ 字号规格**只写在这里**。文件末尾的产品化覆写块里原来还写了一份（25 / 20rpx），
+     那份把这两条压掉了 —— 同一处规格两处各写一次，正是「改了一处、另一处还是旧的」的来源，
+     已删除（见末尾那段注释）。 */
   &__gradetitle {
     font-size: 28rpx;
     font-weight: 700;
@@ -232,13 +236,6 @@
     font-size: 21rpx;
     line-height: 1.5;
     color: var(--td-text-color-placeholder);
-  }
-  &__graderatio {
-    margin-top: 14rpx;
-    font-size: 22rpx;
-    font-weight: 700;
-    color: var(--td-brand-color);
-    font-variant-numeric: tabular-nums;
   }
   &__premiumtip {
     margin-top: 24rpx;
@@ -378,6 +375,13 @@
     margin-bottom: 16rpx;
     > .rcompose__sechead { margin-bottom: 0; }
   }
+  /* ★ 「分镜素材」收起来、且素材是齐的（不出那句「还没有可用素材」提示）时，
+     标题行**就是**这张卡片的全部内容 —— 与上面 `&__colorhead` 是同一种情形，
+     那时再留着这 16rpx 下边距，卡片下沿会凭空多出一截，标题看着偏上（截图里就是这么偏的）。
+     ★ 为什么不用 `:last-child`：本文件从没用过伪类，wxss 的选择器支持面本来就窄。
+       改成**限定在 `--clips` 这张卡里**的正向规则：标题行的下边距归下面那个元素自己给
+       —— 提示（`&__clipshint` 16rpx）与列表（`&__clips` 24rpx）两条本来都自带上边距。 */
+  &__card--clips > &__history-heading { margin-bottom: 0; }
   /* ★ 微信原生 button 自带 `margin-left/right: auto`：放进 flex 行里，两侧 auto 会
      **平分剩余空间 ⇒ 按钮居中**，`justify-content: space-between` 会被顶掉（不生效）。
      所以标题行里的动作（刷新 / 重新生成）必须显式 `margin-left: auto` 才真的靠右。 */
@@ -551,17 +555,27 @@
     border-radius: 6rpx;
     padding: 2rpx 10rpx;
   }
-  /* 展开 / 收起开关（分镜素材区默认收起，见 compose.tsx 的 clipsOpen）
-     ★ 内边距撑到 ≥88rpx 的点击高度：它和「去上传素材」同处一行，
-       太小的点击区会让人反复点到旁边的按钮。 */
+  /* 展开 / 收起开关（分镜素材区默认收起，见 compose.tsx 的 clipsOpen） */
   &__clipstoggle {
     flex: none;
+    /* ★ 原注释写「内边距撑到 ≥88rpx 的点击高度」——那是**假的**：24 号字的行盒 + 14rpx×2
+       内边距实测约 62rpx。这里改成如实的数字：一条错的尺寸说明会让后人照着它做判断。
+       真撑到 88rpx 只能把行高抬起来，而它和「去上传素材」同处一行，
+       整行跟着变高得不偿失（它是**次级**开关，同一行里可能还站着一个主按钮）。 */
     padding: 14rpx 20rpx;
     font-size: 24rpx;
     font-weight: 600;
     color: var(--td-brand-color);
+    /* ★ 2026-09-28：**去掉那圈 1rpx 描边**（底色保留原样）。
+       原来的写法是「浅灰底 + 灰色描边」—— 同一件事（这是一个控件）说了两遍，
+       而它只是个展开开关。去掉描边后边界由底色独家表达，视觉上安静一档。
+       ★ 我一度把底色换成了品牌淡色，**已撤回**：拿真机现状比对后发现
+         （a）它本来就是中性灰，换粉色属于我凭「灰底像卡片被挖了个洞」的臆测改的，
+             这句话在真机截图上不成立；
+         （b）粉色版比同一行里的主操作「去上传素材」还抢眼 —— 一个次级开关抢主角，
+             正好背离主题文件写明的「克制、留白、高级感」。
+       ⇒ 记一条：**次级控件的配色不要靠推演，要么有真机截图，要么就维持中性。** */
     background: var(--td-bg-color-page);
-    border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-default);
   }
   &__clipshint {
@@ -640,13 +654,7 @@
   }
 
   /* ── 发布素材（标题 / 封面 / 文案） ── */
-  &__pubcost {
-    display: block;
-    margin-top: 10rpx;
-    font-size: 22rpx;
-    line-height: 1.6;
-    color: var(--td-text-color-placeholder);
-  }
+  /* ★ 2026-09-28：`&__pubcost`（那行「生成一次最多 X 积分」的常驻小字）按用户要求删除，规则一并去掉。 */
   &__pubbtn {
     margin-top: 20rpx;
   }
@@ -892,16 +900,13 @@
    这里**故意不再重复一遍**字号 —— 同一个标题两处各写一次，
    正是「改了一处、另一处还是旧的」的来源（这条原来是 28rpx，把基础块的 34rpx 压掉了）。 */
 
-.rcompose__grades { gap: 10rpx; }
-.rcompose__grade {
-  min-height: 154rpx;
-  padding: 20rpx 12rpx 16rpx;
-  border-radius: var(--td-radius-default);
-}
-.rcompose__grade--on { box-shadow: inset 0 0 0 1rpx var(--td-brand-color); }
-.rcompose__gradetitle { font-size: 25rpx; }
-.rcompose__gradedesc { font-size: 20rpx; }
-.rcompose__graderatio { margin-top: 10rpx; font-size: 20rpx; }
+/* ★★ 生成方式的规格（gap / min-height / padding / 字号 / 选中态）**只在基础块里写一份**。
+   这里原来还复写了一份（gap 10rpx、min-height 154rpx、padding 20/12/16rpx、字号 25/20rpx，
+   外加一条 `--on` 的 inset 阴影）—— 与基础块同权重、写在后面，**一直是它在赢**：
+   于是改基础块看不出效果、改这里又和基础块对不上，正是本页反复出现「改了没反应」的来源。
+   2026-09-28 整段删除。★ 那条 inset 阴影本来也多余：它画在 2rpx 边框的内侧，
+   等于把选中态的边框加成 3rpx —— 比未选中的 2rpx 更粗，看着不像同一套控件。
+   ⚠ 新加规则时别再在这里复写生成方式，改基础块的 `&__grade*`。 */
 
 .rcompose__choiceitem {
   min-height: 64rpx;
