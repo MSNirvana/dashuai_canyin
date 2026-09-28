@@ -84,6 +84,16 @@ def main() -> int:
             if name.endswith(('.js', '.wxml', '.wxss', '.json')):
                 files.append(os.path.join(dirpath, name))
 
+    # ★★ 2026-09-28：这里必须**早退报错**，否则 `--expect-absent` 会**空真** ——
+    #   产物目录不存在/为空时 blobs 为空、所有串都「不出现」，于是反向断言全部 ABSENT、
+    #   rc=0，看着像验过了，其实一个字都没扫到（我上轮就是这么被骗过一次）。
+    #   ⇒ 扫描数量为 0 一律 rc=2（无效），并且**必须**在同一轮再跑一条「本该命中」的
+    #     正向断言当对照：只有正向 HIT，这次反向的 ABSENT 才有意义。
+    print(f'扫描 {len(files)} 个产物文件（{os.path.relpath(ROOT)}）')
+    if not files:
+        print('!! 没扫到任何产物文件 ⇒ 产物目录缺失或为空，本次结果无效（ABSENT 不算通过）')
+        return 2
+
     blobs = {}
     for path in files:
         blobs[path] = io.open(path, encoding='utf-8', errors='replace').read()
