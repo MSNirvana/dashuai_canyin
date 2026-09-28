@@ -22,6 +22,15 @@
  * ★ 提示词表**有条数上限**：`--target` 一旦超过表里条数，取词就会绕回起点取到同一批描述，
  *   池子里长出近乎重复的曲子且**不报任何错** ⇒ 脚本会在预检里显性告警（但不阻断）。
  *
+ * ★★ 「额度／开通」类错误 ⇒ **立刻中止整轮**，不再试下一首（见 `VOLCANO_FATAL_ERROR_CODES`）：
+ *   这类错误（200023 超 QPS／200028 无资源包／200030 服务未开通 …）**立刻返回**，而循环里
+ *   没有任何间隔 ⇒ 继续试只会把该风格剩余的 `--max` 预算在几秒内全烧掉，且**注定一起失败**。
+ *   实测（2026-09-28）：一轮 84 次机会被这样烧掉 **70 次**，而前 **14 首连续成功** ——
+ *   日志形态是「先连续成功若干首，然后全部失败」。**别把这个形态误判成「并发/发太快」**：
+ *   并行确实是另一个错（见下），但形态完全不同。
+ *   ★ 区分办法：看错误码。QPS 相关是 200023；而 200030 `ServiceNotActivated` /
+ *     200028 `APINoSource` 属于**账号侧没开通或没资源包**，等几秒不会恢复，要去控制台处理。
+ *
  * ★ 默认 **dry-run**：只打印会发什么；加 `--yes` 才真调 API。
  *   火山按秒计费（约 0.002 元/秒，120s 一首 ≈ 0.24 元），ChatCut 消耗额度。
  *
@@ -54,7 +63,7 @@ import {
   ingestVolcanoBgm,
   type BgmIngestOptions,
 } from '../src/render/bgm-ingest.js'
-import { describeVolcanoBgmConfig, VOLCANO_BGM_PROMPTS } from '../src/render/volcano-bgm.js'
+import { describeVolcanoBgmConfig, isVolcanoFatalError, VOLCANO_BGM_PROMPTS } from '../src/render/volcano-bgm.js'
 
 /** 单风格目标曲目数 —— 用库模块的常量（守护靠它判断提示词表条数够不够） */
 const DEFAULT_TARGET = BGM_POOL_TARGET
@@ -174,6 +183,7 @@ async function main(): Promise<void> {
   let created = 0
   let removed = 0
   let failed = 0
+  let aborted = false
   for (const style of styles) {
     const size = listBgmPool(style).length
 
@@ -244,11 +254,30 @@ async function main(): Promise<void> {
         if (done) created += 1
         else failed += 0 // dry-run 的 false 不算失败（没生成是预期的）
       } catch (error) {
-        // 单首失败不该中断其余风格：补货是运维动作，跑一次能补几首是几首
+        const message = (error as Error).message
+        // ★★ 额度／开通类错误：**立刻中止整轮**，不要继续试下一首。
+        //   原因见 `volcano-bgm.ts::VOLCANO_FATAL_ERROR_CODES` —— 这类错误立刻返回、
+        //   循环里没有间隔，会把该风格剩余的整个 `--max` 预算在几秒内全烧掉，
+        //   而它们**注定一起失败**（同一个原因重复 N 次）。实测 84 次机会被这样烧掉 70 次。
+        if (source === 'volcano' && isVolcanoFatalError(message)) {
+          failed += 1
+          console.log(`  ✗ ${style} 第 ${index + 1} 首失败：${message}`)
+          console.log(
+            `\n★★ 命中「额度／开通」类错误 ⇒ **本轮在此中止**（本来还剩 ${todo - index - 1} 次机会）。\n` +
+              '   继续试下去不会成功，只会把机会耗光并让日志看起来像「28 个不同的错」。\n' +
+              '   处置：去火山控制台确认「音乐生成」服务的**资源包余量与开通状态**\n' +
+              '         （200023=超过QPS、200028=没有可用资源包、200030=服务未开通），\n' +
+              '         或联系火山商务提高 QPS；恢复后重跑本脚本即可（幂等，只补缺口）。',
+          )
+          aborted = true
+          break
+        }
+        // 其余（网络抖动、单首生成失败……）才适合「单首失败不中断」：补货是运维动作，跑一次能补几首是几首
         failed += 1
-        console.log(`  ✗ ${style} 第 ${index + 1} 首失败：${(error as Error).message}`)
+        console.log(`  ✗ ${style} 第 ${index + 1} 首失败：${message}`)
       }
     }
+    if (aborted) break
   }
 
   if (!CONFIRMED) {
@@ -257,6 +286,12 @@ async function main(): Promise<void> {
   }
 
   console.log(`\n完成：新生成 ${created} 首，淘汰 ${removed} 首，失败 ${failed} 首`)
+  if (aborted) {
+    console.log(
+      '★ 本轮因「额度／开通」类错误**提前中止**：上面的「失败 N 首」不是「试过 N 条不同的坏描述」，\n' +
+        '  而是**同一个原因**重复了几次。恢复额度后重跑本脚本即可（幂等，只补缺口）。',
+    )
+  }
   for (const style of BGM_STYLES) {
     console.log(`  ${style.padEnd(8)} 池内 ${listBgmPool(style).length} 首`)
   }

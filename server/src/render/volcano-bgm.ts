@@ -204,6 +204,37 @@ export function describeVolcanoBgmConfig(): { configured: boolean; missing: stri
   }
 }
 
+/**
+ * ★★ 火山「额度／开通」类错误码 —— 命中这些，**再试下一首也只会得到同一个错**。
+ *
+ *   官方错误码表（「音视频理解与处理 → 常见错误码」）：
+ *     200022 APIOutOfLimit       用户可用资源包消耗完毕
+ *     200023 APIOutOfQps         api 调用超过 qps 限制（要更多 QPS 须联系火山商务）
+ *     200024 AuthDisable         账号的音乐功能被禁用
+ *     200026 TosBucketLimit      tos 桶名称无效（结果同样是「生成不出来」，一并当致命）
+ *     200027 APIOutOfTime        资源包过期
+ *     200028 APINoSource         没有可用资源包
+ *     200030 ServiceNotActivated 服务未开通
+ *
+ *   ★★ 为什么必须单独识别它们：补货循环是「失败就换下一条描述继续」，
+ *     而这类错误**立刻返回**、循环里**没有任何间隔** ⇒ 会把该风格剩余的整个 `--max` 预算
+ *     在**几秒内**全烧掉。日志看上去像「试了 28 次都失败、每首都有独立的错」，
+ *     实际只是**同一个原因重复了 28 次**，而且把本该留给下次的机会用光了。
+ *   ★ 实测（2026-09-28）：一轮 84 次机会里 70 次是这样烧掉的；前 14 首**连续成功**。
+ *     ⇒ 典型形态是「**先连续成功若干首，然后全部失败**」，这与「请求发得太快」是两回事，
+ *       别把根因误判成并发。
+ *   ⇒ 调用方应当**立刻中止整轮**，去控制台/商务侧确认资源包与开通状态，而不是继续耗机会。
+ */
+export const VOLCANO_FATAL_ERROR_CODES = [200022, 200023, 200024, 200026, 200027, 200028, 200030] as const
+
+/** 该错误串是否属于「额度／开通」类致命错误（形如 `火山 GenBGMForTime Code=200030 ServiceNotActivated`） */
+export function isVolcanoFatalError(message: string): boolean {
+  // ★ 用「后面不能再跟数字」的断言，而不是朴素 includes：`Code=200023` 是 `Code=2000230` 的前缀，
+  //   朴素匹配会把更长的错误码（将来新增的 2000230）误判成 200023 —— 用错判据的代价是
+  //   「一首生成不出来就中止整轮」，池子从此不再生长，而且**不报错**。
+  return VOLCANO_FATAL_ERROR_CODES.some((code) => new RegExp(`Code=${code}(?![0-9])`).test(message))
+}
+
 /** 按风格随机取一条中文描述（池子多样性的来源） */
 export function pickVolcanoPrompt(style: BgmStyle, index?: number): string {
   const pool = VOLCANO_BGM_PROMPTS[style]

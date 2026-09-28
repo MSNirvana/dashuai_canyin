@@ -86,6 +86,7 @@ import {
   VOLCANO_BGM_MIN_SEC,
   VOLCANO_BGM_PROMPTS,
   describeVolcanoBgmConfig,
+  isVolcanoFatalError,
   pickVolcanoPrompt,
   volcanoBgmConfigured,
   volcanoDurationForStyle,
@@ -391,6 +392,41 @@ function main(): void {
   }
   // 还原后不能残留（凭据串到别的用例里会让「未配置」的用例假绿）
   assert.equal(volcanoBgmConfigured(), Boolean(savedAccessKey && savedSecretKey), '环境变量必须已还原')
+
+  // ── ⑭b 「额度／开通」类错误必须可判别 —— 补货靠它决定「立刻中止」还是「继续试下一首」 ──
+  // ★ 实测（2026-09-28）：一轮 84 次机会里 **70 次是同一个原因重复**，而前 14 首连续成功。
+  //   补货脚本据此提前中止；这条判据一旦写歪，脚本要么继续烧机会、要么一首失败就整轮停。
+  {
+    const fatal = [
+      '火山 GenBGMForTime Code=200023 APIOutOfQps',
+      '火山 GenBGMForTime Code=200030 ServiceNotActivated',
+      '火山 GenBGMForTime Code=200028 APINoSource',
+      '火山 GenBGMForTime Code=200022 APIOutOfLimit',
+      '火山 GenBGMForTime Code=200024 AuthDisable',
+      '火山 GenBGMForTime Code=200027 APIOutOfTime',
+      '火山 GenBGMForTime Code=200026 TosBucketLimit',
+    ]
+    for (const message of fatal) {
+      assert.equal(isVolcanoFatalError(message), true, `「额度／开通」类错误必须被识别成致命：${message}`)
+    }
+
+    // ★★ 反向断言不能省：把**普通**失败也当致命 ⇒ 一首生成不出来就中止整轮，池子再也不长且不报错
+    const ordinary = [
+      '火山生成失败（TaskID=x）：300063 InputNotSafe',
+      'fetch failed: ECONNRESET',
+      '火山 GenBGMForTime Code=200020 InvalidSign',
+    ]
+    for (const message of ordinary) {
+      assert.equal(isVolcanoFatalError(message), false, `普通失败不能被当成致命（否则一次抖动就整轮中止）：${message}`)
+    }
+
+    // ★ 边界：`Code=200023` 是 `Code=2000230` 的**前缀**，朴素 includes 会误判 ⇒ 必须精确到「码后面不是数字」
+    assert.equal(
+      isVolcanoFatalError('火山 GenBGMForTime Code=2000230 SomeFutureCode'),
+      false,
+      '更长的错误码不能被它的前缀蹭中（判错代价是「一首出不来就整轮中止」）',
+    )
+  }
 
   // ── ⑮ 选曲的「清单编号」与「下标解析」—— 选错歌要在这里挡住，不能等线上（见文件头 ⑧） ──
   // 这两个函数是**纯的**（不连库、不联网、不读文件），所以能被这个不连库的守护直接测。
