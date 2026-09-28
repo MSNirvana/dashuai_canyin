@@ -10,7 +10,7 @@ interface InfoRow {
   value: string
 }
 
-/** 门店详情页：门店资料（主图 / 视频 / 介绍 / 地址）的统一展示入口 */
+/** 门店详情页：门店资料（门头图片 / 视频 / 介绍 / 地址）的统一展示入口 */
 export default function StoreDetailPage() {
   const router = useRouter()
   // ★ 编号必须当场校验，不能拿「路由里的原值」直接去请求：
@@ -90,7 +90,7 @@ export default function StoreDetailPage() {
         {coverUrl ? (
           <Image className='store-detail__hero-image' src={coverUrl} mode='aspectFill' />
         ) : (
-          <View className='store-detail__placeholder'>添加一张主图，让顾客先认识你的店</View>
+          <View className='store-detail__placeholder'>添加一张门头图片，让顾客先认识你的店</View>
         )}
       </View>
 
@@ -102,7 +102,7 @@ export default function StoreDetailPage() {
         </View>
         {/* ★ 2026-09-24 按需求，门店标题区下面这两块内容一并删除：
             ① 「品类 · 省市县」副标题 —— 地址在下面「到店信息 › 地址」里已完整给过一次；
-            ② 「品牌资料完整度」卡片 —— 它算的是主图/视频/介绍/品类/地址五项资料的填写比例，
+            ② 「品牌资料完整度」卡片 —— 它算的是门头图片/视频/介绍/品类/地址五项资料的填写比例，
                是「催你把资料填全」的运营提示，不是门店信息本身。 */}
 
         <View className='store-detail__section-head'>

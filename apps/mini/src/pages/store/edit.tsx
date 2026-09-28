@@ -63,7 +63,7 @@ export default function StoreEditPage() {
   /**
    * 编辑对象是否加载失败。
    * ★ 失败绝不能落进「空表单可保存」：保存会把 intro/coverKey/videoKey 以 null 写回，
-   *   门店的简介、主图、视频被**全部清空** —— 与 dish/edit 是同一条数据丢失链。
+   *   门店的简介、门头图片、视频被**全部清空** —— 与 dish/edit 是同一条数据丢失链。
    */
   const [loadFailed, setLoadFailed] = useState(false)
 
@@ -165,7 +165,7 @@ export default function StoreEditPage() {
   }
 
   const onSubmit = async () => {
-    // ★ 数据没加载成功就**绝不保存**：此刻表单是空的，保存 = 清空门店简介/主图/视频
+    // ★ 数据没加载成功就**绝不保存**：此刻表单是空的，保存 = 清空门店简介/门头图片/视频
     if (loadFailed) { Taro.showToast({ title: '门店还没加载成功，不能保存', icon: 'none' }); return }
     if (saving || uploadingVideo) return
     if (!form.name.trim()) {
@@ -252,7 +252,7 @@ export default function StoreEditPage() {
 
   if (!loaded) return <View className='store-edit store-edit--loading'>加载中…</View>
 
-  // ★ 加载失败：整页只给重试，绝不渲染空表单（空表单保存 = 清空门店简介/主图/视频）
+  // ★ 加载失败：整页只给重试，绝不渲染空表单（空表单保存 = 清空门店简介/门头图片/视频）
   if (loadFailed) {
     return (
       <View className='store-edit store-edit--loading'>
@@ -278,7 +278,7 @@ export default function StoreEditPage() {
     <View className='store-edit'>
       <View className='store-edit__form'>
         <View className='field'>
-          <Text className='field__label'>门店图片</Text>
+          <Text className='field__label'>门头图片</Text>
           {coverPreview ? (
             <View className='store-cover'>
               <Image className='store-cover__image' src={coverPreview} mode='aspectFill' />
@@ -289,7 +289,7 @@ export default function StoreEditPage() {
             </View>
           ) : (
             <View className='store-cover store-cover--empty' onClick={pickImage}>
-              <Text>上传门店主图</Text>
+              <Text>上传门头图片</Text>
             </View>
           )}
         </View>
@@ -306,7 +306,7 @@ export default function StoreEditPage() {
             </View>
           ) : (
             <View className='store-video store-video--empty' onClick={pickVideo}>
-              <Text>{uploadingVideo ? '上传中…' : '上传门店视频（选填）'}</Text>
+              <Text>{uploadingVideo ? '上传中…' : '上传门店竖版视频（选填）'}</Text>
             </View>
           )}
         </View>
@@ -377,10 +377,10 @@ export default function StoreEditPage() {
         </View>
 
         <View className='field'>
-          <Text className='field__label'>门店介绍</Text>
+          <Text className='field__label'>门店介绍（包含位置、特色、人均、老板性格）</Text>
           <Textarea
             className='field__textarea'
-            placeholder='一两句话说明门店特色，如：开了 12 年的社区烧烤店，招牌是炭烤羊排（可换行）'
+            placeholder='按这四项写，如：位置｜中关村地铁站 B 口；特色｜炭烤羊排是招牌菜；人均｜80 元左右；老板｜爱聊天的东北大哥（可换行）'
             value={form.intro}
             onInput={(e) => set('intro', e.detail.value)}
             maxlength={500}

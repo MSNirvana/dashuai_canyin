@@ -51,7 +51,7 @@ export function deleteStore(id: string) {
 }
 
 /**
- * 取门店图片 / 视频的播放地址（私有桶临时签名，有效期 1 小时）。
+ * 取门头图片 / 视频的播放地址（私有桶临时签名，有效期 1 小时）。
  * 原名叫 getStoreCoverUrl，门店加了视频后改名，调用方同步改为 getStoreMediaUrl。
  */
 export function getStoreMediaUrl(key: string) {

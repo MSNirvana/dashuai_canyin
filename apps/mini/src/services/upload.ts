@@ -173,7 +173,7 @@ export async function uploadMediaFile(opts: {
   thumbFilePath?: string
   /**
    * 素材归属：默认 CREATION（创作素材）。
-   * 门店主图 / 门店视频传 STORE，标记为门店资料，不会混进创作素材池。
+   * 门头图片 / 门店视频传 STORE，标记为门店资料，不会混进创作素材池。
    */
   ownerType?: 'CREATION' | 'STORE' | 'DISH'
   onProgress?: (percent: number) => void

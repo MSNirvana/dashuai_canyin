@@ -192,7 +192,7 @@ export interface ConfirmUploadInput {
   /** 视频封面缩略图的对象键（客户端抽帧后随视频一起上报；服务端生成时由上传路由写入） */
   coverKey?: string | null
   /**
-   * 素材归属：CREATION = 创作素材（默认），STORE = 门店资料（主图/门店视频），DISH = 菜品素材。
+   * 素材归属：CREATION = 创作素材（默认），STORE = 门店资料（门头图片/门店视频），DISH = 菜品素材。
    * 门店资料不参与创作选片，避免污染素材池。
    */
   ownerType?: 'CREATION' | 'STORE' | 'DISH'

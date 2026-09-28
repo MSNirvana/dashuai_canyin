@@ -116,7 +116,7 @@ export async function updateStore(
   const store = await prisma.store.findFirst({ where: { id: storeId, merchantId, deletedAt: null } })
   if (!store) return null
 
-  // 门店图片 / 视频都必须先作为素材落到本门店下，防止借用他人或其它门店的对象键
+  // 门头图片 / 视频都必须先作为素材落到本门店下，防止借用他人或其它门店的对象键
   await assertStoreMedia(prisma, merchantId, storeId, input.coverKey, 'IMAGE', () => new StoreCoverError())
   await assertStoreMedia(prisma, merchantId, storeId, input.videoKey, 'VIDEO', () => new StoreVideoError())
 
@@ -148,7 +148,7 @@ export async function updateStore(
   })
 }
 
-/** 校验门店图片 / 视频的对象键确实属于本门店的已就绪素材 */
+/** 校验门头图片 / 视频的对象键确实属于本门店的已就绪素材 */
 async function assertStoreMedia(
   prisma: PrismaClient,
   merchantId: bigint,
@@ -174,7 +174,7 @@ async function assertStoreMedia(
 
 export class StoreCoverError extends Error {
   constructor() {
-    super('门店图片无效或不属于当前门店')
+    super('门头图片无效或不属于当前门店')
     this.name = 'StoreCoverError'
   }
 }

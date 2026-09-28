@@ -36,7 +36,7 @@ const confirmInput = z.object({
   durationMs: z.number().int().optional(),
   /** 客户端抽帧得到的封面对象键（COS 模式无法由服务端读文件，改由客户端上报） */
   coverKey: z.string().min(1).max(512).optional(),
-  /** 素材归属：默认 CREATION（创作素材）；门店主图/门店视频传 STORE，不进创作素材池 */
+  /** 素材归属：默认 CREATION（创作素材）；门头图片/门店视频传 STORE，不进创作素材池 */
   ownerType: z.enum(['CREATION', 'STORE', 'DISH']).optional(),
 })
 
