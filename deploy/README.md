@@ -498,8 +498,10 @@ bash deploy/install-bgm-replenish.sh --uninstall
   ssh 的远程命令行里就含这个名字，它会**杀掉自己的 shell**（表现为**静默无输出、rc=0**）。
 - ⚠ 池内**超额**时会**淘汰最旧的**。所以 `BGM_POOL_TARGET`（`src/render/bgm-library.ts`）
   **调小 = 下次调度静默删曲子** —— 改之前先想清楚。
-- 提示词表（`src/render/volcano-bgm.ts::VOLCANO_BGM_PROMPTS`）**条数必须 ≥ 目标数**，
-  否则取词会绕回起点生成近乎重复的曲子且**不报错**；`npm run bgm:verify` 会因此变红。
+- 提示词表（`src/render/volcano-bgm.ts::VOLCANO_BGM_PROMPTS`）**条数必须 ≥ 目标数**（现每风格 100 条）。
+  否则取词会绕回复用同一批描述 ⇒ 池内一条描述对应好几首 ⇒ **选曲失去区分度**且**不报错**
+  （曲子本身**不会**重复：同一段 Text 两次生成结果不同、没有 seed，已实测）；
+  `npm run bgm:verify` 会因此变红。
 - 渲染期取用已不再「纯随机」：`bgm-dispatch.ts` 用**进程内 LRU** 保证相邻两次派发不同首、
   且一个池子被完整轮转一遍才回到起点；再叠加「避开**该门店**最近用过的」（`RenderTask.bgm_track`
   这一列 + `bgm-history.ts`）。**列由迁移 `20260928160000_add_render_task_bgm_track` 建**，

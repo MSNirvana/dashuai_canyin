@@ -253,7 +253,7 @@ function main(): void {
     assert.equal(upbeatEntry?.poolSize, 0, '没有池子的风格 poolSize 必须是 0')
     assert.equal(upbeatEntry?.file, join(poolRoot, 'UPBEAT.mp3'), '没有池子的风格要落到单文件上')
 
-    // ── ⑪ 池内「已用过的提示词」（补货取词靠它避免生成近乎重复的曲子） ──────
+    // ── ⑪ 池内「已用过的提示词」（补货取词靠它避免白生成「同描述」的曲子） ──────
     // 承接 ⑨ 之后的状态：池内只剩 LIGHT-03.mp3，侧车存在但**没有 prompt 字段**
     assert.equal(
       usedBgmPromptTexts('LIGHT').size,
@@ -312,12 +312,14 @@ function main(): void {
   for (const style of BGM_STYLES) {
     const prompts = VOLCANO_BGM_PROMPTS[style]
     // ★★ 容量约束：提示词条数必须 ≥ 池子目标数。
-    //   少于它 ⇒ 补货按「池内数量 + 序号」取词会绕回起点、取到同一批描述 ⇒
-    //   池子里长出**近乎重复**的曲子，而且**全程不报任何错**（本项目最典型的静默失效）。
+    //   少于它 ⇒ 补货取词会绕回复用同一批描述 ⇒ 池内一条描述对应好几首 ⇒
+    //   **选曲失去区分度**（模型看到的候选彼此无法区分）＋**曲风单薄**，而且**全程不报任何错**
+    //   （本项目最典型的静默失效）。★ 曲子**不会**因此重复：同一段 Text 两次生成结果不同
+    //   （请求体没有 seed，2026-09-28 实测）—— 别照旧注释去「修」一个不存在的问题。
     //   ★ 断言钉在 `BGM_POOL_TARGET` 上而不是写死数字：谁把目标调大，这里就立刻红。
     assert.ok(
       prompts.length >= BGM_POOL_TARGET,
-      `${style} 至少要有 ${BGM_POOL_TARGET} 条提示词（＝池子目标数），实际只有 ${prompts.length} 条 ⇒ 池子超过这个数必然重复`,
+      `${style} 至少要有 ${BGM_POOL_TARGET} 条提示词（＝池子目标数），实际只有 ${prompts.length} 条 ⇒ 超过这个数就要复用描述、选曲会失去区分度`,
     )
     // ★ 同风格内描述必须互不相同：重复串等于直接生成两首近乎一样的曲子
     assert.equal(
@@ -361,7 +363,7 @@ function main(): void {
       assert.notEqual(
         pickVolcanoPrompt(style, 0),
         pickVolcanoPrompt(style, 1),
-        `${style} 相邻序号必须取到不同提示词，否则补货一轮里会生成近乎重复的曲子`,
+        `${style} 相邻序号必须取到不同提示词，否则补货一轮里会复用同一条描述、生成一首曲风高度雷同的曲子`,
       )
     }
   }
