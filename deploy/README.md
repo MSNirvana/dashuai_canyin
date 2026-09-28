@@ -234,10 +234,14 @@ vi server/.env          # 替换所有 REPLACE_*，然后 chmod 600 server/.env
 > terminated.`；`git fetch` 跑到 135s 报 `Failed to connect to github.com port 443 after 134350 ms:
 > Could not connect to server`。（2026-09-15 曾实测 45s 可完成 —— 现在是**真不通**，不是「慢」。）
 >
-> ★★ **`git fetch origin main >/dev/null 2>&1 && git merge --ff-only FETCH_HEAD` 是危险写法**：
-> fetch 失败被 `2>&1` 吞掉，`merge` 会拿**上一次留下的旧 `FETCH_HEAD`** 去合并 ⇒ 打印
-> `Already up to date.` 而 HEAD 根本没动 ⇒ **假成功**（2026-09-28 实测踩到，白跑两轮才发现）。
-> 判据只有一个：**`git rev-parse --short HEAD` 是不是你期望的那个 commit**。
+> ★★ **危险写法：`git fetch origin main >/dev/null 2>&1; git merge --ff-only FETCH_HEAD`。**
+> 两处叠加才致命：① `>/dev/null 2>&1` 把 fetch 的**失败输出**吞掉；
+> ② 两条命令之间用的是 **`;` 而不是 `&&`** ⇒ fetch 明明失败（rc=128，实测 135s 超时），
+> 后面的 `merge` **照样执行**，拿的是**上一次留下的旧 `FETCH_HEAD`**；而那个旧值恰好就等于 HEAD
+> ⇒ 它老老实实打印 **`Already up to date.`** ⇒ 看起来"同步成功"，实际 HEAD 一步没动。
+> （2026-09-28 实测踩到，白跑两轮才发现。★ 换 `&&` 会短路、没有任何输出 —— 那是另一种形态，
+> 更容易发现；关键是**判据不能是 merge 的措辞**。）
+> **只认这一条：`git rev-parse --short HEAD` 是不是你期望的那个 commit。**
 >
 > 代码上机改走 **bundle 直传**（完全绕开 GitHub）：
 >
