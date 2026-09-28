@@ -229,8 +229,36 @@ cp deploy/env.server.template server/.env
 vi server/.env          # 替换所有 REPLACE_*，然后 chmod 600 server/.env
 ```
 
-> 实测 `git ls-remote` 在腾讯云上 45s 内可完成 —— git 协议**能通，只是慢**，
-> 别因为 `curl https://github.com` 超时就判定拉不动代码。
+> **★★ 2026-09-28 实测：这台服务器已经拉不动 GitHub，不要再指望 `git fetch`。**
+> `git ls-remote` 跑到 90s 报 `GnuTLS recv error (-110): The TLS connection was non-properly
+> terminated.`；`git fetch` 跑到 135s 报 `Failed to connect to github.com port 443 after 134350 ms:
+> Could not connect to server`。（2026-09-15 曾实测 45s 可完成 —— 现在是**真不通**，不是「慢」。）
+>
+> ★★ **`git fetch origin main >/dev/null 2>&1 && git merge --ff-only FETCH_HEAD` 是危险写法**：
+> fetch 失败被 `2>&1` 吞掉，`merge` 会拿**上一次留下的旧 `FETCH_HEAD`** 去合并 ⇒ 打印
+> `Already up to date.` 而 HEAD 根本没动 ⇒ **假成功**（2026-09-28 实测踩到，白跑两轮才发现）。
+> 判据只有一个：**`git rev-parse --short HEAD` 是不是你期望的那个 commit**。
+>
+> 代码上机改走 **bundle 直传**（完全绕开 GitHub）：
+>
+> ```bash
+> # ① 本机：打增量包（只补 服务器当前HEAD → main 这一段）
+> cd <本机仓库>
+> git bundle create /tmp/dashuai-$(git rev-parse --short main).bundle main --not <服务器当前HEAD>
+> git bundle verify /tmp/dashuai-*.bundle     # 看 "requires this ref" 是否 == 服务器那个 HEAD
+> #   ★ 别写成 `A..B` 形式：实测 `git bundle create f.bundle 51b7096..a5ad854` 会直接
+> #     报 `fatal: Refusing to create empty bundle`（明明范围非空）；`main --not <旧HEAD>` 才稳。
+>
+> # ② 直传 + 快进（stdin 喂文件，一次往返回合）
+> source ~/.workbuddy/secrets/dashuai-ssh.env
+> SSHPASS="$SSH_PASS" sshpass -e ssh dashuai \
+>   'cat > /tmp/x.bundle && cd /opt/dashuai && git fetch /tmp/x.bundle main \
+>    && git merge --ff-only FETCH_HEAD && rm -f /tmp/x.bundle && git rev-parse --short HEAD' \
+>   < /tmp/dashuai-<短哈希>.bundle
+> ```
+>
+> 若改动只落在**不进 dist** 的地方（`scripts/`、`deploy/`、文档），到这里就够；
+> 动了 `server/src/**` 还得按下面「增量更新」重编译。
 
 **生成两个密钥**：
 
@@ -538,9 +566,16 @@ bash deploy/install-bgm-replenish.sh --rotate=5 --rotate-cooldown=12
   （曲子本身**不会**重复：同一段 Text 两次生成结果不同、没有 seed，已实测）；
   `npm run bgm:verify` 会因此变红。
 - 渲染期取用已不再「纯随机」：`bgm-dispatch.ts` 用**进程内 LRU** 保证相邻两次派发不同首、
-  且一个池子被完整轮转一遍才回到起点；再叠加「避开**该门店**最近用过的」（`RenderTask.bgm_track`
-  这一列 + `bgm-history.ts`）。**列由迁移 `20260928160000_add_render_task_bgm_track` 建**，
-  漏跑迁移的后果是「查询/写入被内部 catch 掉 ⇒ 静默退化成无历史」，不会报错。
+  且一个池子被完整轮转一遍才回到起点；再叠加 `exclude`＝「**该门店用过的全部**」（**不截断**，
+  数据来自 `RenderTask.bgm_track` 这一列 + `bgm-history.ts`）。**列由迁移
+  `20260928160000_add_render_task_bgm_track` 建**，漏跑迁移的后果是「查询/写入被内部 catch 掉
+  ⇒ 静默退化成无历史」，不会报错。
+  ★★ **两条路径的避重责任不一样**：普通档选曲走 `bgm-dispatch.ts`（LRU 与 `exclude` 都在起作用）；
+  而 **AI 档选曲一旦命中就跳过整个派发器**（`worker.ts`）⇒ LRU 对它**完全不生效**，避重**全部由
+  `exclude` 承担**。所以「同一家店连续不重样」的真正保证条数 = `BGM_HISTORY_SCAN_LIMIT`
+  （`bgm-dispatch.ts`，现 300），**不是** LRU 的池长。
+  ★ 避让**深度这个旋钮已删除**（2026-09-28）。判据：**保证不重样的连续条数 = 避让深度 + 1** ——
+  旧默认「深度 3」只保证 4 条，`A B C D A B C D…` 完全合法；现在不截断 ⇒ 保证 N 条。
 
 判活一行：
 
