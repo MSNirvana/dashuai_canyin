@@ -105,7 +105,7 @@ const newId = () => `s${Date.now().toString(36)}${Math.random().toString(36).sli
 const SEED_SLIDE: Slide = {
   id: '',
   image: SEED_IMAGE,
-  kicker: '从一道菜开始',
+  kicker: '每天5分钟',
   title: '让餐饮门店轻松拍视频',
   desc: '', // 副标题已按需求下线（2026-09-16）
   actionText: '开始创作',
@@ -521,7 +521,7 @@ export default function HomeCarouselPage() {
             />
           </Field>
           <Field label="上方小字" help="留空则不显示">
-            <Input value={form.kicker} onChange={(v) => setForm((f) => ({ ...f, kicker: v as string }))} placeholder="从一道菜开始" />
+            <Input value={form.kicker} onChange={(v) => setForm((f) => ({ ...f, kicker: v as string }))} placeholder="每天5分钟" />
           </Field>
           <Field label="标题" required help="建议不超过 14 个字；超过两行会被省略">
             <Input value={form.title} onChange={(v) => setForm((f) => ({ ...f, title: v as string }))} placeholder="让餐饮门店轻松拍视频" />

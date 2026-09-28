@@ -55,11 +55,13 @@ export interface HomeCarouselSlide {
  *   所以 getHomeLayout() 拿不到 carousel 配置、直接回落到这里。
  *   改文案时**必须先改这里**，只改数据库/seed 在线上是不生效的。
  *   ⚠ 标题已按需求改为「让餐饮门店轻松拍视频」（原「做一条能带来客人的视频」）。
+ *   ⚠ 2026-09-25 上方小字（kicker）改为「每天5分钟」（原「从一道菜开始」）——
+ *     同批改齐了后台 HomeCarousel 的默认值与 placeholder、prisma/seed.ts 的种子值。
  */
 export const FALLBACK_SLIDE: HomeCarouselSlide = {
   id: 'fallback',
   image: HOME_CREATE_HERO,
-  kicker: '从一道菜开始',
+  kicker: '每天5分钟',
   title: '让餐饮门店轻松拍视频',
   // 副标题已按需求下线（2026-09-16）。置空即可 —— home/index.tsx 对 desc 是
   // 条件渲染（`{!!s.desc && ...}`），不会留下空隙。

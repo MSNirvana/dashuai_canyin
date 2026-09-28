@@ -717,9 +717,17 @@
   box-shadow: none;
 }
 
+/* ★ 2026-09-25：由「两列 50%」改「三列等宽」。
+   `flex: 1 1 0` 而不是 `width: calc(...)`：calc 差 1rpx 就会让第三张溢出容器
+   （`.home__recent` 不换行）被右边缘切掉。★ `max-width` 用**写死的 rpx** 也不用 calc ——
+   sass 会把 `calc((100% - 24rpx) / 3)` 编译成 `calc(33.33333% - 24rpx/3)`，
+   把「除以 3」留给运行时；WXSS 的 rpx→px 转换能不能吃下 calc 里的除法**不确定**，
+   一旦不认，max-width 整条失效 ⇒ 只写 1~2 条创作时卡片被拉满整行（封面高度写死 392rpx
+   不变、宽度撑到 686rpx），比例直接失真。221rpx = 686 − 24 再三等分，与下面的高度同源。 */
 .home__recent-item {
   display: block;
-  width: 50%;
+  flex: 1 1 0;
+  max-width: 221rpx;
   min-width: 0;
   padding: 0;
   border: 1rpx solid var(--td-component-stroke);
@@ -728,11 +736,18 @@
   overflow: hidden;
 }
 
-.home__recent-cover { width: 100%; height: 168rpx; margin-right: 0; border-radius: 0; }
+/* ★ 2026-09-25：缩略图从「横 168rpx」改成「竖 392rpx」，并配 tsx 的 `mode='aspectFit'`。
+   盒子 9:16 = 线上封面**实测**比例（5 张：1088×1920 / 720×1280 / 540×960，清一色 9:16）
+   ⇒ 同比例下 aspectFit 既不裁也不留边。★ 392 = 卡片宽 220.67rpx × 16/9
+   （内容区 686rpx − 两条 12rpx 间距，再三等分）—— 改宽度或间距时此高度必须一起重算，
+   否则比例失真，又回到「裁掉一条横带」的老毛病。 */
+.home__recent-cover { width: 100%; height: 392rpx; margin-right: 0; border-radius: 0; }
 .home__recent-cover-image { border-radius: 0; }
-.home__recent-main { padding: 16rpx; }
-.home__recent-title { font-size: 25rpx; }
-.home__recent-meta { margin-top: 8rpx; gap: 8rpx; }
+.home__recent-main { padding: 12rpx; }
+.home__recent-title { font-size: 24rpx; }
+/* 三列后文字区只剩 ~197rpx：类型 pill + 「分镜 N」一行放不下 ⇒ 允许换行。
+   不允许换行会被 `.home__recent-item` 的 overflow:hidden 把后半截直接切掉。 */
+.home__recent-meta { margin-top: 8rpx; gap: 6rpx; flex-wrap: wrap; }
 .home__recent-arrow { display: none; }
 
 .home__works-tabs { margin-top: 2rpx; }

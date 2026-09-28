@@ -190,7 +190,7 @@ export default function HomePage() {
     // 最近创作：跟随当前门店（门店是最高层）。失败只影响这一块，不遮住积分与门店。
     try {
       const sid = useMerchantStore.getState().currentStoreId
-      setRecent(sid ? (await listCreations(sid)).slice(0, 2) : [])
+      setRecent(sid ? (await listCreations(sid)).slice(0, 3) : [])
     } catch {
       setRecent([])
       showError('recent', '最近创作加载失败，请重试')
@@ -424,7 +424,7 @@ export default function HomePage() {
 
       {!isLoggedIn ? (
         /* 未登录：原来这里是一整页的早退分支（文字 hero + 登录卡），现在只替换
-           「接着上次拍」这一块。首页其余部分 —— 口号海报、轮播、优秀作品 ——
+           「近期作品」这一块。首页其余部分 —— 口号海报、轮播、优秀作品 ——
            对未登录用户同样是有效内容，尤其作品区：那才是给未登录用户的引流素材。 */
         <View className='ds-card home__guest home__guest--inline'>
           <Text className='home__guest-title'>登录后开始创作</Text>
@@ -432,10 +432,14 @@ export default function HomePage() {
         </View>
       ) : setupStage === 'READY' ? (
         <>
-          {/* ── 最近创作 ── */}
+          {/* ── 近期作品（★ 2026-09-25 由「接着上次拍」改名；同日「两条→三条 + 竖版缩略图」）──
+              旧名名不副实：这里列的是 `listCreations(...).slice(0, 3)` —— **最近三条**创作，
+              不是「上一次拍的那一条」；下面 `home__recent-*` 那一整套是「近来的一批」。
+              ★ 而 `recent` 这个 state 名、`home__recent-*` 这组类名**都不动** ——
+                改的只是对外文案（与「对外称号只换 label、不动标识符」同一条约定）。 */}
           <View className='home__sec'>
             <View>
-              <Text className='home__sec-title'>接着上次拍</Text>
+              <Text className='home__sec-title'>近期作品</Text>
             </View>
             <View className='home__sec-more' onClick={goCreations}><Text>全部创作 ›</Text></View>
           </View>
@@ -450,12 +454,19 @@ export default function HomePage() {
             <View className='home__recent'>
               {recent.map((c) => (
                 <View className='home__recent-item' key={c.id} hoverClass='ds-hover' onClick={() => openCreation(c.id)}>
-                  {/* 有已上传的视频就显示它的封面（与创作列表同一份服务端字段），没有才退回默认图标 */}
+                  {/* 有已上传的视频就显示它的封面（与创作列表同一份服务端字段），没有才退回默认图标。
+                      ★ mode 用 aspectFit 而**不是** aspectFill：封面是竖屏视频抽出来的帧
+                        （线上实测 5 张全是 9:16），把盒子也做成 9:16 ⇒ 同比例、不裁也不留边；
+                        万一遇到别的比例，宁可留一点底色也要让整张图**完整可见**
+                        （原先是横盒子 + aspectFill，竖屏封面被裁到只剩中间一条横带）。 */}
                   <View className='home__recent-cover'>
                     {c.coverUrl ? (
-                      <Image className='home__recent-cover-image' src={c.coverUrl} mode='aspectFill' />
+                      <Image className='home__recent-cover-image' src={c.coverUrl} mode='aspectFit' />
                     ) : (
-                      <t-icon name='movie-clapper' size='36rpx' />
+                      /* 无封面（还没传素材）走占位图标：占位框跟着缩略图一起变成 9:16 竖版后
+                         高了 2.3 倍（168rpx → 392rpx），36rpx 的小图标丢在深色大框里会像
+                         「图片加载失败」⇒ 放大到 64rpx。 */
+                      <t-icon name='movie-clapper' size='64rpx' />
                     )}
                   </View>
                   <View className='home__recent-main'>
