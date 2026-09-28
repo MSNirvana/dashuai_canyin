@@ -1,6 +1,7 @@
 import { userFacingRenderError } from '../src/render/user-errors.js'
 
-const WANT = '云端合成服务暂不可用，请稍后重试，或改用「基础生成」'
+// ★ 2026-09-28：结尾的「或改用「基础生成」」已随该档位下线一并去掉（见 user-errors.ts 的说明）
+const WANT = '云端合成服务暂不可用，请稍后重试'
 /** 合成服务**内部**出错（JS 运行时错误）的对外说法，见 user-errors.ts 规则 ⑧ */
 const INTERNAL_ERROR = '云端合成服务内部出错，请稍后重试；若反复失败请联系客服'
 
@@ -14,7 +15,7 @@ const cases: Array<[string, string | null, string]> = [
   // ── 回归：原有的三类必须仍然对 ──
   ['授权类 401', 'ChatCut MCP 401 Unauthorized', WANT],
   ['授权类 invalid_grant', 'invalid_grant: refresh token expired', WANT],
-  ['提交类未返回 id', 'ChatCut submit_export 未返回 renderId', '云端合成任务提交失败，请稍后重试，或改用「基础生成」'],
+  ['提交类未返回 id', 'ChatCut submit_export 未返回 renderId', '云端合成任务提交失败，请稍后重试'],
   ['超时类', 'ETIMEDOUT: connect timeout', '云端合成响应超时，请稍后重试'],
   ['配音类', 'TTS 音色不可用', '配音生成失败，请稍后重试，或换一个配音音色'],
   // ── 回归：业务提示要原样保留（不能被新规则吃掉）──

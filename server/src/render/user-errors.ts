@@ -63,18 +63,23 @@ const RULES: [RegExp, string][] = [
   //   ⚠ 必须排在 ④ 之前：ChatCut 的错误报文里常带 `MCP` 字样，先撞上 ④ 就没这条了。
   [
     /\b402\b|credit|quota|insufficient|billing|payment.?required|余额不足|额度/i,
-    '云端合成服务暂不可用，请稍后重试，或改用「基础生成」',
+    '云端合成服务暂不可用，请稍后重试',
   ],
   // ③ 任务提交/会话环节：上传会话、分片、ETag、项目与导出的 id
   [
     /分片上传|ETag|上传会话|签名地址|未返回 renderId|未返回 projectId|create_project|submit_export|upload.?session/i,
-    '云端合成任务提交失败，请稍后重试，或改用「基础生成」',
+    '云端合成任务提交失败，请稍后重试',
   ],
   // ④ 授权/凭据/通道未配置
   [
     /授权|鉴权|unauthorized|invalid_grant|\b401\b|\b403\b|MCP|未配置|未返回成片地址|已完成但未返回/i,
-    '云端合成服务暂不可用，请稍后重试，或改用「基础生成」',
+    '云端合成服务暂不可用，请稍后重试',
   ],
+  // ★★ 2026-09-28：上面三条的结尾原本是「…请稍后重试，或改用「基础生成」」，
+  //   现在把这个建议去掉了 —— 客户端已下线「基础生成」档位（见 compose.tsx 的 GRADE_OPTIONS），
+  //   照着提示去做只会找不到入口，比不给建议更糟。
+  //   ★ 也**不**改成推荐「精品生成」：那是剪辑师人工精剪、系数 3×，
+  //     替商户做这个价差选择不合适 —— 说不出口的时候，「稍后重试」就是唯一诚实的建议。
   // ⑤ 网络与超时
   [
     /ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|socket hang up|timeout|超时/i,

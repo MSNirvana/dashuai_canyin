@@ -48,10 +48,33 @@ export const CHATCUT_VOICES = [
  * （见 compose.tsx 的「AI 成片选项」）。
  * ★ 但 `none` 这个取值**不能**从 CHATCUT_VOICES 里删掉：它同时是 `voiceId` 的合法值
  *   与后端 `CHATCUT_VOICE_OFF` 的契约值，删了类型与提交都会塌。
+ *
+ * ★★ 2026-09-28：合成页的「AI 自动剪辑」卡片已删（AI 档固定 `DEFAULT_CHATCUT`，见 compose.tsx）
+ *   ⇒ `CHATCUT_VOICES` / `CHATCUT_VOICE_CHOICES` / `isVoiceOff` 在本端**已无界面引用**。
+ *   三个都**故意保留**，别按「没人用」清理掉：
+ *     · `none` 是 `voiceId` 的合法取值、也是后端 `CHATCUT_VOICE_OFF` 的契约值；
+ *     · `isVoiceOff` 是「是否不配音」这个语义的定义处；
+ *     · `CHATCUT_VOICES` 是 `ChatCutOptions['voiceId']` 的类型来源。
+ *   将来要把选项面板放回来时直接复用。
  */
 export const CHATCUT_VOICE_CHOICES = CHATCUT_VOICES.filter((voice) => voice.id !== 'none')
 
-/** 是否选了「不配音」（原声直出）。提交前用它把字幕一并关掉。 */
+/**
+ * 是否选了「不配音」（原声直出）。
+ *
+ * ★★ 「不配音」的后果在两条链路上**不一样**，别拿一条去推另一条（2026-09-28 逐行核过）：
+ *   · **本地管线**（AI 档实际走的：客户端发 `engine: 'LOCAL'`，见 compose.tsx）——
+ *     跳过 TTS、直接保留素材原声（`worker.ts` 的 `voiceEnabled = false`）；
+ *     而字幕**照样会有**：`subtitleMode: 'SOURCE_AUDIO'` 让 worker 对**原声**做 ASR。
+ *     所以「不使用 AI 配音」与「显示字幕」在本地链路上并不冲突。
+ *   · **ChatCut 通道**（显式实验通道）—— 第 2 步整个跳过 ⇒ 没有 `voiceSources`
+ *     ⇒ `transcriptionAssetIds` 为空 ⇒ `edit_captions` 根本不会被调用，**连字幕一起没有**
+ *     （`chatcut-driver.ts` 会推一条「字幕一并关闭」的 notice）。
+ *   ★ 上面那句「选它时字幕必须一起关」说的正是**第二条**链路；别拿它解释 AI 档的默认行为。
+ * ★ 另外 `editMode: 'AUTO'` 时服务端会用 `resolveAutoChatcutOptions`（`auto-edit.ts`）
+ *   把参数重新裁决一遍并强制 `voiceId: 'none'` ⇒ AI 档本来就固定「不配音」，
+ *   这也是「删掉面板、全走默认」在服务端侧本就成立的原因。
+ */
 export const isVoiceOff = (voiceId: ChatCutOptions['voiceId']): boolean => voiceId === 'none'
 
 export type ChatCutOptions = {

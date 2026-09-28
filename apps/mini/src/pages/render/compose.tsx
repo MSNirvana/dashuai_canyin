@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
-import { View, Text, Button, Slider, Video, Image, Switch, Textarea } from '@tarojs/components'
+import { View, Text, Button, Slider, Video, Image } from '@tarojs/components'
 import Taro, { useDidShow, useDidHide } from '@tarojs/taro'
 import { getCreation, type CreationDetail } from '../../services/creation'
 import {
@@ -9,9 +9,7 @@ import {
 import {
   submitRender, listRenders, getRender, getPlayUrl, getResultPlayUrl, getGradeCapabilities, previewColor,
   type RenderTask, type RenderGrade, type ColorGrade, type ChatCutOptions,
-  isVoiceOff, type AutoEditProfile, type SubtitleMode, CHATCUT_VOICES,
 } from '../../services/render'
-import { uploadAudioFile } from '../../services/upload'
 import { useMerchantStore } from '../../store/merchant'
 import { readRouteId, isNumericId } from '../../utils/route-id'
 // 时间一律走这里：接口给的是 UTC 的 ISO 串（…T…Z），直接渲染/截串都会露 T、Z 且差 8 小时
@@ -21,6 +19,22 @@ import SectionHelp from '../../components/section-help'
 import './compose.scss'
 
 const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
+/**
+ * 「整片调色」模块**是否显示**（2026-09-28 需求：直接隐藏）。
+ *
+ * ★ 用开关「隐藏」而不是删代码：四轴滑块 + 整片预览 + 出片路径本身是完整可用的，
+ *   只是按要求先不上屏 —— 保留它，将来要放回来只改这一个 `false`，
+ *   不必从 git 历史里往回捞组件。
+ * ★ 隐藏期间没有多余开销：`color` 恒等于 `DEFAULT_COLOR`（没有滑块可改），
+ *   而 `requestColorPreview` 与「回页面重新预览」的 effect 都以 `isNoopColor` 早退
+ *   ⇒ 一次预览请求都不会发出去。
+ * ★ `grade !== 'PREMIUM'` 是它原本的另一个前提（精品生成不走本地调色），一并保留：
+ *   将来把开关打开，也不会在精品档露出这个不该生效的模块。
+ * ★★ 注意一处**耦合**：这个模块原本只在「基础生成」档生效，而该档位 2026-09-28 一并下线了
+ *   ⇒ 要真正恢复调色，得先想清楚它挂在哪个档上（`offerColorRender` 里也有一句同样的提醒），
+ *   不是把这个 `false` 改回 `true` 就完事。
+ */
+const SHOW_COLOR_MODULE = false
 /**
  * 每次生成类调用都新建一个 requestId（与 creation/edit.tsx 同款）。
  * ★ 不要"省事"复用一个模块级常量：服务端按 requestId 做幂等 ——
@@ -37,7 +51,16 @@ const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3
  */
 const PLAYER_VIDEO_ID = 'rcompose-player'
 /**
- * AI 档的 6 项选项（2026-09-21 已全部接到真实原语，面板放回）。
+ * AI 档的剪辑参数。- **现在是唯一来源**：合成页的选项面板 2026-09-28 已删，用户改不了任何一项。
+ *
+ * ★★ 由此带出一条更要紧的事实：`editMode` 恒为 `'AUTO'` ⇒ 服务端会用
+ *   `resolveAutoChatcutOptions`（`server/src/render/auto-edit.ts`）**把参数重新裁决一遍**：
+ *   它强制 `voiceId: 'none'`（不配音、保留原声）、`pacing: 'NATURAL'`、`transitions: 'CLEAN'`、
+ *   `removeSilence: false`、`subtitleStyle: 'CLEAN'`、`normalizeAudio: true`，并按素材画像选配乐；
+ *   真正透传过去的只有 `clipPrep`（素材路线）与 `note`。
+ *   ⇒ 所以「删掉面板、全部走默认」在服务端侧本来就成立。
+ *   ⚠ 反过来也成立：`transitions: 'SMOOTH'` 与 `removeSilence: true` 这两个**客户端默认值**
+ *     在 AUTO 模式下会被覆写掉，改它们改变不了 AI 档的出片效果 —— 别把它当旋钮。
  *
  * ★ 面板文案与**服务端能力**的对应关系（改文案前先看这里，别让两边说法不一致）：
  *   · 字幕样式  → `edit_captions enable preset`（ChatCut 内置预设，见服务端 CAPTION_PRESETS）
@@ -47,8 +70,9 @@ const PLAYER_VIDEO_ID = 'rcompose-player'
  *   · 清理停顿  → `clean_script`（只处理**已转录**内容 ⇒ 依赖配音）
  *   · 统一音量  → 本地测每段响度 + `edit_item decibelAdjustment`（ChatCut 没有响度归一项）
  *   · 配乐      → `submit_music` + 自动排轨（**生成类**调用，受 CHATCUT_BGM_ENABLED 控制）
- * ⚠ 依赖配音的两项（字幕样式、清理停顿）只在「有配音」时才显示 —— 没有配音轨就没有转录，
- *   服务端不会执行它们。显示了却一定不生效，比不显示更伤信任。
+ * ★ 原来那条「依赖配音的两项只在有配音时才显示」的顾虑随面板一起消失了；
+ *   现在的口径是**固定不配音**：本地管线保留素材原声，字幕走对原声的 ASR
+ *   （两条链路为何不同，见 `services/render.ts` 里 `isVoiceOff` 的说明）。
  */
 const DEFAULT_CHATCUT: ChatCutOptions = {
   editMode: 'AUTO',
@@ -61,30 +85,27 @@ const DEFAULT_CHATCUT: ChatCutOptions = {
   clipPrep: 'ORIGINAL', note: '',
 }
 
-/** 字幕样式标签，保持服务端枚举与界面文案一一对应。 */
-const SUBTITLE_STYLE_LABEL: Record<ChatCutOptions['subtitleStyle'], string> = {
-  CLEAN: '简洁', EMPHASIS: '重点强调', SOCIAL: '社交风格',
-}
-const SUBTITLE_MODE_LABEL: Record<SubtitleMode, string> = {
-  OFF: '关闭字幕', VOICE: '旁白字幕', SOURCE_AUDIO: '原声识别', VOICE_AND_SOURCE: '旁白+原声',
-}
 /**
  * 成片记录里给「本地打底」加的后缀。
  * ★ 只在走过该路线时才加：默认路线不加任何字样，**不改变原有记录的观感**。
  */
 const clipPrepSuffix = (task: { chatcut?: Partial<ChatCutOptions> } | null | undefined): string =>
   task?.chatcut?.clipPrep === 'NORMALIZED' ? ' · 本地打底' : ''
+/**
+ * 可选的生成档位。
+ * ★ 2026-09-28：「基础生成」（粗剪拼接 + 调色）按要求**下线**，不再出现在这一行里。
+ *   它原本是整片调色唯一生效的档位 —— 与调色一起退场，两者不再互相矛盾。
+ *   `RenderGrade` 仍保留 `'BASIC'`：历史成片记录里还有这个档位，
+ *   `result.tsx` 要照旧显示中文名，删了类型反而会漏掉老记录。
+ * ★ `GRADE_RATIO` 仍按三档写全（类型是 `Record<RenderGrade, number>`）：少一个键就编译不过。
+ * ★ 口径说明：本文件（以及 scss / 服务端）里还有若干历史注释写「三档互不干扰」——
+ *   那描述的是**按档位隔离**这个机制，机制没变、只是档位少了一个；
+ *   本次只改了**点名「基础生成」**的那几处（照原样会把人引向不存在的选项），
+ *   其余保留原措辞以便追溯，读作「可选的档位之间互不干扰」。
+ */
 const GRADE_OPTIONS = [
-  { key: 'BASIC' as const, title: '基础生成', desc: '粗剪拼接 + 调色' },
   { key: 'AI' as const, title: 'AI 生成', desc: '自动识别 + 智能剪辑' },
   { key: 'PREMIUM' as const, title: '精品生成', desc: '剪辑师人工精剪' },
-]
-const AUTO_EDIT_PROFILE_OPTIONS: Array<{ value: AutoEditProfile | undefined; label: string }> = [
-  { value: undefined, label: '自动识别' },
-  { value: 'DISH', label: '菜品展示' },
-  { value: 'TALKING_HEAD', label: '口播人设' },
-  { value: 'VENUE', label: '门店环境' },
-  { value: 'MIXED', label: '综合探店' },
 ]
 const ACTIVE_STATUS = ['QUEUED', 'RUNNING', 'MANUAL_PENDING', 'MANUAL_DOING']
 const STATUS_LABEL: Record<string, string> = {
@@ -226,14 +247,17 @@ export default function RenderCompose() {
   const resultPrefRef = useRef<string | null>(boot.snap?.resultId ?? null)
   const [detail, setDetail] = useState<CreationDetail | null>(null)
   const [color, setColor] = useState<ColorGrade>(boot.snap?.color ?? DEFAULT_COLOR)
-  const [grade, setGrade] = useState<RenderGrade>(boot.snap?.grade ?? 'BASIC')
-  const [chatcut, setChatcut] = useState<ChatCutOptions>(DEFAULT_CHATCUT)
-  const [autoEditProfile, setAutoEditProfile] = useState<AutoEditProfile | undefined>(undefined)
-  const [customVoice, setCustomVoice] = useState<{ cosKey: string; durationMs?: number; name: string } | null>(null)
-  const [customVoiceUploading, setCustomVoiceUploading] = useState(false)
-  const [recording, setRecording] = useState(false)
-  /** 是否「不配音」（原声直出）。本地 TTS 音色由服务器后台配置。 */
-  const voiceOff = isVoiceOff(chatcut.voiceId)
+  const [grade, setGrade] = useState<RenderGrade>(boot.snap?.grade ?? 'AI')
+  /**
+   * AI 档的剪辑参数。**已经没有界面了** —— 2026-09-28 删掉「AI 自动剪辑」卡片之后，
+   * 这些值一律取 `DEFAULT_CHATCUT`，用户不再能改（需求：「AI 生成之后全部走默认」）。
+   * ★ 下面两条是需求的硬要求，**别顺手改 DEFAULT_CHATCUT**：
+   *   · `voiceId: 'none'` = 不配音、**保留画面原声**（即需求里的「都走真人声音」）；
+   *   · `subtitleMode: 'SOURCE_AUDIO'` = 字幕识别真人原声，而不是照配音轨转录。
+   *   （`services/render.ts` 的 `isVoiceOff` / `CHATCUT_VOICES` 仍然保留：前者定义了
+   *    `none` 的语义，后者既是 `voiceId` 的类型来源、也是后端 `CHATCUT_VOICE_OFF` 的契约值。）
+   */
+  const chatcut: ChatCutOptions = DEFAULT_CHATCUT
   const [renders, setRenders] = useState<RenderTask[]>([])
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [selectedResult, setSelectedResult] = useState<RenderTask | null>(null)
@@ -349,7 +373,7 @@ export default function RenderCompose() {
   /**
    * 提交锁按**档位**分开（不是单一布尔）。
    *
-   * ★ 为什么：三档互不干扰之后，用户在 AI 提交尚未返回时可以立刻点基础生成。
+   * ★ 为什么：档位互不干扰之后，用户在 AI 提交尚未返回时可以立刻提交另一个档位。
    *   单一布尔会让第二次点击命中 `submitLock.current` 后**静默返回** ——
    *   既没提交、也没有任何提示，用户只会觉得「按钮坏了、点了没反应」。
    *   用集合按档位去重，才既防了同档双击、又不吞掉异档提交。
@@ -362,9 +386,6 @@ export default function RenderCompose() {
    * 按 requestId 去重 ⇒ 新 id 就是新的一笔）。锁必须在 showModal **之前**同步置位。
    */
   const publishLock = useRef(false)
-  const recorderRef = useRef<ReturnType<typeof Taro.getRecorderManager> | null>(null)
-  const recordingRef = useRef(false)
-  const recordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const previewVersion = useRef(0)
   const colorPreviewVersion = useRef(0)
   const colorPreviewTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -374,7 +395,7 @@ export default function RenderCompose() {
    *   · `activeTasks` —— **全部**未收敛的任务。用于「进度卡片」与轮询：漏掉哪一档，
    *     那一档的进度就没人更新（页面停在旧百分比上，看着像卡死）。
    *   · `pendingTask` —— **当前档位**的未收敛任务。只用于判断「这一档现在能不能点生成」：
-   *     三档互不干扰是产品约定（AI 档在跑时基础档照样要能提交），所以按钮只该被本档挡住。
+   *     档位互不干扰是产品约定（AI 档在跑时精品档照样要能提交），所以按钮只该被本档挡住。
    *     ⚠ 这两者用反了就是本轮修的那个 bug（按钮被别的档位锁住）或者进度条不刷新。
    */
   const activeTasks = renders.filter((task) => ACTIVE_STATUS.includes(task.status))
@@ -507,7 +528,7 @@ export default function RenderCompose() {
       // 配乐开关是**纯增量**字段：老服务端不返回它 ⇒ 保持 false（不选即可，不会误导）
       setBgmEnabled(!!r.chatcut?.bgmEnabled)
       // 当前选中的档位如果已不可用，回退到 BASIC，避免用户点了提交才发现
-      setGrade((cur) => (issues[cur] ? 'BASIC' : cur))
+      setGrade((cur) => (issues[cur] ? 'AI' : cur))
     } catch {
       setGradeIssues({})
       setBgmEnabled(false)
@@ -566,31 +587,12 @@ export default function RenderCompose() {
     previewVersion.current += 1
     // 预览链接是签名过的、会过期，离开就丢掉；下次回来按需重算（服务端有缓存，很快）
     clearColorPreview()
-    // 录音同样不能带出本页（navigateTo 走时页面只是隐藏、不会卸载，卸载钩子救不了这条路）：
-    // 先清标记再 stop，onStop 走早退分支、不会发起那次孤儿上传
-    recordingRef.current = false
-    setRecording(false)
-    if (recordingTimerRef.current) {
-      clearTimeout(recordingTimerRef.current)
-      recordingTimerRef.current = null
-    }
-    try { recorderRef.current?.stop() } catch { /* 没在录音 */ }
   })
 
   useEffect(() => () => {
     loadVersion.current += 1
     previewVersion.current += 1
     if (colorPreviewTimer.current) clearTimeout(colorPreviewTimer.current)
-    // ★ 录音必须随页面终止：RecorderManager 是 App 级单例，不主动 stop 它会继续采集到
-    //   60s 上限，然后 onStop 回调照常执行 uploadCustomVoice —— 落一条没有任何提交
-    //   会引用的孤儿素材，用户也不知道「为什么还在录音」。
-    //   先清标记再 stop：onStop 见 recordingRef 已清会走早退分支，不会触发那次上传。
-    recordingRef.current = false
-    if (recordingTimerRef.current) {
-      clearTimeout(recordingTimerRef.current)
-      recordingTimerRef.current = null
-    }
-    try { recorderRef.current?.stop() } catch { /* 没在录音 */ }
   }, [])
 
   useEffect(() => {
@@ -905,74 +907,6 @@ export default function RenderCompose() {
     }
   }
 
-  const uploadCustomVoice = async (filePath: string, sizeBytes?: number, name = '自定义配音') => {
-    if (!detail?.storeId || customVoiceUploading) return
-    setCustomVoiceUploading(true)
-    try {
-      const asset = await uploadAudioFile({ filePath, storeId: detail.storeId, sizeBytes })
-      setCustomVoice({ cosKey: asset.cosKey, durationMs: asset.durationMs ?? undefined, name })
-      setChatcut((value) => ({ ...value, voiceId: 'custom' }))
-      Taro.showToast({ title: '自定义配音已添加', icon: 'success' })
-    } catch (error) {
-      Taro.showToast({ title: (error as Error).message || '配音上传失败', icon: 'none' })
-    } finally {
-      setCustomVoiceUploading(false)
-    }
-  }
-
-  const chooseCustomVoice = async () => {
-    try {
-      const result = await Taro.chooseMessageFile({ count: 1, type: 'file', extension: ['mp3', 'm4a', 'wav', 'aac'] })
-      const file = result.tempFiles[0]
-      if (file) await uploadCustomVoice(file.path, file.size, file.name)
-    } catch {
-      // 用户取消选择不提示错误
-    }
-  }
-
-  const recordCustomVoice = async () => {
-    if (customVoiceUploading) return
-    const recorder = recorderRef.current ?? Taro.getRecorderManager()
-    recorderRef.current = recorder
-    if (recordingRef.current) {
-      try { recorder.stop() } catch { /* 录音已经结束 */ }
-      return
-    }
-    try {
-      await Taro.authorize({ scope: 'scope.record' })
-    } catch {
-      Taro.showToast({ title: '请允许使用麦克风', icon: 'none' })
-      return
-    }
-    await new Promise<void>((resolve) => {
-      recorder.onStop((result) => {
-        if (!recordingRef.current) { resolve(); return }
-        recordingRef.current = false
-        setRecording(false)
-        if (recordingTimerRef.current) clearTimeout(recordingTimerRef.current)
-        recordingTimerRef.current = null
-        void uploadCustomVoice(result.tempFilePath, undefined, '我的录音')
-        resolve()
-      })
-      recordingRef.current = true
-      setRecording(true)
-      recorder.start({ duration: 60_000, format: 'aac', sampleRate: 44100, numberOfChannels: 1 })
-      Taro.showToast({ title: '正在录音，再点停止', icon: 'none', duration: 1500 })
-      recordingTimerRef.current = setTimeout(() => {
-        try { recorder.stop() } catch { /* 录音已停止 */ }
-      }, 60_000)
-    })
-  }
-
-  const stopCustomVoice = () => {
-    if (!recordingRef.current) return
-    recordingRef.current = false
-    setRecording(false)
-    if (recordingTimerRef.current) clearTimeout(recordingTimerRef.current)
-    recordingTimerRef.current = null
-    try { recorderRef.current?.stop() } catch { /* 录音已经结束 */ }
-  }
-
   /**
    * 滚动到页面顶部的播放器（成片记录里点「播放」之后用）。
    * rect.top 是相对**视口**的坐标，要加上当前滚动偏移换算回页面绝对位置，
@@ -1035,10 +969,6 @@ export default function RenderCompose() {
       )
       return
     }
-    if (grade === 'AI' && chatcut.voiceId === 'custom' && !customVoice) {
-      setLoadError('请先上传或录制自定义配音，再生成成片')
-      return
-    }
     // P0-5 纵深防御：UI 已把不可用档位标灰，但状态可能过期（例如页面停留期间服务端改了配置），
     // 这里再拦一道，并顺手刷新一次能力表，避免用户反复点到同一个拒绝。
     if (gradeIssues[grade]) {
@@ -1072,11 +1002,12 @@ export default function RenderCompose() {
       if (!confirmed.confirm) return
       const { task } = await submitRender(id, {
         mode, grade, color,
-        // ★ 让「提交载荷」和「界面说法」逐项对齐，别出现「选了但其实没做」的状态：
-        //   · 不配音 ⇒ 字幕与「清理停顿」都没有可转录的音频（服务端会跳过），
-        //     这里显式置 false，而不是靠后端静默忽略；
+        // ★ 提交载荷只写**实际会发出去**的东西，别和界面说法脱钩：
+        //   · `subtitles` 由 `subtitleMode` 推导，不另存一个布尔（两者曾经会打架）；
         //   · 配乐开关没开 ⇒ 强制 NONE —— 面板那时不给选项，正常选不到，
-        //     但默认值/历史状态可能带着旧值，强制归零最稳。
+        //     但默认值可能带着旧值，强制归零最稳。
+        //   ★ 2026-09-28：AI 档的选项面板已删（`chatcut` 恒为 DEFAULT_CHATCUT）
+        //     ⇒ 这里是「固定值 + 两道兜底」，不再是用户选择的结果。
         chatcut: grade === 'AI'
           ? {
               ...chatcut,
@@ -1085,10 +1016,6 @@ export default function RenderCompose() {
             }
           : undefined,
         engine: grade === 'AI' ? 'LOCAL' : undefined,
-        profile: grade === 'AI' && chatcut.editMode === 'ADVANCED' ? autoEditProfile : undefined,
-        ...(grade === 'AI' && chatcut.editMode === 'ADVANCED' && chatcut.voiceId === 'custom' && customVoice
-          ? { customVoiceKey: customVoice.cosKey, customVoiceDurationMs: customVoice.durationMs }
-          : {}),
         requestId: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
       })
       setRenders((tasks) => [task, ...tasks.filter((item) => item.id !== task.id)])
@@ -1114,22 +1041,16 @@ export default function RenderCompose() {
    *   用户根本不会发现，这才是最坏的结果。所以这里明确挡住，并把出口指出来。
    */
   const offerColorRender = async () => {
-    if (grade !== 'BASIC') {
-      setResultError('整片调色只对「基础生成」生效。要保存调色效果，请先切回基础生成并出片。')
-      return
-    }
+    // ★★ 2026-09-28：整片调色已隐藏（`SHOW_COLOR_MODULE = false`）⇒ 画面上不可能再是
+    //   低码率调色预览，这条分支只剩「这条成片暂时拿不到地址」一种解释。
+    //   原来那句「整片调色只对【基础生成】生效，请先切回基础生成出片」必须删掉 ——
+    //   基础生成档位同时下线了，照原样说就是把用户指向一个不存在的档位。
+    //   （要恢复 RECOLOR 那条路，得连「基础生成」一起恢复，见 SHOW_COLOR_MODULE 的说明。）
     if (pendingTask) {
       setResultError(`「${gradeTitle(grade)}」有任务正在处理中，等它完成就能保存这一版成片。`)
       return
     }
-    const cost = estimatePoints(detail?.shots ?? [], grade, true)
-    const { confirm } = await Taro.showModal({
-      title: '调色还没出片',
-      content: `低码率预览不能存进相册，请先按当前调色出片（约 ${cost} 积分）。`,
-      confirmText: '去出片',
-      cancelText: '知道了',
-    })
-    if (confirm) await doRender('RECOLOR')
+    setResultError('这条成片暂时拿不到下载地址，请稍后重试；仍不行就换一条成片保存。')
   }
 
   /**
@@ -1237,7 +1158,7 @@ export default function RenderCompose() {
   const playUrl = colorPreviewUrl ?? videoUrl
   const previewBadge = showingStill ? '调色近似' : showingColorPreview ? '调色预览' : `${previewedGrade}${clipPrepSuffix(selectedResult)}`
   const stillLabel = draggingAxis !== null ? '松手后生成整片精确预览' : '正在生成整片精确预览…'
-  // 本地自动剪辑与基础生成共用归一化、拼接和调色管线；ChatCut 仅作为显式外部实验通道。
+  // 本地管线（归一化、拼接、调色）现由 AI 档使用；ChatCut 仅作为显式外部实验通道。
   const colorUnsupported = false
   return (
     <View className='rcompose'>
@@ -1423,161 +1344,10 @@ export default function RenderCompose() {
         )}
       </View>
 
-      {grade === 'AI' && (
-        <View className='rcompose__card rcompose__card--ai'>
-          <View className='rcompose__titlerow'>
-            <Text className='rcompose__sectitle'>AI 自动剪辑</Text>
-            <SectionHelp
-              title='AI 自动剪辑'
-              text='服务器会分析素材内容、画面质量和口播关系，自动选择镜头与节奏。'
-            />
-          </View>
-          <View className='rcompose__choice'>
-            <View className='rcompose__fieldrow'>
-              <Text className='rcompose__fieldlabel'>剪辑模式</Text>
-              <SectionHelp
-                title='剪辑模式'
-                text='AI 默认模式：不添加 AI 配音，保留素材原声并自动生成字幕；系统会识别镜头类型、语音节奏和转场，优先保证语句完整与音画同步。高级模式：可自选配音、字幕样式、节奏与转场等细节。'
-              />
-            </View>
-            <View className='rcompose__choices'>
-              <Text className={`rcompose__choiceitem ${chatcut.editMode === 'AUTO' ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((value) => ({ ...value, editMode: 'AUTO' }))}>AI 默认模式</Text>
-              <Text className={`rcompose__choiceitem ${chatcut.editMode === 'ADVANCED' ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((value) => ({ ...value, editMode: 'ADVANCED' }))}>高级模式</Text>
-            </View>
-          </View>
-          {chatcut.editMode === 'AUTO' ? null : (
-            <>
-          <View className='rcompose__choice'>
-            <View className='rcompose__fieldrow'>
-              <Text className='rcompose__fieldlabel'>剪辑内容类型</Text>
-              <SectionHelp title='剪辑内容类型' text='不确定时选择自动识别，系统会根据整组素材判断。' />
-            </View>
-            <View className='rcompose__choices'>
-              {AUTO_EDIT_PROFILE_OPTIONS.map((option) => (
-                <Text
-                  key={option.label}
-                  className={`rcompose__choiceitem ${autoEditProfile === option.value ? 'rcompose__choiceitem--on' : ''}`}
-                  onClick={() => setAutoEditProfile(option.value)}
-                >
-                  {option.label}
-                </Text>
-              ))}
-            </View>
-          </View>
-          <View className='rcompose__fieldrow'>
-            <Text className='rcompose__fieldlabel'>配音音色</Text>
-            <SectionHelp
-              title='配音音色'
-              text='系统音色即选即用；选「自定义」可用自己的录音或音频文件，自定义配音会优先于服务器音色，并作为整条旁白使用。'
-            />
-          </View>
-          <View className='rcompose__voicegrid'>
-            {CHATCUT_VOICES.map((voice) => (
-              <View
-                key={voice.id}
-                className={`rcompose__voice ${chatcut.voiceId === voice.id ? 'rcompose__voice--on' : ''}`}
-                onClick={() => setChatcut((value) => ({
-                  ...value,
-                  voiceId: voice.id,
-                  subtitleMode: voice.id === 'none' && value.subtitleMode === 'VOICE' ? 'SOURCE_AUDIO' : value.subtitleMode,
-                }))}
-              >
-                <Text className='rcompose__voicename'>{voice.name}</Text>
-              </View>
-            ))}
-          </View>
-          {chatcut.voiceId === 'custom' && (
-            <View className='rcompose__customvoice'>
-              <View className='rcompose__voiceactions'>
-                <Button size='mini' loading={customVoiceUploading} onClick={() => void chooseCustomVoice()}>选择音频</Button>
-                <Button size='mini' type={recording ? 'warn' : 'default'} onClick={recording ? stopCustomVoice : () => void recordCustomVoice()}>
-                  {recording ? '停止录音' : '开始录音'}
-                </Button>
-              </View>
-              {customVoice && (
-                <View className='rcompose__customvoiceline'>
-                  <Text className='rcompose__optiondesc'>{customVoice.name}</Text>
-                  <Text className='rcompose__colorreset' onClick={() => setCustomVoice(null)}>移除</Text>
-                </View>
-              )}
-              {!customVoice && !customVoiceUploading && <Text className='rcompose__optiondesc'>请先选择音频或录制一段配音。</Text>}
-            </View>
-          )}
-
-          <View className='rcompose__optionrow'>
-            <View className='rcompose__titlerow'>
-              <Text className='rcompose__optiontitle'>显示字幕</Text>
-              {/* 说明收进「?」：这一行右列是 Switch，常驻的小字会把开关和它自己的
-                  间距一起撑高，而「字幕能不能认原声」是按需了解的事。 */}
-              <SectionHelp title='显示字幕' text='字幕独立于配音，可识别视频原声。' />
-            </View>
-            <Switch checked={chatcut.subtitleMode !== 'OFF'} onChange={(event) => setChatcut((value) => ({ ...value, subtitles: event.detail.value, subtitleMode: event.detail.value ? (voiceOff ? 'SOURCE_AUDIO' : 'VOICE') : 'OFF' }))} color='#e1251b' />
-          </View>
-          {chatcut.subtitleMode !== 'OFF' && (
-            <>
-              <View className='rcompose__choice'>
-                <Text className='rcompose__fieldlabel'>字幕来源</Text>
-                <View className='rcompose__choices'>
-                  {(['VOICE', 'SOURCE_AUDIO', 'VOICE_AND_SOURCE'] as const).map((value) => (
-                    <Text key={value} className={`rcompose__choiceitem ${chatcut.subtitleMode === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, subtitleMode: value, subtitles: true }))}>
-                      {SUBTITLE_MODE_LABEL[value]}
-                    </Text>
-                  ))}
-                </View>
-              </View>
-              <View className='rcompose__choice'>
-                <Text className='rcompose__fieldlabel'>字幕样式</Text>
-                <View className='rcompose__choices'>
-                  {(['CLEAN', 'EMPHASIS', 'SOCIAL'] as const).map((value) => (
-                    <Text key={value} className={`rcompose__choiceitem ${chatcut.subtitleStyle === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, subtitleStyle: value }))}>
-                      {SUBTITLE_STYLE_LABEL[value]}
-                    </Text>
-                  ))}
-                </View>
-              </View>
-            </>
-          )}
-
-          <View className='rcompose__choice'>
-            <Text className='rcompose__fieldlabel'>剪辑节奏</Text>
-            <View className='rcompose__choices'>
-              {(['NATURAL', 'FAST', 'STORY'] as const).map((value) => (
-                <Text key={value} className={`rcompose__choiceitem ${chatcut.pacing === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, pacing: value }))}>
-                  {{ NATURAL: '自然', FAST: '紧凑', STORY: '叙事' }[value]}
-                </Text>
-              ))}
-            </View>
-          </View>
-          <View className='rcompose__choice'>
-            <Text className='rcompose__fieldlabel'>转场效果</Text>
-            <View className='rcompose__choices'>
-              {(['CLEAN', 'SMOOTH', 'DYNAMIC'] as const).map((value) => (
-                <Text key={value} className={`rcompose__choiceitem ${chatcut.transitions === value ? 'rcompose__choiceitem--on' : ''}`} onClick={() => setChatcut((item) => ({ ...item, transitions: value }))}>
-                  {{ CLEAN: '硬切', SMOOTH: '柔和溶解', DYNAMIC: '动态擦除' }[value]}
-                </Text>
-              ))}
-            </View>
-          </View>
-          <View className='rcompose__optionrow'>
-            <View className='rcompose__titlerow'><Text className='rcompose__optiontitle'>统一音量</Text><SectionHelp title='统一音量' text='统一原声和配音的响度，减少忽大忽小。' /></View>
-            <Switch checked={chatcut.normalizeAudio} onChange={(event) => setChatcut((value) => ({ ...value, normalizeAudio: event.detail.value }))} color='#e1251b' />
-          </View>
-          <View className='rcompose__optionrow'>
-            <View className='rcompose__titlerow'><Text className='rcompose__optiontitle'>清理停顿</Text><SectionHelp title='清理停顿' text='压缩过长静音，保留正常语句节奏。' /></View>
-            <Switch checked={chatcut.removeSilence} onChange={(event) => setChatcut((value) => ({ ...value, removeSilence: event.detail.value }))} color='#e1251b' />
-          </View>
-
-          <Text className='rcompose__fieldlabel'>备注与关键字</Text>
-          <Textarea className='rcompose__note' maxlength={300} placeholder='例如：突出招牌菜、适合小红书种草' value={chatcut.note} onInput={(event) => setChatcut((value) => ({ ...value, note: event.detail.value }))} />
-            </>
-          )}
-        </View>
-      )}
-
       {/* ── 整片调色 ──
           默认收起（`colorOpen`）：四根滑块是这一屏里最占高度的一块，而多数人录完就出片。
-          点标题行才展开滑块。★ 收起时仍保留「重置」—— 调过色的用户不必展开就能一键回默认。 */}
-      {grade !== 'PREMIUM' && (
+          点标题行才展开滑块。★★ 2026-09-28 起整个模块被 `SHOW_COLOR_MODULE = false` 关掉（需求：直接隐藏）—— 上面这句描述的是**开关打开后**的行为，代码原样保留。★ 收起时仍保留「重置」—— 调过色的用户不必展开就能一键回默认。 */}
+      {SHOW_COLOR_MODULE && grade !== 'PREMIUM' && (
         <View className='rcompose__card rcompose__card--color'>
           <View
             className='rcompose__colorhead'
