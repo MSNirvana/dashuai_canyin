@@ -19,6 +19,29 @@
  *   ② 池内 < target ⇒ 补到 target，但**单次每个风格最多 `--max` 首**（防手抖烧额度）
  *   ③ 池内 = target ⇒ 什么都不做
  *
+ * ── ★★ 第四件事：轮换（`--rotate=N`，默认 **0 = 关**） ──────────────────────
+ * 「池子满了」并不等于「用户不会再听到重复」：池子 100 首对**一家门店**来说是 100 个候选，
+ * 但它听过的那几首会被一直避开（`bgm-history.ts` 那条「用过的全避」），
+ * 于是这家店能再听到的**新鲜曲目只会越来越少**。轮换就是补这个：
+ * **每天淘汰几首「已经有人听过的」，用新曲子顶上来**（判据与顺序见 `planBgmRotation`）。
+ *
+ *   · **只淘汰「被派发过」的曲子**。淘汰一首谁都没用过的曲子是**纯亏**——
+ *     没有任何门店因此多听到一首新的；反过来淘汰「听过的」，每一家听过的门店都**净增一首**。
+ *   · **都没有用过 ⇒ 本轮不动**（`planBgmRotation` 直接返回空）。新池子刚建好时就是这种状态，
+ *     那时轮换只会平白烧钱。**这条是语义要求，不是优化。**
+ *   · **先删后补**，顺序不能反：补货取词挑的是「池里没用过的描述」，而**删掉侧车 `.json`
+ *     才把那条描述释放回可用池**。反过来做（先补再删）会得到「池内两条曲子撞同一条描述」。
+ *     ★ 副作用要知情：新曲子会**复用刚腾出来的那几条描述** ⇒ 曲子是新的、但**曲风与刚删掉的相近**。
+ *       要连曲风一起换新，必须**先往 `VOLCANO_BGM_PROMPTS` 加词**
+ *       （现在每风格 100 条 = 池内 100 首的硬上限，见 `bgm-library.ts::BGM_POOL_TARGET`）。
+ *   · **池内没满时不轮换**：轮换是先删后补，而补货可能因额度耗尽失败 —— 边删边补失败就是**净减**，
+ *     连着删几天能把 100 首的池子削没。**满了才动手** ⇒ 只在有余量的位置上操作。
+ *   · **冷却期**（`--rotate-cooldown`，默认 6 小时）：最近这么久内被派发过的**不淘汰**。
+ *     一次出片是「先记下路径、几十秒后 ffmpeg 才去读它」，正好删到那一条 ⇒ `ENOENT`
+ *     ⇒ **那一单出片失败**。取「最久未派发优先」已天然避开刚用的，冷却期是第二道保险。
+ *   · 成本：`--rotate=5` × 3 风格 × 0.24 元 ≈ **3.6 元/天**（磁盘**不涨**：删 5 补 5）。
+ *     默认 0 ⇒ 不显式要求就不轮换、不花钱。
+ *
  * ★ 提示词表**有条数上限**：`--target` 一旦超过表里条数，取词就会绕回起点取到同一批描述，
  *   让**选曲层的候选描述撞车**，而且**不报任何错** ⇒ 脚本会在预检里显性告警（但不阻断）。
  *   ★ 「撞词 ⇒ 生成近乎重复的曲子」**已被实测否掉**（同一 Text 两次生成结果不同，见
@@ -45,6 +68,8 @@
  *   npm run bgm:replenish                        # 看池子现状与计划（不发请求）
  *   npm run bgm:replenish -- --yes               # 按缺口补，并把超额部分淘汰
  *   npm run bgm:replenish -- --target=8 --max=3  # 目标 8 首，单次每风格最多补 3 首
+ *   npm run bgm:replenish -- --yes --rotate=5    # 轮换：每风格淘汰 5 首「被派发过」的并补回新的
+ *   npm run bgm:replenish -- --yes --rotate=5 --rotate-cooldown=12   # 冷却期改成 12 小时
  *   npm run bgm:replenish -- --prune-only        # 只淘汰超额，不生成
  *   npm run bgm:replenish -- --list              # 只看现状
  */
@@ -54,9 +79,13 @@ import {
   BGM_POOL_TARGET,
   BGM_STYLES,
   listBgmPool,
+  planBgmRotation,
   pruneBgmPool,
+  removeBgmTracks,
   usedBgmPromptTexts,
+  type BgmRotationPlan,
   type BgmStyle,
+  type BgmUsage,
 } from '../src/render/bgm-library.js'
 import {
   ensureChatcutBgmProject,
@@ -72,6 +101,19 @@ const DEFAULT_TARGET = BGM_POOL_TARGET
 /** 单次每个风格最多生成几首 —— 补货是花钱动作，一次跑太多不容易发现「提示词全打偏」 */
 const DEFAULT_MAX_PER_RUN = 2
 const DEFAULT_WAIT_SECONDS = 300
+/** `--rotate` 的默认值：**0 = 不轮换**。★ 默认必须是关的，否则「改了脚本」本身就会开始花钱。 */
+const DEFAULT_ROTATE_PER_RUN = 0
+/** `--rotate-cooldown`（小时）：最近这么久内被派发过的曲子不淘汰（防删掉正在出片要读的那一首） */
+const DEFAULT_ROTATE_COOLDOWN_HOURS = 6
+/**
+ * 读「派发记录」时最多扫这么多条任务。
+ *
+ * ★ 它不是「只保留最近 N 条」的语义，而是**归并窗口**：同一首曲子被派给好几家门店时会占好几行。
+ *   窗口比「池内 300 首」大一个量级就够。
+ * ★ 落在窗口外的老记录等价于「更久没被派发过」⇒ 只会让那首在淘汰序里**更靠前**；
+ *   而**不会**被误判成「没用过」（那种误判才是危险的：白淘汰一首没人听过的曲子）。
+ */
+const USAGE_SCAN_LIMIT = 5000
 
 const BGM_SOURCES = ['volcano', 'chatcut'] as const
 type BgmSource = (typeof BGM_SOURCES)[number]
@@ -95,6 +137,46 @@ function positiveInt(raw: string | null, fallback: number): number {
   return Number.isFinite(value) && value >= 1 ? Math.floor(value) : fallback
 }
 
+/** 允许 0（`--rotate=0` 是「关掉轮换」这个**有效**取值，不能用 `positiveInt`） */
+function nonNegativeNumber(raw: string | null, fallback: number): number {
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : fallback
+}
+
+/**
+ * 读「哪些曲子被派发过、最近一次是什么时候」—— 轮换的判据来源。
+ *
+ * ★ 数据源就是 `render_task.bgm_track`（出片时写入的那条绝对路径），**不需要新表新列**：
+ *   那本来就是「这次出片用了哪一首」的唯一记账处（见 `bgm-history.ts`）。
+ * ★ 取最近 `USAGE_SCAN_LIMIT` 条**有配乐记录**的任务，再按路径归并取「最近一次」。
+ *   ★ 别只查 `id > 上次跑的位置`：首曲子被派给第二家门店时也会新增一行，
+ *     「某首曲子最近一次是什么时候」必须看**全窗口**，只看增量会漏掉最新的那次。
+ * ★★ 查库失败**不抛**，返回空数组 ⇒ 上层据此「本轮不轮换」。
+ *   轮换是**可选**动作，绝不能因为它把补货（必要动作）一起搞挂。
+ */
+async function loadBgmUsage(): Promise<BgmUsage[]> {
+  try {
+    const rows = await prisma.renderTask.findMany({
+      where: { bgmTrack: { not: null } },
+      orderBy: { id: 'desc' },
+      take: USAGE_SCAN_LIMIT,
+      select: { bgmTrack: true, createdAt: true },
+    })
+    const usage: BgmUsage[] = []
+    for (const row of rows) {
+      const file = typeof row.bgmTrack === 'string' ? row.bgmTrack.trim() : ''
+      if (!file) continue
+      const usedAt = row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt)
+      if (!Number.isFinite(usedAt)) continue
+      usage.push({ file, usedAt })
+    }
+    return usage
+  } catch (error) {
+    console.warn(`  ⚠ 读取派发记录失败（本轮不做轮换）：${(error as Error)?.message ?? String(error)}`)
+    return []
+  }
+}
+
 async function main(): Promise<void> {
   const requested = (argValue('--style') ?? 'ALL').trim().toUpperCase()
   const styles: BgmStyle[] = requested === 'ALL' ? [...BGM_STYLES] : [requested as BgmStyle]
@@ -106,6 +188,13 @@ async function main(): Promise<void> {
 
   const target = positiveInt(argValue('--target'), DEFAULT_TARGET)
   const maxPerRun = positiveInt(argValue('--max'), DEFAULT_MAX_PER_RUN)
+  // ★ 轮换：默认 0（关）。0 是**有效取值**，所以用 nonNegativeNumber 而不是 positiveInt。
+  const rotatePerRun = Math.floor(nonNegativeNumber(argValue('--rotate'), DEFAULT_ROTATE_PER_RUN))
+  const rotateCooldownHours = nonNegativeNumber(
+    argValue('--rotate-cooldown'),
+    DEFAULT_ROTATE_COOLDOWN_HOURS,
+  )
+  const rotateCooldownMs = rotateCooldownHours * 3_600_000
   const source = (argValue('--source') ?? process.env.BGM_SOURCE ?? 'volcano').trim().toLowerCase()
   if (!(BGM_SOURCES as readonly string[]).includes(source)) {
     fail(`未知生成源 ${source}，可选：${BGM_SOURCES.join(' / ')}（也可用 BGM_SOURCE 环境变量指定）`)
@@ -114,7 +203,12 @@ async function main(): Promise<void> {
 
   // ── 现状 ────────────────────────────────────────────────────────────────
   console.log('大帅餐饮配乐池')
-  console.log(`  生成源：${source}    目标：每风格 ${target} 首    单次每风格最多补：${maxPerRun} 首`)
+  console.log(
+    `  生成源：${source}    目标：每风格 ${target} 首    单次每风格最多补：${maxPerRun} 首` +
+      (rotatePerRun > 0
+        ? `    轮换：每风格最多 ${rotatePerRun} 首（冷却 ${rotateCooldownHours} 小时）`
+        : '    轮换：关闭（--rotate=N 开启）'),
+  )
   if (!CONFIRMED && !LIST_ONLY) {
     console.log('  （dry-run：只打印计划，不发任何请求；加 --yes 才真调用）')
   }
@@ -146,6 +240,49 @@ async function main(): Promise<void> {
     }
   }
 
+  // ── 轮换计划（`--rotate=N`）────────────────────────────────────────────────
+  // ★ 计划**在所有风格上先算出来、后执行**（真正删除在下面的逐风格循环里），两个原因：
+  //   ① dry-run 必须能看见它 —— 这是花钱动作，先给人看清计划；
+  //   ② 下面那句「要不要检查生成凭证」得知道**轮换也会腾出缺口**，否则「池子已满 + 要轮换」
+  //      这一档会因为「没有缺口」而跳过凭证检查，一路跑到真生成时才炸。
+  // ★ 执行放在循环内、且在中止（`aborted`）时 `break` ⇒ 后面的风格还没被删过。
+  //   否则一次额度耗尽会把三个风格同时削掉。
+  const rotation = new Map<BgmStyle, BgmRotationPlan>()
+  if (rotatePerRun > 0 && !PRUNE_ONLY) {
+    const usage = await loadBgmUsage()
+    for (const style of styles) {
+      const pool = listBgmPool(style)
+      const planned = planBgmRotation(pool, usage, {
+        limit: rotatePerRun,
+        cooldownMs: rotateCooldownMs,
+      })
+      // ★★ 池内没满 ⇒ 不轮换（`targets` 清空）。理由见文件头：先删后补，补失败了就是净减，
+      //   连着几天能把池子削没。满了才动手 ⇒ 只在有余量的位置上操作。
+      rotation.set(style, pool.length < target ? { ...planned, targets: [] } : planned)
+    }
+
+    console.log('')
+    console.log('── 轮换计划（只淘汰「被派发过」的曲子；都没用过就不动）─────────────')
+    for (const style of styles) {
+      const plan = rotation.get(style)
+      const size = listBgmPool(style).length
+      if (size < target) {
+        console.log(`  ${style.padEnd(8)} 池内 ${size} 首 < 目标 ${target} ⇒ 本轮不轮换（先补满再说）`)
+        continue
+      }
+      console.log(
+        `  ${style.padEnd(8)} 池内用过的 ${plan?.used ?? 0} 首` +
+          ((plan?.cooled ?? 0) > 0 ? `（其中 ${plan?.cooled} 首最近刚派发过、本轮跳过）` : '') +
+          ` ⇒ 淘汰 ${plan?.targets.length ?? 0} 首` +
+          ((plan?.used ?? 0) === 0 ? '　← 一首都没被用过，按你的规则不动' : ''),
+      )
+      for (const file of plan?.targets ?? []) console.log(`      - ${file}`)
+      if (plan && (plan.used ?? 0) > 0 && plan.targets.length < plan.used - plan.cooled) {
+        console.log(`      （用过的共 ${plan.used} 首，本轮只淘汰最久未派发的 ${plan.targets.length} 首，其余下轮继续）`)
+      }
+    }
+  }
+
   // ── 前置检查 ────────────────────────────────────────────────────────────
   // ★ 密钥/连通性这类**全局**问题要在循环前一次性挡住：否则会在每个风格上重复报同一句错，
   //   看起来像「三个风格各失败一次」，实际只有一个原因。
@@ -153,8 +290,13 @@ async function main(): Promise<void> {
   //   跟生成凭证毫无关系，不该因为没配 AK/SK 就跑不动 —— 淘汰本来就该随时能做。
   // ★★ dry-run **不做**这些检查、也**不建项目**：没配密钥的人也必须能先看清计划
   //   （否则「先 dry-run 看看」这一步就被密钥挡住了，等于没法评估要不要做这件事）。
+  // ★ 轮换也会腾出缺口（先删 N 首、随后补回）⇒ 必须算进「要不要检查生成凭证」里，
+  //   否则「池子已满 + 开轮换」这一档会跳过凭证检查，一路跑到真生成时才炸。
   const needsGeneration =
-    !PRUNE_ONLY && styles.some((style) => listBgmPool(style).length < target)
+    !PRUNE_ONLY &&
+    styles.some(
+      (style) => listBgmPool(style).length < target || (rotation.get(style)?.targets.length ?? 0) > 0,
+    )
   let projectId = ''
   if (needsGeneration && CONFIRMED) {
     if (source === 'volcano') {
@@ -185,14 +327,34 @@ async function main(): Promise<void> {
 
   let created = 0
   let removed = 0
+  let rotated = 0
   let failed = 0
   let aborted = false
   for (const style of styles) {
-    const size = listBgmPool(style).length
+    let size = listBgmPool(style).length
+    console.log(`\n── ${style} ─────────────────────────────────────────────`)
+
+    // ⓿ 轮换：先把「被派发过」的淘汰掉（计划已在上面算好），随后由 ③ 补回新的。
+    //   ★ 一个风格一个风格地来：某个风格因额度耗尽中止（`break`）时，
+    //     后面的风格**还没被删过** —— 否则一次中止会同时削掉三个风格。
+    const plannedRotation = rotation.get(style)?.targets ?? []
+    if (plannedRotation.length > 0) {
+      if (!CONFIRMED) {
+        console.log(`  · （dry-run）将轮换淘汰 ${plannedRotation.length} 首「被派发过」的曲子，随后补回新的`)
+        for (const file of plannedRotation) console.log(`      - ${file}`)
+        // ★ 模拟删除，让后面的缺口计算与真跑走**同一条路径**（本脚本一贯的做法）
+        size = Math.max(0, size - plannedRotation.length)
+      } else {
+        const dropped = removeBgmTracks(plannedRotation)
+        rotated += dropped.length
+        console.log(`  · 轮换：淘汰 ${dropped.length} 首「被派发过」的曲子（下面补回新的）`)
+        for (const file of dropped) console.log(`      - ${file}`)
+        size = listBgmPool(style).length
+      }
+    }
 
     // ① 超额 ⇒ 淘汰最旧的（连 `.json` 元数据一起），且**不再生成**
     if (size > target) {
-      console.log(`\n── ${style} ─────────────────────────────────────────────`)
       if (!CONFIRMED) {
         // ★ dry-run 绝不能真删：只报计划
         console.log(`  · （dry-run）超额 ${size - target} 首，将淘汰最旧的 ${size - target} 首、保留最新 ${target} 首`)
@@ -207,7 +369,6 @@ async function main(): Promise<void> {
 
     // ② 正好 ⇒ 不动
     if (size === target) {
-      console.log(`\n── ${style} ─────────────────────────────────────────────`)
       console.log(`  · 正好 ${target} 首，不动`)
       continue
     }
@@ -216,7 +377,6 @@ async function main(): Promise<void> {
     // ★ dry-run 走的是**同一条路径**（只是 `confirmed:false` 让 ingest 只打印不发请求），
     //   否则「计划里说 2 首、真跑时因为别的原因变成 1 首」这种分叉会一直存在。
     const todo = Math.min(target - size, maxPerRun)
-    console.log(`\n── ${style} ─────────────────────────────────────────────`)
     if (PRUNE_ONLY) {
       console.log(`  · 缺口 ${target - size} 首，但 --prune-only 只淘汰不生成 ⇒ 跳过`)
       continue
@@ -289,7 +449,9 @@ async function main(): Promise<void> {
     return
   }
 
-  console.log(`\n完成：新生成 ${created} 首，淘汰 ${removed} 首，失败 ${failed} 首`)
+  console.log(
+    `\n完成：新生成 ${created} 首，轮换淘汰 ${rotated} 首，超额淘汰 ${removed} 首，失败 ${failed} 首`,
+  )
   if (aborted) {
     console.log(
       '★ 本轮因「额度／开通」类错误**提前中止**：上面的「失败 N 首」不是「试过 N 条不同的坏描述」，\n' +

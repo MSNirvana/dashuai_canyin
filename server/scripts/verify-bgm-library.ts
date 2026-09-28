@@ -69,7 +69,9 @@ import {
   describeBgmCandidates,
   describeBgmLibrary,
   listBgmPool,
+  planBgmRotation,
   pruneBgmPool,
+  removeBgmTracks,
   resolveBgmTrack,
   singleFileBgmTrack,
   usedBgmPromptTexts,
@@ -297,6 +299,33 @@ function main(): void {
     for (const badStyle of [undefined, null, '']) {
       assert.deepEqual(describeBgmCandidates(badStyle), [], `空风格 ${String(badStyle)} 必须返回空数组`)
     }
+
+    // ── ⑬ 轮换的**删除动作**：音频与侧车必须一起删 ──────────────────────────
+    // ★★ 只删音频不删 `.json` ⇒ 那条描述永远被算「已用过」⇒ 轮换腾出来的缺口会去复用**别的**
+    //   描述 ⇒ 池内的描述空间更快耗竭，而且**不报任何错**。这条断言就是钉这个。
+    const rotateFile = join(poolDir, 'LIGHT-06.mp3')
+    writeFileSync(rotateFile, Buffer.alloc(4096, 6))
+    writeFileSync(bgmMetadataPath(rotateFile), JSON.stringify({ prompt: '轮换描述' }), 'utf8')
+    assert.ok(usedBgmPromptTexts('LIGHT').has('轮换描述'), '前提：这条描述当前应被算作「已用过」')
+
+    assert.deepEqual(removeBgmTracks([rotateFile]), [rotateFile], '应返回真正删掉的文件')
+    assert.equal(existsSync(rotateFile), false, '轮换淘汰必须真的删掉音频文件')
+    assert.equal(
+      existsSync(bgmMetadataPath(rotateFile)),
+      false,
+      '轮换淘汰必须连 `.json` 侧车一起删 —— 否则那条描述永远算「已用过」，新曲子会去复用别的描述',
+    )
+    assert.equal(
+      usedBgmPromptTexts('LIGHT').has('轮换描述'),
+      false,
+      '侧车删掉之后那条描述必须重新可用 —— 这正是「先删后补」能把同一条描述派回新曲子的原因',
+    )
+
+    // ★ 不存在的路径**不算淘汰**：否则日志里的「本轮淘汰 N 首」会虚高，判活的人会误判
+    assert.deepEqual(removeBgmTracks([join(poolDir, 'LIGHT-不存在.mp3')]), [], '不存在的路径不算淘汰')
+    assert.deepEqual(removeBgmTracks([]), [], '空列表不删任何东西')
+    assert.deepEqual(removeBgmTracks([null, '', undefined]), [], '空值必须被忽略且不抛错')
+    assert.equal(existsSync(join(poolDir, 'LIGHT-04.mp3')), true, '删指定的那几首时**不许**碰到别的曲子')
   } finally {
     if (previousRoot === undefined) delete process.env.BGM_LIBRARY_DIR
     else process.env.BGM_LIBRARY_DIR = previousRoot
@@ -605,13 +634,96 @@ function main(): void {
   assert.deepEqual(filterTracksByStyle(mixed, null), [], '没有风格时返回空（别把别的风格当成要避开的）')
   assert.deepEqual(filterTracksByStyle(mixed, 'NONE'), [], '非法风格名返回空（它本来就没有池子）')
 
+  // ── ★★ 轮换：只淘汰「被派发过」的曲子（用户规则：「如果都没有使用则不用轮换了」） ──
+  //   判据（这是这一整段的核心）：淘汰一首**谁都没用过**的曲子是**纯亏** —— 没有任何门店
+  //   因此多听到一首新的；反过来淘汰「听过的」，每一家听过的门店都**净增一首**没听过的。
+  const rotPool = [light1, light2, light3, light4]
+  const t0 = 1_700_000_000_000
+  const agoHours = (n: number): number => t0 - n * 3_600_000
+  const SIX_HOURS = 6 * 3_600_000
+
+  // ① 都没有用过 ⇒ 一首都不淘汰
+  assert.deepEqual(
+    planBgmRotation(rotPool, [], { limit: 5 }),
+    { targets: [], used: 0, cooled: 0 },
+    '池内曲子都没被派发过时必须**什么都不做** —— 淘汰「没人听过的」不会让任何门店多听到一首',
+  )
+  assert.deepEqual(
+    planBgmRotation(rotPool, [{ file: join(upbeatDir, 'UPBEAT-1.wav'), usedAt: t0 }], { limit: 5 }).targets,
+    [],
+    '使用记录里没有**池内**曲子（别的风格 / 已被淘汰的旧路径）时也不许淘汰任何东西',
+  )
+
+  // ② 用过的比 limit 少 ⇒ 有几首淘汰几首，**不硬凑**
+  assert.deepEqual(
+    planBgmRotation(rotPool, [{ file: light1, usedAt: agoHours(1) }, { file: light2, usedAt: agoHours(2) }], {
+      limit: 5,
+      now: t0,
+    }).targets,
+    [light2, light1],
+    '用过的只有 2 首时不能硬凑到 5 首（只有「用过的」才允许淘汰）',
+  )
+
+  // ③ 用过的比 limit 多 ⇒ 淘汰**最久未被派发**的那几首，并如实报出总数
+  //   （这里**不**开冷却：本条测的是排序与上限，冷却单独由 ④ 覆盖）
+  const manyUsage = [
+    { file: light1, usedAt: agoHours(10) },
+    { file: light2, usedAt: agoHours(50) },
+    { file: light3, usedAt: agoHours(30) },
+    { file: light4, usedAt: agoHours(1) },
+  ]
+  const picked = planBgmRotation(rotPool, manyUsage, { limit: 2, now: t0 })
+  assert.deepEqual(
+    picked.targets,
+    [light2, light3],
+    '必须淘汰**最久未被派发**的。按「用过最多」淘汰会反复换同几首、其它永远轮不到；' +
+      '按「最近刚用过」淘汰则会正好删掉那一家店刚听过的（对它等于没换）',
+  )
+  assert.equal(picked.used, 4, 'used 要报出池内被派发过的总数（日志靠它说明「本轮只换 2 首、其余下轮继续」）')
+  assert.equal(picked.cooled, 0, '都在冷却期之外时 cooled 必须是 0')
+
+  // ④ 冷却期内的不淘汰 —— 防删掉「正在出片、几十秒后要被 ffmpeg 读」的那一首
+  const cooled = planBgmRotation(rotPool, manyUsage, { limit: 4, cooldownMs: SIX_HOURS, now: t0 })
+  assert.deepEqual(
+    cooled.targets,
+    [light2, light3, light1],
+    '最近 6 小时内被派发过的（light4）必须留着：那一单可能还没走到读文件那一步',
+  )
+  assert.equal(cooled.cooled, 1, 'cooled 要如实报出被冷却期挡下的数量（否则日志会让人以为「没有用过的」）')
+
+  // ⑤ 同一路径多条记录 ⇒ 取**最近**那一次
+  const duplicated = planBgmRotation(
+    rotPool,
+    [
+      { file: light1, usedAt: agoHours(100) }, // 很久以前用过
+      { file: light1, usedAt: agoHours(1) }, // 同一首又被派给另一家门店
+      { file: light2, usedAt: agoHours(2) },
+    ],
+    { limit: 1, now: t0 },
+  )
+  assert.deepEqual(
+    duplicated.targets,
+    [light2],
+    '同一首曲子有多条记录时必须取**最近**那次；取最早那次会把刚用过的误判成「最久未用」而优先淘汰',
+  )
+  assert.equal(duplicated.used, 2, '同一首曲子按路径去重后只算 1 首')
+
+  // ⑥ limit=0 / 空池 / 非法记录 ⇒ 一律不淘汰（`--rotate=0` 就是「关掉轮换」）
+  assert.deepEqual(planBgmRotation(rotPool, manyUsage, { limit: 0, now: t0 }).targets, [], 'limit=0 不淘汰任何东西')
+  assert.deepEqual(planBgmRotation([], manyUsage, { limit: 5, now: t0 }).targets, [], '池子为空时不淘汰')
+  assert.deepEqual(
+    planBgmRotation(rotPool, [{ file: light1, usedAt: Number.NaN }], { limit: 5, now: t0 }).targets,
+    [],
+    '时刻不可解析的记录必须被忽略（当成没用过），不能让它变成「最久未派发」而被优先淘汰',
+  )
+
   console.log(
     '配乐曲库守护通过：风格集合三处同源、扩展名白名单不含元数据、空文件不命中、环境变量可还原、' +
       '池子优先且随机取用、单文件查找不看池子、淘汰保留最新并连元数据清掉、池内已用描述可读出、' +
       '候选描述与候选清单严格同序、选曲清单从 0 编号、下标解析越界不夹取且不抛错、' +
       '火山提示词纯中文且排除人声、条数不薄于池子目标、生成时长同时满足接口与曲库硬约束、AK/SK 判据精确、' +
       '派发器完整轮转且相邻必不同、门店历史是硬过滤且占满时放宽、避让覆盖整池且扫描窗口装得下整池、' +
-      'LRU 容量可关、历史过滤只认池子目录',
+      'LRU 容量可关、历史过滤只认池子目录、轮换只淘汰被派发过的且冷却期生效且侧车同删',
   )
 }
 

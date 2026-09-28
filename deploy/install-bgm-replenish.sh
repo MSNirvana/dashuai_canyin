@@ -2,8 +2,10 @@
 # ═══════════════════════════════════════════════════════════════
 # 安装「配乐池补货」的定时任务（幂等）。
 #
-#   bash deploy/install-bgm-replenish.sh                    # 安装（每日 04:40，单次每风格补 1 首）
+#   bash deploy/install-bgm-replenish.sh                    # 安装（每日 04:40，单次每风格补 1 首、不轮换）
 #   bash deploy/install-bgm-replenish.sh --max=2            # 单次每风格最多补 2 首（更费钱）
+#   bash deploy/install-bgm-replenish.sh --rotate=5         # 每天每风格轮换 5 首（见下方「轮换」）
+#   bash deploy/install-bgm-replenish.sh --rotate=5 --rotate-cooldown=12   # 冷却期改成 12 小时
 #   bash deploy/install-bgm-replenish.sh --cron='20 5 * * 0'  # 改周期（例：每周日 05:20）
 #   bash deploy/install-bgm-replenish.sh --check            # 只看现状，不改动
 #   bash deploy/install-bgm-replenish.sh --uninstall        # 移除任务（保留日志与池子）
@@ -20,7 +22,7 @@
 # 一条 **ubuntu 用户**的 crontab 任务（按 `# dashuai-bgm-replenish` 标记行幂等替换）：
 #
 #   cd /opt/dashuai/server && flock -n -E 75 <锁> npx tsx scripts/bgm-replenish.ts \
-#       --yes --max=<N> >> /var/log/dashuai/bgm-replenish.log 2>&1
+#       --yes --max=<N> --rotate=<R> --rotate-cooldown=<H> >> /var/log/dashuai/bgm-replenish.log 2>&1
 #
 # 与 `deploy/install-cron.sh`（存储 GC）同一套骨架：flock 互斥、日志落
 # `/var/log/dashuai`、按标记行替换而**绝不用 `crontab -` 覆盖**其他任务。
@@ -31,6 +33,7 @@
 #     2026-09-28 起为 **100** —— 依据是「同一门店连续出片的重样概率」这条生日问题曲线，
 #     见该常量上方的注释）；**补满之后每轮零花费**（脚本会走「正好 ⇒ 不动」分支，只打一行日志）
 #   · 单轮每风格最多 `--max` 首 ⇒ 单轮上界 = 3 风格 × N × 0.24 元（默认 N=1 ⇒ **≈0.72 元**）
+#     ★ 开了轮换之后上界是 `3 × (max + rotate) × 0.24 元`（删掉的那几首也要重新生成）。
 #   · ★★ 首次把池子填到 100 首/风格（≈300 首、≈72 元、约 2.3 小时）**不要靠这个定时任务慢慢补**
 #     —— 每轮 3 首要好几个月。用一次性批量补，且**逐风格分开跑**：
 #       cd /opt/dashuai/server && npx tsx scripts/bgm-replenish.ts --yes --target=100 --max=70 --style=LIGHT
@@ -43,6 +46,21 @@
 #   · 池内**超额**时它会**淘汰最旧的**（保留最新 N 首）。★ 若哪天把 `BGM_POOL_TARGET`
 #     调小，下一次调度就会按新目标删掉多出来的曲子 —— 这是**静默删除**，改常量前先想清楚。
 #   ⇒ 稳态成本 0；最坏情况（提示词打偏、每轮都失败）才是 0.72 元/天。
+#
+# ── ★★ 轮换（`--rotate=N`，默认 0 = 不轮换）────────────────────────
+# 「池子满了」不等于「用户不会再听到重复」：池子 100 首对**一家门店**是 100 个候选，
+# 但它听过的那几首会被一直避开（`bgm-history.ts` 的「用过的全避」）⇒ 这家店还能听到的
+# **新鲜曲目只会越来越少**。轮换补的就是这一块：**每天淘汰几首「已经有人听过的」、
+# 用新曲子顶上来**（判据与顺序见 `server/src/render/bgm-library.ts::planBgmRotation`）。
+#
+#   · **只淘汰「被派发过」的曲子**（来源是 `render_task.bgm_track`）。淘汰一首谁都没用过的
+#     曲子是**纯亏**：没有任何门店因此多听到一首新的。淘汰「听过的」，每一家听过的门店才**净增一首**。
+#   · **都没有用过 ⇒ 本轮不动**。新池子刚建好时正是这个状态，这时轮换只会平白烧钱。
+#   · **`--max` 必须 ≥ `--rotate`**：轮换是「先删 N 首、再由补货补回 N 首」，`--max` 小于 N
+#     就补不满 ⇒ 池子一天掉一点。本安装器默认让两者取同一个值。
+#   · **池内没满时不轮换**（先删后补，补失败就是净减 ⇒ 不许在没有余量时动手）。
+#   · 成本：`--rotate=5` × 3 风格 × 0.24 元 ≈ **3.6 元/天 ≈ 108 元/月**；**磁盘不涨**（删 5 补 5）。
+#     默认 0 ⇒ 不显式要求就**不轮换、不多花一分钱**。
 #
 # ── 判活（一行）─────────────────────────────────────────────────
 #   tail -3 /var/log/dashuai/bgm-replenish.log
@@ -67,6 +85,8 @@ CRON_LOG="$LOG_DIR/bgm-replenish.cron.log"
 LOCK_FILE="/tmp/dashuai-bgm-replenish.lock"
 CRON_TIME="${DASHUAI_BGM_CRON:-40 4 * * *}"
 MAX_PER_RUN="${DASHUAI_BGM_MAX:-1}"
+ROTATE_PER_RUN="${DASHUAI_BGM_ROTATE:-0}"
+ROTATE_COOLDOWN="${DASHUAI_BGM_ROTATE_COOLDOWN:-6}"
 CONFLICT_RC=75
 
 log() { printf '\033[1;36m[install-bgm-replenish] %s\033[0m\n' "$*"; }
@@ -80,7 +100,9 @@ while [ $# -gt 0 ]; do
     --check)     MODE="check" ;;
     --cron=*)    CRON_TIME="${1#*=}" ;;
     --max=*)     MAX_PER_RUN="${1#*=}" ;;
-    *)           die "未知参数：$1（支持 --cron='分 时 日 月 周' / --max=N / --check / --uninstall）" ;;
+    --rotate=*)  ROTATE_PER_RUN="${1#*=}" ;;
+    --rotate-cooldown=*) ROTATE_COOLDOWN="${1#*=}" ;;
+    *)           die "未知参数：$1（支持 --cron='分 时 日 月 周' / --max=N / --rotate=N / --rotate-cooldown=小时 / --check / --uninstall）" ;;
   esac
   shift
 done
@@ -125,7 +147,16 @@ fi
 mkdir -p "$LOG_DIR" 2>/dev/null || die "无法创建 $LOG_DIR（需要写权限）"
 touch "$LOG_FILE" "$CRON_LOG" 2>/dev/null || true
 
-CMD="cd $SERVER_DIR && $FLOCK_BIN $FLOCK_ARGS $LOCK_FILE $NPX_BIN tsx scripts/bgm-replenish.ts --yes --max=$MAX_PER_RUN"
+# ★★ `--max` 与 `--rotate` 的**数值关系**在这里兜住：轮换是「先删 N 首、再由补货补回 N 首」，
+#   若 `--max < --rotate`，删掉的那几首补不满 ⇒ 每天净减。宁可在这里自动抬高 `--max`，
+#   也不要留下一个「看着配了、实际每天掉几首」的定时任务（掉到 0 就是全员没配乐）。
+EFFECTIVE_MAX="$MAX_PER_RUN"
+if [ "$ROTATE_PER_RUN" -gt "$EFFECTIVE_MAX" ] 2>/dev/null; then
+  EFFECTIVE_MAX="$ROTATE_PER_RUN"
+  log "⚠ --rotate=$ROTATE_PER_RUN > --max=$MAX_PER_RUN ⇒ 自动把 --max 抬到 $ROTATE_PER_RUN（否则每轮补不满、池子会一天掉一点）"
+fi
+
+CMD="cd $SERVER_DIR && $FLOCK_BIN $FLOCK_ARGS $LOCK_FILE $NPX_BIN tsx scripts/bgm-replenish.ts --yes --max=$EFFECTIVE_MAX --rotate=$ROTATE_PER_RUN --rotate-cooldown=$ROTATE_COOLDOWN"
 # ① 先把本轮输出落到主日志；② 再把退出码单独记一行（**不写 rc 就分不出「补满没做事」和「崩了」**）；
 # ③ 日志瘦身到最近 400 行；④ **最后 `exit $rc` 把真实退出码还原给 cron**。
 #   ★ ④ 是必须的：③ 的 `mv` 一旦执行成功，整行的退出码就变成 0 ——
@@ -145,7 +176,8 @@ rm -f "$TMP"
 
 log "已安装："
 echo "    $LINE"
-echo "    周期：$CRON_TIME    单轮每风格最多：$MAX_PER_RUN 首（上界约 $(awk -v n="$MAX_PER_RUN" 'BEGIN{printf "%.2f", n*3*0.24}') 元）"
+echo "    周期：$CRON_TIME    单轮每风格最多：$EFFECTIVE_MAX 首    轮换：每风格 $ROTATE_PER_RUN 首/轮（冷却 ${ROTATE_COOLDOWN} 小时）"
+echo "    单轮上界约 $(awk -v n="$EFFECTIVE_MAX" -v r="$ROTATE_PER_RUN" 'BEGIN{printf "%.2f", (n+r)*3*0.24}') 元（补货 + 轮换各按满额算）"
 echo "    日志：$LOG_FILE"
 
 # ── 自证：跑一次**只读**的 --list ──────────────────────────────

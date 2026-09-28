@@ -17,6 +17,9 @@ import { fileURLToPath } from 'node:url'
  * ★★ 两档目录约定（取用时**池子优先、单文件兜底**）：
  *   ① 池子 `assets/bgm/<STYLE>/`：同风格多条曲子，运行时**随机抽一首** ⇒ 每条片子配乐不重样。
  *      这是「API 供给的缓存层」——补货脚本（`npm run bgm:replenish`）往这里写，渲染只读。
+ *      ★ 池子满了之后还可以**轮换**：把「已经有人听过」的曲子淘汰掉、用新曲子顶上来
+ *        （`planBgmRotation` / `removeBgmTracks`，判据与调度见 `bgm-replenish.ts --rotate`）。
+ *        「听过的」是按 `render_task.bgm_track` 判定的 —— 只有这些曲子淘汰掉才真的有人受益。
  *   ② 单文件 `assets/bgm/<STYLE>.<ext>`：老的约定，线上现存曲库就是这种，**继续有效**。
  *   两个位置互不覆盖：换生成源（ChatCut ↔ 火山）不会删掉已有的曲子。
  *
@@ -268,6 +271,113 @@ export function pruneBgmPool(style: string, keep: number): string[] {
     }
   }
   return removed
+}
+
+/**
+ * 删掉**指定的**几首曲子（连同名 `.json` 元数据）。给「轮换」用（`planBgmRotation`）。
+ *
+ * ★ 与 `pruneBgmPool` 的区别只在**判据**：那个按「最旧」（mtime）删，这个由调用方决定删谁
+ *   （现用判据是「被派发过」）。判据不同就拆成两个函数，而不是给 `pruneBgmPool` 塞参数 ——
+ *   两者混在一起之后，「删掉了不该删的」这种事故在日志里看不出是哪个判据干的。
+ * ★★ 必须**连侧车一起删**：`.json` 里的 `prompt` 正是 `usedBgmPromptTexts` 判「这条描述用过了」
+ *   的依据。只删音频不删侧车 ⇒ 那条描述永远被算「已用过」⇒ 轮换腾出来的缺口会去复用**别的**
+ *   描述 ⇒ 池内的描述空间更快耗竭，而且**不报任何错**。
+ * ★ 删不掉的跳过，**绝不抛错**：这是运维动作，不该因为一个文件的权限问题把整轮补货搞挂。
+ */
+export function removeBgmTracks(files: readonly (string | null | undefined)[]): string[] {
+  const removed: string[] = []
+  for (const file of files) {
+    if (typeof file !== 'string' || !file.trim()) continue
+    // ★ 只把**确实存在**的算作「本轮淘汰了它」：日志与返回的计数要能当判据用
+    //   （`rmSync` 带 `force` 时对不存在的路径也是"成功"，不判这一下就会虚报淘汰数）。
+    if (!existsSync(file)) continue
+    try {
+      rmSync(file, { force: true })
+      rmSync(bgmMetadataPath(file), { force: true })
+      removed.push(file)
+    } catch {
+      // 留着即可：下一轮还会被选中
+    }
+  }
+  return removed
+}
+
+/** 一首曲子「被派发过」的记录（来自 `render_task.bgm_track`，同一路径取**最近**一次） */
+export interface BgmUsage {
+  file: string
+  /** 最近一次被派发的时刻（毫秒时间戳） */
+  usedAt: number
+}
+
+/** 一轮轮换的计划 */
+export interface BgmRotationPlan {
+  /** 要淘汰的曲子，**最久未被派发的在前** */
+  targets: string[]
+  /** 池内**有使用记录**的曲子数（= 本轮可淘汰的上界） */
+  used: number
+  /** 因为落在「冷却期」内而被排除的数量（见 `cooldownMs`） */
+  cooled: number
+}
+
+/**
+ * 纯函数：算出这一轮该淘汰哪几首（「轮换」）。
+ *
+ * ── 它要解决什么 ────────────────────────────────────────────────────────────
+ * 池子里一首曲子被派出过一次，对**那一家门店**来说它就已经是「听过的」了。
+ * 隔一阵把它淘汰掉、用新曲子顶上来，等于给**每家听过的门店净增一首没听过的**。
+ * 反过来，淘汰一首**谁都没用过**的曲子是纯亏：没有任何门店因此多听到一首新的。
+ * ⇒ 所以**只淘汰「有使用记录」的曲子**（调用方的 `--rotate` 就是这个语义）。
+ *
+ * ★★ **都没有被用过 ⇒ 什么都不做**（返回空数组）。这不是优化，是**必须的语义**：
+ *   新池子刚建好时全部是「未使用」，此时轮换只会平白烧钱 —— 不会让任何用户多听到什么。
+ *
+ * @param pool    当前池内的曲子（`listBgmPool` 的结果；必须与稍后传给 `removeBgmTracks` 的同一批）
+ * @param usage   使用记录（`render_task.bgm_track` 的汇总；同一路径可重复出现）
+ * @param options.limit      本轮最多淘汰几首（≤0 ⇒ 不轮换）
+ * @param options.cooldownMs 冷却期：最近这么多毫秒内被派发过的**不淘汰**。默认 0。
+ *   ★ 为什么需要它：淘汰是**删文件**，而一次出片是「先记下路径、几十秒之后才让 ffmpeg 去读它」。
+ *     正好删到那一条 ⇒ `ENOENT` ⇒ **那一单出片失败**。「最久未派发优先」已经天然避开了刚用过的，
+ *     冷却期是第二道保险（调度恰好撞上密集出片时兜住）。
+ * @param options.now        当前时刻（测试用；默认 `Date.now()`）
+ */
+export function planBgmRotation(
+  pool: readonly (string | null | undefined)[],
+  usage: readonly BgmUsage[],
+  options: { limit: number; cooldownMs?: number; now?: number },
+): BgmRotationPlan {
+  const empty: BgmRotationPlan = { targets: [], used: 0, cooled: 0 }
+  const limit = Math.max(0, Math.floor(options.limit))
+  if (limit <= 0 || pool.length === 0 || usage.length === 0) return empty
+
+  const inPool = new Set<string>()
+  for (const file of pool) if (typeof file === 'string' && file.trim()) inPool.add(file)
+  if (inPool.size === 0) return empty
+
+  // ★ 同一路径会出现多次（同一首曲子被派给好几家门店）⇒ 取**最近**那一次。
+  //   若取成最早那一次，会把它误判成「很久没用过」而优先淘汰 —— 正好淘汰掉刚用过的。
+  const latest = new Map<string, number>()
+  for (const item of usage) {
+    if (!item || typeof item.file !== 'string' || !inPool.has(item.file)) continue
+    const usedAt = Number(item.usedAt)
+    if (!Number.isFinite(usedAt)) continue
+    const previous = latest.get(item.file)
+    if (previous === undefined || usedAt > previous) latest.set(item.file, usedAt)
+  }
+  if (latest.size === 0) return empty
+
+  const cooldownMs = Math.max(0, options.cooldownMs ?? 0)
+  const now = typeof options.now === 'number' && Number.isFinite(options.now) ? options.now : Date.now()
+  let cooled = 0
+  const eligible: { file: string; usedAt: number }[] = []
+  for (const [file, usedAt] of latest) {
+    if (cooldownMs > 0 && now - usedAt < cooldownMs) cooled += 1
+    else eligible.push({ file, usedAt })
+  }
+
+  // 最久未被派发的先淘汰；时刻相同（或都是 0）时按路径排序 ⇒ 结果**完全确定**，守护才测得住
+  eligible.sort((a, b) => a.usedAt - b.usedAt || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0))
+
+  return { targets: eligible.slice(0, limit).map((item) => item.file), used: latest.size, cooled }
 }
 
 // ★★ 取用顺序：**池子优先、单文件兜底**。
