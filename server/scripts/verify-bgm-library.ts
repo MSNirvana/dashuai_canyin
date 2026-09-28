@@ -28,6 +28,17 @@
  *      顺序取词就会撞上已经用过的描述，生成近乎重复的曲子，而且**不报任何错**。
  *      ⇒ 所以断言 `usedBgmPromptTexts` 能读出池内已用描述（并 trim），缺侧车/侧车坏掉时不算已用过。
  *
+ *   ⑧ **按内容选曲是一次「候选清单下标」的往返**：服务把候选写成**带编号的清单**交给模型，
+ *      模型回一个下标，服务拿它去 `candidates[index]` 取文件。以下几种写法**全都不会报错**，
+ *      只会让片子配上另一首歌，或者「永远选第一首」变成一条谁也没定过的规律：
+ *        · 编号从 1 开始（或只给描述不给编号）⇒ 稳定偏一首
+ *        · 候选顺序与 `listBgmPool` 不同（下标与文件错位）
+ *        · 没有描述的候选把 `null` 渲染进提示词（模型把字面量当成曲风特征）
+ *        · 下标越界后**夹取**而不是判非法 ⇒ 把「模型写了 9」变成「永远选第一首」
+ *      ⇒ 所以断言：清单严格从 0 编号且逐行对应、候选与 `listBgmPool` 严格同序、无描述写占位而非
+ *      `null`；`parseBgmChoice` 对越界 / 非整数 / 非 JSON / 缺字段一律返回 `null`（退回随机抽取），
+ *      并且**绝不抛错**（`count` 非法也不行）。
+ *
  * 不连库、不联网、不写任何项目文件（只在系统临时目录里造样例，`finally` 清掉）。
  */
 import assert from 'node:assert/strict'
@@ -41,6 +52,7 @@ import {
   bgmLibraryDir,
   bgmMetadataPath,
   bgmPoolDir,
+  describeBgmCandidates,
   describeBgmLibrary,
   listBgmPool,
   pruneBgmPool,
@@ -48,6 +60,7 @@ import {
   singleFileBgmTrack,
   usedBgmPromptTexts,
 } from '../src/render/bgm-library.js'
+import { buildBgmOptionText, parseBgmChoice } from '../src/render/bgm-choice.js'
 import { BGM_PROMPTS, ChatCutOptionsSchema } from '../src/render/chatcut.js'
 import {
   VOLCANO_BGM_MAX_SEC,
@@ -241,13 +254,34 @@ function main(): void {
     writeFileSync(bgmMetadataPath(join(poolDir, 'LIGHT-05.mp3')), '{ 这不是 json', 'utf8')
     assert.equal(usedBgmPromptTexts('LIGHT').size, 2, '没有侧车或侧车坏掉都不该计入「已用过」')
     assert.ok(existsSync(join(poolDir, 'LIGHT-05.mp3')), '读侧车失败绝不能删掉音频文件')
+
+    // ── ⑫ 候选清单：选曲服务把「每首长什么样」交给模型的唯一依据 ──────────────
+    // 承接 ⑪ 之后的状态：03/04 有描述（甲/乙），05 的侧车是坏的
+    const described = describeBgmCandidates('LIGHT')
+    assert.equal(described.length, 3, `候选数必须等于池内曲子数，实际 ${described.length}`)
+    // ★★ 顺序即下标。模型返回的是下标，这里一旦重排，同样的返回值就指向了另一首曲子 ——
+    //    「配乐选错」但**不报任何错**，是最难查的一类。所以必须与 listBgmPool 严格同序。
+    assert.deepEqual(
+      described.map((candidate) => candidate.file),
+      listBgmPool('LIGHT'),
+      '候选顺序必须与 listBgmPool 完全一致（顺序 = 下标，重排 ⇒ 静默选错曲子）',
+    )
+    assert.deepEqual(
+      described.map((candidate) => candidate.note),
+      ['描述甲', '描述乙', null],
+      '描述必须逐首对应；侧车坏掉的那一首必须为 null（被算成有描述 ⇒ 模型会拿一个假特征做判断）',
+    )
+    assert.deepEqual(describeBgmCandidates('NONE'), [], '非法风格必须返回空数组而不是抛错')
+    for (const badStyle of [undefined, null, '']) {
+      assert.deepEqual(describeBgmCandidates(badStyle), [], `空风格 ${String(badStyle)} 必须返回空数组`)
+    }
   } finally {
     if (previousRoot === undefined) delete process.env.BGM_LIBRARY_DIR
     else process.env.BGM_LIBRARY_DIR = previousRoot
     rmSync(poolRoot, { recursive: true, force: true })
   }
 
-  // ── ⑫ 火山生成源的契约（改提示词表/时长会让生成**静默**出问题，所以断言钉在这里） ──
+  // ── ⑬ 火山生成源的契约（改提示词表/时长会让生成**静默**出问题，所以断言钉在这里） ──
   assert.deepEqual(
     Object.keys(VOLCANO_BGM_PROMPTS).sort(),
     [...BGM_STYLES].sort(),
@@ -310,7 +344,7 @@ function main(): void {
     }
   }
 
-  // ── ⑬ 「密钥一到就能切换」的判据本身要被测到 ────────────────────────────
+  // ── ⑭ 「密钥一到就能切换」的判据本身要被测到 ────────────────────────────
   // 这组是**闸门类**用例：会改环境变量，必须 finally 还原（否则串到后面的用例）。
   const savedAccessKey = process.env.VOLCENGINE_ACCESS_KEY
   const savedSecretKey = process.env.VOLCENGINE_SECRET_KEY
@@ -339,9 +373,68 @@ function main(): void {
   // 还原后不能残留（凭据串到别的用例里会让「未配置」的用例假绿）
   assert.equal(volcanoBgmConfigured(), Boolean(savedAccessKey && savedSecretKey), '环境变量必须已还原')
 
+  // ── ⑮ 选曲的「清单编号」与「下标解析」—— 选错歌要在这里挡住，不能等线上（见文件头 ⑧） ──
+  // 这两个函数是**纯的**（不连库、不联网、不读文件），所以能被这个不连库的守护直接测。
+  const options = buildBgmOptionText([
+    { file: '/x/LIGHT-1.mp3', note: '轻快尤克里里' },
+    { file: '/x/LIGHT-2.mp3', note: '舒缓钢琴' },
+    { file: '/x/LIGHT-3.mp3', note: null },
+  ])
+  assert.equal(
+    options.split('\n')[0],
+    '0. 轻快尤克里里',
+    '候选清单必须从 **0** 开始编号 —— 从 1 开始不会报错，只会让每次选曲都稳定偏一首',
+  )
+  assert.ok(options.includes('1. 舒缓钢琴'), '每一首候选都要带上自己的编号与描述')
+  assert.equal(options.trim().split('\n').length, 3, '候选几首就写几行（漏行 ⇒ 编号与下标错位）')
+  assert.ok(
+    !options.includes('null'),
+    '没有描述的候选不能把 null 渲染进提示词（模型会把字面量当成一种曲风特征）',
+  )
+
+  // 正常返回
+  assert.deepEqual(parseBgmChoice('{"index":2,"reason":"更贴"}', 3), { index: 2, reason: '更贴' })
+  // ★ 被 Markdown 代码块/解释包着也要认得出来 —— 模型经常这么写，解析不出来就等于每次白花钱
+  assert.deepEqual(
+    parseBgmChoice('好的，我选第 1 首：\n```json\n{"index":1,"reason":"x"}\n```', 3),
+    { index: 1, reason: 'x' },
+    '被代码块包住的 JSON 必须仍能解析',
+  )
+  assert.equal(parseBgmChoice('{"index":"0"}', 3)?.index, 0, 'index 写成字符串也要认（模型偶尔加引号）')
+  assert.equal(parseBgmChoice('{"index":2}', 3)?.reason, '', '没有 reason 时给空串，不能因此判失败')
+  assert.ok(
+    (parseBgmChoice(`{"index":0,"reason":"${'长'.repeat(200)}"}`, 3)?.reason.length ?? 999) <= 80,
+    'reason 会进日志，必须截断',
+  )
+
+  // ★★ 越界 / 非法一律 null（调用方据此退回**随机抽取**），**绝不夹取**：
+  //   夹到 0 会把「模型写了 9」变成「永远选第一首」—— 那是把一个可见的错误
+  //   换成一条看不见的规律，比直接退回随机更糟。
+  for (const bad of [
+    '{"index":3}', // == count，越界
+    '{"index":-1}',
+    '{"index":9}',
+    '{"index":1.5}',
+    '{"index":"abc"}',
+    '{}',
+    '{"reason":"只有理由没有下标"}',
+    '"index":0', // 没有花括号
+    '{"index":0', // 半截 JSON
+    '{bad json}',
+    '不是 JSON',
+    '',
+  ]) {
+    assert.equal(parseBgmChoice(bad, 3), null, `非法返回必须解析为 null（退回随机抽取）：${bad}`)
+  }
+  // count 本身非法时也**绝不能抛错**（它是从候选数来的，候选为 0 时就是 0）
+  for (const badCount of [0, -1, 1.5, Number.NaN]) {
+    assert.equal(parseBgmChoice('{"index":0}', badCount), null, `count=${badCount} 必须返回 null 而不是抛错`)
+  }
+
   console.log(
     '配乐曲库守护通过：风格集合三处同源、扩展名白名单不含元数据、空文件不命中、环境变量可还原、' +
       '池子优先且随机取用、单文件查找不看池子、淘汰保留最新并连元数据清掉、池内已用描述可读出、' +
+      '候选描述与候选清单严格同序、选曲清单从 0 编号、下标解析越界不夹取且不抛错、' +
       '火山提示词纯中文且排除人声、条数不薄于池子目标、生成时长同时满足接口与曲库硬约束、AK/SK 判据精确',
   )
 }

@@ -53,12 +53,23 @@ export const SCENE = {
   // ★ 输出是**结构化 JSON**（结构定义在 render/edl.ts），不是给人读的文案 ——
   //   所以解析器只认 JSON，失败就退回用户在面板选的档位（绝不阻塞出片）。
   edit_plan: 'edit_plan',
+  /**
+   * 配乐选曲（2026-09-28 接入）。
+   *
+   * ★ 位置：本地出片路径挑配乐的那一刻（`worker.ts`），与 ffmpeg 的编码工作**并发**发起
+   *   —— 这样这一次 AI 调用的等待时间被编码时间盖住，不额外占用出片预算。
+   * ★★ 它**不是**「让模型写一段曲风描述」，而是「从本地曲库已有的候选里挑一首」：
+   *   输出 `{"index":N}`，N 是候选清单里从 0 开始的编号。
+   *   改成这样的原因写在 `prisma/prompts.ts` 的 `BGM_SELECT_SCENE` 那段：
+   *   写描述意味着「拿描述去**现生成**一首」，那会把 1~5 分钟的在线等待塞进出片链路，
+   *   而 nginx 只给 480s —— 正是池化架构要避开的坑。
+   */
+  bgm_select: 'bgm_select',
 
   // ── 待接入：提示词已配好，业务方尚未引用 ──
   script_polish: 'script_polish',
   review_guard: 'review_guard',
   title_overlay: 'title_overlay',
-  bgm_select: 'bgm_select',
   rhythm_detect: 'rhythm_detect',
 } as const
 
@@ -77,6 +88,7 @@ export const LIVE_SCENE_CODES: readonly SceneCode[] = [
   SCENE.publish_cover,
   SCENE.publish_cover_pick,
   SCENE.edit_plan,
+  SCENE.bgm_select,
 ]
 
 /**

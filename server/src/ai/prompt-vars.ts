@@ -71,6 +71,20 @@ const STORYBOARD_VARS = [
 const SYNTH_VARS = [...COPY_VARS, 'copyText', 'shotCountRule'] as const
 
 /**
+ * 配乐选曲场景（`bgm_select`）：只吃**口播文案**与**候选曲目清单**。
+ *
+ * ★★ 为什么**刻意不给** `COPY_VARS`（门店 / 品类 / 菜品那一套）—— 这是本表里最容易想当然的一处：
+ *   渲染期在 `worker.ts` 里根本拿不到门店与菜品信息（合成任务的入参只有素材、台词、档位），
+ *   白名单一旦放开而模板又引用了，那几行会被渲染成**空串** —— 模型看到的是
+ *   「【门店】｜品类：」，它会认为「门店信息漏了」于是自己编一个店名补上。
+ *   这正是本文件反复出现的那类静默失效：模板校验通过、调用照常扣积分、结果不对。
+ *   （原提示词正是引用了 storeName/dishName 的，接线时一并改掉了。）
+ * ★ 反过来，`bgmOptions` 是**必须**的：模型看不到音频，候选清单是它唯一的判断依据，
+ *   取不到就只剩「闭着眼睛挑一个」，而这一次调用照样花钱。
+ */
+const BGM_SELECT_VARS = ['copyText', 'bgmOptions'] as const
+
+/**
  * AI 剪辑决策场景（`edit_plan`）：拿到**逐镜头的台词与素材时长**，输出剪辑决策 JSON。
  *
  * ★ 为什么只有 `copyText` 不够、必须有 `shotPlanInput`（逐镜头清单）：
@@ -128,7 +142,8 @@ export const SCENE_VARIABLES: Record<string, readonly string[]> = {
   script_polish: SYNTH_VARS,
   review_guard: SYNTH_VARS,
   title_overlay: SYNTH_VARS,
-  bgm_select: SYNTH_VARS,
+  // ★ 配乐选曲**不是** SYNTH_VARS：它跑在渲染链路里，拿不到门店/菜品（理由见上面 BGM_SELECT_VARS）
+  bgm_select: BGM_SELECT_VARS,
   rhythm_detect: SYNTH_VARS,
   publish_material: PUBLISH_VARS,
   publish_cover: PUBLISH_COVER_VARS,

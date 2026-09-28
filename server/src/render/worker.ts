@@ -43,6 +43,7 @@ import {
 } from './ffmpeg.js'
 import { applyAiSynthesis, fitShotDurationsToTimeline, shouldExtendForNarration, type SynthesisShot } from './synthesis.js'
 import { resolveBgmTrack } from './bgm-library.js'
+import { selectBgmFromPool } from './bgm-select.service.js'
 import { activeTtsProvider, providerForVoice } from '../services/tts-provider.service.js'
 import { estimateSpeechMs } from './tts.js'
 import { signedObjectUrl } from '../lib/cos.js'
@@ -484,6 +485,42 @@ async function processTask(
     await reportProgress(task.id, 8, fence)
   }
 
+  /**
+   * ★★ 配乐选曲**在这里就发出去**，而不是等到真正挑配乐那一刻（下面 3.5 节）再 await。
+   *
+   * 为什么必须提前：这是一次**在线 AI 调用**。若放在用它的地方同步等，它的耗时
+   * （正常 7~8s，超时上限 30s）会**整段加进出片时间** —— 而本项目的等待预算是硬的、
+   * 且**不允许再变**：nginx 480s > 前端 420s > 服务端 390s。
+   * 放在这里，它就和「逐镜头归一化 + 调色 + 拼接」那几十秒 ffmpeg 工作是**并发**的 ——
+   * 等真正要用时它多半已经好了，这次调用的等待时间约等于 0。
+   *
+   * ★ 立刻挂 `.catch`：即使后面某个环节抛错、整单提前退出，也不会留下一个未处理的 rejection
+   *   （那会在 Node 里冒出 unhandledRejection，把一次正常的失败日志搅乱，误导排查方向）。
+   * ★ 门禁条件与使用点**刻意保持一致**：只有 AI 档、且档位不是 `NONE`（用户明确不要配乐）时才发。
+   *   ★ 唯一可能「发了却没用上」的情况是渲染在到达配乐那一步之前就失败了。那时的代价是
+   *     一次便宜的调用（输出只有十几 token），换来的是**不占用出片预算** —— 这笔账是划算的。
+   *   ★ 真正「不值得发」的几种情况（没台词、池内不足两首、没有描述）由 service 内部挡住
+   *     （它会在发请求**之前**就返回，见 `MIN_DESCRIBED_CANDIDATES`）。
+   */
+  const bgmSelection =
+    aiMode && effectiveChatcut.bgm !== 'NONE'
+      ? selectBgmFromPool({
+          merchantId: task.merchantId,
+          taskId: task.id,
+          style: effectiveChatcut.bgm,
+          copyText: clips
+            .map((clip) => clip.line?.trim())
+            .filter((line): line is string => Boolean(line))
+            .join('\n'),
+        }).catch((error: unknown) => {
+          // service 内部已经「绝不抛错」；这里纯粹是第二道保险，确保不留未处理的 rejection
+          console.warn(
+            `[render-worker] 配乐选曲意外抛错（按随机抽处理）：${(error as Error)?.message ?? String(error)}`,
+          )
+          return null
+        })
+      : null
+
   const dir = await mkdtemp(join(tmpdir(), 'dashuai-render-'))
   try {
     // 1) 逐镜头：归一化（命中缓存则跳过）→ 调色
@@ -626,9 +663,14 @@ async function processTask(
         if (effectiveChatcut.bgm !== 'NONE') {
           /**
            * 配乐取用顺序（**三级**，越靠前越优先）：
-           *   ① 本地曲库里该风格的那一首（`assets/bgm/<风格>.<ext>`）——
-           *      由 `npm run bgm:generate` 用 ChatCut 的 `submit_music`（mureka-9）生成后落盘；
-           *      运营也可以直接丢一个**已获授权**的文件进去，命名成 `LIGHT.mp3` 即可，不用改代码。
+           *   ① 本地曲库该风格的那一首。它自己又分两档：
+           *      a) **池子** `assets/bgm/<风格>/` 里的若干首 —— 由定时补货
+           *         （`npm run bgm:replenish`）或 `npm run bgm:generate` 落盘，
+           *         多条曲子正是「每条片子配乐不重样」的来源。
+           *         ★ 池内有多首时，**先按口播内容让模型挑一首**（`bgm-select.service.ts`），
+           *           选不出来（没台词 / 通道挂 / 积分不足 / 没描述）就退回随机抽一首 ——
+           *           随机那条路径是对外行为完全不变的老行为。
+           *      b) 老的**单文件** `assets/bgm/<风格>.<ext>`（线上现存曲库就是这种）。
            *   ② `DEFAULT_BGM_PATH` 指定的单个文件（老配置：所有风格共用一首，保留兼容）。
            *   ③ 合成垫底 `ffmpegGenerateBackgroundMusic`。
            *
@@ -645,11 +687,22 @@ async function processTask(
            *   最坏是「有一条长音垫底」（实测约 -37dBFS，听感是嗡不是曲子），而不是没有配乐。
            */
           const style = effectiveChatcut.bgm
-          const styleTrack = resolveBgmTrack(style)
+          // ★ 第 ① 档内部再分两层：先用前面**并发发出**的选曲结果，拿不到就随机抽一首。
+          //   `await` 一个已经跑了几十秒 ffmpeg 的 promise，正常情况下是立即返回的。
+          const selection = bgmSelection ? await bgmSelection : null
+          if (selection) {
+            console.log(
+              `[render-worker] task ${task.id} ${selection.notice}（本次选曲扣 ${selection.beanCharged} 积分）`,
+            )
+          }
+          const styleTrack = selection?.file ?? resolveBgmTrack(style)
           const configuredBgm = process.env.DEFAULT_BGM_PATH?.trim()
           if (styleTrack) {
             backgroundMusicPath = styleTrack
-            console.log(`[render-worker] task ${task.id} 配乐取自曲库 ${style}：${styleTrack}`)
+            console.log(
+              `[render-worker] task ${task.id} 配乐取自曲库 ${style}` +
+                `（${selection?.file ? '按口播内容选中' : '随机抽取'}）：${styleTrack}`,
+            )
           } else if (configuredBgm && existsSync(configuredBgm)) {
             backgroundMusicPath = configuredBgm
             console.log(`[render-worker] task ${task.id} 曲库无 ${style}，配乐取 DEFAULT_BGM_PATH：${configuredBgm}`)

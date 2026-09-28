@@ -16,7 +16,7 @@
 //
 // 用法：npm run ai-prompts:sync
 import { PrismaClient } from '@prisma/client'
-import { CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, STORYBOARD_SCENE, PUBLISH_SCENES } from '../prisma/prompts.js'
+import { BGM_SELECT_SCENE, CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, STORYBOARD_SCENE, PUBLISH_SCENES } from '../prisma/prompts.js'
 import { validateTemplate } from '../src/ai/prompt-vars.js'
 
 const prisma = new PrismaClient()
@@ -47,6 +47,13 @@ const scenes: SceneSpec[] = [
   // ★ 它自带 kind，但仍显式覆盖成 'TEXT'：与 STORYBOARD_SCENE 同一种写法，
   //   避免 `EDIT_PLAN_SCENE.kind` 被推断成宽泛的 `string` 而与 SceneSpec 的联合类型不兼容。
   { ...EDIT_PLAN_SCENE, kind: 'TEXT' as SceneKind },
+  // 配乐选曲（2026-09-28）—— 从「写一段曲风描述」改成「从本地曲库候选里挑一首」。
+  // ★★ 它是本清单里**唯一一个「先有旧行、再改用途」**的场景：库里的 `bgm_select` 行早就存在
+  //   （旧提示词引用 storeName/dishName，而渲染期拿不到这两个值）。
+  //   走本脚本会命中 `updateMany` 的更新分支 ⇒ **只换模板，不动 beanPrice/候选链/超时**。
+  //   那正是我们要的：旧模板里那两个占位符在新白名单（`BGM_SELECT_VARS`）下会被**拒绝入库**，
+  //   所以必须靠这次同步把库里的行刷新成新模板 —— 否则线上会继续用旧模板、渲染期照旧渲染成空串。
+  { ...BGM_SELECT_SCENE, kind: 'TEXT' as SceneKind },
 ]
 
 /**

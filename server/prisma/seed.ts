@@ -123,19 +123,18 @@ const TITLE_OVERLAY_PROMPT = `你是餐饮短视频封面文案专家。请为�
 5. 只输出 JSON 对象，不要 Markdown 代码块、不要任何解释：
 {"title": "", "subtitle": "", "badge": ""}`
 
-const BGM_SELECT_PROMPT = `你是短视频配乐师。请为下面的餐饮短视频挑选合适的 BGM 风格。
-【门店】{{storeName}}｜品类：{{category}}
-【菜品】{{dishName}}
-【口播文案】{{copyText}}
-
-挑选要求：
-1. mood：整体情绪，从 热闹/温馨/治愈/烟火气/高级感/轻快 中选一个
-2. tags：3~5 个曲风标签（如 民谣吉他、轻电子、国风、爵士、钢琴）
-3. tempo：建议节奏，从 慢/中/快 中选一个
-4. reason：一句话说明为什么这样选
-5. 只输出 JSON 对象，不要 Markdown 代码块、不要任何解释：
-{"mood": "", "tags": [], "tempo": "", "reason": ""}`
-
+// ★★ 原来的 `BGM_SELECT_PROMPT` 已**移出本文件**（2026-09-28）—— 不要往这里加回来。
+//
+//   两个理由，各自都够：
+//   ① **它同时改了用途**。原提示词是「请挑选合适的 BGM 风格」，输出一段曲风描述
+//      （mood / tags / tempo），那是给「拿描述去**现生成**一首曲子」用的；而本项目已经改成
+//      **池子 + 后台补货**（`assets/bgm/<风格>/` 预先躺好若干首，渲染时毫秒级读本地随机抽）。
+//      现生成会把 1~5 分钟在线等待塞进出片链路（nginx 只给 480s）。所以它现在只做一件事：
+//      **从已经躺在磁盘上的候选里挑一首**，输出 `{"index":N}`。
+//   ② **本文件与 prompts.ts 各存一份模板**，是个已经点过名的隐患（见下面 PUBLISH_SCENES 那段）：
+//      `npm run ai-prompts:sync` 只认 prompts.ts 那一份，而 `npm run db:seed` 会用本文件这份
+//      **把库里改过的模板打回默认值**。两份并存 ⇒ 谁跑 seed 谁就把线上行为悄悄改回去。
+//   ⇒ 现在它只在 `prisma/prompts.ts` 的 `BGM_SELECT_SCENE` 里维护，用 `npm run ai-prompts:sync` 入库。
 const RHYTHM_DETECT_PROMPT = `你是短视频剪辑节奏指导。请为下面的分镜脚本给出卡点建议。
 【门店】{{storeName}}｜菜品：{{dishName}}
 【分镜数量要求】{{shotCountRule}}
@@ -151,7 +150,7 @@ const RHYTHM_DETECT_PROMPT = `你是短视频剪辑节奏指导。请为下面�
 const SCRIPT_POLISH_FALLBACK = `{{copyText}}`
 const REVIEW_GUARD_FALLBACK = `{"pass":true,"hits":[],"reason":"","suggestion":""}`
 const TITLE_OVERLAY_FALLBACK = `{"title":"{{dishName}}","subtitle":"{{storeName}}·{{sellingPoints}}","badge":"现做现卖"}`
-const BGM_SELECT_FALLBACK = `{"mood":"烟火气","tags":["轻快","民谣吉他"],"tempo":"中","reason":"餐饮日常场景通用配乐"}`
+// （`BGM_SELECT_FALLBACK` 随提示词一起移到了 prisma/prompts.ts，见上面的说明）
 const RHYTHM_DETECT_FALLBACK = `{"shots":[],"beatPoints":[],"reason":"按分镜建议时长自然衔接"}`
 
 async function seedAi() {
@@ -283,7 +282,11 @@ async function seedAi() {
     { code: 'script_polish', name: '口播润色 · 合成增强（待接入）', prompt: SCRIPT_POLISH_PROMPT, fallback: SCRIPT_POLISH_FALLBACK, temperature: 0.6, maxOutputTokens: 600, beanPrice: 5n },
     { code: 'review_guard', name: '内容安全审校 · 合成增强（待接入）', prompt: REVIEW_GUARD_PROMPT, fallback: REVIEW_GUARD_FALLBACK, temperature: 0.2, maxOutputTokens: 400, beanPrice: 3n },
     { code: 'title_overlay', name: '封面标题贴片 · 合成增强（待接入）', prompt: TITLE_OVERLAY_PROMPT, fallback: TITLE_OVERLAY_FALLBACK, temperature: 0.85, maxOutputTokens: 300, beanPrice: 5n },
-    { code: 'bgm_select', name: 'BGM 智能选择 · 合成增强（待接入）', prompt: BGM_SELECT_PROMPT, fallback: BGM_SELECT_FALLBACK, temperature: 0.7, maxOutputTokens: 300, beanPrice: 3n },
+    // ★ `bgm_select` **已从这里移除**（2026-09-28）：它已接线进渲染链路，模板与
+    //   timeout/maxRetries/maxOutputTokens 全部改由 `prisma/prompts.ts` 的 `BGM_SELECT_SCENE`
+    //   维护、由 `npm run ai-prompts:sync` 入库。
+    //   ⚠ 更要紧的是**本循环会写 `enabled: true` 与全套配置**：把它留在这里，任何人跑一次
+    //     `db:seed` 都会把线上调好的候选链与模板打回这份旧默认值 —— 而线上那行本来就是好的。
     { code: 'rhythm_detect', name: '节奏点检测 · 合成增强（待接入）', prompt: RHYTHM_DETECT_PROMPT, fallback: RHYTHM_DETECT_FALLBACK, temperature: 0.4, maxOutputTokens: 500, beanPrice: 3n },
   ]
   for (const s of synthScenes) {

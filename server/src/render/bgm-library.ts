@@ -151,6 +151,27 @@ export function listBgmPool(style: string | undefined | null): string[] {
 }
 
 /**
+ * 读一首曲子的「生成描述」—— 同名 `.json` 侧车里的 `prompt` 字段，读不到返回 `null`。
+ *
+ * ★ 为什么单拎出来：它在两处被用到，而两处对「读不到」的处理**恰好相反又都要正确**：
+ *   · 补货（`usedBgmPromptTexts`）把读不到当成「没记录过」，顶多多生成一首；
+ *   · 选曲（`describeBgmCandidates`）把读不到当成「description 为空」，那一首就不该
+ *     被交给模型去比。写成两份就一定有一份会漂移。
+ * ★ 一律 `trim()`：池子里的曲子是照着提示词表生成的，而提示词表里的原串没有首尾空白 ——
+ *   不 trim 就永远比不中，等于这条记录不存在（**静默**失效）。
+ */
+function readBgmPrompt(file: string): string | null {
+  try {
+    const parsed = JSON.parse(readFileSync(bgmMetadataPath(file), 'utf8')) as { prompt?: unknown }
+    const prompt = typeof parsed.prompt === 'string' ? parsed.prompt.trim() : ''
+    return prompt || null
+  } catch {
+    // 没有侧车或内容不可解析：当作没记录过
+    return null
+  }
+}
+
+/**
  * 池内**已经用过的**生成提示词（读同名 `.json` 侧车的 `prompt` 字段）。
  *
  * ★ 为什么需要它：补货按「池内数量 + 序号」顺序取词，隐含假设「已有曲子正好占了 0..n-1 号」。
@@ -163,15 +184,34 @@ export function listBgmPool(style: string | undefined | null): string[] {
 export function usedBgmPromptTexts(style: string | undefined | null): Set<string> {
   const used = new Set<string>()
   for (const file of listBgmPool(style)) {
-    try {
-      const parsed = JSON.parse(readFileSync(bgmMetadataPath(file), 'utf8')) as { prompt?: unknown }
-      const prompt = typeof parsed.prompt === 'string' ? parsed.prompt.trim() : ''
-      if (prompt) used.add(prompt)
-    } catch {
-      // 没有侧车或内容不可解析：当作没记录过
-    }
+    const prompt = readBgmPrompt(file)
+    if (prompt) used.add(prompt)
   }
   return used
+}
+
+/** 池内一首候选曲子：文件绝对路径 + 它的生成描述（侧车缺失时为 `null`） */
+export interface BgmCandidate {
+  file: string
+  /**
+   * 这首曲子「长什么样」的一句话描述（来自生成时的提示词）。
+   *
+   * ★ 它是**选曲**唯一的依据：模型看不到音频，只看到文字。没有描述就等于「一首无法描述的歌」，
+   *   无从比较 —— 所以调用方在候选里描述太少时应当**放弃调用**（见 `bgm-select.service.ts`），
+   *   而不是让模型在几行「（无描述）」里瞎猜。
+   * ★ 手放的曲子没有侧车 ⇒ 这里为 `null`；这不影响渲染（照样能被随机抽到），只影响能否被 AI 比选。
+   */
+  note: string | null
+}
+
+/**
+ * 池内候选（保持 `listBgmPool` 的稳定排序）—— 交给选曲服务去做「按内容挑一首」。
+ *
+ * ★ 顺序**必须稳定**：模型返回的是下标，下标与顺序一一对应。顺序一变，同样的返回值
+ *   就指向了另一首曲子 —— 而且**不会报错**。所以直接沿用 `listBgmPool` 的排序，不要在这里重排。
+ */
+export function describeBgmCandidates(style: string | undefined | null): BgmCandidate[] {
+  return listBgmPool(style).map((file) => ({ file, note: readBgmPrompt(file) }))
 }
 
 /**
