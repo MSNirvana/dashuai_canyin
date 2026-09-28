@@ -1,10 +1,17 @@
-// 自建拍摄层：整页 fixed 浮层，画在 <Camera> 取景之上。
+// 自建拍摄层：整页 fixed 浮层。
 //
-// ★ 层级怎么来的：camera 是原生组件、默认压在所有普通组件之上，要让上面的浮层盖住它，
-//   靠的是**同层渲染**（官方现说明「原生组件均已支持同层渲染，建议使用 view 替代 cover-view」），
-//   所以这一层用普通 View + 完整 CSS，没有走 cover-view 那套老限制。
-// ★ 结构上刻意「浮层 fixed、camera 绝对定位填满」：原生组件本身不支持 position:fixed、
-//   也不吃父级的 overflow 裁剪，把它做成浮层的**子**元素比自己 fixed 稳。
+// ★★ 第一版（43454fa）把控件画在 camera **上面**，靠同层渲染盖住它 —— 真机上三条
+//   控件（前置/后置、补光、快门）**全部点不动**。原因：camera 是客户端创建的原生组件，
+//   官方原文「它的层级是最高的，不能通过 z-index 控制层级」，同层渲染又会在
+//   「Android 缺少内核 / iOS 页面节点树不稳定」时失败（官方 `bindrendererror` 注释）。
+//   一旦失败，叠在它矩形上的普通 View 既可能被盖住、也可能点不到。
+// ★★ 所以现在的硬规则：**任何控件都不许和 camera 的矩形重叠**。整层改成三段式
+//   flex 列（顶栏+提词器 / 取景区 / 底部控制），camera 单独占中间那一格。
+//   这样布局完全不依赖同层渲染 —— 它能渲染就渲染，渲染不了也只是取景画面变小，
+//   控件照样能点。**不要**再把控件挪回取景矩形里（包括"就盖一点点"）。
+// ★ 结构上刻意「浮层 fixed、camera 绝对定位填满取景区」：原生组件本身不支持
+//   position:fixed、也不吃父级的 overflow 裁剪，把它做成普通 View 的子元素比它自己
+//   fixed 稳。取景区那一格靠 flex 拿到确定高度，camera 用 100% 撑满即可。
 // ★ 这一层里不出现任何滚动容器 —— camera 不能放进 scroll-view（微信官方硬约束）。
 .shotcam {
   position: fixed;
@@ -15,6 +22,8 @@
   z-index: 900;
   background: #000;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 
   &__preview {
     position: absolute;
@@ -24,21 +33,21 @@
     height: 100%;
   }
 
-  /* 控制层：顶栏 / 提词器 / 底部控制，中间整片留给取景 */
-  &__ui {
-    position: absolute;
-    left: 0;
-    right: 0;
-    top: 0;
-    bottom: 0;
-    box-sizing: border-box;
-    display: flex;
-    flex-direction: column;
-    padding: calc(20rpx + env(safe-area-inset-top)) 28rpx calc(36rpx + env(safe-area-inset-bottom));
+  /* ── 顶栏 + 提词器：整块在取景矩形**之外**（见文件头 ★★）── */
+  &__top {
+    flex: none;
+    padding: calc(20rpx + env(safe-area-inset-top)) 28rpx 0;
   }
 
-  /* ── 顶栏 ── */
-  &__top {
+  /* ── 取景区：camera 的唯一容器。这一层里只允许有 camera，不许放控件 ── */
+  &__stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+  }
+
+  /* ── 顶栏第一行：关闭 / 分镜 / 前后摄 ── */
+  &__toprow {
     display: flex;
     align-items: center;
     gap: 16rpx;
@@ -79,13 +88,17 @@
     opacity: 0;
   }
 
-  /* ── 提词器：贴着上方（靠近镜头），念稿时视线不离取景框 ── */
+  /* ── 提词器：贴在顶栏下方（靠近镜头），念稿时视线不离取景框 ──
+     ★ 它现在在取景矩形**之外**（原来是压在取景画面上、会跟着一起点不动），
+       所以底色跟着黑色顶栏走：用浅色卡，原来那种 rgba(0,0,0,.52) 在纯黑底上看不出来。
+     ★ max-height 是给取景区留高度的闸：提词器长一分取景就矮一分，不留上限的话
+       长台词会把取景挤到几乎没有。 */
   &__prompt {
     margin-top: 24rpx;
     padding: 26rpx 28rpx;
     border-radius: var(--td-radius-large);
-    background: rgba(0, 0, 0, 0.52);
-    max-height: 46vh;
+    background: rgba(255, 255, 255, 0.08);
+    max-height: 30vh;
     overflow: hidden;
   }
   &__line {
@@ -114,15 +127,13 @@
     line-height: 1.6;
   }
 
-  &__spacer {
-    flex: 1;
-  }
-
-  /* ── 底部控制 ── */
+  /* ── 底部控制：整块在取景矩形**之外**（见文件头 ★★）── */
   &__bottom {
+    flex: none;
     display: flex;
     flex-direction: column;
     align-items: center;
+    padding: 30rpx 28rpx calc(36rpx + env(safe-area-inset-bottom));
   }
   &__metarow {
     width: 100%;

@@ -331,6 +331,12 @@ export default function ShotCamera({ visible, shot, tipText, onCancel, onDone, o
   if (!visible) return null
 
   const recording = phase === 'recording'
+  /**
+   * ★★ 只在「正在取景」时才挂 <Camera>。拍完确认（review）与相机不可用（failMsg）两块
+   * 面板都是**居中**的，必然会压到取景矩形上 —— 先卸掉 camera 再画面板，面板上的按钮
+   * 才点得到；这也是 43454fa 里「面板同样点不动」的同一条根因（见 index.scss 文件头 ★★）。
+   */
+  const showCamera = !failMsg && phase !== 'review'
   const line = (shot?.line ?? '').trim()
   const visual = (shot?.visualReq ?? '').trim()
   // 提词器字号按台词长度分三档：分镜台词通常十几字，长台词要主动缩一号才不会占掉半个屏幕
@@ -338,26 +344,13 @@ export default function ShotCamera({ visible, shot, tipText, onCancel, onDone, o
 
   return (
     <View className='shotcam' catchMove>
-      {/* 取景层。★ 有 failMsg 时不挂 <Camera>（见 failMsg 的注释） */}
-      {!failMsg && (
-        <Camera
-          className='shotcam__preview'
-          devicePosition={device}
-          flash={flash}
-          resolution='high'
-          onError={(e) => setFailMsg(`相机不可用：${errText(e.detail) || '请检查权限'}`)}
-          onStop={() => {
-            // 摄像头被非正常终止（切后台、被系统抢占）。正在录的话微信会走
-            // timeoutCallback 把文件交回来，这里只负责把界面从「录制中」摘出来，
-            // 别让它一直停在录制态骗用户。
-            if (recording) { clearTimer(); setPhase('idle') }
-          }}
-        />
-      )}
+      {/* ★★ 三段式：顶栏(含提词器) / 取景区 / 底部控制。控件一律不许和 camera 的矩形
+          重叠 —— 一重叠就得靠同层渲染，而它会失败（见 index.scss 文件头 ★★），于是
+          「前置/后置、补光、快门」三条一起点不动。 */}
 
-      {!failMsg && phase !== 'review' && (
-        <View className='shotcam__ui'>
-          <View className='shotcam__top'>
+      {showCamera && (
+        <View className='shotcam__top'>
+          <View className='shotcam__toprow'>
             <Text className='shotcam__close' onClick={() => void close()}>✕</Text>
             <Text className='shotcam__seq'>
               分镜 {shot?.seq ?? ''}{shot?.shotType ? ` · ${shot.shotType}` : ''}
@@ -373,7 +366,9 @@ export default function ShotCamera({ visible, shot, tipText, onCancel, onDone, o
             ) : <Text className='shotcam__tool shotcam__tool--off'>·</Text>}
           </View>
 
-          {/* ── 提词器：贴着上方（靠近镜头），念稿时视线不离取景框 ── */}
+          {/* ── 提词器：贴在顶栏下方（靠近镜头），念稿时视线不离取景框 ──
+              ★ 它必须待在取景矩形**之外**：压到 camera 上就跟着一起点不动（见文件头 ★★），
+                而且会挡住取景画面。长台词靠 scss 里的 max-height 兜住。 */}
           {(!!line || !!visual || !!tipText) && (
             <View className='shotcam__prompt'>
               {!!line && <Text className={`shotcam__line ${lineSize}`}>{line}</Text>}
@@ -382,33 +377,58 @@ export default function ShotCamera({ visible, shot, tipText, onCancel, onDone, o
             </View>
           )}
 
-          <View className='shotcam__spacer' />
+        </View>
+      )}
 
-          <View className='shotcam__bottom'>
-            <View className='shotcam__metarow'>
-              <Text className='shotcam__timer ds-num'>
-                {fmtClock(recording ? elapsed : 0)} / {fmtClock(SHOOT_MAX_SECONDS * 1000)}
-              </Text>
-              <Text
-                className='shotcam__tool'
-                onClick={() => setFlash((f) => (f === 'off' ? 'torch' : 'off'))}
-              >
-                补光 {flash === 'torch' ? '开' : '关'}
-              </Text>
-            </View>
+      {/* 取景区：这一层里**只允许有 camera**，任何控件都不许放进来（见上面 ★★）。
+          有 failMsg 或已拍完时不挂 camera，这里就是一块纯黑底，给面板当背景。 */}
+      <View className='shotcam__stage'>
+        {showCamera && (
+          <Camera
+            /* ★ key 里带上 device/flash：camera 的 device-position 在部分机型上
+               动态改不生效（实测点「前置」画面不动），换 key 强制重建最稳。
+               重建只在开录前发生 —— 录制中两个开关都是禁用的。 */
+            key={`${device}-${flash}`}
+            className='shotcam__preview'
+            devicePosition={device}
+            flash={flash}
+            resolution='high'
+            onError={(e) => setFailMsg(`相机不可用：${errText(e.detail) || '请检查权限'}`)}
+            onStop={() => {
+              // 摄像头被非正常终止（切后台、被系统抢占）。正在录的话微信会走
+              // timeoutCallback 把文件交回来，这里只负责把界面从「录制中」摘出来，
+              // 别让它一直停在录制态骗用户。
+              if (recording) { clearTimer(); setPhase('idle') }
+            }}
+          />
+        )}
+      </View>
 
-            <View className='shotcam__shutterwrap' onClick={toggleRecord}>
-              <View className={`shotcam__shutter ${recording ? 'shotcam__shutter--on' : ''}`} />
-            </View>
-
-            <Text className='shotcam__hint'>
-              {recording
-                ? '点一下停止'
-                : shot?.durationSuggest
-                  ? `点一下开始 · 这一段建议 ${shot.durationSuggest} 秒`
-                  : '点一下开始录，再点一下停'}
+      {showCamera && (
+        <View className='shotcam__bottom'>
+          <View className='shotcam__metarow'>
+            <Text className='shotcam__timer ds-num'>
+              {fmtClock(recording ? elapsed : 0)} / {fmtClock(SHOOT_MAX_SECONDS * 1000)}
+            </Text>
+            <Text
+              className='shotcam__tool'
+              onClick={() => setFlash((f) => (f === 'off' ? 'torch' : 'off'))}
+            >
+              补光 {flash === 'torch' ? '开' : '关'}
             </Text>
           </View>
+
+          <View className='shotcam__shutterwrap' onClick={toggleRecord}>
+            <View className={`shotcam__shutter ${recording ? 'shotcam__shutter--on' : ''}`} />
+          </View>
+
+          <Text className='shotcam__hint'>
+            {recording
+              ? '点一下停止'
+              : shot?.durationSuggest
+                ? `点一下开始 · 这一段建议 ${shot.durationSuggest} 秒`
+                : '点一下开始录，再点一下停'}
+          </Text>
         </View>
       )}
 
