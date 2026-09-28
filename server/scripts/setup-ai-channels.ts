@@ -81,7 +81,35 @@
 //
 //   选型原则：三个模型都要稳稳落在 ai_scene.timeout_ms(30s) 之内，
 //   否则「正常的慢」会被当成故障 → 无谓地触发故障转移、白白多等 30s。
-//   gpt-5.6-sol 就是反例：它 1/3 概率要 36s，超过 30s 超时线，做主力会周期性拖垮体验。
+//   gpt-5.6-sol 曾是反例：上表里它 1/3 概率要 36s，超过 30s 超时线。
+//
+// ══ ★★ 2026-09-28 复测：gpt-5.6-sol 的尾巴**本次未复现**，主力换成它 ══
+//   同一口径复打（生产 copy_generate 的真实模板 + 生产变量、不传 reasoning_effort）：
+//
+//     模型            样本   成功               耗时(秒)     中位   超30s
+//     gpt-5.5         11    9/11（非首枪 9/9）  4.0~8.6      ~5.2   0
+//     ★ gpt-5.6-sol   11    11/11              3.2~4.4       3.9   0
+//     gpt-6-sol       11    11/11              3.0~5.3       4.4   0
+//     gpt-6-luna       5    5/5                2.9~3.9       3.1   0
+//     gpt-6-astra      6    6/6                4.8~10.8      5.3   0
+//
+//   ★★ 这一轮**差点被自己误判**：4 个模型按顺序打时，跑在**最前面**的 gpt-5.5
+//      2/3 都是 60s 超时，后面三个 3/3 全过 —— 看起来像「现役模型退化了」。
+//      **把顺序倒过来复跑（gpt-5.5 放最后）⇒ 它 3/3 全过：4.1 / 5.4 / 8.6s。**
+//      真相是**一轮里的第一个请求要付通道冷启动代价**，与模型本身无关。
+//      ⇒ 以后做这类对照：首枪要么单独标注，要么正反序各跑一轮。
+//   ★ 延迟真源是**生产** `ai_call_log.latency_ms`，不是合成探针：gpt-5.5 近 30 天
+//      24/24 全成功（均值 17.9s、最大 46.6s）⇒ 换模型不是为了修故障，是为了常规延迟。
+//   ★ 尾巴的诚实结论：11/11 全过在「1/3 概率」下仍有约 1.2% 可能 ⇒ 只能写
+//      「本次时段没复现」，**不能写「尾巴没了」**。拿它做主力就要留一条观测。
+//   ★ 不选 gpt-6-luna 的原因：它中位最快（3.1s）但**系统性写短稿**
+//      （5 次里 3 次只写 42~43 字，同 prompt 其他模型 70~120 字），
+//      与「正文 100~130 字」的硬要求冲突 —— 延迟再快也不能当主力。
+//   ⚠ 换模型码**必须同时补 `PRICES`**（见下）：不在价目表里的模型 `priceOf()` 返 0/0，
+//      而 `src/ai/gateway.ts` 的零成本守卫会直接 `continue` 掉它（不是变便宜，是不可用）。
+//   ⚠ 另一条静默事故：不带 `TB_SET_PRICES=1` 跑本脚本，会把**已有**模型的单价
+//      一并清成 0（`modelData` 在 update 分支也会写）⇒ 全部文本模型被零成本守卫拦掉
+//      ⇒ **整个 AI 挂掉**。「清零」不等于「跳过」。
 //   三个模型码都可用环境变量覆盖（见下），换模型不必改代码。
 //
 // ══ ★ 另一个必须知道的坑：max_tokens 被「思考」吃掉 ══
@@ -121,7 +149,7 @@ import { CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, PUBLISH_SCENES } from '../pris
 const BASE_URL = 'https://tokenbox.you/v1'
 
 /** 模型码可用环境变量覆盖 —— 换模型不必改代码、不必重新审阅脚本 */
-const MODEL_GPT = (process.env.TB_GPT_MODEL ?? 'gpt-5.5').trim()
+const MODEL_GPT = (process.env.TB_GPT_MODEL ?? 'gpt-5.6-sol').trim()
 const MODEL_CLAUDE = (process.env.TB_CLAUDE_MODEL ?? 'claude-sonnet-5').trim()
 const MODEL_DEEPSEEK = (process.env.TB_DEEPSEEK_MODEL ?? 'deepseek-v4-flash').trim()
 
@@ -176,6 +204,18 @@ const USD_TO_CNY = Number(process.env.TB_USD_TO_CNY ?? 7.2)
  */
 const PRICES: Record<string, { inUsdPerMtok: number; outUsdPerMtok: number; note: string }> = {
   'gpt-5.5': { inUsdPerMtok: 4.0, outUsdPerMtok: 24.0, note: 'p×5 c×30，Gpt pro号池 ×0.4' },
+  /**
+   * ★ 2026-09-28 新增。取自 `GET /api/pricing` 里该模型的 `billing_expr`：
+   *   `p * 5 + c * 30 + cr * 0.5 + cc * 6.25`（base 档）
+   *   ⇒ 与 gpt-5.5 的 `p * 5 + c * 30 + cr * 0.5` **系数完全相同** ⇒ **同价 $4/$24**。
+   *   ⚠ 多出来的 `cc * 6.25` 是**缓存输出**的附加项（cc = cached completion tokens）；
+   *     本表按「每百万 token」报价的口径装不下它。量小，先忽略；账单异常时回来看这里。
+   *   ⚠ 自校验方法（下次换模型照做）：拿 gpt-5.5 的**已知**值（库里 2880/17280 分
+   *     = $4/$24）标定 `group_ratio`：`系数 × gr × 2 = 美元/Mtok` ⇒ gr = 0.4。
+   *     若哪天对不上，说明分组倍率变了，重标一次再写 —— **别拿 model_ratio 直接算**，
+   *     有 `billing_mode=tiered_expr` 时以 `billing_expr` 为准（否则会算成 $6/$36）。
+   */
+  'gpt-5.6-sol': { inUsdPerMtok: 4.0, outUsdPerMtok: 24.0, note: 'p×5 c×30（与 gpt-5.5 同系数同价）；另含 cc×6.25 缓存输出附加项' },
   'claude-sonnet-5': { inUsdPerMtok: 4.0, outUsdPerMtok: 20.0, note: 'ratio 1 / completion 5，Claude max ×2' },
   'deepseek-v4-flash': { inUsdPerMtok: 1.2, outUsdPerMtok: 4.8, note: 'p×1 c×4，Deepseek官方 ×0.6（空闲时段）' },
 }
