@@ -458,6 +458,39 @@ tail -3 /var/log/dashuai/cert-watch.log     # 出现 `| OK |` 即正常
 > （此法已实测：剥完再跑，`rc=0`，日志写出 `all simulated renewals succeeded`）。
 > 另：crontab 行里**不能出现 `%`**（cron 把它当换行符），所以时间戳统一用 `date --iso-8601=seconds`。
 
+### ★ 配乐池补货（渲染取本地、补货在闲时）
+
+出片时配乐走的是 `worker.ts` → `resolveBgmTrack(风格)` → **毫秒级读本地** `server/assets/bgm/<风格>/` 随机抽一首。
+好处是第三方（火山 / ChatCut）挂了也**不出片失败**；代价是**池子里有几首，出片就有几种配乐**。
+所以补货必须是个**后台常驻动作**：
+
+```bash
+bash deploy/install-bgm-replenish.sh              # 安装（幂等，可反复跑）
+bash deploy/install-bgm-replenish.sh --check      # 只看现状：crontab 行 + 各风格池内数量 + 日志末尾
+bash deploy/install-bgm-replenish.sh --max=2      # 单轮每风格补 2 首（更费钱）
+bash deploy/install-bgm-replenish.sh --uninstall
+```
+
+- **默认每日 04:40**（错开 04:30 的存储 GC），单轮每风格补 **1** 首 ⇒ 上界约 **0.72 元/轮**
+  （火山按秒计费，约 0.002 元/秒，120s 一首 ≈ 0.24 元）。
+- **补满之后每轮零花费**：脚本走「正好 ⇒ 不动」分支，只打一行日志。
+- ⚠ 池内**超额**时会**淘汰最旧的**。所以 `BGM_POOL_TARGET`（`src/render/bgm-library.ts`）
+  **调小 = 下次调度静默删曲子** —— 改之前先想清楚。
+- 提示词表（`src/render/volcano-bgm.ts::VOLCANO_BGM_PROMPTS`）**条数必须 ≥ 目标数**，
+  否则取词会绕回起点生成近乎重复的曲子且**不报错**；`npm run bgm:verify` 会因此变红。
+
+判活一行：
+
+```bash
+tail -3 /var/log/dashuai/bgm-replenish.log
+# rc=0  → 正常（含「补满后什么都没做」）
+# rc=75 → 上一轮还没跑完，本轮跳过（flock 冲突码，不是故障）
+# 其他  → 真失败，同一文件里有本轮输出；整行退出的就是它（末尾 `exit $rc`）
+```
+
+> ⚠ 手工验证这条 cron 时，同样要**剥掉前 5 个调度字段**再交给 shell（`awk '{for(i=6;i<=NF;i++) ...}'`），
+> 否则会去执行一个叫 `40` 的命令。另外，把命令里的 `--yes` 换成 `--list` 就能**零花费**地自证整条脚手架。
+
 ### 主域名首页（**备案号悬挂页**）
 
 管局要求「在**网站首页底部**悬挂 ICP 备案号并链接至工信部备案官网首页，否则将被管局责令更改」。
@@ -682,3 +715,4 @@ bash scripts/build-weapp-prod.sh https://api.<你的域名>/api/v1
 | `scripts/build-weapp-prod.sh` | 用正式域名给小程序出包（带 HTTPS/端口校验） |
 | `deploy/install-cron.sh` | 装「存储孤儿对象回收」的每日 cron（幂等，按 `# dashuai-storage-gc` 标记行替换） |
 | `deploy/install-cert-watch.sh` | 装「证书续期守望」cron（每日剩余天数 + 每周 staging 干跑），补「续期失败无人知」这个缺口。守望脚本本体**内嵌在本文件里**，装到 `/usr/local/bin/dashuai-cert-watch.sh` —— 只维护一处，不会出现仓库版与服务器版漂移 |
+| `deploy/install-bgm-replenish.sh` | 装「配乐池补货」cron（每日 04:40，单轮每风格补 1 首，上界约 0.72 元/轮）。**为什么必须有**：渲染时的配乐是毫秒级读 `assets/bgm/<风格>/` 随机抽一首 ⇒ **池子里有几首，出片就有几种配乐**；补货脚本本来只是手工命令，没有调度就等于池子永远停在首次生成的那几首。装完可用 `--check` 体检、`--uninstall` 卸载 |
