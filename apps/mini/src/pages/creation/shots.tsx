@@ -10,7 +10,7 @@ import {
   type ShotItem,
 } from '../../services/creation'
 import { listShotLibrary, type ShotLibraryItem } from '../../services/account'
-import { uploadVideoFile, UploadAbortedError } from '../../services/upload'
+import { uploadVideoFile, UploadAbortedError, describeUploadError } from '../../services/upload'
 import { readRouteId } from '../../utils/route-id'
 import ProgressLine from '../../components/progress-line'
 import ShotCamera, { SHOOT_MAX_SECONDS, type ShotCameraResult } from '../../components/shot-camera'
@@ -137,10 +137,15 @@ export default function CreationShots() {
     } catch (e: unknown) {
       // 页面已卸载导致的中止不算失败：既不该弹 toast，也不该在已卸载的组件上 setState
       if (e instanceof UploadAbortedError) return
-      const err = e as { code?: number; errMsg?: string }
+      // ★ 真实原因必须显出来。COS 上传失败时 SDK 抛的是 `{UploadId, err, error}`，
+      //   顶层**没有** `errMsg` —— 原来那句 `!cancel.test(err?.errMsg ?? '')` 对它恒为空串，
+      //   于是「域名没进白名单 / 403 / 超时」全被吞成一句「分镜 N 上传失败」，无从排查。
+      const reason = describeUploadError(e)
       // 用户取消选择不算失败；其他异常保留原错误层 toast，并补一条明确到分镜的提示。
-      if (!/cancel/i.test(err?.errMsg ?? '') && err?.code !== 2001) {
-        Taro.showToast({ title: `分镜 ${shot.seq} 上传失败`, icon: 'none' })
+      if (!/cancel/i.test(reason) && (e as { code?: number })?.code !== 2001) {
+        // 完整对象留给开发者工具 / 真机 vConsole —— 这是唯一能看到 SDK 原文的出口
+        console.error('[shots] 分镜上传失败', shot.id, e)
+        Taro.showToast({ title: `分镜 ${shot.seq} 上传失败：${reason}`.slice(0, 50), icon: 'none', duration: 5000 })
       }
     } finally {
       uploadAborters.current.delete(shot.id)

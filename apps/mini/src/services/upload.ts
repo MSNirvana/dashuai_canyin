@@ -48,6 +48,66 @@ function randomStr(n: number): string {
 }
 
 /**
+ * 把底层错误压成一句**可读的原因**，供 toast 与日志使用。
+ *
+ * ★ 为什么必须有它：
+ *   `cos-wx-sdk-v5` 上传失败时，`sliceUploadFile` 的 callback 收到的是
+ *   `{ UploadId, err, error }`（见 node_modules/cos-wx-sdk-v5/src/advance.js 的 `_err` 构造）
+ *   —— 一个**普通对象**：既不是 Error 实例（没有 `message`），也没有顶层 `errMsg`。
+ *   调用方按常规读 `e.errMsg` / `e.message` 只能拿到 undefined，底层那句真话被整个吞掉，
+ *   界面只剩一句「上传失败」。被吞掉的恰恰是最该看到的：
+ *     · `request:fail url not in domain list` —— COS 域名没进「request 合法域名」
+ *     · `403 AccessDenied` / `InvalidAccessKeyId` —— 凭证或权限问题
+ *     · `request:fail timeout` —— 弱网，或上传中切后台被系统挂起
+ *
+ * ★ 为什么 services/request.ts 里已有的 toNetworkError 救不了它：
+ *   那是给**我们自己**的 http 请求（/upload/sts、/upload/complete）准备的；
+ *   而 COS 上传是 SDK 自己调的 `wx.request`（node_modules/cos-wx-sdk-v5/lib/request.js，
+ *   分片上传走 request、postObject 才走 uploadFile），完全不经过那一层。
+ *   所以必须在 SDK 边界上再归一化一次。
+ */
+export function describeUploadError(e: unknown): string {
+  // SDK 的 err / error 互相引用（`{err: err, error: err}`），递归前先防环；
+  // 顺路把**嵌套层**的 statusCode 捞出来 —— 它常常不在顶层（形如 `{err:{statusCode:403,...}}`）
+  const seen = new Set<unknown>()
+  let status = 0
+  const pick = (v: unknown, depth: number): string => {
+    if (v == null || depth > 4 || seen.has(v)) return ''
+    if (typeof v === 'string') return v.trim()
+    if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+    if (typeof v !== 'object') return ''
+    seen.add(v)
+    const o = v as Record<string, unknown>
+    if (!status && typeof o.statusCode === 'number') status = o.statusCode
+    for (const k of ['errMsg', 'error', 'err', 'message', 'msg']) {
+      const t = pick(o[k], depth + 1)
+      if (t) return t
+    }
+    return ''
+  }
+
+  const text = pick(e, 0) || (e instanceof Error ? e.message : '') || '未知错误'
+
+  // 补一句人话解释：真机上用户看到的就是这一句，它得自己会说话
+  const hint = /url not in domain list/i.test(text)
+    ? '（COS 域名未加入小程序「request 合法域名」白名单）'
+    : /AccessDenied|InvalidAccessKeyId|SignatureDoesNotMatch|Forbidden/i.test(text)
+      ? '（对象存储拒绝：凭证过期或权限不足）'
+      : /ERR_CONNECTION|ECONNREFUSED|FAILED_TO_CONNECT|fail to connect|ERR_NAME_NOT_RESOLVED/i.test(text)
+        ? '（连不上对象存储）'
+        : /timeout/i.test(text)
+          ? '（超时：弱网，或上传中切后台被系统挂起）'
+          : ''
+  // ★ 顺序很关键：**人话在前、原始 errMsg 在后**。
+  //   toast 按长度截断（见 shots.tsx 的 slice(0,50)），若把 `request:fail url not in domain list`
+  //   这类原始串放前面，截断后恰好剩下一句用户读不懂、也无法照做的英文；
+  //   反过来就能保证「域名未加入白名单」这类**可行动**的信息一定在可见范围内。
+  return hint
+    ? `${status ? `HTTP ${status} ` : ''}${hint}〔${text}〕`
+    : `${status ? `HTTP ${status} ` : ''}${text}`
+}
+
+/**
  * 确认落库失败（对象已上传、但后端没有登记）。
  *
  * 这类失败会在存储里留下**孤儿对象**：文件真实存在、数据库没有对应素材行，
@@ -159,7 +219,10 @@ async function sliceUploadWithRetry(
       if (cancel.byUser || handlers.isCancelled?.()) throw new UploadAbortedError()
     }
   }
-  throw lastErr instanceof Error ? lastErr : new Error('分片上传失败，请检查网络后重试')
+  // ★ 不裸抛 SDK 的原始对象：它是 `{UploadId, err, error}` 的非 Error 形状，
+  //   上层读不出 message / errMsg，只能显示一句「上传失败」。
+  //   这里带上归一化后的真实原因（域名白名单 / 403 / 超时…），排查才有着落。
+  throw new Error(`分片上传失败：${describeUploadError(lastErr)}`)
 }
 
 /** 直传媒体文件，返回落库后的素材记录。onProgress 回调 0~100 */
