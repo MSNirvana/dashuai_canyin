@@ -23,6 +23,7 @@
     "verify:dist": "node scripts/verify-weapp-dist.mjs",
     "verify:boundary": "node scripts/check-platform-boundary.mjs",
     "assets:upload": "node scripts/upload-static-assets.mjs",
+    "icons:shotcam": "python3 scripts/gen-shotcam-icons.py",
     "assets:slogan": "node scripts/render-slogan-banner.mjs",
     "tdesign:closure": "node scripts/tdesign-closure.mjs",
     "copy-paragraphs:verify": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/verify-copy-paragraphs.ts"

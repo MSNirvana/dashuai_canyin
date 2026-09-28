@@ -66,32 +66,45 @@
   border-radius: 50%;
 }
 
-/* 右上角两条控件（前置/后置、补光） */
+/* 右上角两条控件（切换镜头 / 补光）：都是 64rpx 的圆钮，里面放图标。
+   ★ 图标必须是 `<cover-image>` —— 这一层是盖在 camera 上的 cover-view，
+     里面只允许嵌套 cover-view 与 cover-image，字体图标在这一层渲染不出来。 */
 .shotcam__tool {
   position: absolute;
   right: 28rpx;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.42);
-}
-/* 「前置 / 后置」：必须留 —— 它就是「前置和后置摄像头点了没反应」那个需求本尊 */
-.shotcam__tool--device {
-  top: calc(20rpx + env(safe-area-inset-top));
-  height: 64rpx;
-  line-height: 64rpx;
-  padding: 0 24rpx;
-  font-size: 24rpx;
-  border-radius: 32rpx;
-}
-/* 补光：只给后置（前置摄像头没有闪光灯，`flash='torch'` 在它身上必然无效 ——
-   上一轮「补光也没有用」就是这么来的，不是坏了）。不带字，用亮 / 灭表示开与关。 */
-.shotcam__tool--flash {
-  top: calc(104rpx + env(safe-area-inset-top));
   width: 64rpx;
   height: 64rpx;
   border-radius: 50%;
+  background: rgba(0, 0, 0, 0.42);
 }
+/* 切换镜头：环形双箭头。★ 只有符号、没有「前置/后置」四个字（用户要求只留两条文案） */
+.shotcam__tool--device {
+  top: calc(20rpx + env(safe-area-inset-top));
+}
+/* 补光：只给后置（前置摄像头没有闪光灯，`flash='torch'` 在它身上必然无效 ——
+   上一轮「补光也没有用」就是这么来的，不是坏了） */
+.shotcam__tool--flash {
+  top: calc(104rpx + env(safe-area-inset-top));
+}
+/* 「开」：加一层很淡的暖色底。
+   ★ 不能用实色黄 —— 图标是白的，压在实色黄上就糊成一片了。 */
 .shotcam__tool--flash-on {
-  background: #ffd76a;
+  background: rgba(255, 197, 61, 0.22);
+}
+
+/* 图标本体：cover-view 不吃 flex ⇒ 居中只能用 left/top 50% + 负 margin */
+.shotcam__icon {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin-left: -22rpx;
+  margin-top: -22rpx;
+  width: 44rpx;
+  height: 44rpx;
+}
+/* 补光「关」用的是空心闪电，本来就比实心的弱；再压一点透明度，两种状态的差别更明确 */
+.shotcam__icon--dim {
+  opacity: 0.85;
 }
 
 /* ── 屏幕上**只有这两条文案**：口播文案（大，要念的）+ 画面文案（小，要拍到的）──

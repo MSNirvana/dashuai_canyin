@@ -41,8 +41,18 @@
 //   内部不嵌套任何滚动容器（提词器用 CoverView —— 分镜台词本来就只有十几个字）。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { View, Text, Image, Camera, CoverView } from '@tarojs/components'
+import { View, Text, Image, Camera, CoverView, CoverImage } from '@tarojs/components'
 import Taro from '@tarojs/taro'
+// ★★ 这两个控件（切换镜头 / 补光）的**图形符号只能用图片**：它们必须待在盖住 camera 的
+//   那个 `<cover-view>` 里，而 cover-view **只允许嵌套 cover-view 与 cover-image** ——
+//   字体图标（t-icon 之类）在这一层根本渲染不出来。
+//   图标由 `scripts/gen-shotcam-icons.py` 生成（白描、透明底），改形状请改脚本重跑。
+//   ★ 这三个 PNG 都是 2–3KB，会被 webpack 的图片规则**内联成 base64**，而 <cover-image>
+//     的 src 官方只声明支持「临时路径 / 网络地址 / 云文件ID」⇒ 已在 config/index.ts 里
+//     关掉内联（`mini.imageUrlLoaderOption.limit = 0`），必须是**真文件**。
+import iconSwitch from '../../assets/shotcam/switch-camera.png'
+import iconFlashOn from '../../assets/shotcam/flash-on.png'
+import iconFlashOff from '../../assets/shotcam/flash-off.png'
 import './index.scss'
 
 /**
@@ -549,25 +559,33 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
           <CoverView className='shotcam__close' onClick={() => void close()}>✕</CoverView>
 
           {/* 切前后摄只能在开录前：录到一半换摄像头会把这一段废掉。
-              ★ 用户这轮说「其他文案不要」，但这一条必须留 —— 它就是上一轮
-                「前置和后置摄像头点了没反应」那个需求本身，删掉就退回去了。 */}
+              ★ 用户这轮说「其他文案不要」，所以这里**不留「前置/后置」四个字**，
+                改成环形双箭头的图形符号（前后摄点不动那个需求本身还在）。
+              ★ 符号只表示「点它就换一个镜头」，不再表示「当前是哪个」——
+                当前是哪一路，取景画面自己会说话。 */}
           {!recording && !saving && (
             <CoverView
               className='shotcam__tool shotcam__tool--device'
               onClick={switchDevice}
             >
-              {device === 'back' ? '前置' : '后置'}
+              <CoverImage className='shotcam__icon' src={iconSwitch} />
             </CoverView>
           )}
 
           {/* 补光：**只在后置时给**。前置摄像头没有闪光灯，`flash='torch'` 在它身上必然无效
               —— 上一轮「补光也没有用」就是这么来的，不是坏了。
-              控件本身不带字（这轮只许留两条文案），用亮 / 灭的小圆点表示开与关。 */}
+              状态靠图形本身表达：**实心闪电 = 开 / 空心闪电 = 关**（外加一圈暖色底），
+              不再有「补光 开 / 关」这几个字。 */}
           {!recording && !saving && device === 'back' && (
             <CoverView
               className={`shotcam__tool shotcam__tool--flash ${flash === 'torch' ? 'shotcam__tool--flash-on' : ''}`}
               onClick={() => setFlash((f) => (f === 'off' ? 'torch' : 'off'))}
-            />
+            >
+              <CoverImage
+                className={`shotcam__icon ${flash === 'torch' ? '' : 'shotcam__icon--dim'}`}
+                src={flash === 'torch' ? iconFlashOn : iconFlashOff}
+              />
+            </CoverView>
           )}
 
           {/* ★ 这两条文案直接**浮在取景画面上**：「分镜 N · 类型」「建议 N 秒」

@@ -88,6 +88,28 @@ export default defineConfig(async (merge, { mode }) => {
       '@': `${process.cwd()}/src`,
     },
     mini: {
+      /**
+       * ★★ 图片一律**落成真文件**，不做 base64 内联。
+       *
+       * 为什么非关不可：自建拍摄层的图标放在**盖住原生 `<camera>` 的 `<cover-view>`** 里，
+       * 那一层只认 `<cover-image>`；而 `<cover-image>` 的 `src` 官方只声明支持
+       * 「临时路径 / 网络地址（2.0.2 起支持云文件 ID）」，**没有列 base64 data URL**。
+       * 而 Taro 默认把 ≤ `IMAGE_LIMIT`（= **2 * 1024 = 2048 字节**）的图片内联成 data URL。
+       * 拍摄层那三个图标是 1.9–3.0KB（见 `scripts/gen-shotcam-icons.py`）—— 正好卡在阈值两侧：
+       * 实测 `flash-on.png`(1903B) 被内联、`flash-off.png`(2253B) 落成文件。这种「一半能用
+       * 一半不能用」的故障在真机上只会表现为「某个图标不显示」，极难查。
+       *
+       * ★ 这个配置的语义是**反的**，别想当然（`@tarojs/webpack5-runner` 的 `getAssetsMaxSize`）：
+       *     `true`  ⇒ maxSize = 0            ⇒ **永不内联，全部落文件** ← 我们要的就是它
+       *     `false` ⇒ maxSize = MAX_SAFE_INT ⇒ **全部内联成 base64**
+       *     数字 n  ⇒ maxSize = n（写 `0` **不行**：0 是 falsy，会被当成「没配」而回落成 2048）
+       *
+       * 影响面：本仓库当前**只有** `src/assets/logo.png` 是 import 进来的图片，它 13.9KB
+       * 本来就没被内联（产物里就是 `assets/logo.png`），所以这条改动等于只对拍摄层生效。
+       */
+      imageUrlLoaderOption: {
+        limit: true,
+      },
       postcss: {
         pxtransform: {
           enable: true,
