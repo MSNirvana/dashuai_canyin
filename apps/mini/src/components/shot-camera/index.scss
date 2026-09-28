@@ -1,18 +1,26 @@
-// 自建拍摄层：整页 fixed 浮层。
+// 自建拍摄层：整页 fixed 浮层，取景画面**铺满全屏**，控件与文案直接浮在它上面。
 //
-// ★★ 第一版（43454fa）把控件画在 camera **上面**，靠同层渲染盖住它 —— 真机上三条
-//   控件（前置/后置、补光、快门）**全部点不动**。原因：camera 是客户端创建的原生组件，
-//   官方原文「它的层级是最高的，不能通过 z-index 控制层级」，同层渲染又会在
-//   「Android 缺少内核 / iOS 页面节点树不稳定」时失败（官方 `bindrendererror` 注释）。
-//   一旦失败，叠在它矩形上的普通 View 既可能被盖住、也可能点不到。
-// ★★ 所以现在的硬规则：**任何控件都不许和 camera 的矩形重叠**。整层改成三段式
-//   flex 列（顶栏+提词器 / 取景区 / 底部控制），camera 单独占中间那一格。
-//   这样布局完全不依赖同层渲染 —— 它能渲染就渲染，渲染不了也只是取景画面变小，
-//   控件照样能点。**不要**再把控件挪回取景矩形里（包括"就盖一点点"）。
-// ★ 结构上刻意「浮层 fixed、camera 绝对定位填满取景区」：原生组件本身不支持
-//   position:fixed、也不吃父级的 overflow 裁剪，把它做成普通 View 的子元素比它自己
-//   fixed 稳。取景区那一格靠 flex 拿到确定高度，camera 用 100% 撑满即可。
-// ★ 这一层里不出现任何滚动容器 —— camera 不能放进 scroll-view（微信官方硬约束）。
+// ★★ 界面必须用 <cover-view>（见 index.tsx 文件头 ★★）。这一版推翻的是第一版的两条结论：
+//   1. 第一版（43454fa）把控件画在 camera **上面**、靠同层渲染盖住它 —— 真机上三条控件
+//      全部点不动。当时的结论是「控件一律不许和 camera 的矩形重叠」。
+//   2. 但「取景画面要占满屏幕、文案要浮在画面上」这个需求**必然**要求控件压在 camera 上。
+//      ⇒ 正确的答案不是躲开，而是换成官方唯一保证能盖住原生组件的元素：**cover-view**。
+//      普通 View 靠同层渲染，而它会失败（官方 `bindrendererror` 注释：Android 缺内核 /
+//      iOS 页面节点树不稳定）；cover-view 走的是原生覆盖层，不依赖同层渲染。
+// ★★ 所以这一层里的硬规则变成了：**浮在取景画面上的东西必须是 CoverView**。
+//   普通 View 只允许出现在 camera 已经卸载的两块面板里（拍完确认 / 相机不可用）。
+// ★★ cover-view 的样式限制（官方原文）：只支持基本的**定位、布局、文本样式**；不支持
+//   单边 border、background-image、shadow、overflow: visible；默认样式是
+//   `white-space: nowrap; line-height: 1.2; display: block`。落地到这份样式就是三条约束：
+//   a. **不吃 flex** ⇒ 所有子元素一律 `position: absolute` + `left/right` 或
+//      `left:50%` 配负 margin 做居中，不用 flex 居中、也不用 transform。
+//   b. **nowrap** ⇒ 长文案会被静默裁掉。字号按字数下台阶（见 index.tsx 的 lineSize），
+//      同时补一句 `white-space: normal` 当兜底（不支持时被忽略）。
+//   c. **CSS 变量不保证继承到覆盖层** ⇒ 这里的颜色/圆角写死，不用 var(--td-*)。写死的
+//      `#e1251b` 与 `src/styles/theme.scss` 的 `--td-brand-color` 同值，改主题要一起改。
+//
+// ★ 结构：`.shotcam`（fixed 全屏）里只有两样东西 —— `<camera>` 铺满，`<cover-view>` 盖在上面。
+//   `.shotcam` 里不出现任何滚动容器（camera 不能放进 scroll-view，微信官方硬约束）。
 .shotcam {
   position: fixed;
   left: 0;
@@ -22,223 +30,256 @@
   z-index: 900;
   background: #000;
   overflow: hidden;
+}
+
+/* ── 取景画面：铺满整屏。camera 是原生组件，层级最高、z-index 管不了它，
+      只能靠上面的 cover-view 盖住（见文件头 ★★）── */
+.shotcam__preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── 立体 UI 层：一整块 cover-view，子元素全部绝对定位（它不吃 flex）── */
+.shotcam__ui {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+}
+
+/* 关闭。左上角圆形按钮，✕ 是符号不是文案 */
+.shotcam__close {
+  position: absolute;
+  left: 28rpx;
+  top: calc(20rpx + env(safe-area-inset-top));
+  width: 64rpx;
+  height: 64rpx;
+  line-height: 64rpx;
+  text-align: center;
+  font-size: 34rpx;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.42);
+  border-radius: 50%;
+}
+
+/* 右上角两条控件（前置/后置、补光） */
+.shotcam__tool {
+  position: absolute;
+  right: 28rpx;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.42);
+}
+/* 「前置 / 后置」：必须留 —— 它就是「前置和后置摄像头点了没反应」那个需求本尊 */
+.shotcam__tool--device {
+  top: calc(20rpx + env(safe-area-inset-top));
+  height: 64rpx;
+  line-height: 64rpx;
+  padding: 0 24rpx;
+  font-size: 24rpx;
+  border-radius: 32rpx;
+}
+/* 补光：只给后置（前置摄像头没有闪光灯，`flash='torch'` 在它身上必然无效 ——
+   上一轮「补光也没有用」就是这么来的，不是坏了）。不带字，用亮 / 灭表示开与关。 */
+.shotcam__tool--flash {
+  top: calc(104rpx + env(safe-area-inset-top));
+  width: 64rpx;
+  height: 64rpx;
+  border-radius: 50%;
+}
+.shotcam__tool--flash-on {
+  background: #ffd76a;
+}
+
+/* ── 屏幕上**只有这两条文案**：口播文案（大，要念的）+ 画面文案（小，要拍到的）──
+   ★ 不加底色：用户要的就是「文案直接浮在画面上」。可读性靠 text-shadow 撑
+     （覆盖层对 shadow 的支持不保证，真机若发现亮背景下看不清，再补一层半透明底）。 */
+.shotcam__prompt {
+  position: absolute;
+  left: 40rpx;
+  right: 40rpx;
+  top: calc(150rpx + env(safe-area-inset-top));
+}
+/* ★ 字号按字数下台阶：cover-view 默认 nowrap，长句会被**静默裁掉**（不换行、不报错）。
+   750rpx 屏、左右各留 40rpx ⇒ 可用约 670rpx；中文按 1 字约等于 1 个字号宽估算。 */
+.shotcam__promptline {
+  text-align: center;
+  font-weight: 700;
+  line-height: 1.35;
+  color: #fff;
+  text-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.7);
+  white-space: normal;
+  word-break: break-all;
+}
+.shotcam__promptline--s1 { font-size: 56rpx; }  /* ≤11 字 */
+.shotcam__promptline--s2 { font-size: 40rpx; }  /* ≤16 字 */
+.shotcam__promptline--s3 { font-size: 30rpx; }  /* 更长 */
+.shotcam__promptvisual {
+  margin-top: 16rpx;
+  text-align: center;
+  font-size: 26rpx;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.78);
+  text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.7);
+  white-space: normal;
+  word-break: break-all;
+}
+
+/* ── 录制计时：顶部居中。★ 这是新加的「真」计时 —— 旧实现显示的是
+   `fmtClock(recording ? elapsed : 0)`，而 elapsed 只在 startRecord 的 success 里更新，
+   真机上那个 success 不回调 ⇒ 左边那半永远是 00:00（用户说的「左侧那个时间也是假的」）。 ── */
+.shotcam__recdot {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(24rpx + env(safe-area-inset-top));
+  text-align: center;
+  font-size: 20rpx;
+  line-height: 1.1;
+  color: #ff3b30;
+}
+.shotcam__bigtime {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50rpx + env(safe-area-inset-top));
+  text-align: center;
+  font-size: 40rpx;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 2rpx 10rpx rgba(0, 0, 0, 0.7);
+}
+
+/* ── 快门：底部居中（left:50% + 负 margin，不用 flex / transform — 见文件头 a）── */
+.shotcam__shutterwrap {
+  position: absolute;
+  left: 50%;
+  bottom: calc(70rpx + env(safe-area-inset-bottom));
+  margin-left: -74rpx;
+  width: 148rpx;
+  height: 148rpx;
+  border-radius: 50%;
+  border: 6rpx solid rgba(255, 255, 255, 0.9);
+}
+/* 待拍 = 实心圆；录制中 = 收成圆角方块（「点一下停止」的那个停止符） */
+.shotcam__shutter {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin-left: -54rpx;
+  margin-top: -54rpx;
+  width: 108rpx;
+  height: 108rpx;
+  border-radius: 50%;
+  background: #e1251b; /* = theme.scss 的 --td-brand-color（覆盖层不保证继承 CSS 变量） */
+}
+.shotcam__shutter--on {
+  margin-left: -28rpx;
+  margin-top: -28rpx;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 14rpx;
+}
+
+/* ── 点停之后的「正在保存」：盖住整屏，让用户知道点停有反应了。
+   ★★ 它**故意不带 onClick**（放弃会跟后到的 stopRecord 回调抢状态，见 index.tsx）。
+   它最多停 STOP_ACK_TIMEOUT_MS，到点由看门狗收口。 ── */
+.shotcam__wait {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.72);
+}
+.shotcam__waittitle {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 46%;
+  text-align: center;
+  font-size: 32rpx;
+  font-weight: 650;
+  color: #fff;
+}
+.shotcam__waitsub {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 53%;
+  text-align: center;
+  font-size: 30rpx;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+/* ── 两块面板：拍完确认 / 相机不可用（都用它，位置一致不跳）。
+   ★ 它们是**普通 View** —— 走到这两态时 camera 已经卸载（showCamera=false），
+     没有原生组件要盖，普通 View 反而好写（能吃 flex、能换行）。
+     z-index 是给 review 面板压在取景层上的兜底。 ── */
+.shotcam__panel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 10;
+  width: 600rpx;
+  box-sizing: border-box;
+  padding: 40rpx 36rpx 34rpx;
+  background: rgba(20, 21, 24, 0.94);
+  border: 1rpx solid rgba(255, 255, 255, 0.14);
+  border-radius: 20rpx;
   display: flex;
   flex-direction: column;
-
-  &__preview {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-  }
-
-  /* ── 顶栏 + 提词器：整块在取景矩形**之外**（见文件头 ★★）── */
-  &__top {
-    flex: none;
-    padding: calc(20rpx + env(safe-area-inset-top)) 28rpx 0;
-  }
-
-  /* ── 取景区：camera 的唯一容器。这一层里只允许有 camera，不许放控件 ── */
-  &__stage {
-    flex: 1 1 auto;
-    min-height: 0;
-    position: relative;
-  }
-
-  /* ── 顶栏第一行：关闭 / 分镜 / 前后摄 ── */
-  &__toprow {
-    display: flex;
-    align-items: center;
-    gap: 16rpx;
-  }
-  &__close {
-    flex: none;
-    width: 64rpx;
-    height: 64rpx;
-    line-height: 64rpx;
-    text-align: center;
-    font-size: 34rpx;
-    color: #fff;
-    background: rgba(0, 0, 0, 0.42);
-    border-radius: 50%;
-  }
-  &__seq {
-    flex: 1;
-    min-width: 0;
-    text-align: center;
-    font-size: 28rpx;
-    font-weight: 650;
-    color: #fff;
-    text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.55);
-  }
-  /* 顶栏与底部共用的胶囊小按钮（前置/后置、补光） */
-  &__tool {
-    flex: none;
-    min-width: 104rpx;
-    text-align: center;
-    font-size: 24rpx;
-    color: #fff;
-    background: rgba(0, 0, 0, 0.42);
-    border-radius: var(--td-radius-pill);
-    padding: 10rpx 20rpx;
-  }
-  /* 录制中给「前置/后置」留位但不给点：换摄像头要把这一段废掉 */
-  &__tool--off {
-    opacity: 0;
-  }
-
-  /* ── 提词器：贴在顶栏下方（靠近镜头），念稿时视线不离取景框 ──
-     ★ 它现在在取景矩形**之外**（原来是压在取景画面上、会跟着一起点不动），
-       所以底色跟着黑色顶栏走：用浅色卡，原来那种 rgba(0,0,0,.52) 在纯黑底上看不出来。
-     ★ max-height 是给取景区留高度的闸：提词器长一分取景就矮一分，不留上限的话
-       长台词会把取景挤到几乎没有。 */
-  &__prompt {
-    margin-top: 24rpx;
-    padding: 26rpx 28rpx;
-    border-radius: var(--td-radius-large);
-    background: rgba(255, 255, 255, 0.08);
-    max-height: 30vh;
-    overflow: hidden;
-  }
-  &__line {
-    display: block;
-    color: #fff;
-    font-weight: 700;
-    line-height: 1.45;
-    word-break: break-word;
-  }
-  /* 字号按台词长度分三档：分镜台词通常十几字，长台词要主动缩一号才不会吃掉半个屏幕 */
-  &__line--xl { font-size: 52rpx; }
-  &__line--lg { font-size: 42rpx; }
-  &__line--md { font-size: 34rpx; }
-  &__visual {
-    display: block;
-    margin-top: 14rpx;
-    font-size: 26rpx;
-    color: rgba(255, 255, 255, 0.78);
-    line-height: 1.6;
-  }
-  &__tip {
-    display: block;
-    margin-top: 10rpx;
-    font-size: 24rpx;
-    color: rgba(255, 255, 255, 0.6);
-    line-height: 1.6;
-  }
-
-  /* ── 底部控制：整块在取景矩形**之外**（见文件头 ★★）── */
-  &__bottom {
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 30rpx 28rpx calc(36rpx + env(safe-area-inset-bottom));
-  }
-  &__metarow {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 30rpx;
-  }
-  &__timer {
-    font-size: 30rpx;
-    font-weight: 700;
-    color: #fff;
-    text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.55);
-  }
-  &__shutterwrap {
-    width: 148rpx;
-    height: 148rpx;
-    border-radius: 50%;
-    border: 6rpx solid rgba(255, 255, 255, 0.9);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  /* 待拍 = 实心圆；录制中 = 收成圆角方块（就是「点一下停止」的那个停止符） */
-  &__shutter {
-    width: 108rpx;
-    height: 108rpx;
-    border-radius: 50%;
-    background: var(--td-brand-color);
-    transition: all 0.18s ease-out;
-  }
-  &__shutter--on {
-    width: 56rpx;
-    height: 56rpx;
-    border-radius: 14rpx;
-  }
-  &__hint {
-    margin-top: 24rpx;
-    font-size: 24rpx;
-    color: rgba(255, 255, 255, 0.82);
-    text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.55);
-  }
-
-  /* ── 面板：拍完确认 / 相机不可用（都用它，位置一致不跳）── */
-  &__panel {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 600rpx;
-    box-sizing: border-box;
-    padding: 40rpx 36rpx 34rpx;
-    background: rgba(20, 21, 24, 0.94);
-    border: 1rpx solid rgba(255, 255, 255, 0.14);
-    border-radius: var(--td-radius-extra);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-  &__reviewthumb {
-    width: 100%;
-    height: 420rpx;
-    border-radius: var(--td-radius-default);
-    background: #2a2c31;
-    margin-bottom: 26rpx;
-  }
-  &__reviewthumb--ph {
-    background: #17181b;
-  }
-  &__paneltitle {
-    font-size: 32rpx;
-    font-weight: 700;
-    color: #fff;
-    text-align: center;
-    line-height: 1.5;
-  }
-  &__panelsub {
-    margin-top: 12rpx;
-    font-size: 24rpx;
-    color: rgba(255, 255, 255, 0.62);
-    text-align: center;
-    line-height: 1.6;
-  }
-  &__panelacts {
-    margin-top: 32rpx;
-    width: 100%;
-    display: flex;
-    gap: 20rpx;
-  }
-  &__btn {
-    flex: 1;
-    text-align: center;
-    font-size: 28rpx;
-    font-weight: 650;
-    color: #fff;
-    padding: 24rpx 0;
-    border-radius: var(--td-radius-default);
-    background: rgba(255, 255, 255, 0.12);
-  }
-  &__btn--main {
-    background: var(--td-brand-color);
-  }
-  &__retry {
-    margin-top: 26rpx;
-    font-size: 24rpx;
-    color: rgba(255, 255, 255, 0.6);
-  }
+  align-items: center;
+}
+.shotcam__reviewthumb {
+  width: 100%;
+  height: 420rpx;
+  border-radius: 12rpx;
+  background: #2a2c31;
+  margin-bottom: 26rpx;
+}
+.shotcam__reviewthumb--ph {
+  background: #17181b;
+}
+.shotcam__paneltitle {
+  font-size: 32rpx;
+  font-weight: 700;
+  color: #fff;
+  text-align: center;
+  line-height: 1.5;
+}
+.shotcam__panelsub {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.62);
+  text-align: center;
+  line-height: 1.6;
+}
+.shotcam__panelacts {
+  margin-top: 32rpx;
+  width: 100%;
+  display: flex;
+  gap: 20rpx;
+}
+.shotcam__btn {
+  flex: 1;
+  text-align: center;
+  font-size: 28rpx;
+  font-weight: 650;
+  color: #fff;
+  padding: 24rpx 0;
+  border-radius: 12rpx;
+  background: rgba(255, 255, 255, 0.12);
+}
+.shotcam__btn--main {
+  background: #e1251b; /* = theme.scss 的 --td-brand-color */
+}
+.shotcam__retry {
+  margin-top: 26rpx;
+  font-size: 24rpx;
+  color: rgba(255, 255, 255, 0.6);
 }
