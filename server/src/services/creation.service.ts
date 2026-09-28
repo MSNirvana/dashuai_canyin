@@ -104,19 +104,24 @@ export function copyTrackLabel(v: unknown): string | null {
 export const DEFAULT_COPY_TRACK: CopyTrack = 'PRODUCT'
 
 /**
- * 内容模式：这条创作是**菜品驱动**还是**话题驱动**。
+ * 内容模式：这条创作是**菜品驱动**、**话题驱动**还是**款式驱动**。
  *
  * · `DISH`  —— 选门店（+可选菜品），走四款**菜品文案**（人设型 / 干货型 / 产品型 / 种草型）。
  * · `TOPIC` —— 「流量型」：不选门店、不选菜品，只靠节气/节日/时令与生活共识出稿。
+ * · `STYLE` —— 「不选菜品」（2026-09-28 新增）：**只按所选款式写**，门店与菜品资料一律不喂。
+ *   见 `STYLE_TRACKS` 与 `buildVariables` 里 `noMaterial` 的说明。
  *
  * ★ 为什么不靠「track='TRAFFIC' 且 dishId 为空」推断：那个组合在**存量数据里已经存在**
  *   （老用户建过没选菜品的流量款创作），推断会把它们误判成话题稿；
  *   而两者的提示词完全不同（话题稿不喂门店/菜品）—— 误判的后果是文案里凭空没有门店信息，
  *   且**不会报错**。
+ * ★ 同理：`STYLE` 与「`DISH` 且没选菜品」（界面上是「只讲门店」）**必须靠这一列区分** ——
+ *   两者的 `dishId` 都是空，区别只在门店资料喂不喂，靠字段有无**永远推不出来**。
  */
 export const CONTENT_MODES = {
   DISH: { label: '菜品稿' },
   TOPIC: { label: '话题稿' },
+  STYLE: { label: '款式稿' },
 } as const
 export type ContentMode = keyof typeof CONTENT_MODES
 export const DEFAULT_CONTENT_MODE: ContentMode = 'DISH'
@@ -127,6 +132,35 @@ export function isContentMode(v: unknown): v is ContentMode {
 
 /** 话题稿只允许这一款（它就是要走「流量型」那份纯话题模板） */
 export const TOPIC_TRACK: CopyTrack = 'TRAFFIC'
+
+/**
+ * ★★ 「不选菜品」（`mode='STYLE'`）允许的款式 —— 只有**人设型与干货型**。
+ *
+ * 为什么是这两款：它们是四款里唯一**不靠门店与菜品资料也写得成立**的两款。
+ * - 干货型模板本身就写着「不推自己的店、不推自己的菜，不许出现自家店名、自家菜名、自家价格」；
+ * - 人设型讲的是老板这个人与做事方式，资料全空时它自带「资料不足时只说…不强行交代
+ *   姓名、籍贯、年限、创业原因」的兜底。
+ *
+ * ★ 产品型与种草型被排除，判据是**可验收**的，不是口味问题：这两款的兜底模板
+ *   （`COPY_PRODUCT_FALLBACK` / `COPY_RECOMMEND_FALLBACK`）都写成 `{{storeName}}的菜，…`，
+ *   而这一档把门店资料也清空了 ⇒ 网关失败时用户唯一能看到的那句话会渲染成
+ *   「的菜，具体价格和包含内容以门店当前菜单为准。」这种病句。
+ *   （对照 skill `db-prompt-template-contract` §12.2 的「悬空搭配」判据。）
+ *
+ * ⚠ 「流量型」（`TRAFFIC`）也**不在**这里：它已经有自己的形态（`mode='TOPIC'`），
+ *   与 `STYLE` 的区别是它还要吃 `topicInfo`（节气/时令/起手方向），
+ *   而 `STYLE` 按要求**什么都不补**。让 `TRAFFIC` 同时进这两条路，等于同一件事两个入口。
+ */
+export const STYLE_TRACKS = ['PERSONA', 'KNOWLEDGE'] as const
+export function isStyleTrack(v: unknown): v is (typeof STYLE_TRACKS)[number] {
+  return typeof v === 'string' && (STYLE_TRACKS as readonly string[]).includes(v)
+}
+/**
+ * `STYLE` 没拿到合法款式时的落点。
+ * ★ 取人设型而不是 `DEFAULT_COPY_TRACK`（产品型）：产品型**恰恰不在**允许集里，
+ *   拿它兜底等于把「款式稿」写成一条要求讲清菜名与价格的稿子，而手里一个字都没有。
+ */
+export const DEFAULT_STYLE_TRACK: CopyTrack = 'PERSONA'
 
 /** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜 */
 export const COMPLEXITIES = {
@@ -195,6 +229,34 @@ export class TopicHostStoreMissingError extends Error {
   constructor() {
     super('请先添加门店，再使用流量型')
     this.name = 'TopicHostStoreMissingError'
+  }
+}
+
+/**
+ * 「不选菜品」（`mode='STYLE'`）不接受菜品。
+ *
+ * ★ 与话题稿**相反**：这一档门店是**必填**的（创作要挂在门店下 —— 列表按门店归属、
+ *   软删与越权校验都走 storeId），被禁止的只有菜品。
+ *   抛错而不是静默忽略：写进去会得到一条「款式稿却挂着某道菜」的记录，
+ *   而它生成时那道菜根本不进提示词 —— 界面上却显示着菜名，没人能解释。
+ */
+export class StyleCreationDishForbiddenError extends Error {
+  constructor() {
+    super('「不选菜品」不能再指定菜品')
+    this.name = 'StyleCreationDishForbiddenError'
+  }
+}
+
+/**
+ * 「不选菜品」只支持人设型与干货型（见 `STYLE_TRACKS`）。
+ *
+ * 抛错而不是悄悄改成默认款式：那会让用户「选了产品款、实际出的是人设款」，
+ * 而且**不报错** —— 正是本仓反复拦的那种静默变味。
+ */
+export class StyleCreationTrackForbiddenError extends Error {
+  constructor() {
+    super('「不选菜品」只支持人设型与干货型')
+    this.name = 'StyleCreationTrackForbiddenError'
   }
 }
 
@@ -516,6 +578,17 @@ export async function createCreation(
   if (mode === 'TOPIC' && (input.storeId !== undefined || input.dishId !== undefined)) {
     throw new TopicCreationStoreForbiddenError()
   }
+  /**
+   * ★ 「不选菜品」（`STYLE`）与话题稿的**必填性正好相反**，两条都要显式守：
+   *   · 菜品**不许**有 —— 这一档的定义就是不给 AI 任何门店与菜品资料；
+   *   · 款式**必须是**人设型或干货型 —— 产品型/种草型站在这一档上必然翻车
+   *     （理由见 `STYLE_TRACKS`，其中一条是兜底会渲染成病句）。
+   *   门店不在这条闸门里：它对两种模式都必填（下面 `storeId === undefined` 会兜住）。
+   */
+  if (mode === 'STYLE') {
+    if (input.dishId !== undefined) throw new StyleCreationDishForbiddenError()
+    if (input.track !== undefined && !isStyleTrack(input.track)) throw new StyleCreationTrackForbiddenError()
+  }
   const host = mode === 'TOPIC' ? await resolveTopicHostStore(prisma, merchantId) : null
   const storeId = host ? host.id : input.storeId
   if (storeId === undefined) throw new CreationStoreMismatchError()
@@ -550,17 +623,29 @@ export async function createCreation(
          *   这时标题退回**门店名**，不能留 undefined：前端有 4 处 `title || '未命名创作'`
          *   兜底（首页近期作品 / 创作列表 / 创作编辑页 / 合成页），落 undefined 就会全部显示
          *   「未命名创作」—— 看起来像「这条创作坏了」，而用户只是没选菜。
+         * ★ 2026-09-28：「不选菜品」（`mode='STYLE'`）同样走这条兜底 —— 它也没选菜，
+         *   标题一样退回门店名。★ 注意「退回门店名」只是**这件创作的名字**，
+         *   不是喂给模型的门店资料：`buildVariables` 对 `STYLE` 把门店变量也清空了。
          *   （话题稿那一侧不走这里，它由文案模型顺便取名，见 generateCopy 的 parseTopicCopy。）
          */
         title: input.title?.trim() || (
-          mode === 'DISH'
-            ? (dishName ? `${store.name}+${dishName}` : store.name)
-            : undefined
+          mode === 'TOPIC'
+            ? undefined
+            : dishName
+              ? `${store.name}+${dishName}`
+              : store.name
         ),
         // ★ 话题稿**强制**用流量款：它是唯一一份不喂门店/菜品的文案模板。
         //   允许调用方传别的款式，会让「话题稿却走介绍款模板」这种组合悄悄生效 ——
         //   介绍款要求讲清菜名与卖点，而话题稿手里一个字都没有，模型只能编。
-        track: mode === 'TOPIC' ? TOPIC_TRACK : (input.track ?? DEFAULT_COPY_TRACK),
+        // ★ 「不选菜品」不能照抄这条：它的款式是**用户选的**（人设型/干货型），
+        //   强制成流量款等于把款式行上的选择静默改掉。没传款式时才落到 `DEFAULT_STYLE_TRACK`。
+        track:
+          mode === 'TOPIC'
+            ? TOPIC_TRACK
+            : mode === 'STYLE'
+              ? (input.track ?? DEFAULT_STYLE_TRACK)
+              : (input.track ?? DEFAULT_COPY_TRACK),
         mode,
         // 地域钩子 = 创建**当时**宿主门店档案里的所在地区快照（门店没填位置 ⇒ null）。
         // 不是入参：页面上没有这个输入框了，理由见 CreateCreationInput 里那段说明。
@@ -856,36 +941,47 @@ export async function buildVariables(
   const mode: ContentMode = isContentMode(c.mode) ? c.mode : DEFAULT_CONTENT_MODE
 
   /**
-   * ★ 话题稿：门店与菜品相关变量**一律给空串**。
+   * ★ 两种「不喂门店与菜品资料」的形态，门店与菜品相关变量**一律给空串**：
+   *   · `TOPIC`（话题稿）—— 界面上是「流量型」，刻意不选门店与菜品；
+   *   · `STYLE`（款式稿）—— 界面上是「不选菜品」，2026-09-28 新增，只按所选款式写。
    *
    * 为什么不是「反正模板不引用、给了也无所谓」：那样一旦有人把 {{storeName}} 加回流量款模板，
    * 就会当场渲染出真店名 —— 而这条稿子的产品定义就是「不涉及门店」。
-   * 何况 c.store 只是**宿主门店**（服务端为了媒体归属挑的），把它喂进提示词等于
-   * 拿一个用户根本没选过的门店去做内容，用户会莫名其妙。
+   * 何况 `c.store` 只是**宿主门店**（服务端为了媒体归属挑的，或用户那唯一一家店），
+   * 把它喂进提示词等于拿一个用户根本没选过的门店去做内容，用户会莫名其妙。
    *
    * ⚠ 城市的来源变了（2026-09-21）：走 c.topicCity，它现在是**创建时从宿主门店档案取的快照**
    *   （见 storeLocationOf），而不是用户手填的自由文本。
    *   仍然**不实时读宿主门店的 city** —— 门店改了位置不该让同一条稿重新生成跑出另一个地方，
    *   而且那样「今天生成」和「下周重新生成」结果不一致，用户只会觉得是玄学。
    *   快照为 null = 门店一个位置字段都没填 ⇒ topicInfo 里整行不出现（纯话题稿，不提地方）。
+   *
+   * ★★ `STYLE` 与话题稿有一处**故意的不对称**，别顺手抹平：`topicInfo` 只给话题稿。
+   *   用户对「不选菜品」的验收口径是「直接按款式生成，**什么都不补**」——
+   *   节气/时令/起手方向是话题款那份模板自己的素材，`STYLE` 既没有它、
+   *   拿到也用不上（人设型/干货型的模板里没有它的位置）。
    */
   const topic = mode === 'TOPIC'
+  /** 门店与菜品资料一律清空（话题稿 + 款式稿两种形态） */
+  const noMaterial = topic || mode === 'STYLE'
   return {
-    storeName: topic ? '' : c.store.name,
-    storeIntro: topic ? '' : (c.store.intro ?? ''),
-    category: topic ? '' : (c.store.category ?? ''),
-    city: topic ? '' : (c.store.city ?? ''),
-    dishName: topic ? '' : (c.dish?.name ?? ''),
-    dishIntro: topic ? '' : (c.dish?.intro ?? ''),
-    sellingPoints: topic ? '' : (c.dish?.sellingPoints ?? ''),
-    comboInfo: topic ? '' : formatComboInfo(c.dish),
-    persona: topic ? '' : formatPersona(c.store.persona),
+    storeName: noMaterial ? '' : c.store.name,
+    storeIntro: noMaterial ? '' : (c.store.intro ?? ''),
+    category: noMaterial ? '' : (c.store.category ?? ''),
+    city: noMaterial ? '' : (c.store.city ?? ''),
+    dishName: noMaterial ? '' : (c.dish?.name ?? ''),
+    dishIntro: noMaterial ? '' : (c.dish?.intro ?? ''),
+    sellingPoints: noMaterial ? '' : (c.dish?.sellingPoints ?? ''),
+    comboInfo: noMaterial ? '' : formatComboInfo(c.dish),
+    persona: noMaterial ? '' : formatPersona(c.store.persona),
     // ★ 每次生成都现算：创作可能存了一周才生成，缓存住「今天」会让节日提示过期。
     //   代价只是一次 Intl 格式化 + 几十条候选过滤，可忽略。
-    //   ⚠ 话题稿也要算它：分镜模板引用 {{dateInfo}}（话题稿同样要分镜）。
+    //   ⚠ 话题稿也要算它：分镜模板引用 {{dateInfo}}（话题稿同样要分镜）；
+    //     款式稿也要算它 —— 但它的**文案**模板拿不到 topicInfo，只有 {{dateInfo}}。
     dateInfo: formatDateInfo(),
     // 话题稿专属：今天是什么日子 + 几条可直接开口的起头方向（见 lib/topic.ts）。
-    // 菜品稿拿到的是空串 —— 它由门店/菜品驱动，不需要话题方向，也（在白名单层面）引用不到。
+    // 菜品稿与款式稿拿到的是空串 —— 它们由门店/菜品或款式驱动，
+    // 不需要话题方向，也（在白名单层面）引用不到。
     topicInfo: topic ? formatTopicInfo(new Date(), c.topicCity ?? '') : '',
     copyText: c.copyText ?? '',
     track,
@@ -960,7 +1056,17 @@ export async function generateCopy(
            * 而且全程不报错 —— 看起来就像 AI 突然变笨了。
            * 所以这里把它改回默认款式，而不是「尊重传入的款式」。
            */
-          return want === TOPIC_TRACK ? DEFAULT_COPY_TRACK : want
+          const safe = want === TOPIC_TRACK ? DEFAULT_COPY_TRACK : want
+          /**
+           * ★★ 「不选菜品」（`STYLE`）另有一条收窄：只认人设型与干货型（`STYLE_TRACKS`）。
+           *
+           * 款式可能从两个地方来：入参（页面上换款式）与「同款配方」（`ExcellentWork.recipe_json`
+           * 会把优秀作品的款式原样带过来，其中完全可能是产品型/种草型）。
+           * 不兜这一下，就会用「要求讲清在售内容」的模板去写一条既没门店、也没菜品的稿子 ——
+           * 产品型的硬约束会退化成「门店资料也撑不住就写短一点」，等于让模型自由发挥，
+           * 而且**不报错**。与上面那条一样：改回默认款式，而不是「尊重传入的款式」。
+           */
+          return mode === 'STYLE' && !isStyleTrack(safe) ? DEFAULT_STYLE_TRACK : safe
         })()
   const sceneCode = mode === 'TOPIC' ? SCENE.copy_traffic : await resolveCopyScene(prisma, finalTrack)
   if (current?.track !== finalTrack || (current && !isContentMode(current.mode))) {
@@ -1034,6 +1140,16 @@ export async function updateCreation(
     select: { mode: true, storeId: true, topicCity: true },
   })
   const isTopicRow = isContentMode(row?.mode) && row.mode === 'TOPIC'
+  /**
+   * ★ 「不选菜品」（`STYLE`）在款式上比话题稿**松一档**：款式**可以改** ——
+   *   它这一档的驱动就是款式本身，锁死等于让用户回不去换款式。
+   *   但只收人设型与干货型；收到别的（产品型/种草型）一律丢弃、留着库里的值。
+   *   丢弃的写法与话题稿一致：前端换款式是**本地即时生效的高频操作**，
+   *   为一个不该出现的入参把整次编辑请求打失败不划算；丢弃后返回的仍是库里的真实值。
+   */
+  const isStyleRow = isContentMode(row?.mode) && row.mode === 'STYLE'
+  const trackWritable =
+    !isTopicRow && !(isStyleRow && input.track !== undefined && !isStyleTrack(input.track))
 
   const data: {
     copyText?: string
@@ -1044,7 +1160,7 @@ export async function updateCreation(
   } = {}
   if (input.copyText !== undefined) data.copyText = input.copyText
   if (input.title !== undefined) data.title = input.title
-  if (input.track !== undefined && !isTopicRow) data.track = input.track
+  if (input.track !== undefined && trackWritable) data.track = input.track
   if (input.complexity !== undefined) data.complexity = input.complexity
   /**
    * ★ 给存量话题稿**补**地域快照。

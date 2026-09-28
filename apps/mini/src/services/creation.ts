@@ -15,10 +15,13 @@ export type CopyTrack = 'TRAFFIC' | 'PERSONA' | 'KNOWLEDGE' | 'PRODUCT' | 'RECOM
 /** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜 */
 export type Complexity = 'SIMPLE' | 'COMPLEX' | 'FINE'
 /**
- * 内容模式：`DISH` = 菜品稿（选门店+菜品）；`TOPIC` = 话题稿（流量型，不选门店菜品）。
+ * 内容模式：`DISH` = 菜品稿（门店+可选菜品）；
+ * `TOPIC` = 话题稿（流量型，不选门店菜品，靠节气/时令出稿）；
+ * `STYLE` = 款式稿（2026-09-28 新增的「不选菜品」：门店与菜品资料**都不喂**给 AI，
+ * 只按用户选的人设型/干货型写）。
  * 服务端有同名枚举，这里是它的下达形态。
  */
-export type ContentMode = 'DISH' | 'TOPIC'
+export type ContentMode = 'DISH' | 'TOPIC' | 'STYLE'
 
 /**
  * 各款的中文名。★ 创作页「文案款式」的五个选项就是它（`DISH_TRACK_OPTIONS` 是它的四款子集）。
@@ -111,6 +114,32 @@ export const DISH_TRACK_OPTIONS = COPY_TRACK_OPTIONS.filter((o) => o.value !== '
  *   「菜品悄悄没被提交」—— 两种都不报错。
  */
 export const TRAFFIC_TRACK: CopyTrack = 'TRAFFIC'
+
+/**
+ * ★★ 「不选菜品」（`mode='STYLE'`）允许的款式 —— 只有**人设型与干货型**。
+ *
+ * 2026-09-28 需求：菜品选择器里加一档「不选菜品」，选它就不给 AI 任何门店与菜品资料。
+ * 但**不是每个款式都能站在这一档上**：
+ * · 干货型模板本来就写着「不推自己的店、不推自己的菜，不许出现自家店名、菜名、价格」，
+ *   人设型讲的是老板这个人，两者没有门店/菜品资料也写得成立；
+ * · 产品型与种草型天生要讲清在售内容，资料全空时只能编 —— 而且它们的兜底文案都写成
+ *   `{{storeName}}的菜，…`，门店资料被清空后会渲染成「的菜，具体价格…」这种病句
+ *   （兜底恰恰是网关失败时用户唯一能看到的那句话）。
+ * ⇒ 需求原话：「不选菜品只有流量款、人设款、干货款可以选择，其他的都没有这个选项」。
+ *
+ * ⚠ 流量型（`TRAFFIC`）**不在这个数组里**，但它在界面上同样属于「没有菜品」：
+ *   它走自己的形态（`mode='TOPIC'`），菜品那一行整体置灰，压根不给选择器 ——
+ *   所以「哪些款式下能选不选菜品」在本页要连 `isTraffic` 一起判，见 `allowsNoMaterial`。
+ */
+export const NO_MATERIAL_TRACKS: CopyTrack[] = ['PERSONA', 'KNOWLEDGE']
+
+/**
+ * 当前款式下，菜品选择器里**是否提供「不选菜品」这一档**。
+ * ★ 判据是值不是位置，且流量型也返回 true —— 它在界面上走的是「整行置灰」那条分支，
+ *   但这个函数回答的是「这一款需不需要菜品资料」，流量型显然不需要。
+ */
+export const allowsNoMaterial = (track: CopyTrack) =>
+  track === TRAFFIC_TRACK || NO_MATERIAL_TRACKS.includes(track)
 
 /**
  * 把「服务端 / 同款配方给来的 track」收敛成**菜品稿可用的四款**；不是这四款（含流量型、认不出的值）就返回 null。

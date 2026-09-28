@@ -73,6 +73,11 @@ import {
   updateCreation,
   CONTENT_MODES,
   TOPIC_TRACK,
+  STYLE_TRACKS,
+  DEFAULT_STYLE_TRACK,
+  isStyleTrack,
+  StyleCreationDishForbiddenError,
+  StyleCreationTrackForbiddenError,
 } from '../src/services/creation.service.js'
 import { upsertAiScene, AdminAiInvalidTemplateError } from '../src/services/admin-ai.service.js'
 
@@ -758,6 +763,126 @@ if (dbReady) {
         check(pf.length === 0, `库里 ${s.code} 的兜底模板仍能通过校验`, pf.join('；'))
       }
     }
+
+    // ── 4.5 ★★ 「不选菜品」（`mode='STYLE'`）的真实链路（2026-09-28）──
+    //   需求：菜品选择器里加一档「不选菜品」，选它就**不给 AI 任何门店与菜品资料**，
+    //   只按用户选的款式（人设型/干货型）写。要同时证明五件事：
+    //     ① 门店**照旧必填**（创作仍挂在门店下），菜品则**不许有**
+    //     ② 九项门店/菜品变量全为空串，且 topicInfo 也空（用户口径：「什么都不补」）
+    //     ③ 渲染后的提示词里查不到这家店的店名/品类/城市/菜名/人设
+    //     ④ 提示词里带着「门店与菜品都为空」的说明（模型不会以为资料漏了而自己编）
+    //     ⑤ 标题不落 undefined；两条闸门（带菜品 / 带产品型）真的会被拒
+    //   ★ ③ 是唯一有份量的那条：前四条只证明「代码没崩」，只有③能证明 AI 拿不到这家店的信息。
+    const styleStore = await prisma.store.create({
+      data: {
+        merchantId,
+        name: '契约测试门店-不选菜品',
+        category: '川菜',
+        city: '济南',
+        intro: '开了十二年的老川菜馆，招牌是每天现炒的辣子鸡。',
+      },
+    })
+    // ★ 这家店**有菜、有人设、有介绍**，而款式稿一个都不该拿到 ——
+    //   店里空着的话，③ 就成了一条永远为真的假断言（对照 4.2b 的同款做法）。
+    const styleDish = await prisma.dish.create({
+      data: { storeId: styleStore.id, name: '不该被款式稿提到的菜-水煮牛肉', sellingPoints: '麻辣鲜香' },
+    })
+    await prisma.persona.create({
+      data: { merchantId, storeId: styleStore.id, bossTags: '80后老板', activity: '开业酬宾' },
+    })
+    const styleCre = await createCreation(prisma, merchantId, {
+      storeId: styleStore.id,
+      mode: 'STYLE',
+      track: 'KNOWLEDGE',
+      complexity: 'COMPLEX',
+    })
+    check(
+      styleCre.mode === 'STYLE' && styleCre.track === 'KNOWLEDGE',
+      '★ 款式稿按用户选的款式落库（款式是这一档唯一的驱动，不许被强制成流量型）',
+      `mode=${styleCre.mode} track=${styleCre.track}`,
+    )
+    check(styleCre.dishId === null, '款式稿没有菜品（dishId 落 null）')
+    check(
+      styleCre.title === '契约测试门店-不选菜品',
+      '★ 款式稿标题退回门店名（留 undefined 会让前端 4 处显示「未命名创作」）',
+      `title=${JSON.stringify(styleCre.title)}`,
+    )
+    const vStyle = await buildVariables(prisma, styleCre.id, { track: 'KNOWLEDGE' })
+    const STYLE_BLANKED = [
+      'storeName', 'storeIntro', 'category', 'city',
+      'dishName', 'dishIntro', 'sellingPoints', 'comboInfo', 'persona',
+    ] as const
+    check(
+      STYLE_BLANKED.every((k) => vStyle[k] === ''),
+      '★★ 门店与菜品九项变量全为空串 —— 这是「不给 AI 门店与菜品信息」在服务端唯一的形态',
+      STYLE_BLANKED.filter((k) => vStyle[k] !== '').join('、'),
+    )
+    check(vStyle.topicInfo === '', '★ 款式稿不补话题素材（topicInfo 为空串 —— 与话题稿刻意不同）')
+    check(vStyle.dateInfo.length > 0, 'dateInfo 仍非空（模板那一行不会渲染成空白）')
+    // ③ 两条允许的款式逐份真渲染，断言「这家店的任何可识别信息都查不到」
+    for (const code of ['copy_persona', 'copy_knowledge']) {
+      const t = TEMPLATES.find((x) => x.code === code)!
+      const out = renderTemplate(t.tpl, vStyle as unknown as Record<string, string>)
+      check(!out.includes('{{'), `${t.label} 款式稿渲染后无残留占位符`)
+      check(
+        !out.includes('契约测试门店-不选菜品') &&
+          !out.includes('川菜') &&
+          !out.includes('济南') &&
+          !out.includes('不该被款式稿提到的菜') &&
+          !out.includes('80后老板'),
+        `★★ ${t.label} 款式稿：店名/品类/城市/菜名/人设一个都不出现在提示词里`,
+      )
+      check(out.includes('都为空'), `${t.label} 款式稿：提示词里带着「门店与菜品都为空」的空值说明`)
+    }
+    // ★★ 反向：**只讲门店**（同一家店、同样没选菜，但 `mode='DISH'`）必须照旧拿到门店资料。
+    //   没有这条，「只要没选菜就清空门店」也能让上面全绿 —— 而那会把「只讲门店」
+    //   这条既有路径悄悄改坏，正是本次最该防的回归。
+    const storeOnly = await createCreation(prisma, merchantId, {
+      storeId: styleStore.id,
+      mode: 'DISH',
+      track: 'PRODUCT',
+      complexity: 'COMPLEX',
+    })
+    const vStoreOnly = await buildVariables(prisma, storeOnly.id, { track: 'PRODUCT' })
+    check(
+      vStoreOnly.storeName === '契约测试门店-不选菜品' &&
+        vStoreOnly.category === '川菜' &&
+        vStoreOnly.dishName === '',
+      '★ 反向：「只讲门店」照旧拿到门店资料、且没有菜品（没被款式稿的改动波及）',
+      `storeName=${JSON.stringify(vStoreOnly.storeName)} dishName=${JSON.stringify(vStoreOnly.dishName)}`,
+    )
+    // ⑤ 两条闸门必须真的拒，且拒完库里不留半条记录
+    const styleBefore = await prisma.creation.count({ where: { storeId: styleStore.id } })
+    let dishGate = false
+    try {
+      await createCreation(prisma, merchantId, {
+        storeId: styleStore.id,
+        mode: 'STYLE',
+        track: 'KNOWLEDGE',
+        dishId: styleDish.id,
+      })
+    } catch (e) {
+      dishGate = e instanceof StyleCreationDishForbiddenError
+    }
+    check(dishGate, '★ 「不选菜品」带菜品被拒（StyleCreationDishForbiddenError）')
+    let trackGate = false
+    try {
+      await createCreation(prisma, merchantId, { storeId: styleStore.id, mode: 'STYLE', track: 'PRODUCT' })
+    } catch (e) {
+      trackGate = e instanceof StyleCreationTrackForbiddenError
+    }
+    check(trackGate, '★ 「不选菜品」+ 产品型被拒（它天生要讲清在售内容，这一档手里什么都没有）')
+    const styleAfter = await prisma.creation.count({ where: { storeId: styleStore.id } })
+    check(styleAfter === styleBefore, '★ 两次被拒都没有落库（闸门是拒，不是写一半）', `${styleBefore} → ${styleAfter}`)
+    check(
+      isStyleTrack('PERSONA') &&
+        isStyleTrack('KNOWLEDGE') &&
+        !isStyleTrack('PRODUCT') &&
+        !isStyleTrack('RECOMMEND') &&
+        !isStyleTrack(TOPIC_TRACK),
+      '★ 允许集恰好是「人设型 + 干货型」（流量型走它自己的 TOPIC 形态，不在这里）',
+      `STYLE_TRACKS=${STYLE_TRACKS.join('/')} DEFAULT=${DEFAULT_STYLE_TRACK}`,
+    )
   } finally {
     if (merchantId !== null) {
       // 硬删：creation → dish → persona → store → merchant（顺序遵循外键）
@@ -932,8 +1057,12 @@ check(
 )
 check(!traffic.fallback.includes('{{'), '★ 流量款兜底是零占位符的静态句（变量全空时不会渲染出半句话）')
 check(
-  Object.keys(CONTENT_MODES).length === 2 && CONTENT_MODES.TOPIC.label.length > 0,
-  '内容模式注册表含 DISH / TOPIC 两种',
+  Object.keys(CONTENT_MODES).length === 3 &&
+    CONTENT_MODES.TOPIC.label.length > 0 &&
+    // ★ 2026-09-28 加的第三种形态（「不选菜品」）：三种缺任何一个都说明注册表被删过
+    CONTENT_MODES.STYLE.label.length > 0 &&
+    CONTENT_MODES.DISH.label.length > 0,
+  '内容模式注册表含 DISH / TOPIC / STYLE 三种',
 )
 
 // 5.10.1 流量款不复制身份、区号或地名，而是让观众自然参与话题。

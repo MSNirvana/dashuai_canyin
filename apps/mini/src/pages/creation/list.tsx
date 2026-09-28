@@ -385,6 +385,13 @@ export default function CreationList() {
                     ) : (
                       !!c.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{c.trackLabel}</Text>
                     )}
+                    {/* ★ 2026-09-28：「不选菜品」（`mode='STYLE'`）必须和「只讲门店」分得开。
+                        两者的款式、标题（都退回门店名）、分镜数**完全一样** —— 不标出来，
+                        列表里就是两条一模一样的记录，而它们喂给 AI 的资料彻底不同。
+                        ★ 位置在款式之后：款式仍然是主标识，这只是补一条「素材范围」。
+                        ★ 文案取用户在选择器里看到的那个词（「不选菜品」），不用服务端的
+                          `modeLabel`（「款式稿」）—— 那是内部叫法，用户没在任何界面上见过它。 */}
+                    {c.mode === 'STYLE' && <Text className='ds-pill ds-pill--gray'>不选菜品</Text>}
                     {!!c.complexityLabel && <Text className='ds-pill ds-pill--gray'>{c.complexityLabel}</Text>}
                     <Text className='clist__shots'>分镜 {c.shotsTotal}</Text>
                     <Text className='clist__time'>{fmtRelTime(c.createdAt)}</Text>

@@ -64,8 +64,12 @@ const createInput = z.object({
    */
   storeId: z.string().min(1).optional(),
   dishId: z.string().optional(),
-  /** 内容模式；不传 = 菜品稿（保持既有客户端行为不变） */
-  mode: z.enum(['DISH', 'TOPIC']).optional(),
+  /**
+   * 内容模式；不传 = 菜品稿（保持既有客户端行为不变）。
+   * ★ 2026-09-28 加 `STYLE`（「不选菜品」）：门店**必填**、菜品**不许传**，
+   *   且款式只收人设型/干货型 —— 三条都由 service 一处判定（同下面 storeId 的做法）。
+   */
+  mode: z.enum(['DISH', 'TOPIC', 'STYLE']).optional(),
   /**
    * ⚠ 这里**没有** `topicCity`，是 2026-09-21 刻意移除的，不要再加回来。
    *
@@ -163,6 +167,10 @@ router.post('/', async (req, res) => {
     // 话题稿的两种前置条件单列错误码：前端要区分「参数传错了」（开发期问题）
     // 与「还没建门店」（用户能自己解决，要引导到门店页）
     if (e instanceof creationSvc.TopicCreationStoreForbiddenError) return fail(res, 2002, e.message, 400)
+    // ★「不选菜品」（STYLE）的两条闸门各给一个码，别共用一个：前端拿到 2015 要去掉菜品、
+    //   拿到 2016 要换款式 —— 两条的**补救动作不同**，合码就只能弹一句无法执行的提示。
+    if (e instanceof creationSvc.StyleCreationDishForbiddenError) return fail(res, 2015, e.message, 400)
+    if (e instanceof creationSvc.StyleCreationTrackForbiddenError) return fail(res, 2016, e.message, 400)
     if (e instanceof creationSvc.TopicHostStoreMissingError) return fail(res, 2011, e.message, 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
     console.error('[creations] 创建异常:', e)
