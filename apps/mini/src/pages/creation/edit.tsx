@@ -1316,7 +1316,13 @@ export default function CreationEdit() {
           <Text className='cedit__sectitle'>口播文案</Text>
           <View className='cedit__secbadges'>
             {!!detail.trackLabel && <Text className='ds-pill ds-pill--red-soft'>{detail.trackLabel}</Text>}
-            {hasCopy && <Text className='ds-pill ds-pill--ghost'>已生成 · {(detail.copyText ?? '').length} 字</Text>}
+            {/* ★ 2026-09-28：原来这里还有一个灰色徽标「已生成 · N 字」
+                （类名 `ds-pill--ghost`），按用户要求删除。
+                ⚠ 「文案已生成」这个状态**不靠它表达** —— 下面 `hasCopy ? (…)` 那条分支
+                  会把文案正文整段渲染出来，用户看到正文就知道已生成；而且「换一款」入口
+                  本身也是 `hasCopy` 才出现。⇒ 删掉它不会造成「状态失联」。
+                ※ 它是 `ds-pill--ghost` 的**唯一**使用点 ⇒ 样式规则已同步从 app.scss 删除
+                  （那条规则当时与 `ds-pill--gray` 只差一个 `font-weight`）。 */}
             {/* 已生成后这一行默认收起；要换款式时点这里展开，不用时完全不占视觉。
                 ⚠ 话题稿不给这个入口：它的款式服务端不许改（`updateCreation` 对 TOPIC 行直接
                    丢弃 track），给了就是一个点了没反应的「换一款」。 */}

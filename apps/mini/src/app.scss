@@ -124,10 +124,9 @@ view, text, button, input, textarea, image {
   color: var(--ds-success);
   font-weight: 500;
 }
-.ds-pill--ghost {
-  background: var(--td-bg-color-secondary);
-  color: var(--td-text-color-secondary);
-}
+// ★ 2026-09-28：`.ds-pill--ghost` 随它**唯一**的使用点（创作编辑页那个「已生成 · N 字」徽标）
+// 一起删除。这条规则当时与上面的 `.ds-pill--gray` 只差一个 `font-weight: 500` ——
+// 需要这个观感请直接用 `--gray`，不要重新引入一个近乎重复的变体。
 
 // ───────────── 按钮（纯色扁平 + 微投影） ─────────────
 // 圆角 20rpx（10px），非胶囊 —— 对齐设计稿
