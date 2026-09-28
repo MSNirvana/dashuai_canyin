@@ -244,6 +244,41 @@ export default function CreationShots() {
   /** 进自建拍摄层：这一层里点一下开始、再点一下停，并显示提词器 */
   const openCamera = (shot: ShotItem) => setCameraShot(shot)
 
+  /** 相册「已存一份」的成功提示只给一次：连拍几个分镜时，不该被同一句话反复打断 */
+  const albumHinted = useRef(false)
+
+  /**
+   * 录制一结束，就把这一段**存一份到手机相册**（需求：用小程序拍素材时默认在本地留一份）。
+   *
+   * ★ 为什么不 await、也不往外抛：它是**附带的保险动作**，主流程始终是「用这条 → 上传」。
+   *   相册授权可能弹框、可能被拒 —— 绝不能因此拖住上传，更不能让上传凭空失败。
+   * ★ 为什么不需要 downloadFile：成片那边（render/compose.tsx）必须先下载，是因为它拿到的是
+   *   **网络地址**；这里 videoPath 是自建相机刚录出来的**本地临时文件**，
+   *   `saveVideoToPhotosAlbum` 直接就能吃 —— 多一步下载等于白等一次网络。
+   * ★ 为什么时机必须在「刚录完」而不是「点用这条」：videoPath 是**临时文件**
+   *   （官方口径：本次小程序启动期间可用），且用户可能直接重拍 —— 早一步存下，
+   *   才防得住「上传失败 = 这一段白拍」。
+   */
+  const saveRecordToAlbum = useCallback(async (videoPath: string) => {
+    try {
+      await Taro.saveVideoToPhotosAlbum({ filePath: videoPath })
+      if (!albumHinted.current) {
+        albumHinted.current = true
+        void Taro.showToast({ title: '已存一份到相册', icon: 'success' })
+      }
+    } catch (e) {
+      // ★ 失败几乎都是「相册权限被拒」，而授权框**只有第一次**会弹：用户拒过之后，
+      //   之后每次调用都是**静默** fail。所以这里必须每次都说话，否则用户会以为已经存上了。
+      const errMsg = (e as { errMsg?: string })?.errMsg ?? ''
+      const denied = /auth|deny|permission/i.test(errMsg)
+      void Taro.showToast({
+        title: denied ? '未存到相册：请在设置里允许「保存到相册」' : '未存到相册（不影响上传）',
+        icon: 'none',
+        duration: 3000,
+      })
+    }
+  }, [])
+
   /**
    * 自建相机拍完的那一条。
    * ★ durationMs 来自拍摄层的计时（自建相机拿不到 duration），它一样是计价依据。
@@ -591,6 +626,10 @@ export default function CreationShots() {
         shot={cameraShot}
         tipText={cameraShot ? (tipsFor(cameraShot)[0]?.tips ?? '') : ''}
         onCancel={() => setCameraShot(null)}
+        // ★ 录制一结束就留一份到相册（不等用户点「用这条」）：这样即使随后上传失败、
+        //   或者用户直接重拍，这一段也已经落地了。它是**附带动作** —— 不阻塞、不抛错，
+        //   「用这条 → 上传」那条主链路完全不受它影响。
+        onRecorded={(r) => { void saveRecordToAlbum(r.videoPath) }}
         onDone={(r) => { if (cameraShot) void onShootDone(cameraShot, r) }}
         onUnavailable={(reason) => { if (cameraShot) onShootUnavailable(cameraShot, reason) }}
       />

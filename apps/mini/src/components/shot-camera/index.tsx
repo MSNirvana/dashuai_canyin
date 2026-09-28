@@ -111,6 +111,15 @@ interface Props {
    * ★ 调用方必须接住并回落到微信原生选择器 —— 否则用户在这一页就彻底拍不了。
    */
   onUnavailable: (reason: string) => void
+  /**
+   * 录制**刚结束**（文件已拿到、但还没进 review 面板）时回调一次。
+   * ★ 与 onDone 的差别只在时机：onDone 要等用户点「用这条」，这里**一录完就给**。
+   *   调用方用它做「留一份本地副本」这种**不需要用户确认**的附带动作
+   *   （本项目：存一份到手机相册）—— 放在这个时机，即使随后上传失败、或用户直接重拍，
+   *   这一段也已经落地了；等 onDone 就晚了，而「上传失败导致视频丢了」正是要防的场景。
+   * ★ 可选：不传即代表调用方不需要副本。本组件只负责把文件路径交出来，存到哪里是调用方的事。
+   */
+  onRecorded?: (r: ShotCameraResult) => void
 }
 
 /** 录制结束的两种来源（用户点击 / 微信自己结束）回给我们的都是这俩路径 */
@@ -190,7 +199,7 @@ function cameraCtx(): {
   }
 }
 
-export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavailable }: Props) {
+export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavailable, onRecorded }: Props) {
   /** idle 取景待拍 / recording 录制中 / review 拍完待确认 */
   const [phase, setPhase] = useState<'idle' | 'recording' | 'review'>('idle')
   const [elapsed, setElapsed] = useState(0)
@@ -233,6 +242,20 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
    *   上一段的 stopRecord 回来时会把**上一段的文件**当成刚拍好的这一段填进 take。
    */
   const epochRef = useRef(0)
+
+  /**
+   * ★ 把 onRecorded 转成「永远指向最新」的读取口，而不是在 finalize 里直接用 props 里的它。
+   *
+   * 为什么必须绕这一下：finalize 是 `useCallback(..., [clearTimer])`，而 clearTimer 恒定
+   * ⇒ **finalize 只会创建一次**，它闭包住的是**第一次 render 时**那个 onRecorded。
+   * 调用方传的多半是内联箭头函数、里面闭着当轮的 state —— 直接用就会读到**过期**的那一份
+   * （典型症状：留副本时用的是旧分镜 / 旧门店）。
+   * 而把 onRecorded 塞进 finalize 的依赖数组同样不行：那会让 finalize 每次 render 重建，
+   * 连带 doStop 等一串 callback 一起失效 —— 而「回调稳定」正是本组件录制状态机成立的前提
+   * （见上面 resetRun / epochRef 那几段注释）。⇒ ref 是唯一两边都不动的办法。
+   */
+  const onRecordedRef = useRef(onRecorded)
+  useEffect(() => { onRecordedRef.current = onRecorded }, [onRecorded])
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }
@@ -312,8 +335,15 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     }
     const durationMs = endedElapsedRef.current ?? Math.max(0, elapsedRef.current)
     const sizeBytes = await readFileSize(videoPath)
-    setTake({ videoPath, thumbPath: res.tempThumbPath, durationMs, sizeBytes })
+    const recorded: ShotCameraResult = { videoPath, thumbPath: res.tempThumbPath, durationMs, sizeBytes }
+    setTake(recorded)
     setPhase('review')
+    // ★ 录制一结束就把这一段交给调用方（它要留一份到相册）。
+    //   时机刻意放在「拿到文件」之后、「用户点『用这条』」之前：这样即使随后上传失败、
+    //   或用户直接重拍，这一段也已经落地了 —— 这正是要防的场景（上传失败 = 视频白拍）。
+    //   ★ 刻意**不 await**：留副本要过相册授权（可能弹框、可能被拒），绝不能因此把用户
+    //     卡在「正在保存…」而迟迟进不了 review 面板；保存失败也不影响本次交付的文件。
+    onRecordedRef.current?.(recorded)
   }, [clearTimer])
 
   const doStop = useCallback(() => {
