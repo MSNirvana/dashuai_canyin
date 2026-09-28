@@ -133,23 +133,47 @@
     padding: 32rpx;
     box-shadow: var(--ds-shadow-card);
   }
-  // 紧跟页头的第一张卡（现为「分镜素材」）：页头自己已有 padding-bottom: 24rpx，
-  // 再叠一个 24rpx 会让卡片显得与页头脱开，所以这张不要上边距
-  &__card--lead {
-    margin-top: 0;
+  /* ★ 2026-09-25：`&__card--lead` 删除（tsx 里的类名一并去掉）。
+     它是为「紧跟页头的第一张卡」写的，但 flex `order` 把 `.rcompose__preview`（order 3）
+     插在了页头与「分镜素材」（order 7）之间 ⇒ 这张卡从来不挨着页头；
+     而且下游 `.rcompose__card--clips { margin-top: 20rpx }` 与它同权重、写在后面，
+     **本来就一直赢** ⇒ 这一条是死规则。第一张卡的间距改由文件末尾的分组规则统一给。 */
+  /* ── 卡片区标题：「竖条 + 文字」成组 ──
+     ★★ 与创作页 `&__spec-head` / `&__spec-bar` 同一套规格（那是用户已认可的「标题样」）：
+        6rpx × 30rpx 品牌色圆角竖条 + 34rpx/700 标题。
+        以前这里只有一行 28rpx 的黑字，与正文（22~25rpx 的字段名 / 选项）只差 3~6rpx
+        ⇒ 整页读起来是「一堆一样大的黑字」，这就是「标题没有标题样」。
+     ★ 为什么竖条要单独一个 `View`、而不是 `&__sectitle::before` 或 `border-left`：
+       `Text` 在 weapp 里编译成 `<text>`，**伪元素不渲染**；而 `border-left` 会跟着行盒长到
+       ~42rpx 且是方的，和创作页那条 30rpx 圆角竖条不是一个东西 —— 两页并排看会明显不齐。 */
+  &__sechead {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    /* 标题是 flex 项：给它 min-width: 0，长标题（如「高级生成 · 逐镜精剪 · 进行中」）
+       才不会把同一行右侧的按钮顶出去，而是自己折行。 */
+    min-width: 0;
+    /* 只有「标题直接坐在卡片里、下面紧跟内容」时才需要这段下边距；
+       标题若在 `&__history-heading` / `&__colorhead` 这类**行容器**里，间距归容器管
+       （见那两条规则里的 `> .rcompose__sechead { margin-bottom: 0 }`）。 */
+    margin-bottom: 18rpx;
+  }
+  &__secbar {
+    flex: none;
+    width: 6rpx;
+    height: 30rpx;
+    border-radius: 3rpx;
+    background: var(--td-brand-color);
   }
   &__sectitle {
-    display: block;
     font-size: 34rpx;
     font-weight: 700;
     letter-spacing: -0.02em;
+    line-height: 1.25;
     color: var(--td-text-color-primary);
-    margin-bottom: 24rpx;
   }
-  // 标题带右侧动作（如「重置」）时用它 + 一个 flex 容器把下边距交给容器管
-  &__sectitle--flush {
-    margin-bottom: 0;
-  }
+  /* ★ 2026-09-25：`&__sectitle--flush` 删除。它原本只是抵消上面那条 `margin-bottom`，
+     而下边距现在归 `&__sechead` 管 ⇒ 这个修饰类已无处可挂（tsx 里那一处也一并去掉）。 */
   /* ── 标题 + 问号成行（小字说明收进「?」后的通用排法）──
      gap 留 10rpx：问号直径只有 32rpx，贴太近会被标题的字重吃掉。 */
   &__titlerow {
@@ -157,11 +181,9 @@
     align-items: center;
     gap: 10rpx;
   }
-  &__fieldrow {
-    display: flex;
-    align-items: center;
-    gap: 10rpx;
-  }
+  /* ★ 2026-09-25：`&__fieldrow` 删除（tsx 三处一并去掉）。它包住的只有一个 `&__fieldlabel`，
+     而同一个卡片里另外几处字段名是**裸写**的 ⇒ 同一种「字段名」出现两种排版。
+     现在统一裸写，间距由 `&__fieldlabel` 自己的 margin 给。 */
 
   /* ── 三档生成方式 ── */
   &__grades {
@@ -222,7 +244,9 @@
     margin-top: 24rpx;
   }
 
-  &__fieldlabel { display: block; margin: 20rpx 0 12rpx; font-size: 24rpx; color: var(--td-text-color-secondary); }
+  /* 字段名：给下面那组选项起名字，**不是**标题 ⇒ 比 `&__sectitle` 轻两档。
+     加 600 字重是为了在同为 24rpx 的正文里还能立住，但不至于升格成标题。 */
+  &__fieldlabel { display: block; margin: 22rpx 0 10rpx; font-size: 24rpx; font-weight: 600; color: var(--td-text-color-secondary); }
   &__voicegrid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14rpx; }
   &__voice { padding: 18rpx; border: 1rpx solid var(--td-component-stroke); border-radius: var(--td-radius-default); }
   &__voice--on { border-color: var(--td-brand-color); background: var(--td-brand-color-soft); }
@@ -234,7 +258,9 @@
   &__customvoiceline { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-top: 12rpx; }
   &__optionrow { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 18rpx 0; border-top: 1rpx solid var(--td-component-border); }
   &__optiontitle, &__optiondesc { display: block; }
-  &__optiontitle { font-size: 26rpx; }
+  /* 开关行的行标题：比 `&__fieldlabel` 高一档 —— 它是一件「可以开关的事」，
+     而 fieldlabel 只是给下面那组选项起个名字。同一行里还有 `Switch`，所以它要够醒目。 */
+  &__optiontitle { font-size: 26rpx; font-weight: 600; color: var(--td-text-color-primary); }
   &__optiondesc { margin-top: 6rpx; font-size: 20rpx; color: var(--td-text-color-placeholder); }
   &__choices { display: flex; flex-wrap: wrap; gap: 12rpx; }
   &__choiceitem { padding: 10rpx 18rpx; border: 1rpx solid var(--td-component-stroke); border-radius: 6rpx; font-size: 22rpx; color: var(--td-text-color-secondary); }
@@ -250,6 +276,9 @@
     align-items: center;
     justify-content: space-between;
     gap: 16rpx;
+    /* 展开时 `&__colorbody` 自带 margin-top: 24rpx；收起时这一行就是卡片的全部内容，
+       所以标题在这里**不要**下边距，否则收起态底部会多出一截空白。 */
+    > .rcompose__sechead { margin-bottom: 0; }
   }
   &__colorheadright {
     display: flex;
@@ -343,7 +372,11 @@
     align-items: center;
     justify-content: space-between;
     gap: 16rpx;
-    .rcompose__sectitle { margin-bottom: 0; }
+    /* 标题在这个行容器里 ⇒ 下边距归容器管。
+       ★ 这里必须有值：下面紧跟的可能是 `ProgressLine`（它自己没有上边距）——
+         不给的话「基础生成 · 进行中」会**贴着**进度条，看着像压住了。 */
+    margin-bottom: 16rpx;
+    > .rcompose__sechead { margin-bottom: 0; }
   }
   /* ★ 微信原生 button 自带 `margin-left/right: auto`：放进 flex 行里，两侧 auto 会
      **平分剩余空间 ⇒ 按钮居中**，`justify-content: space-between` 会被顶掉（不生效）。
@@ -381,8 +414,12 @@
   }
 
   /* ── 分镜素材 ── 一行两个；每格只有「序号（压角）+ 标题 + 标签」
-     卡片内宽 614rpx（678 − 32×2）⇒ 单格 48.5% ≈ 298rpx，中缝 ≈ 18rpx，
-     缩略图按 16:9 ⇒ 298 × 9/16 ≈ 167rpx 高（与 &__clipthumbwrap 的 height 对齐）。
+     卡片内宽 **630rpx**（678 − 24×2；24rpx 来自文件末尾那条 `.rcompose__card { padding }`，
+     基础块里写的 32rpx 是被它覆盖掉的旧值）⇒ 单格 48.5% ≈ 306rpx，中缝 ≈ 19rpx，
+     缩略图按 16:9 ⇒ 306 × 9/16 ≈ 172rpx。
+     ⚠ `&__clipthumbwrap` 的 height 仍是 167rpx（那是按内宽 614rpx 时代的 298rpx 算的，差 ~3%）。
+       不改成 172rpx：封面用 `aspectFill` 裁切显示，3% 的裁切差肉眼看不出来，
+       而改它会连带牵动下面那一整套「两格 + 中缝」的宽度关系 —— 收益不抵风险。
      ★ 宽度必须留余量，**绝不能用 `calc(50% - 10rpx)`**（HEAD 里正是它）：
        `(50% - 10rpx) × 2 + 20rpx（列间距）` = **恰好 100%**，一格余量都没有。
        而 `1rpx = 屏宽 / 750 px` 只在部分屏宽整除（390pt → 0.52 整除；440pt → 0.58666… 不整除），
@@ -394,9 +431,12 @@
        ★ 顺便排掉一个错猜：calc() 里的 rpx **是会被换算的** —— 全仓 8 个页面都在用
          `calc(24rpx + env(safe-area-inset-bottom))` 且线上正常。所以问题不在「calc 不认」，
          而在**零余量**：calc 本身没错，错在没有余量给它消化取整误差。
-     ★ margin-top 是给标题让位的：上面那行标题（&__history-heading）把
-       .rcompose__sectitle 的 margin-bottom 置成了 0（它假设「下边距交给容器管」，
-       可容器自己没管）⇒ 不补这一行，缩略图会直接贴着「分镜素材 · 已上传 x/y」。 */
+     ★ margin-top 与上面 `&__history-heading` 的 margin-bottom: 16rpx 相加 = 40rpx。
+       需要这么一段空档：标题那行右侧还挂着「去上传素材 / 展开」两个小按钮，
+       空档不够时缩略图会被读成按钮所在行的一部分。
+       ★ 2026-09-25 之前这里是「标题的 margin-bottom 被置 0、全靠这一条兜底」——
+         那个坑随标题改成 `&__sechead` 成组、间距归行容器管而消失；
+         标题也从 28rpx 提到 34rpx，这 40rpx 不必再变大。 */
   &__clips {
     display: flex;
     flex-wrap: wrap;
@@ -600,13 +640,6 @@
   }
 
   /* ── 发布素材（标题 / 封面 / 文案） ── */
-  &__pubhint {
-    display: block;
-    margin-top: 8rpx;
-    font-size: 23rpx;
-    line-height: 1.7;
-    color: var(--td-text-color-secondary);
-  }
   &__pubcost {
     display: block;
     margin-top: 10rpx;
@@ -746,16 +779,6 @@
     font-size: 22rpx;
     color: var(--td-text-color-placeholder);
   }
-  // 底部条里的「?」：图标本身 38rpx，外面留 56rpx 触摸区 ——
-  // 别只按图标大小给尺寸，那样点起来很难命中（项目里的小按钮不低于 64rpx 高度是同一道理）
-  &__help {
-    flex: none;
-    width: 56rpx;
-    height: 56rpx;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
   &__render {
     flex: 1;
   }
@@ -769,7 +792,7 @@
   display: flex;
   flex-direction: column;
   gap: 0;
-  padding-top: 16rpx;
+  padding-top: 20rpx;
 }
 
 /* ★ 2026-09-24：`.rcompose > .rcompose__stage { order: 1 }` 随顶部深色框体一起删除。 */
@@ -793,12 +816,16 @@
 
 .rcompose__head {
   align-items: center;
-  padding: 8rpx 4rpx 18rpx;
+  padding: 10rpx 4rpx 24rpx;
 }
 
-.rcompose__title { font-size: 32rpx; letter-spacing: 0; }
-.rcompose__store { margin-top: 4rpx; font-size: 22rpx; }
-.rcompose__materials { font-size: 21rpx; padding: 6rpx 14rpx; }
+/* ★★ 页头大标题：原来被覆写成 32rpx —— 只比卡片标题（当时的 28rpx）大 4rpx，
+   于是「页面标题」和「卡片标题」谁也压不住谁。
+   现在回到 40rpx/700，与卡片区标题（34rpx）拉开一档，也压得住下面那个 410rpx 的深色视频框。 */
+.rcompose__title { font-size: 40rpx; font-weight: 700; letter-spacing: -0.025em; line-height: 1.2; }
+.rcompose__store { margin-top: 6rpx; font-size: 23rpx; }
+/* 份数胶囊：页头右侧唯一的信息，和 `.rcompose__headmain`（flex:1）抢宽度时不能被压扁 */
+.rcompose__materials { flex: none; font-size: 21rpx; padding: 6rpx 14rpx; }
 
 .rcompose__preview {
   height: 410rpx;
@@ -818,34 +845,52 @@
 .rcompose__actions { margin-top: 12rpx; }
 .rcompose__action { height: 72rpx; border-radius: var(--td-radius-default); }
 
+/* ★★ 卡片底色统一纯白。
+   原来 `--ai / --color / --history / --publish` 是 `rgba(255, 255, 255, .78)`：
+   半透明白压在 #f5f6f8 页底上，读起来不是「更轻的一张卡」，而是「这块没渲染干净」——
+   层次感反而没了。按设计规范「层次靠留白 + 灰阶」，主次改由**描边 / 投影 / 间距**表达。 */
 .rcompose__card {
   margin-top: 16rpx;
   padding: 24rpx;
+  background: #fff;
   border: 1rpx solid var(--td-component-stroke);
   border-radius: var(--td-radius-large);
   box-shadow: none;
 }
 
-.rcompose__card--clips {
-  margin-top: 20rpx;
-  background: #fff;
-}
+/* ── 分组间距：同组 16rpx、换组 32rpx ──
+   这一屏最多 7 张卡，之前**全部** 20 / 16rpx 等距排下来 ⇒ 一条没有停顿的长带子，
+   扫视时找不到「哪几块是一件事」。按语义分四组（组内 16、换组 32，2 倍关系）：
+     ① 页头 + 预览 + 保存  ② 分镜素材（输入）
+     ③ 生成方式 · AI 自动剪辑 · 整片调色 · 进行中（本次生成的全部决策与反馈）
+     ④ 成片记录 · 发布素材（产出） */
+.rcompose > .rcompose__card--clips { margin-top: 32rpx; }
 
-.rcompose__card--generation {
-  background: #fff;
+/* 「生成方式」是这一屏**唯一的主决策** ⇒ 品牌色描边 + 投影把它顶起来，
+   下面三张（AI 自动剪辑 / 整片调色 / 进行中）用同一组 16rpx 紧跟，读成它的展开与反馈。 */
+.rcompose > .rcompose__card--generation {
+  margin-top: 32rpx;
   border-color: var(--td-brand-color-light);
+  box-shadow: var(--ds-shadow-card);
 }
 
-.rcompose__card--ai,
-.rcompose__card--color,
-.rcompose__card--history,
-.rcompose__card--publish { background: rgba(255, 255, 255, 0.78); }
+.rcompose > .rcompose__card--ai,
+.rcompose > .rcompose__card--color { margin-top: 16rpx; }
 
-.rcompose__sectitle {
-  margin-bottom: 16rpx;
-  font-size: 28rpx;
-  letter-spacing: 0;
+/* 「进行中」也吃品牌描边：它是这一屏里唯一「正在发生」的东西，
+   也是用户点完底部按钮之后唯一想看的反馈。 */
+.rcompose > .rcompose__card--active {
+  margin-top: 16rpx;
+  border-color: var(--td-brand-color-light);
+  box-shadow: var(--ds-shadow-card);
 }
+
+.rcompose > .rcompose__card--history { margin-top: 32rpx; }
+.rcompose > .rcompose__card--publish { margin-top: 32rpx; }
+
+/* ★★ 卡片区标题：规格写在基础块的 `&__sectitle`（34rpx/700 + 左侧品牌色竖条）。
+   这里**故意不再重复一遍**字号 —— 同一个标题两处各写一次，
+   正是「改了一处、另一处还是旧的」的来源（这条原来是 28rpx，把基础块的 34rpx 压掉了）。 */
 
 .rcompose__grades { gap: 10rpx; }
 .rcompose__grade {
@@ -868,9 +913,11 @@
 }
 
 .rcompose__optionrow { padding: 16rpx 0; }
-.rcompose__optiontitle { font-size: 25rpx; }
+.rcompose__optiontitle { font-size: 26rpx; font-weight: 600; }
 .rcompose__optiondesc { font-size: 21rpx; line-height: 1.55; }
-.rcompose__fieldlabel { margin: 18rpx 0 10rpx; font-size: 23rpx; font-weight: 600; }
+/* 字段名与开关行标题收在 2rpx 的差里，层级靠**颜色**分（secondary / primary）——
+   23 vs 25 这种 2rpx 字号差在手机上读不出来，只会显得「没对齐」。 */
+.rcompose__fieldlabel { margin: 22rpx 0 10rpx; font-size: 24rpx; font-weight: 600; }
 
 .rcompose__history { padding: 18rpx 0; }
 .rcompose__history-title { font-size: 25rpx; }

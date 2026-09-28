@@ -15,7 +15,6 @@ import { readRouteId, isNumericId } from '../../utils/route-id'
 // 时间一律走这里：接口给的是 UTC 的 ISO 串（…T…Z），直接渲染/截串都会露 T、Z 且差 8 小时
 import { formatMinute } from '../../utils/time'
 import ProgressLine from '../../components/progress-line'
-import SectionHelp from '../../components/section-help'
 import './compose.scss'
 
 const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
@@ -725,36 +724,30 @@ export default function RenderCompose() {
   /**
    * 生成发布素材：标题 + 文案 + 封面（`part='COVER'` 时只重出封面）。
    *
-   * ★ 先弹确认再发请求：这里是**两笔**钱 —— 封面固定价 + 封面选帧（按 token 计费），
-   *   当前配置下合计 900 积分（300 + 600，见 prisma/prompts.ts 的 PUBLISH_SCENES）。
-   *   在不知情的情况下花掉一笔相对大的积分，是最容易被投诉的那种体验。
-   *   价格取服务端给的 `estimate`，不在客户端写死 —— 后台改价后这里跟着变。
+   * ★★ 2026-09-25 弹窗瘦身：确认框只回答「要不要做」，`content` 收成一句
+   *   「确定生成？」/「确定重新生成？」。原来这里塞了金额（标题与文案最多 180 +
+   *   封面选帧最多 300 + 封面固定 300）加三步流程说明，超过四行 ——
+   *   手机原生弹窗里这段话几乎没人读完，读不完就等于没提示。
+   *   ⇒ 只把**总额**搬到卡片上那行常驻小字（`rcompose__pubcost`，见那段注释）；原先挂在
+   *     「发布素材」问号上的**明细**（三项拆分、只重出封面的价）**故意不补落点**：
+   *     2026-09-25 用户要求「把系统的所有问号解释的问号都删了」，并明确选择「直接删，不补」。
+   * ★ title 跟着**按下去的那个按钮**走：首次是「生成发布素材」，已经有素材了就是「重新生成发布素材」
+   *   —— 原来不看状态、恒为「生成发布素材」，而按钮写的是「重新生成」，同一件事两个说法。
    * ★ 不假装进度：服务端是「出文本 → 抽帧选帧 → 出图」三步**串行**（约 1~2 分钟），
    *   三段都没有可订阅的进度事件，编一个「进度条」只会让人盯着一个假的百分比。
-   *   所以只说清「要等多久、在等什么」。
-   * ★ 2026-09-24 起，封面底图改为**从拍摄素材里挑一帧真实画面**再做设计
-   *   （原来是让模型凭空画）。因此多出「封面选帧」这一笔，
-   *   `costText` 与文案都必须把它算进去，否则会出现「说好 480、实扣 1080」。
+   *   所以等的过程由生成中的 `ProgressLine` 负责说（按耗时估算，见那里的说明）。
    */
   const doGeneratePublish = async (part: 'ALL' | 'COVER') => {
     if (!id || publishLoading || publishLock.current) return
     // 同步上锁（见 publishLock 的说明）：此后整条链路 —— 包括等弹窗期间 —— 第二次点击直接挡掉
     publishLock.current = true
     try {
-      const cap = publishEstimate?.textBeanCap
-      const cover = publishEstimate?.coverBeans
-      const pick = publishEstimate?.pickBeans
-      const costText =
-        part === 'COVER'
-          ? `封面选帧最多 ${pick ?? '?'} 积分 + 封面固定 ${cover ?? '?'} 积分`
-          : `标题与文案最多 ${cap ?? '?'} 积分 + 封面选帧最多 ${pick ?? '?'} 积分 + 封面固定 ${cover ?? '?'} 积分`
+      // 已经有素材 = 这次是把上次的结果重做一遍（头部的「重新生成」与封面失败的「重试封面」都走这里）
+      const again = part === 'COVER' || !!publishMat
       const { confirm } = await Taro.showModal({
-        title: part === 'COVER' ? '重新生成封面' : '生成发布素材',
-        content:
-          `${costText}。\n大约 1~2 分钟：先从你拍的画面里挑一帧当底图，再出标题与文案，\n` +
-          `最后按抖音封面规范做成封面（3:4 竖版）。\n` +
-          (part === 'COVER' ? '标题与文案会沿用已生成的那版，不会重复扣费。' : ''),
-        confirmText: '开始生成',
+        title: part === 'COVER' ? '重新生成封面' : again ? '重新生成发布素材' : '生成发布素材',
+        content: again ? '确定重新生成？' : '确定生成？',
+        confirmText: again ? '重新生成' : '开始生成',
         cancelText: '再想想',
       })
       if (!confirm) return
@@ -934,21 +927,6 @@ export default function RenderCompose() {
     scrollToPlayer()
   }
 
-  /**
-   * 底部「?」：把结算口径一次说清。
-   * 档位系数直接从 GRADE_RATIO 生成，**不在文案里另写一份数字** —— 费率改了这里跟着变，
-   * 不会出现「弹窗写着 1.5×、卡片上却是别的数」。
-   */
-  const showCostHelp = () => {
-    const ratios = GRADE_OPTIONS.map((option) => `${option.title} ${GRADE_RATIO[option.key].toFixed(1)}×`).join('、')
-    void Taro.showModal({
-      title: '积分怎么算',
-      content: `参考预估按每秒积分与档位系数计算（${ratios}），按实际时长结算，失败全额返还。`,
-      showCancel: false,
-      confirmText: '知道了',
-    })
-  }
-
   const doRender = async (mode: 'FULL' | 'RECOLOR') => {
     if (!id || !detail || submitLock.current.has(grade)) return
     // ★ 只拦**本档**：三档互不干扰（服务端同样按档位判，见 render.service.ts 的 running 查询）。
@@ -993,10 +971,9 @@ export default function RenderCompose() {
         if (result.confirm) await Taro.navigateTo({ url: '/pages/recharge/index' })
         return
       }
-      const cost = estimatePoints(detail.shots, grade, mode === 'RECOLOR')
       const confirmed = await Taro.showModal({
         title: '确认生成',
-        content: `参考预估 ${cost} 积分，可用 ${account.available} 积分，按实际结算。`,
+        content: '确定生成？',
         confirmText: '确认提交',
       })
       if (!confirmed.confirm) return
@@ -1135,7 +1112,22 @@ export default function RenderCompose() {
       </View>
     )
   }
+  // 底部条那个「约 X 积分」——**视频合成**的价，随档位与分镜数变，与发布素材那一行无关
   const cost = estimatePoints(detail.shots, grade)
+  /**
+   * 发布素材这一步的价格上限（标题与文案上限 + 封面选帧上限 + 封面固定价）——
+   * 给卡片上那行常驻小字用。null = 还没拿到服务端报价，此时不显示金额。
+   *
+   * ★ 是**上限**（前两项是上限、第三项是固定价），所以文案里必须带「最多」二字：
+   *   写成「需要 X 积分」会和实际结算对不上。
+   * ★ 与 `publishEstimate` 同一真源（服务端 `estimate`）：后台改价后小字跟着变。
+   * ★ 2026-09-25：标题旁的「?」按用户要求**全系统删除** ⇒ 原来挂在「发布素材」问号上的
+   *   金额明细（三项拆分、只重出封面的价）一并去掉，只留这一行总额。
+   *   同一次删除里底部条「积分怎么算」那个问号也没补落点（用户明确选择「直接删，不补」）。
+   */
+  const pubCost = publishEstimate
+    ? publishEstimate.textBeanCap + publishEstimate.pickBeans + publishEstimate.coverBeans
+    : null
   const previewedGrade = selectedResult ? gradeTitle(selectedResult.grade) : ''
   // 拖动中的近似预览需要一张静帧来承载 CSS 滤镜，取第一张有封面的分镜。
   // 用静帧而不是「当前正在播的某一帧」，是因为 video 是原生组件、内部渲染吃不到样式 ——
@@ -1181,9 +1173,12 @@ export default function RenderCompose() {
             「去上传素材」按钮就在同一行里，若把 onClick 挂在父容器上，
             在小程序里按钮的 tap 会冒泡到父节点 ⇒ 点「去上传」会顺手把列表收起来。
             （stopPropagation 在 weapp 里不可靠，所以从结构上避开，而不是靠它。） */}
-      <View className='rcompose__card rcompose__card--lead rcompose__card--clips'>
+      <View className='rcompose__card rcompose__card--clips'>
         <View className='rcompose__history-heading'>
-          <Text className='rcompose__sectitle'>分镜素材 · 已上传 {readyShots.length}/{detail.shots.length}</Text>
+          <View className='rcompose__sechead'>
+            <View className='rcompose__secbar' />
+            <Text className='rcompose__sectitle'>分镜素材</Text>
+          </View>
           {/* 「缺哪几个分镜」不再用文字说一遍 —— 缺素材的格子自己就写着「缺素材」，重复只是噪音。
               但「去上传」这个**入口**必须留着：素材不齐就点不了「生成成片」，
               没了入口用户只能退回上一页找路。 */}
@@ -1309,7 +1304,10 @@ export default function RenderCompose() {
 
       {/* ── 生成方式 ── */}
       <View className='rcompose__card rcompose__card--generation'>
-        <Text className='rcompose__sectitle'>生成方式</Text>
+        <View className='rcompose__sechead'>
+          <View className='rcompose__secbar' />
+          <Text className='rcompose__sectitle'>生成方式</Text>
+        </View>
         <View className='rcompose__grades'>
           {GRADE_OPTIONS.map((option) => {
             const issue = gradeIssues[option.key]
@@ -1354,12 +1352,9 @@ export default function RenderCompose() {
             hoverClass='ds-hover'
             onClick={() => setColorOpen((value) => !value)}
           >
-            <View className='rcompose__titlerow'>
-              <Text className='rcompose__sectitle rcompose__sectitle--flush'>整片调色</Text>
-              <SectionHelp
-                title='整片调色'
-                text='拖动时画面只是近似示意（锐化在拖动中不体现）。松手约 1 秒后生成整片精确预览，免费。'
-              />
+            <View className='rcompose__sechead'>
+              <View className='rcompose__secbar' />
+              <Text className='rcompose__sectitle'>整片调色</Text>
             </View>
             {/* ★ 这两个可点项都在「展开开关」里面，各自必须 stopPropagation：
                 weapp 下 View 的 tap 会冒泡，否则点「重置」会顺手把模块收起来。 */}
@@ -1420,7 +1415,10 @@ export default function RenderCompose() {
       {activeTasks.map((task) => (
         <View className='rcompose__card rcompose__card--active' key={task.id}>
           <View className='rcompose__history-heading'>
-            <Text className='rcompose__sectitle'>{gradeTitle(task.grade)}{clipPrepSuffix(task)} · 进行中</Text>
+            <View className='rcompose__sechead'>
+              <View className='rcompose__secbar' />
+              <Text className='rcompose__sectitle'>{gradeTitle(task.grade)}{clipPrepSuffix(task)} · 进行中</Text>
+            </View>
           </View>
           <ProgressLine
             percent={task.progress}
@@ -1460,12 +1458,9 @@ export default function RenderCompose() {
       {renders.length > 0 && (
         <View className='rcompose__card rcompose__card--history'>
           <View className='rcompose__history-heading'>
-            <View className='rcompose__titlerow'>
+            <View className='rcompose__sechead'>
+              <View className='rcompose__secbar' />
               <Text className='rcompose__sectitle'>成片记录</Text>
-              <SectionHelp
-                title='成片记录'
-                text='每次提交生成都会留下一条记录（含积分结算）。点左侧描述可进详情页；成功的成片点「播放」直接在本页顶部播放。'
-              />
             </View>
             <Button className='rcompose__headbtn' size='mini' loading={refreshingHistory} disabled={refreshingHistory} onClick={() => void reloadHistory()}>刷新</Button>
           </View>
@@ -1533,17 +1528,25 @@ export default function RenderCompose() {
             与档位、调色都无关 —— 所以没有必要跟三档/调色并排挤在一起。 */}
       <View className='rcompose__card rcompose__card--publish'>
         <View className='rcompose__history-heading'>
-          <View className='rcompose__titlerow'>
+          <View className='rcompose__sechead'>
+            <View className='rcompose__secbar' />
             <Text className='rcompose__sectitle'>发布素材</Text>
-            <SectionHelp
-              title='发布素材'
-              text='按这条视频的口播文案，生成可以直接发布的三样东西：标题、3:4 竖版封面、发布文案。'
-            />
           </View>
           {!!publishMat && !publishLoading && (
             <Button className='rcompose__headbtn' size='mini' onClick={() => void doGeneratePublish('ALL')}>重新生成</Button>
           )}
         </View>
+
+        {/* ── 价格常驻在按钮这一屏（2026-09-25）──
+            ★ 为什么必须有这一行：原来金额**只**出现在确认弹窗里（`costText`）。
+              弹窗按用户要求收成一句「确定重新生成？」之后，金额就没有落点了 ——
+              那等于「点下去之前看不到价」。而这里是**两笔**钱（封面固定 + 按 token 的选帧），
+              当前配置合计可到 900 积分量级，属于「不知情花掉就会被投诉」的那一档。
+            ★ 为什么是小字而不是再加一句弹窗话：小字不占一次点击、不挤压布局，
+              弹窗只回答「要不要做」。（明细原来挂在标题旁那个问号上，2026-09-25 连同问号一起删了。）
+            ⚠ 与底部条那个「约 X 积分」**不是一回事**：那条是**视频合成**的价（随档位/时长变），
+              这一行是**发布素材**的价（与档位无关）。两者并排出现时字面很容易混，别合并。 */}
+        {pubCost !== null && <Text className='rcompose__pubcost'>生成一次最多 {pubCost} 积分</Text>}
 
         {!publishMat && !publishLoading && (
           <>
@@ -1558,9 +1561,6 @@ export default function RenderCompose() {
 
         {publishLoading && (
           <>
-            <Text className='rcompose__pubhint'>
-              正在生成：先从你拍好的画面里挑一帧，再写标题与文案，最后做成封面。大约需要 1~2 分钟，请不要离开本页。
-            </Text>
             {/* ★ 这里用「按耗时估算」的进度而不是无反馈的转圈：服务端没有可订阅的进度事件，
                 但三步耗时量级稳定（实测：文本 ~10s / 选帧 6~20s / 出图 30~85s），所以估算是有信息量的。
                 percent 封顶 95 —— 永远不能显示 100%，那等于在结果回来之前宣称已完成。
@@ -1689,11 +1689,6 @@ export default function RenderCompose() {
             <Text className='rcompose__balance'>
               可用 {available} · {isMember ? '已订阅' : '未订阅，生成前需开通'}
             </Text>
-          </View>
-          {/* 那一行结算口径的小字收进这个问号：常驻时占掉一行高度却几乎没人读，
-              而底部条是固定定位 —— 省下的高度就是内容区的高度。点开才展开（原生弹窗，不挤压布局）。 */}
-          <View className='rcompose__help' hoverClass='ds-hover' onClick={showCostHelp}>
-            <t-icon name='help-circle' size='38rpx' color='#8e939a' />
           </View>
           <Button
             className='ds-btn ds-btn--primary rcompose__render'
