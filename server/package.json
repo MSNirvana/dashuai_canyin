@@ -47,6 +47,7 @@
     "publish-cover:verify": "tsx scripts/verify-publish-cover-chain.ts",
     "publish-cover:probe": "tsx scripts/probe-publish-cover.ts",
     "cover:framing-drift": "python3 scripts/cover-framing-drift.py",
+    "works:hide-placeholders": "tsx scripts/hide-placeholder-works.ts",
     "input-trim:verify": "tsx scripts/verify-input-trim.ts",
     "color-preview:verify": "tsx scripts/verify-color-preview.ts",
     "profile:verify": "tsx scripts/verify-profile.ts",

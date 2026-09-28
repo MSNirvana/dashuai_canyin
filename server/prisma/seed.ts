@@ -653,6 +653,9 @@ async function seedExcellentWorks() {
     }
     const existing = await prisma.excellentWork.findFirst({ where: { title: w.title, deletedAt: null } })
     if (existing) {
+      // ★★ 注意 `data` 里**故意没有 `enabled`**：重跑 seed 只刷新配方与分类，
+      //   绝不能把运营的上下架决定打回去（那会让「我明明下架了」变成每次 seed 都复活）。
+      //   加字段时先想清楚：改 `data` 就等于改**所有已存在作品的运营状态**。
       await prisma.excellentWork.update({ where: { id: existing.id }, data })
     } else {
       await prisma.excellentWork.create({
@@ -660,15 +663,22 @@ async function seedExcellentWorks() {
           title: w.title,
           ...data,
           // 封面/视频留空，由运营在后台补齐；未补素材前前端展示中性占位
-          enabled: true,
+          // ★★ 2026-09-28：改为**默认不上架**（原来这里是 enabled: true）。
+          //   这 28 条是**配方模板**、没有任何素材，上架状态下的真实效果是：
+          //   首页「优秀作品」整块全是「封面待补」的灰块，点进去也播不了 ——
+          //   对一个还没上传过任何真实作品的账号，这等于首页在自我否定。
+          //   现在它们只是后台里的**未上架草稿**：运营挑一条、补上视频与封面、上架，
+          //   首页那块会自动出现（前端按「有没有已上架作品」决定整块显不显示）。
+          enabled: false,
           sourceType: 'MANUAL',
-          publishedAt: new Date(),
+          publishedAt: null,
         },
       })
     }
   }
   const categories = new Set(excellentWorks.map((w) => w.category))
   console.log(`[seed] 优秀作品: ${excellentWorks.length} 条（${categories.size} 个分类，${WORK_STYLES.length} 套镜头模板）`)
+  console.log('[seed] 优秀作品默认**全部未上架**：它们是配方模板、没有素材。补上视频与封面再在后台点「上架」。')
 }
 
 // ================= 后台管理员（单角色全权限，密码 scrypt 哈希） =================
