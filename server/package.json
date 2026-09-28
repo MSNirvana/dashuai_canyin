@@ -77,6 +77,7 @@
     "tts:verify-voices": "tsx scripts/verify-tts-voices.ts",
     "asr:probe": "tsx scripts/probe-tencent-asr.ts",
     "bgm:generate": "tsx scripts/bgm-generate.ts",
+    "bgm:replenish": "tsx scripts/bgm-replenish.ts",
     "bgm:verify": "tsx scripts/verify-bgm-library.ts"
   },
   "dependencies": {
