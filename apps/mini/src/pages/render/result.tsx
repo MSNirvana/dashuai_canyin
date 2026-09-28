@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { View, Text, Button, Video, Image } from '@tarojs/components'
 import Taro, { useRouter } from '@tarojs/taro'
 import { getRender, listRenders, getResultPlayUrl, type RenderTask } from '../../services/render'
-import { getPublishMaterial, type PublishMaterial, type PublishMaterialEstimate } from '../../services/publish-material'
+import { getPublishMaterial, type PublishMaterial } from '../../services/publish-material'
 import { isNumericId } from '../../utils/route-id'
 // 时间一律走这里：接口给的是 UTC 的 ISO 串（…T…Z），直接渲染会露出 T、Z 且差 8 小时
 import { formatMinute } from '../../utils/time'
@@ -43,7 +43,6 @@ export default function RenderResult() {
   const [task, setTask] = useState<RenderTask | null>(null)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [material, setMaterial] = useState<PublishMaterial | null>(null)
-  const [estimate, setEstimate] = useState<PublishMaterialEstimate | null>(null)
   const [loadError, setLoadError] = useState('')
   const [mediaError, setMediaError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -78,7 +77,6 @@ export default function RenderResult() {
       setTask(loadedTask)
       if (materialRes) {
         setMaterial(materialRes.material)
-        setEstimate(materialRes.estimate)
       }
       if (loadedTask.resultKey) {
         // ★ 结果地址每次进页面现签：签名 URL 会过期，缓存进 storage 隔天就是打不开的黑屏
@@ -227,8 +225,7 @@ export default function RenderResult() {
           <View className='rresult__empty'>
             <Text className='rresult__emptytitle'>还没有生成发布素材</Text>
             <Text className='rresult__emptytext'>
-              在「合成成片」页点「生成发布素材」，会按口播文案给出标题、封面与文案
-              {estimate ? `（标题/文案最多 ${estimate.textBeanCap} 积分，封面选帧最多 ${estimate.pickBeans} 积分，封面固定 ${estimate.coverBeans} 积分）` : ''}。
+              在「合成成片」页点「生成发布素材」，会按口播文案给出标题、封面与文案。
             </Text>
             <Button
               className='ds-btn ds-btn--primary'

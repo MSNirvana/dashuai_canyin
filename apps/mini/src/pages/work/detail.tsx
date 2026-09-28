@@ -97,8 +97,8 @@ export default function WorkDetailPage() {
     const r = await Taro.showModal({
       title: '用 AI 直接生成',
       content: shotCount
-        ? `将预填这条作品的文案款式与镜头复杂度，并直接套用它的 ${shotCount} 个分镜（不再另外生成分镜）。点「生成」后只消耗文案的积分。继续？`
-        : '将按这条作品的配方预填文案款式与镜头复杂度，点「生成」后消耗积分。继续？',
+        ? `将预填这条作品的文案款式与镜头复杂度，并套用它的 ${shotCount} 个分镜（不再另生成分镜）。`
+        : '将按这条作品的配方预填文案款式与镜头复杂度。',
       confirmText: '继续生成',
       confirmColor: '#e1251b',
     })

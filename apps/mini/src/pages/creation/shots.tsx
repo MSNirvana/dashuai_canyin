@@ -294,7 +294,7 @@ export default function CreationShots() {
     if (!id || skipping[shot.id]) return
     const r = await Taro.showModal({
       title: '跳过这个分镜',
-      content: '不会出现在成片里，也不会计费。',
+      content: '跳过后不会出现在成片里。',
       confirmText: '确定跳过',
       confirmColor: '#8e939a',
     })

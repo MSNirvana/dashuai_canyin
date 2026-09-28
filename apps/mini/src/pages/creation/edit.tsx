@@ -274,14 +274,6 @@ export default function CreationEdit() {
   const dishReqRef = useRef(0)
 
   const [creating, setCreating] = useState(false)
-  /**
-   * 页脚「?」的说明气泡是否展开。
-   *
-   * 纯本地开关，不落库、不需要跨页保持 —— 它收的是原来常驻在按钮下方的那句
-   * 「选好门店、菜品和表达方向，文案与分镜会自动整理好」：属于**按需了解**的信息，
-   * 常驻只会占掉按按钮前最后一眼的注意力，收到问号里更合适。
-   */
-  const [showHelp, setShowHelp] = useState(false)
   // ── 同款配方（来自优秀作品） ──
   const [workRecipe, setWorkRecipe] = useState<WorkRecipe | null>(null)
   const [workTitle, setWorkTitle] = useState('')
@@ -1054,9 +1046,10 @@ export default function CreationEdit() {
             门店上下文改由 `currentStoreId` 单一来源决定（本页 storeIdx 跟随它）。 */}
         <View className='cedit__new-head'>
           <Text className='cedit__new-title'>每天5分钟坚持同城曝光！</Text>
-          {/* 原来这里的副标题（「选好门店、菜品和表达方向，AI 会帮你…」）已挪到页脚做小字提醒。
-              它说的是「接下来要做什么」，摆在标题下方会先于表单占掉一屏注意力；
-              而且带「AI」的说法在这里是多余的 —— 按钮和页脚已经说清会发生什么。 */}
+          {/* 原来这里的副标题（「选好门店、菜品和表达方向，AI 会帮你…」）已删除。
+              它说的是「接下来要做什么」，摆在标题下方会先于表单占掉一屏注意力。
+              ★ 沿革：先挪到页脚做小字 → 再收进页脚那个「?」的气泡 → **2026-09-25 随
+                「?」一起删掉**（用户要求删掉全系统的问号，并明确选择「直接删，不补」）。 */}
         </View>
 
         {/* ── 文案款式：本页**第一个**决定，所以排在最前、字号也最大 ──
@@ -1171,20 +1164,15 @@ export default function CreationEdit() {
         )}
 
         <View className='ds-footer'>
-          {/* 问号与主按钮**成组居中**。
+          {/* 主按钮居中。
               不再套 `ds-footer__row`：它那条 `.ds-footer__row .ds-btn--block { flex:1; width:auto }`
               是给「上一步 + 下一步」那种一窄一宽的排法用的，会把按钮撑满整行，
               而这一版要的是半宽按钮（见 scss 的 `&__submit`）。
               ★ 居中容器不能直接是 `<Button>` —— 小程序原生 button 自带一套样式，
-                给它设 `display:flex` 会影响其内部渲染，所以外面必须再包一层 View。 */}
+                给它设 `display:flex` 会影响其内部渲染，所以外面必须再包一层 View。
+              ★ 2026-09-25：原来这一行是「问号 + 半宽按钮」成组居中；问号按用户要求删掉，
+                现在只剩按钮一个元素居中（`&__footrow` 因此也不再需要 gap）。 */}
           <View className='cedit__footrow'>
-            <View
-              className={`cedit__help ${showHelp ? 'cedit__help--on' : ''}`}
-              hoverClass='ds-hover'
-              onClick={() => setShowHelp((v) => !v)}
-            >
-              ?
-            </View>
             <Button
               className='ds-btn ds-btn--primary cedit__submit'
               hoverClass='ds-hover'
@@ -1200,15 +1188,6 @@ export default function CreationEdit() {
               非读取态整行不渲染，页脚自然回到「只有一行按钮」的高度。 */}
           {!!workId && !workLoaded && (
             <View className='ds-footer__note'>正在读取同款配方…</View>
-          )}
-          {/* 点「?」弹出来的说明。.ds-footer 是 position:fixed，所以这里 absolute + bottom:100%
-              就浮在页脚上沿，不会把按钮往下推（展开/收起时页脚高度不变）。 */}
-          {showHelp && (
-            <View className='cedit__help-bubble'>
-              <Text className='cedit__help-line'>
-                选好门店、菜品和表达方向，文案与分镜会自动整理好
-              </Text>
-            </View>
           )}
         </View>
 
