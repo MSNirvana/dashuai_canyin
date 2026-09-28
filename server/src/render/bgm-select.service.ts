@@ -48,6 +48,15 @@ export interface BgmSelectInput {
   style: string
   /** 这条片子的口播文案（逐镜头拼起来）。空 = 没有可判断的内容 */
   copyText: string
+  /**
+   * 该门店最近用过的曲子（绝对路径，见 `bgm-history.ts`）—— 从候选里**排除**掉。
+   *
+   * ★ 排除**必须发生在喂给模型之前**，而不是拿到模型的下标之后再过滤：模型返回的是
+   *   **下标**，而下标与候选清单一一对应。先按同一份清单算下标、再拿被过滤过的清单去取，
+   *   就会取到**另一首**（而且不报错）—— 那正是 `bgm-library.ts::describeBgmCandidates`
+   *   注释里警告过的「顺序 = 契约」。
+   */
+  exclude?: readonly string[]
 }
 
 export interface BgmSelectOutcome {
@@ -81,9 +90,14 @@ export async function selectBgmFromPool(input: BgmSelectInput): Promise<BgmSelec
   const copyText = input.copyText.trim()
   if (!copyText) return skip('这条片子没有口播台词 ⇒ 没有内容依据，随机抽一首')
 
-  const candidates = describeBgmCandidates(input.style)
+  const allCandidates = describeBgmCandidates(input.style)
+  // ★ 「避开该门店最近用过的」——**在喂给模型之前**就把它们剔掉（理由见 `exclude` 的注释）。
+  // ★ 全被剔空（池子很小 / 该门店已把池子用遍）时退回全池：宁可重样，也不能没有候选可比。
+  const blocked = new Set((input.exclude ?? []).filter(Boolean))
+  const remaining = blocked.size > 0 ? allCandidates.filter((candidate) => !blocked.has(candidate.file)) : allCandidates
+  const candidates = remaining.length > 0 ? remaining : allCandidates
   if (candidates.length <= 1) {
-    return skip(`风格 ${input.style} 的池内只有 ${candidates.length} 首 ⇒ 无从选，随机抽一首`)
+    return skip(`风格 ${input.style} 的池内只有 ${candidates.length} 首可挑 ⇒ 无从选，随机抽一首`)
   }
   const describedCount = candidates.filter((candidate) => candidate.note).length
   if (describedCount < MIN_DESCRIBED_CANDIDATES) {

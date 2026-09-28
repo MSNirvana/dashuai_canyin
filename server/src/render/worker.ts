@@ -44,6 +44,8 @@ import {
 import { applyAiSynthesis, fitShotDurationsToTimeline, shouldExtendForNarration, type SynthesisShot } from './synthesis.js'
 import { resolveBgmTrack } from './bgm-library.js'
 import { selectBgmFromPool } from './bgm-select.service.js'
+import { dispatchBgmFromPool, noteBgmDispatched } from './bgm-dispatch.js'
+import { recentBgmTracksForMerchant, storeBgmTrack } from './bgm-history.js'
 import { activeTtsProvider, providerForVoice } from '../services/tts-provider.service.js'
 import { estimateSpeechMs } from './tts.js'
 import { signedObjectUrl } from '../lib/cos.js'
@@ -486,13 +488,18 @@ async function processTask(
   }
 
   /**
-   * ★★ 配乐选曲**在这里就发出去**，而不是等到真正挑配乐那一刻（下面 3.5 节）再 await。
+   * ★★ 配乐准备（查门店历史 → 选曲）**在这里就发出去**，而不是等到真正挑配乐那一刻
+   * （下面 3.5 节）再 await。
    *
-   * 为什么必须提前：这是一次**在线 AI 调用**。若放在用它的地方同步等，它的耗时
+   * 为什么必须提前：选曲是一次**在线 AI 调用**。若放在用它的地方同步等，它的耗时
    * （正常 7~8s，超时上限 30s）会**整段加进出片时间** —— 而本项目的等待预算是硬的、
    * 且**不允许再变**：nginx 480s > 前端 420s > 服务端 390s。
    * 放在这里，它就和「逐镜头归一化 + 调色 + 拼接」那几十秒 ffmpeg 工作是**并发**的 ——
    * 等真正要用时它多半已经好了，这次调用的等待时间约等于 0。
+   *
+   * ★ 这一步现在多做一件事：查「**该门店最近在同风格下用过哪些曲子**」（一次走
+   *   `[merchantId, createdAt]` 索引的查询）。它是「同一家店别连着重样」的唯一依据
+   *   （进程内那个派发器只管「同一时刻别撞」，重启即失、不区分门店）。同样藏在 ffmpeg 那几十秒里。
    *
    * ★ 立刻挂 `.catch`：即使后面某个环节抛错、整单提前退出，也不会留下一个未处理的 rejection
    *   （那会在 Node 里冒出 unhandledRejection，把一次正常的失败日志搅乱，误导排查方向）。
@@ -502,20 +509,27 @@ async function processTask(
    *   ★ 真正「不值得发」的几种情况（没台词、池内不足两首、没有描述）由 service 内部挡住
    *     （它会在发请求**之前**就返回，见 `MIN_DESCRIBED_CANDIDATES`）。
    */
-  const bgmSelection =
-    aiMode && effectiveChatcut.bgm !== 'NONE'
-      ? selectBgmFromPool({
-          merchantId: task.merchantId,
-          taskId: task.id,
-          style: effectiveChatcut.bgm,
-          copyText: clips
-            .map((clip) => clip.line?.trim())
-            .filter((line): line is string => Boolean(line))
-            .join('\n'),
-        }).catch((error: unknown) => {
-          // service 内部已经「绝不抛错」；这里纯粹是第二道保险，确保不留未处理的 rejection
+  const prepareBgmStyle = effectiveChatcut.bgm === 'NONE' ? null : effectiveChatcut.bgm
+  const bgmPreparation =
+    aiMode && prepareBgmStyle
+      ? (async () => {
+          const style = prepareBgmStyle
+          const exclude = await recentBgmTracksForMerchant(task.merchantId, style)
+          const selection = await selectBgmFromPool({
+            merchantId: task.merchantId,
+            taskId: task.id,
+            style,
+            copyText: clips
+              .map((clip) => clip.line?.trim())
+              .filter((line): line is string => Boolean(line))
+              .join('\n'),
+            exclude,
+          })
+          return { exclude, selection }
+        })().catch((error: unknown) => {
+          // 上面两步内部都已经「绝不抛错」；这里纯粹是第二道保险，确保不留未处理的 rejection
           console.warn(
-            `[render-worker] 配乐选曲意外抛错（按随机抽处理）：${(error as Error)?.message ?? String(error)}`,
+            `[render-worker] 配乐准备意外抛错（按「没有历史 + 随机派发」处理）：${(error as Error)?.message ?? String(error)}`,
           )
           return null
         })
@@ -663,14 +677,13 @@ async function processTask(
         if (effectiveChatcut.bgm !== 'NONE') {
           /**
            * 配乐取用顺序（**三级**，越靠前越优先）：
-           *   ① 本地曲库该风格的那一首。它自己又分两档：
-           *      a) **池子** `assets/bgm/<风格>/` 里的若干首 —— 由定时补货
-           *         （`npm run bgm:replenish`）或 `npm run bgm:generate` 落盘，
-           *         多条曲子正是「每条片子配乐不重样」的来源。
-           *         ★ 池内有多首时，**先按口播内容让模型挑一首**（`bgm-select.service.ts`），
-           *           选不出来（没台词 / 通道挂 / 积分不足 / 没描述）就退回随机抽一首 ——
-           *           随机那条路径是对外行为完全不变的老行为。
-           *      b) 老的**单文件** `assets/bgm/<风格>.<ext>`（线上现存曲库就是这种）。
+           *   ① 本地曲库该风格的那一首。它自己又分三层（见下面使用点的注释）：
+           *      **池子** `assets/bgm/<风格>/`（由定时补货 `bgm-replenish.ts` 或
+           *      `bgm:generate` 落盘）⇒ 取用时先按口播内容让模型挑（`bgm-select.service.ts`），
+           *      挑不出来就交给**进程内派发器**（`bgm-dispatch.ts`，避开最近派发过的几首），
+           *      池子为空才退回老的随机抽取；再往后才是老的**单文件** `assets/bgm/<风格>.<ext>`。
+           *      ★ 派发器与选曲都还会避开「**该门店最近用过的**」曲子
+           *        （`bgm-history.ts` 读 `RenderTask.bgmTrack`）—— 那是「同一个店别连着重样」的依据。
            *   ② `DEFAULT_BGM_PATH` 指定的单个文件（老配置：所有风格共用一首，保留兼容）。
            *   ③ 合成垫底 `ffmpegGenerateBackgroundMusic`。
            *
@@ -687,22 +700,35 @@ async function processTask(
            *   最坏是「有一条长音垫底」（实测约 -37dBFS，听感是嗡不是曲子），而不是没有配乐。
            */
           const style = effectiveChatcut.bgm
-          // ★ 第 ① 档内部再分两层：先用前面**并发发出**的选曲结果，拿不到就随机抽一首。
+          // ★ 第 ① 档内部再分三层：
+          //   a) 前面**并发发出**的选曲结果（按口播内容选中的那一首）；
+          //   b) 进程内派发器（`bgm-dispatch.ts`）—— 避开最近派发过的几首，同刻并发出片不撞同一首；
+          //   c) `resolveBgmTrack` 的随机抽取（池子为空时才会走到 ⇒ 退化成改动前的行为）。
           //   `await` 一个已经跑了几十秒 ffmpeg 的 promise，正常情况下是立即返回的。
-          const selection = bgmSelection ? await bgmSelection : null
+          const prepared = bgmPreparation ? await bgmPreparation : null
+          const selection = prepared?.selection ?? null
+          const recentExclude = prepared?.exclude ?? []
           if (selection) {
             console.log(
               `[render-worker] task ${task.id} ${selection.notice}（本次选曲扣 ${selection.beanCharged} 积分）`,
             )
           }
-          const styleTrack = selection?.file ?? resolveBgmTrack(style)
+          // ★ 先让派发器「知道」AI 选走的那一首：否则它会把同一首发给紧接着的下一条片子
+          if (selection?.file) noteBgmDispatched(style, selection.file)
+          const dispatched = selection?.file ? null : dispatchBgmFromPool(style, recentExclude)
+          const styleTrack = selection?.file ?? dispatched?.file ?? resolveBgmTrack(style)
           const configuredBgm = process.env.DEFAULT_BGM_PATH?.trim()
           if (styleTrack) {
             backgroundMusicPath = styleTrack
-            console.log(
-              `[render-worker] task ${task.id} 配乐取自曲库 ${style}` +
-                `（${selection?.file ? '按口播内容选中' : '随机抽取'}）：${styleTrack}`,
-            )
+            const bgmSource = selection?.file
+              ? '按口播内容选中'
+              : dispatched
+                ? `按派发器选出（池内 ${dispatched.poolSize} 首，可用 ${dispatched.usableSize} 首` +
+                  `${dispatched.relaxed ? '，被避空已放宽' : ''}）`
+                : '随机抽取（池子为空，退回单文件兜底）'
+            console.log(`[render-worker] task ${task.id} 配乐取自曲库 ${style}（${bgmSource}）：${styleTrack}`)
+            // 记下这次用的曲子 ⇒ 下次同一门店派发时避开它。★ 内部已 catch，写入失败绝不影响出片
+            await storeBgmTrack(task.id, styleTrack, fence)
           } else if (configuredBgm && existsSync(configuredBgm)) {
             backgroundMusicPath = configuredBgm
             console.log(`[render-worker] task ${task.id} 曲库无 ${style}，配乐取 DEFAULT_BGM_PATH：${configuredBgm}`)

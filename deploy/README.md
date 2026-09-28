@@ -474,10 +474,19 @@ bash deploy/install-bgm-replenish.sh --uninstall
 - **默认每日 04:40**（错开 04:30 的存储 GC），单轮每风格补 **1** 首 ⇒ 上界约 **0.72 元/轮**
   （火山按秒计费，约 0.002 元/秒，120s 一首 ≈ 0.24 元）。
 - **补满之后每轮零花费**：脚本走「正好 ⇒ 不动」分支，只打一行日志。
+- ★★ **首次填充不要靠它**：目标已提到 **30 首/风格**（≈84 首、≈20 元），按每轮 3 首算要将近
+  一个月。首次用一次性批量补，之后让定时任务只负责「掉了就补回来」：
+  ```bash
+  cd /opt/dashuai/server && npx tsx scripts/bgm-replenish.ts --yes --target=30 --max=10
+  ```
 - ⚠ 池内**超额**时会**淘汰最旧的**。所以 `BGM_POOL_TARGET`（`src/render/bgm-library.ts`）
   **调小 = 下次调度静默删曲子** —— 改之前先想清楚。
 - 提示词表（`src/render/volcano-bgm.ts::VOLCANO_BGM_PROMPTS`）**条数必须 ≥ 目标数**，
   否则取词会绕回起点生成近乎重复的曲子且**不报错**；`npm run bgm:verify` 会因此变红。
+- 渲染期取用已不再「纯随机」：`bgm-dispatch.ts` 用**进程内 LRU** 保证相邻两次派发不同首、
+  且一个池子被完整轮转一遍才回到起点；再叠加「避开**该门店**最近用过的」（`RenderTask.bgm_track`
+  这一列 + `bgm-history.ts`）。**列由迁移 `20260928160000_add_render_task_bgm_track` 建**，
+  漏跑迁移的后果是「查询/写入被内部 catch 掉 ⇒ 静默退化成无历史」，不会报错。
 
 判活一行：
 

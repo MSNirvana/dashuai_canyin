@@ -435,6 +435,13 @@ model RenderTask {
   startAt       DateTime? @map("start_at") @db.DateTime(3)
   finishAt      DateTime? @map("finish_at") @db.DateTime(3)
   costMs        Int?      @map("cost_ms") @db.UnsignedInt()
+  /// 本次出片**实际用到的配乐文件**（绝对路径，`null` = 这次没配乐/是历史数据）。
+  ///
+  /// ★ 为什么必须落成列而不是塞进 paramsJson：`storeChatCutState` 对 `params_json` 做
+  ///   **整体替换**，塞进去会被静默冲掉（当年租约那几列落列是同一个理由）。
+  /// ★ 用途：下次给**同一门店**派发配乐时避开最近用过的几首
+  ///   （`bgm-dispatch.ts` 的进程内记忆只管「同一时刻别撞」，跨重启/按门店维度的记忆靠这一列）。
+  bgmTrack      String?   @map("bgm_track") @db.VarChar(512)
   /// worker 租约（fencing token）。认领时写入 owner 并递增 version，心跳只刷新 leaseExpireAt。
   /// ★ 为什么必须落成列而不是塞进 paramsJson：
   ///   ① 回收判据要能走索引、且不能与 `storeChatCutState` 的全量替换 paramsJson 抢读改写；

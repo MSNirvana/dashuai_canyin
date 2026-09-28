@@ -39,6 +39,18 @@
  *      `null`；`parseBgmChoice` 对越界 / 非整数 / 非 JSON / 缺字段一律返回 `null`（退回随机抽取），
  *      并且**绝不抛错**（`count` 非法也不行）。
  *
+ *   ⑨ **「别重样」这件事光靠随机做不到**：随机**没有记忆** —— 同时出片的几条片子两两撞同一首的
+ *      概率仍是 `1/N`；而用户真正会察觉的是「**我这个店**连着几条重样」（生日问题：池子再大也躲
+ *      不掉短期重叠）。更要紧的是：`index = f(门店, 时间)` 这类**纯函数救不了并发撞车** ——
+ *      碰撞概率一样是 `1/N`，而且映射相同的那一对门店会**永久**撞在一起（比随机更差）。
+ *      ⇒ 必须有**共享的分配状态**在中间协调。所以断言派发器：**完整轮转**（池子遍历一遍才回到起点，
+ *      因而池里每一首都用得上）、相邻两次派发**必然**不同首、门店历史是**硬过滤**、历史把候选占满时
+ *      **放宽而不是返回空**（宁可重样也不能没有配乐）、LRU 容量为 0 时退化成「永远取第一首」
+ *      （证明容量是个真旋钮）、`note()` 能让 AI 选走的那首也进出口径；以及门店历史的过滤
+ *      **只认池子目录** —— `LIGHT.mp3` 这种单文件混进来会白占一个避开位。
+ *      ⚠ 特别注意「完整轮转」这条：最初写成「避开最近 3 首 + 取第一个可用」时，池子里第 5 首
+ *      **永远轮不到**（窗口一放宽队首又可用，序列稳定落在 `A B C D A B C D…`）—— 比随机更浪费。
+ *
  * 不连库、不联网、不写任何项目文件（只在系统临时目录里造样例，`finally` 清掉）。
  */
 import assert from 'node:assert/strict'
@@ -61,6 +73,13 @@ import {
   usedBgmPromptTexts,
 } from '../src/render/bgm-library.js'
 import { buildBgmOptionText, parseBgmChoice } from '../src/render/bgm-choice.js'
+import {
+  BGM_HISTORY_AVOID,
+  BGM_LRU_CAPACITY,
+  createBgmAllocator,
+  filterTracksByStyle,
+  pickLeastRecent,
+} from '../src/render/bgm-dispatch.js'
 import { BGM_PROMPTS, ChatCutOptionsSchema } from '../src/render/chatcut.js'
 import {
   VOLCANO_BGM_MAX_SEC,
@@ -431,11 +450,104 @@ function main(): void {
     assert.equal(parseBgmChoice('{"index":0}', badCount), null, `count=${badCount} 必须返回 null 而不是抛错`)
   }
 
+  // ── ⑯ 派发器 + 门店历史过滤（见文件头 ⑨）—— 同样是不连库的纯逻辑 ──────────────
+  const cands = ['a', 'b', 'c', 'd', 'e']
+  assert.equal(pickLeastRecent([], []), null, '没有候选必须返回 null，让调用方去走单文件兜底')
+  assert.equal(pickLeastRecent(cands, []), 'a', '都没用过时取顺序里第一个（结果必须完全确定）')
+  assert.equal(pickLeastRecent(['a', 'b'], ['a']), 'b', '刚用过的必须让位给没用过的')
+  assert.equal(pickLeastRecent(['a', 'b'], ['b', 'a']), 'a', '两首都用过时取**最久**的那首（不是随便一首）')
+  assert.equal(
+    pickLeastRecent(['a', 'b', 'c'], ['b']),
+    'a',
+    '从没用过的优先级最高 —— 否则新补进池子的曲子会永远轮不到',
+  )
+
+  const alloc = createBgmAllocator()
+  const seq: string[] = []
+  for (let i = 0; i < 10; i += 1) {
+    const hit = alloc.dispatch(cands)
+    assert.ok(hit, `第 ${i} 次派发不该返回 null`)
+    seq.push(hit.file)
+  }
+  // ★★ 这一条是整段改动的核心保证：随机抽取做不到「5 次覆盖全池且相邻必不同」
+  assert.equal(new Set(seq.slice(0, 5)).size, 5, '前 5 次必须覆盖全池（稳定轮转；随机抽样做不到）')
+  for (let i = 1; i < seq.length; i += 1) {
+    assert.notEqual(seq[i], seq[i - 1], `相邻两次派发必须不同首（第 ${i} 次）—— 这就是并发不撞车的保证`)
+  }
+  assert.deepEqual(
+    seq,
+    ['a', 'b', 'c', 'd', 'e', 'a', 'b', 'c', 'd', 'e'],
+    '必须是**完整轮转**：池子里每一首都用得上，且遍历一遍才回到起点',
+  )
+
+  // ★ 该门店的历史是**硬过滤**：传进来的必须真的被避开
+  assert.equal(createBgmAllocator().dispatch(cands, ['a'])?.file, 'b', 'exclude 里的曲子必须被跳过')
+  // ★ 历史把候选占满 ⇒ 放宽（宁可重样，也不能没有配乐），而不是返回 null
+  const relaxedHit = createBgmAllocator().dispatch(['a'], ['a'])
+  assert.equal(relaxedHit?.file, 'a', '候选被历史占满时必须放宽，而不是派不出配乐')
+  assert.equal(relaxedHit?.relaxed, true, '放宽这一事实必须能被日志看见（`relaxed` 字段）')
+
+  // ★ 容量是个**真旋钮**：置 0 就退化成「永远取第一个」（证明记忆确实在起作用）
+  const noMemory = createBgmAllocator(0)
+  assert.equal(noMemory.dispatch(cands)?.file, 'a')
+  assert.equal(noMemory.dispatch(cands)?.file, 'a', 'LRU 容量为 0 时必须退化成固定取第一首')
+
+  // ★ AI 选曲绕过派发器，必须能把「它选走的那首」回填进使用次序，否则紧接着的派发会又发同一首
+  const alloc2 = createBgmAllocator()
+  assert.equal(alloc2.dispatch(cands)?.file, 'a')
+  alloc2.note('c')
+  assert.notEqual(alloc2.dispatch(cands)?.file, 'c', 'note() 记过的曲子必须被后续派发避开')
+  alloc2.reset()
+  assert.equal(alloc2.dispatch(cands)?.file, 'a', 'reset() 后记忆必须清空（测试之间不能互相串）')
+
+  // ★ 池子只有 1~2 首时：既不能返回 null、也不能死循环（2 首必须交替）
+  const tiny = createBgmAllocator()
+  const tinySeq: string[] = []
+  for (let i = 0; i < 4; i += 1) {
+    const hit = tiny.dispatch(['a', 'b'])
+    assert.ok(hit, '池子只有 2 首时也必须派得出来')
+    tinySeq.push(hit.file)
+  }
+  assert.deepEqual(tinySeq, ['a', 'b', 'a', 'b'], '池子只有 2 首时必须交替，而不是只发第一首')
+  assert.ok(createBgmAllocator().dispatch(['a']), '池子只有 1 首时也必须派得出来')
+
+  assert.ok(BGM_HISTORY_AVOID >= 1, '门店历史的避开深度至少要是 1，否则「避开最近用过的」整体失效')
+  assert.ok(BGM_LRU_CAPACITY >= 16, 'LRU 容量必须明显大于常见池子大小，否则轮转会退化成「只在前几首里转」')
+
+  // ── 门店历史过滤：**只认池子目录**（单文件与别的风格都不是候选，绝不能占避开位） ──
+  const lightDir = bgmPoolDir('LIGHT')
+  const upbeatDir = bgmPoolDir('UPBEAT')
+  const light1 = join(lightDir, 'LIGHT-1.wav')
+  const light2 = join(lightDir, 'LIGHT-2.wav')
+  const light3 = join(lightDir, 'LIGHT-3.wav')
+  const light4 = join(lightDir, 'LIGHT-4.wav')
+  const mixed = [
+    light4,
+    light3,
+    'LIGHT.mp3', // ← 单文件约定：**不是**池内候选
+    join(upbeatDir, 'UPBEAT-1.wav'), // ← 别的风格
+    null,
+    '',
+    light2,
+    light1,
+  ]
+  assert.deepEqual(
+    filterTracksByStyle(mixed, 'LIGHT'),
+    [light4, light3, light2],
+    '必须只挑同风格池子目录里的路径、保持原顺序、默认取最近几首（单文件与别的风格都要剔掉）',
+  )
+  assert.deepEqual(filterTracksByStyle(mixed, 'LIGHT', 2), [light4, light3], 'limit 必须生效')
+  assert.deepEqual(filterTracksByStyle(mixed, 'PREMIUM'), [], '没有该风格的历史时必须返回空数组')
+  assert.deepEqual(filterTracksByStyle(mixed, 'LIGHT', 0), [], 'limit=0 必须返回空')
+  assert.deepEqual(filterTracksByStyle(mixed, null), [], '没有风格时返回空（别把别的风格当成要避开的）')
+  assert.deepEqual(filterTracksByStyle(mixed, 'NONE'), [], '非法风格名返回空（它本来就没有池子）')
+
   console.log(
     '配乐曲库守护通过：风格集合三处同源、扩展名白名单不含元数据、空文件不命中、环境变量可还原、' +
       '池子优先且随机取用、单文件查找不看池子、淘汰保留最新并连元数据清掉、池内已用描述可读出、' +
       '候选描述与候选清单严格同序、选曲清单从 0 编号、下标解析越界不夹取且不抛错、' +
-      '火山提示词纯中文且排除人声、条数不薄于池子目标、生成时长同时满足接口与曲库硬约束、AK/SK 判据精确',
+      '火山提示词纯中文且排除人声、条数不薄于池子目标、生成时长同时满足接口与曲库硬约束、AK/SK 判据精确、' +
+      '派发器完整轮转且相邻必不同、门店历史是硬过滤且占满时放宽、LRU 容量可关、历史过滤只认池子目录',
   )
 }
 
