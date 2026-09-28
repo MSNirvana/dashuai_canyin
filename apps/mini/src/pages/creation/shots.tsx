@@ -513,11 +513,17 @@ export default function CreationShots() {
                     <View className='cshots__drop' hoverClass='ds-hover' onClick={() => openCamera(s)}>
                       <t-icon name='camera' size='48rpx' />
                       <Text className='cshots__drop-title'>{s.skipped ? '补拍这个分镜' : '拍摄视频'}</Text>
-                      <Text className='cshots__drop-sub'>
-                        {s.skipped
-                          ? '已跳过，不会被合成进成片'
-                          : '点一下开始录 · 台词会显示在取景画面上'}
-                      </Text>
+                      {/* ★ 2026-09-28：原来这里有一句常驻副标题
+                          「点一下开始录 · 台词会显示在取景画面上」，按用户要求删除。
+                          ⚠ 删掉之后这个虚线框里只剩「图标 + 标题」，这是可接受的 ——
+                            `&__drop` 是 `justify-content: center` 的**定高**容器
+                            （基础块 200rpx、产品化覆写块 168rpx），
+                            少一个子元素只会让剩下两行继续居中，不会内容靠上或留一截空白。
+                          ⚠ 「已跳过，不会被合成进成片」**没有**跟着删：它是**另一条**信息
+                            （说明这一段不会被合成进成片），不是那句引导语的变体。 */}
+                      {s.skipped && (
+                        <Text className='cshots__drop-sub'>已跳过，不会被合成进成片</Text>
+                      )}
                     </View>
                     <View className='cshots__actsrow'>
                       <Text className='cshots__alt' onClick={() => void onPickAlbum(s)}>从相册选一段 ›</Text>
