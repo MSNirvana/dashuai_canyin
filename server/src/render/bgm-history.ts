@@ -11,16 +11,7 @@
  * ★ 本模块的读写都**绝不抛错**：配乐是增强步骤，把它搞挂不该影响出片。
  */
 import { prisma } from '../db.js'
-import { filterTracksByStyle } from './bgm-dispatch.js'
-
-/**
- * 一次查询最多扫这么多条本门店的历史任务。
- *
- * ★ 为什么不是直接 `take: BGM_RECENT_AVOID`：历史里混着**别的风格**的曲子，而且
- *   中间可能有没配乐的任务。只取 3 条很可能一条都不属于当前风格 ⇒ 避开策略静默失效。
- *   取一个「足够覆盖近期几次同风格出片」的窗口，再在内存里按风格过滤。
- */
-const HISTORY_SCAN_LIMIT = 60
+import { BGM_HISTORY_SCAN_LIMIT, filterTracksByStyle } from './bgm-dispatch.js'
 
 /** worker 的租约（fencing token）—— 结构类型，避免与 worker.ts 互相 import */
 export interface BgmHistoryFence {
@@ -29,8 +20,14 @@ export interface BgmHistoryFence {
 }
 
 /**
- * 该门店**最近**在同风格下用过的曲子（最新在前）。
+ * 该门店在**同风格**下用过的曲子（最新在前）。
  *
+ * ★★ 返回的是**全部**（扫描窗口内的每一条同风格记录），不截断成「最近几首」——
+ *   调用方拿它当**硬过滤**，语义就是「这家店用过的曲子，用完一遍之前不再出现」。
+ *   2026-09-28 之前它只取「最近 3 首」（一个叫 `BGM_HISTORY_AVOID` 的深度），那个深度已删掉：
+ *   它只能保证 4 条不重样（判据：**保证不重样的条数 = 深度 + 1**），听感上就是「老在几首里打转」。
+ * ★★ 于是**扫描窗口 `BGM_HISTORY_SCAN_LIMIT` 成了唯一的真正上限**，它必须够大，
+ *   否则 `filterTracksByStyle` 只会返回一个短数组、**不报任何错** ⇒ 避重静默变浅。
  * ★ 任何失败都返回空数组 —— 调用方据此退化成「没有可避开的」，也就是本次改动之前的行为。
  */
 export async function recentBgmTracksForMerchant(
@@ -42,7 +39,8 @@ export async function recentBgmTracksForMerchant(
     const rows = await prisma.renderTask.findMany({
       where: { merchantId, bgmTrack: { not: null } },
       orderBy: { id: 'desc' },
-      take: HISTORY_SCAN_LIMIT,
+      // ★ 窗口必须装得下「一整个风格的池子」，理由见 `BGM_HISTORY_SCAN_LIMIT` 的注释
+      take: BGM_HISTORY_SCAN_LIMIT,
       select: { bgmTrack: true },
     })
     return filterTracksByStyle(

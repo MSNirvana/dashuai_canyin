@@ -4,7 +4,8 @@
  * ── 为什么不能只用随机 ────────────────────────────────────────────────────────
  * 随机抽取的病是：它**没有记忆**。池子 30 首、同时有 6 条片子出片，两两撞同一首的概率约 40%
  * —— 而那几条片子正是**同时**被看到的两家不同门店。更糟的是同一家门店连着出 3 条：
- * 第 3 条撞前两条的概率约 10%，一个月 8 条约 64%（生日问题，见 `bgm-library.ts::BGM_POOL_TARGET`）。
+ * 第 3 条撞前两条的概率约 10%，一个月 8 条约 64%（生日问题，见 `bgm-library.ts::BGM_POOL_TARGET`；
+ * 那几个百分比是按当时池子 30 首算的，池子已提到 100 ⇒ 数变小、结论不变）。
  *
  * ★★ 关键结论（决定了本模块为什么长这样）：**「门店 + 时间」这类纯函数救不了并发撞车。**
  *   任何 `index = f(merchantId, now)` 的确定性映射，两条不同片子的碰撞概率**仍然是 1/N**，
@@ -14,14 +15,21 @@
  *   · 一个池子会被**完整轮转一遍**才回到起点 ⇒ 池里每一首都真的用得上。
  *
  * ⚠ 踩过的坑（写下来免得下一个人再走一遍）：最初实现是「取第一个没被避开的那首」，
- *   配一个「避开最近 3 首」的窗口。结果第 5 首**永远轮不到** —— 因为容量为 3 的窗口一放宽，
+ *   配一个「避开最近 3 首」的**候选窗口**（那是派发器自己的窗口，不是门店维度那个深度，
+ *   它早就删了）。结果第 5 首**永远轮不到** —— 因为容量为 3 的窗口一放宽，
  *   队首又变成可用了，序列稳定地落在 `A B C D A B C D…`，池子里剩下的曲子被永久饿死
  *   （比随机更浪费：随机至少每首都有机会）。**多样性要靠轮转，不是靠避让窗口。**
  *
- * ── 与「按门店避开最近用过的」的分工 ─────────────────────────────────────────
- * 本模块的记忆活在**内存**里：重启即失，且不区分门店。它负责「同一时刻别撞」+「短期别重样」。
+ * ── 与「按门店避开用过的」的分工 ─────────────────────────────────────────────
+ * 本模块的记忆活在**内存**里：重启即失，且不区分门店。它负责「同一时刻别撞」。
  * 跨重启、按门店维度的记忆由调用方从库里查出（`RenderTask.bgmTrack`）后作为 `exclude` 传进来。
  * 两者互补：`exclude` 是**硬过滤**，LRU 是**在剩下的里挑最久没用过的**。
+ * ★★ `exclude` 是**整池**（`filterTracksByStyle` 不截断，见该函数注释）⇒ 一家门店在某个风格下
+ *   **用过一遍之前不会听到重复的曲子**。这条路才是「同一家店别重样」的主力；
+ *   LRU 管的是「池子被用遍之后（`exclude` 占空候选、只能放宽）仍然尽量错开」。
+ * ★★ 但 AI 选曲那条路径**绕过本模块**：`worker.ts` 里 `selection?.file` 有值就**不调用**
+ *   `dispatchBgmFromPool` ⇒「完整轮转」对它**不生效**，它的避重完全由 `exclude` 负责。
+ *   这也正是 `note()` 存在的原因 —— AI 选走的那首必须回填进使用次序。
  *
  * ★ 池子为空时返回 `null`，调用方退回 `resolveBgmTrack()`（它会走单文件兜底）。
  *   本模块**绝不抛错**：配乐是增强步骤，任何失败都该退化成「按老规矩找一个文件」。
@@ -30,12 +38,28 @@ import { dirname, resolve } from 'node:path'
 import { bgmPoolDir, listBgmPool } from './bgm-library.js'
 
 /**
- * 该门店「最近用过的」避开深度（`bgm-history.ts` 取历史条数时用它）。
+ * 门店历史一次最多扫多少条任务（`bgm-history.ts` 的 `take`）。
  *
- * ★ 取 3 而不是 1：只避开上一首的话，`A B A B` 也满足「相邻不重样」，但听感上就是两首在打转。
- * ★ 它**不**参与进程内的轮转算法（那里靠 LRU 保证完整轮转），只决定去库里取几条历史。
+ * ── 为什么这里**没有**「避让深度」这个旋钮了（2026-09-28 删掉） ────────────────
+ * 原先是 `BGM_HISTORY_AVOID = 3`，语义是「只要不和最近 3 首重样就行」——
+ * 而 `A B C D A B C D…` 完全满足它，用户听到的却是「这家店老在几首里打转」。
+ * 现在 `filterTracksByStyle` **不截断**：该门店在这个风格下用过的曲子**全部**拿去当避开集合，
+ * 语义变成「池子里的曲子在这家店用过一遍之前不会再出现」。
+ *   ★ 判据（记下来，免得被重新引入）：**保证不重样的连续条数 = 避让深度 + 1**。
+ *     深度 3 ⇒ 只保证 4 条；**不截断 ⇒ 保证 N 条**（N = 池内数量）。
+ *   ★ 守护里有一条用例拿「比池子目标还长」的历史来钉它 —— 退化成任何小常数都会红
+ *     （先前写成 `= BGM_POOL_TARGET` 也是一种小常数，它当场被这条用例逮住）。
+ *
+ * ★★ 于是「扫描窗口」成了唯一的真正上限 —— **它必须 ≥ 池子大小 × 风格数**：
+ *   `bgmTrack` 这一列里混着**别的风格**的曲子（还有退回单文件兜底写进来的条目），
+ *   一个三种风格都在用的店，要凑出「LIGHT 整池 100 条」，窗口至少得装下约 300 条。
+ *   窗口不够时 `filterTracksByStyle` 只会返回一个**短数组**、不报任何错
+ *   ⇒ 避让**静默变浅**，又回到「老在几首里打转」。
+ * ★★ 写成**字面量**而不是 `BGM_POOL_TARGET * BGM_STYLES.length`：写成算式会让守护里那条
+ *   关系断言变成**恒等式**（怎么改都绿）。字面量 + 断言，才能做到「改池子目标的人被迫看一眼这里」。
+ * ★ 代价只是每次出片多扫几百行**单列**数据（`select: { bgmTrack: true }`），相对 ffmpeg 可忽略。
  */
-export const BGM_HISTORY_AVOID = 3
+export const BGM_HISTORY_SCAN_LIMIT = 300
 
 /**
  * LRU 记忆容量：最多记住多少首的「最近使用次序」。
@@ -198,7 +222,7 @@ export function noteBgmDispatched(style: string | undefined | null, file: string
 }
 
 /**
- * 纯函数：从一批历史配乐路径里，挑出**属于该风格池子**的那些，按原顺序取前 `limit` 个。
+ * 纯函数：从一批历史配乐路径里，挑出**属于该风格池子**的那些，按原顺序返回。
  *
  * ★ 放在本模块（而不是 `bgm-history.ts`）是为了让守护**不连库**就能测它 ——
  *   `bgm-history.ts` 在 import 时就拉进 `PrismaClient`，守护脚本必须能独立跑。
@@ -206,20 +230,31 @@ export function noteBgmDispatched(style: string | undefined | null, file: string
  * ★ 判据是「文件所在目录 == `assets/bgm/<风格>/`」而不是「路径里含风格名」——
  *   后者会把 `LIGHT.mp3` 这种**单文件**也算进来，而它不是池内候选，
  *   传去当 `exclude` 只会白占一个位置（永远匹配不上任何候选）。
+ *
+ * ★★ 不传 `limit` ⇒ **不截断**（返回全部同风格历史）。调用方 `bgm-history.ts` 就是这么用的：
+ *   它拿到的是「这家店在这个风格下用过的**全部**曲子」⇒ 避开策略的语义是
+ *   「池子用过一遍之前不再出现」。**别再给它加默认上限**（曾经是 3，也正是「老在几首里打转」
+ *   的根因；连 `= 池子目标` 这种「够用」的上限都会被守护里那条长历史用例逮住）——
+ *   判据见 `BGM_HISTORY_SCAN_LIMIT` 的注释：**保证不重样的连续条数 = 深度 + 1**。
+ *   要临时只取最近 n 条，显式传 `limit`。
+ *
+ * @param limit 最多返回几条；**不传 = 全部**。`<= 0` 返回空数组（显式关掉避开）。
  */
 export function filterTracksByStyle(
   files: readonly (string | null | undefined)[],
   style: string | undefined | null,
-  limit: number = BGM_HISTORY_AVOID,
+  limit?: number,
 ): string[] {
-  if (!style || limit <= 0) return []
+  if (!style) return []
+  const cap = limit === undefined ? Number.POSITIVE_INFINITY : limit
+  if (cap <= 0) return []
   const dir = bgmPoolDir(style)
   const hits: string[] = []
   for (const file of files) {
     if (typeof file !== 'string' || !file.trim()) continue
     if (resolve(dirname(file)).toLowerCase() !== resolve(dir).toLowerCase()) continue
     hits.push(file)
-    if (hits.length >= limit) break
+    if (hits.length >= cap) break
   }
   return hits
 }

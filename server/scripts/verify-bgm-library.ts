@@ -76,7 +76,7 @@ import {
 } from '../src/render/bgm-library.js'
 import { buildBgmOptionText, parseBgmChoice } from '../src/render/bgm-choice.js'
 import {
-  BGM_HISTORY_AVOID,
+  BGM_HISTORY_SCAN_LIMIT,
   BGM_LRU_CAPACITY,
   createBgmAllocator,
   filterTracksByStyle,
@@ -551,7 +551,20 @@ function main(): void {
   assert.deepEqual(tinySeq, ['a', 'b', 'a', 'b'], '池子只有 2 首时必须交替，而不是只发第一首')
   assert.ok(createBgmAllocator().dispatch(['a']), '池子只有 1 首时也必须派得出来')
 
-  assert.ok(BGM_HISTORY_AVOID >= 1, '门店历史的避开深度至少要是 1，否则「避开最近用过的」整体失效')
+  // ── ★★「同一家店别重样」：避让深度已经**不存在**了（2026-09-28 删掉那个 `= 3` 的旋钮） ──
+  //   曾经是「只要不和最近 3 首重样就行」⇒ `A B C D A B C D…` 也合法，
+  //   用户听到的是「这家店老在几首里打转」。现在默认**不截断**（用过的曲子全部避开）
+  //   ⇒ 保证不重样的条数 = 池内数量（判据：**深度 + 1**）。
+  //   真正的证明在下面那条「默认必须返回全部历史」的用例里 —— 退化成任何小常数都会红。
+  // ★★ 扫描窗口必须装得下「一个风格整池」的同风格历史：`bgmTrack` 列里混着别的风格
+  //   （还有退回单文件兜底写进来的条目）⇒ 至少要 × 风格数。窗口比需要避开的数量还小时，
+  //   `filterTracksByStyle` 只会返回一个短数组、不报错 ⇒ 避让**静默变浅**。
+  assert.ok(
+    BGM_HISTORY_SCAN_LIMIT >= BGM_POOL_TARGET * BGM_STYLES.length,
+    `历史扫描窗口（${BGM_HISTORY_SCAN_LIMIT}）必须 ≥ 池子目标 × 风格数` +
+      `（${BGM_POOL_TARGET} × ${BGM_STYLES.length} = ${BGM_POOL_TARGET * BGM_STYLES.length}）——` +
+      '否则「避开整池」会退化成「避开窗口里那几条」，而且不报任何错',
+  )
   assert.ok(BGM_LRU_CAPACITY >= 16, 'LRU 容量必须明显大于常见池子大小，否则轮转会退化成「只在前几首里转」')
 
   // ── 门店历史过滤：**只认池子目录**（单文件与别的风格都不是候选，绝不能占避开位） ──
@@ -573,8 +586,18 @@ function main(): void {
   ]
   assert.deepEqual(
     filterTracksByStyle(mixed, 'LIGHT'),
-    [light4, light3, light2],
-    '必须只挑同风格池子目录里的路径、保持原顺序、默认取最近几首（单文件与别的风格都要剔掉）',
+    [light4, light3, light2, light1],
+    '必须只挑同风格池子目录里的路径、保持原顺序，且**默认不截断**（= 覆盖整池；单文件与别的风格都要剔掉）',
+  )
+  // ★★ 默认值必须是「整池」而不是某个小常数：拿一段比池子目标还长的历史证明它不被截断。
+  //   退回 `= 3` 时这里立刻红。只断言长度、不断言内容 ⇒ 以后换池子目标也不会误伤。
+  const manyLight = Array.from({ length: BGM_POOL_TARGET + 20 }, (_, i) =>
+    join(lightDir, `LIGHT-${String(i).padStart(3, '0')}.wav`),
+  )
+  assert.equal(
+    filterTracksByStyle(manyLight, 'LIGHT').length,
+    manyLight.length,
+    `默认必须返回该风格的**全部**历史（覆盖整池）：${manyLight.length} 条历史要一条不少地拿来当避开集合`,
   )
   assert.deepEqual(filterTracksByStyle(mixed, 'LIGHT', 2), [light4, light3], 'limit 必须生效')
   assert.deepEqual(filterTracksByStyle(mixed, 'PREMIUM'), [], '没有该风格的历史时必须返回空数组')
@@ -587,7 +610,8 @@ function main(): void {
       '池子优先且随机取用、单文件查找不看池子、淘汰保留最新并连元数据清掉、池内已用描述可读出、' +
       '候选描述与候选清单严格同序、选曲清单从 0 编号、下标解析越界不夹取且不抛错、' +
       '火山提示词纯中文且排除人声、条数不薄于池子目标、生成时长同时满足接口与曲库硬约束、AK/SK 判据精确、' +
-      '派发器完整轮转且相邻必不同、门店历史是硬过滤且占满时放宽、LRU 容量可关、历史过滤只认池子目录',
+      '派发器完整轮转且相邻必不同、门店历史是硬过滤且占满时放宽、避让覆盖整池且扫描窗口装得下整池、' +
+      'LRU 容量可关、历史过滤只认池子目录',
   )
 }
 
