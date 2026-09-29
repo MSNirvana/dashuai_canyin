@@ -115,6 +115,13 @@ export const SUBTITLE_BOTTOM_MARGIN = 400
  *   这是「字大 + 每行 10 字」两条要求叠加后的必然结果，**不要再往上加**：
  *   守护脚本守着「字数 × 字号 ＋ 描边 ≤ 1080」这条线，超了就会被裁边
  *   （`WrapStyle: 2` 不自动折行，所以不会有第二行来救，只会切掉两头的字）。
+ *
+ * ★★ 2026-09-29 用户提「超过 12 个字才分两行」，**这个数没被采纳**，仍是 10：
+ *   `10 × 104px ＋ 描边 12 = 1052 ≤ 1080` 是硬上限，12 字要 1248px ⇒ 超出画布 168px。
+ *   只有两条路：① 保住 104px 大字、按 10 字折行（**已选**）；② 降字号到 ~86px 才放得下 12 字。
+ *   用户看过这组数据后选了 ①。
+ * ★ 去标点之后（2026-09-29 起字幕不含任何标点，见 `SUBTITLE_STRIP_PUNCT`），
+ *   这 10 个字**全是正文字**，不再被逗号占掉一格 ⇒ 同样一行的信息量比上一版多。
  */
 export const SUBTITLE_MAX_WIDTH = 10
 /** 字幕块像素宽 —— 由字数与字号推出（10 × 104 = 1040）。 */
@@ -224,8 +231,17 @@ function lineSegments(shots: SynthesisShot[]): TranscriptionSegment[] {
   return segments
 }
 
+/**
+ * 字幕的**显示宽度**（CJK 记 1、ASCII 记 0.55）。
+ *
+ * ★★ 换行符 `\n` 记 **0** —— 它是「一句两行」的分隔符，不是可见字符。
+ *   算进宽度会让两行的屏被误判成超宽，「同屏两行」直接失效（2026-09-29）。
+ */
 export function subtitleDisplayWidth(text: string): number {
-  return [...text].reduce((sum, char) => sum + (/^[\x00-\xff]$/.test(char) ? 0.55 : 1), 0)
+  return [...text].reduce(
+    (sum, char) => sum + (char === '\n' ? 0 : /^[\x00-\xff]$/.test(char) ? 0.55 : 1),
+    0,
+  )
 }
 
 /**
@@ -266,7 +282,8 @@ function hardSplitByWidth(text: string, maxWidth: number): string[] {
 /**
  * 中文分词器：Node 内置 ICU 词典（**无需新依赖**）。
  *
- * ★ 只用来**决定在哪里断行**，绝不改动文本本身 —— 切完拼回去必须逐字相等。
+ * ★ 只用来**决定在哪里断行**，绝不改动文本本身 —— 切完拼回去必须逐字相等
+ *   （**唯一例外是空白**：它由 `toSubtitleAtoms` 主动丢弃，见下）。
  * ★★ 为什么必须有它（2026-09-25 拿用户成片实测）：
  *   按「第 N 个字」硬切时，切点完全不认识词，实测把
  *   `千万` 劈成 `千 | 万`、`香油` 劈成 `香 | 油`、`七上八下` 劈成 `七上 | 八下`，
@@ -287,9 +304,17 @@ const SUBTITLE_WORD_SEGMENTER: SubtitleWordSegmenter | null =
       ).Segmenter('zh', { granularity: 'word' })
     : null
 
-/** 纯标点/空白（自成一词的标点）。 */
+/**
+ * 纯标点（自成一词的标点）—— 见到就粘到前一个词的尾巴上。
+ *
+ * ★★ 这里**故意不含 `\s`**（2026-09-29 修）：空白不是标点，它是**词间的分隔**。
+ *   旧版把 `\s` 列进来 ⇒ ASR/文案里那个空格会被**粘进前一个词**变成 `别 `，
+ *   于是 ① 空格**显形在字幕上**（成片实测 `廊坊想吃火锅的千万\N别 划走这盘牛肚`），
+ *   且 ② 这个原子的宽度成了 `1 + 0.55 = 1.55`，把「千万别」从行尾挤掉 ⇒
+ *   第一行只剩 9 个字（本该 10 个）。空白改由 `push` 按「两侧是否都是 ASCII」定夺，见下。
+ */
 const SUBTITLE_PUNCT_ONLY =
-  /^[\s。．，、；：！？…⋯·,;:!?.～~“”‘’"'（）()「」『』【】《》〈〉—\-]+$/
+  /^[。．，、；：！？…⋯·,;:!?.～~“”‘’"'（）()「」『』【】《》〈〉—\-]+$/
 
 /**
  * 把整句切成「**词 + 紧随其后的标点**」原子。
@@ -297,17 +322,37 @@ const SUBTITLE_PUNCT_ONLY =
  * ★★ 标点一律挂到**前一个词**的尾巴上 ⇒ 它永远不会成为某一行的第一个字符。
  *    这是「行首冒出逗号」（实测成片出现过 `，我敢说不是动货`）的**根治**做法 ——
  *    在切点处就杜绝，而不是事后把行首标点再挪回去。
+ * ★★ 空白（空格/制表/全角空格）的处理是**有判据的丢弃**，不是无脑丢：
+ *    ① 两侧只要有一侧是 CJK ⇒ **丢掉**。源文本要么是 ASR 转写（转写引擎会在数字/字母
+ *       两侧塞空格），要么是口播文案 —— 这类空格是**噪声**，留着会**显形在成片上**
+ *       （实测 `廊坊想吃火锅的千万\N别 划走这盘牛肚`），还会按 0.55 字占掉行宽、
+ *       把本该在行尾的「千万别」挤到下一行（第一行只剩 9 个字）。
+ *    ② 两侧都是 ASCII ⇒ **保留一个空格**。这是有意义的文本（`iPhone 15`、`128 GB`），
+ *       丢了会粘成 `iPhone15`。
  * ★ 分词器不可用时退化成逐字，行为等价于「只按宽度切」，不会比旧实现更差。
  */
 export function toSubtitleAtoms(text: string): string[] {
   const atoms: string[] = []
+  /** 上一个被丢掉的空白 —— 它要等**下一个原子**来了才知道该不该保留（判据见上）。 */
+  let pendingSpace = false
   const push = (value: string): void => {
     if (!value) return
-    if (SUBTITLE_PUNCT_ONLY.test(value) && atoms.length) {
-      atoms[atoms.length - 1] += value
+    if (!value.trim()) {
+      pendingSpace = true
       return
     }
-    atoms.push(value)
+    const word = value.trim()
+    if (SUBTITLE_PUNCT_ONLY.test(word) && atoms.length) {
+      atoms[atoms.length - 1] += word
+      pendingSpace = false
+      return
+    }
+    const previous = atoms[atoms.length - 1]
+    if (pendingSpace && previous !== undefined && /[\x20-\x7e]$/.test(previous) && /^[\x20-\x7e]/.test(word)) {
+      atoms[atoms.length - 1] = `${previous} `
+    }
+    pendingSpace = false
+    atoms.push(word)
   }
   if (!SUBTITLE_WORD_SEGMENTER) {
     for (const char of text) push(char)
@@ -355,8 +400,11 @@ function balanceSubtitleTail(lines: string[][], maxWidth: number): void {
  *    19 字切成 `10+9`……用户看到的就是「**还是 8 个字不是 10 个字**」。
  *    而它的切点也不认识词和标点，所以 `千万` 被劈开、逗号被甩到行首。
  * ★ 现在的边界：① 行宽 ≤ `maxWidth`；② 只在词边界断；③ 标点永远不在行首；
- *    ④ 行末标点由出口的 `stripTrailingPunctuation` 吃掉（用户要求「末尾没有」）；
+ *    ④ 标点在上游 `splitSubtitleText` 就被整个去掉了，这里**不**再处理标点；
  *    ⑤ 末行不留残句（见 `balanceSubtitleTail`）。
+ * ★★ 出口逐行 `trim()`：ASCII 词之间的空格是**粘在前一个词尾巴上**的
+ *    （见 `toSubtitleAtoms` ②），若断行正好落在那个空格之后就成 `iPhone 15 `——
+ *    行末空格既渲染成「字幕块莫名偏左」，又会多算 0.55 行宽。行内空格保留、行首尾一律去掉。
  */
 function packSubtitleLines(text: string, maxWidth: number): string[] {
   const atoms = toSubtitleAtoms(text)
@@ -385,57 +433,67 @@ function packSubtitleLines(text: string, maxWidth: number): string[] {
   }
   if (current.length) lines.push(current)
   balanceSubtitleTail(lines, maxWidth)
-  return lines.map((line) => line.join('')).filter(Boolean)
+  return lines.map((line) => line.join('').trim()).filter(Boolean)
 }
 
 /**
- * 去掉字幕块**末尾**的标点。
+ * 字幕的**句子边界** —— 见到就断成两条独立字幕。
  *
- * ★★ 2026-09-25 用户要求「每句字幕去除所有末尾的标点符号」。
- * ★★ 同一天用户又补了一条，两条必须一起读才完整：
- *   「一行里面要有标点符号，只是末尾没有，中间还是要有」
- *   ⇒ **行内标点必须原样保留**，只有每一行**最末**那个标点被吃掉。
- *   所以本函数只作用在「整行/整句」上，**绝不能拿去洗行内的字** —— 那样标点会全没。
- * ★ 放在 `splitSubtitleText` 的**出口**统一做，而不是在几个 push 点各做一次：
- *   出口做一次，之后新增任何切分分支都自动被覆盖。
- * ★★ 只吃「标点 + 紧随其后的收尾符号」，**不动单独出现的引号/括号** —— 这条边界是刻意的：
- *   · 「他说“没问题”。」→ 只掉「。」，保留成对的收尾引号（那是对的）；
- *   · 「今天真好（笑）」→ 末尾不是标点，整个「（笑）」保留；若只砍掉「）」会留下不成对的「（笑」。
- *   别为了「更彻底」把引号括号也一律砍掉。
+ * ★★ 2026-09-29 用户拍板：**逗号 / 顿号 / 冒号也算句界**（原话「禁止两句话同时出现」）。
+ *   ⚠ 这与 `speech-range.ts::SPEECH_SENTENCE_END_PUNCT`（只认句末标点）**故意不同**：
+ *     那个是「剪废片 + ASR cue 收口」共用的判据，管的是**声音在哪里剪**；
+ *     这个是**字幕怎么分屏**。用途不同 ⇒ 两套粒度不同是对的，不是「不一致」。
+ * ★ `stripTrailingPunctuation`（只吃行末标点那版）已随之**删除**：
+ *   口径从「行末去标点」换成「整条不含标点」之后它一个调用点都没有了，
+ *   留着只会让下一个人以为「出口还在吃行末标点」。
  */
-const TRAILING_PUNCTUATION = /[\s。．，、；：！？…⋯·,;:!?.～~]+[”’」』》】）)\]]*$/u
-
-export function stripTrailingPunctuation(text: string): string {
-  return text.replace(TRAILING_PUNCTUATION, '').trim()
-}
+const SUBTITLE_CLAUSE_BREAK = /[。．，、；：！？…⋯·!?～~]+/u
 
 /**
- * 先把整段按**完整句**拆（`。！？；`），再把每句**按词装箱**成行；
- * 只在每行**行末**不留标点，行内标点原样保留。
+ * 字幕里要**全部去掉**的标点（用户 2026-09-29：「去除标点符号」）。
+ * ★ 句读标点 + 成对引号/括号一律去掉；**保留** `-` 与 `°`（可能是「100-200」「0°锁鲜」的一部分）。
+ * ★ 这是**唯一**一份标点清洗 —— 旧的「只吃行末标点」那份（`TRAILING_PUNCTUATION`）已删除，
+ *   别再加回来：两套粒度并存时，行内标点会从没被清掉的那个口子漏到成片上。
+ */
+const SUBTITLE_STRIP_PUNCT = /[。．，、；：！？…⋯·!?～~“”‘’"'「」『』【】《》〈〉（）()\[\]{}—–,;:.]/gu
+
+/**
+ * 把一段文本切成**字幕屏**：一屏 = 一句话（1 行，或**同屏两行** —— 两行用 `\n` 分隔）。
+ *
+ * ★★ 2026-09-29 用户要求（原话）：
+ *   「要像自然语言表达那样，一句一行，如果超过12个字，则一句两行，
+ *     禁止两句话同时出现，然后去除标点符号。」
+ *   ⇒ 三条硬规则，缺一条都会被一眼看出来：
+ *
+ *   ① **一句一屏** —— 按**标点**断句（含逗号/顿号/冒号），每句单独一屏。
+ *      ✗ 旧实现按「10 字宽」装箱，切点不认识标点后的语义停顿，成片里产出过
+ *        「土豆是切块炸的，火候」＝「一个完整子句 ＋ 下一个子句的头两个字」，
+ *        用户看到的就是「两句话同时出现」。
+ *   ② **超长才两行** —— 一句话超过 `maxWidth` 个字时**同屏**折两行
+ *      （`\n`，ASS 出口转 `\N`）；两行各自仍 ≤ `maxWidth`。
+ *      ★ `maxWidth` 仍是 **10**、不是用户口头说的 12 —— 这是**画布的物理约束**：
+ *        `10 × 104px ＋ 描边 12 = 1052 ≤ 1080`，而 12 字要 1248px、超出画布 168px，
+ *        `WrapStyle: 2` 下不会折行、只会把两头静默裁掉。用户已拍板「保字号、按 10 字」。
+ *   ③ **去掉所有标点** —— 句读标点 + 引号括号一并去掉。
+ *      ✗ 旧实现只吃**行末**标点，行内逗号原样留着 —— 那正是用户截图里的「香料，香脆脆的」。
  */
 export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): string[] {
   const clean = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
   if (!clean) return []
-  const sentences = clean.match(/[^。！？!?；;]+[。！？!?；;]?/g) ?? [clean]
-  const result: string[] = []
-  for (const rawSentence of sentences) {
-    // ★★ 这里**只按整句拆，不再按逗号/顿号断句** —— 这是用户那条「中间还是要有（标点）」
-    //   的直接结果。旧写法把子句当原子单位逐个塞进一行，逗号于是永远落在行尾，
-    //   再被「行末不留标点」吃掉 ⇒ 成片里一个标点都看不到。改成连续填字后逗号自然留在行内。
-    // ★ 先去掉**句末**标点再量宽度：「第一句话完整显示。」是 8 个字而不是 9，
-    //   带着句号量会把它误判成超宽、白切一刀。
-    const sentence = stripTrailingPunctuation(rawSentence)
-    if (!sentence) continue
-    // ★★ 「一句话要完整」：不超宽时 `packSubtitleLines` 原样返回整句，不做任何切分。
-    // ★★ 「不要剩一个字留在下一句开头」＝两层保障：
-    //   ① 切点只落在**词边界**（分词器给），不会把 `千万` 劈成 `千|万`；
-    //   ② 标点挂在词尾 ⇒ 绝不会成为行首；末行过短还会从上一行搬词下来（`balanceSubtitleTail`）。
-    // ★★ 2026-09-25 实测修正：旧的「先算块数再均分」**正是「还是 8 个字」的原因** ——
-    //   合并后的单元常见 17~25 字，均分出来的行必然落在 7~9 字；且切点按算术落，
-    //   与词、标点完全无关。已换成词边界贪心装箱。
-    result.push(...packSubtitleLines(sentence, maxWidth))
+  // ① 按标点拆子句（分隔符本身丢弃），再清掉残留的引号/括号 —— 一步满足「去除标点」
+  const clauses = clean
+    .split(SUBTITLE_CLAUSE_BREAK)
+    .map((clause) => clause.replace(SUBTITLE_STRIP_PUNCT, '').trim())
+    .filter(Boolean)
+  const screens: string[] = []
+  for (const clause of clauses) {
+    // ② 词边界装箱 ⇒ 每行 ≤ maxWidth（不劈词、行首不出标点）；③ 每**两行**合成一屏
+    const lines = packSubtitleLines(clause, maxWidth)
+    for (let index = 0; index < lines.length; index += 2) {
+      screens.push(lines.slice(index, index + 2).join('\n'))
+    }
   }
-  return result.map(stripTrailingPunctuation).filter(Boolean)
+  return screens
 }
 
 /** 将字幕归一为单行、非重叠、连续替换的 cue，避免 libass 自动换成多行。 */
@@ -512,8 +570,21 @@ function segmentsToSrt(segments: TranscriptionSegment[]): string {
   )).join('\n')
 }
 
+/**
+ * ASS 事件文本转义。
+ *
+ * ★★ `\n` 必须转成 ASS 的换行符 `\N`，**不能**再压成空格 ——
+ *   那是「一句两行」唯一的表达方式。`WrapStyle: 2` 表示 libass **不自动折行**，
+ *   所以没有 `\N` 就没有第二行；反过来把它压成空格就是「两行静默变一行」，
+ *   而且**不报错**（2026-09-29）。
+ * ⚠ 顺序：先转义反斜杠、再处理换行 —— 反了会把刚生成的 `\N` 里的反斜杠再转义一次。
+ */
 function escapeAssText(text: string): string {
-  return text.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}').replace(/[\r\n]+/g, ' ')
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/{/g, '\\{')
+    .replace(/}/g, '\\}')
+    .replace(/\r?\n/g, '\\N')
 }
 
 /** Build a single-line ASS document with an explicit vertical-video canvas. */
@@ -747,7 +818,45 @@ function escapeDrawtextPath(path: string): string {
   return path.replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'")
 }
 
-/** libass 不可用时的字幕回退：每个 cue 只画一行，后一个 cue 自动覆盖前一个。 */
+/** drawtext 回退链的构造结果：滤镜串数组 ＋ 末端节点名（还要接 `null[v]`）。 */
+export interface DrawtextFilterChain {
+  filters: string[]
+  lastNode: string
+}
+
+/**
+ * libass 不可用时的字幕回退滤镜链（**纯函数**，抽出来是为了让守护脚本能断言）。
+ *
+ * ★★ 「一句两行」在这里靠**两个 drawtext 串联**实现，不依赖 `\n` 在 filtergraph 里的转义
+ *   （那要过 shell + filtergraph 两层，写错了**不会报错**、只会把两行粘成一行）。
+ *   第 0 行落在与单行时**完全相同**的位置，第 n 行再往上挪 n 个行高。
+ * ★ 抽成纯函数之前这段逻辑埋在 `muxWithDrawtext` 里 ⇒ 只有真跑 ffmpeg 才走得到，
+ *   而它偏偏是「libass 挂了」才启用的兜底路径 —— 等于**永远没被验证过**。
+ */
+export function buildDrawtextFilterChain(
+  segments: TranscriptionSegment[],
+  fontFile: string,
+  startNode = '0:v',
+): DrawtextFilterChain {
+  let current = startNode
+  const filters: string[] = []
+  const lineHeight = Math.round(SUBTITLE_FONT_SIZE * 1.25)
+  segments.forEach((segment, index) => {
+    const enable = `between(t\\,${(segment.startMs / 1000).toFixed(3)}\\,${(segment.endMs / 1000).toFixed(3)})`
+    segment.text.split('\n').filter(Boolean).forEach((line, lineIndex) => {
+      const next = `dt${index}_${lineIndex}`
+      filters.push(
+        `[${current}]drawtext=fontfile='${escapeDrawtextPath(fontFile)}':text='${escapeDrawtextText(line)}':` +
+        `fontcolor=white:fontsize=${SUBTITLE_FONT_SIZE}:borderw=${SUBTITLE_BORDER_WIDTH}:bordercolor=black:` +
+        `x=(w-text_w)/2:y=h-text_h-${SUBTITLE_BOTTOM_MARGIN + lineIndex * lineHeight}:enable='${enable}'[${next}]`,
+      )
+      current = next
+    })
+  })
+  return { filters, lastNode: current }
+}
+
+/** libass 不可用时的字幕回退：每个 cue 画一到两行（见 `buildDrawtextFilterChain`）。 */
 async function muxWithDrawtext(
   videoPath: string,
   audioPath: string | null,
@@ -759,17 +868,7 @@ async function muxWithDrawtext(
   if (!font.file || !existsSync(font.file)) throw new Error('字幕无法生成：服务器未找到可用的中文字体文件')
   const normalized = normalizeSubtitleSegments(segments)
   if (!normalized.length) return false
-  let current = '0:v'
-  const filters: string[] = []
-  normalized.forEach((segment, index) => {
-    const next = `dt${index}`
-    const enable = `between(t\\,${(segment.startMs / 1000).toFixed(3)}\\,${(segment.endMs / 1000).toFixed(3)})`
-    filters.push(
-      `[${current}]drawtext=fontfile='${escapeDrawtextPath(font.file!)}':text='${escapeDrawtextText(segment.text)}':` +
-      `fontcolor=white:fontsize=${SUBTITLE_FONT_SIZE}:borderw=${SUBTITLE_BORDER_WIDTH}:bordercolor=black:x=(w-text_w)/2:y=h-text_h-${SUBTITLE_BOTTOM_MARGIN}:enable='${enable}'[${next}]`,
-    )
-    current = next
-  })
+  const { filters, lastNode: current } = buildDrawtextFilterChain(normalized, font.file)
   const args = ['-i', videoPath]
   if (audioPath) args.push('-i', audioPath)
   args.push('-filter_complex', `${filters.join(';')};[${current}]null[v]`, '-map', '[v]')
@@ -793,19 +892,30 @@ function escapeXml(value: string): string {
 }
 
 /**
- * Sharp 回退路径用的单行字幕 SVG。
+ * Sharp 回退路径用的字幕 SVG（**支持同屏两行**）。
  *
  * ★ 抽成导出函数只为一个理由：它的**画布尺寸必须跟着字号走**，而那是「放大字号」时最容易
  *   漏掉、且**不会报错**的一处（字形被 sharp 裁掉，成片里只是字少了半个）。
  *   抽出来之后 `verify-auto-edit.ts` 才能断言「画布装得下字号」。
+ * ★★ 2026-09-29：`text` 里可以含 `\n`（一句两行）—— 画布高度按**行数**翻倍，
+ *   每行一个 `<text>`。只改 width/height 不拆行，会让第二行被画布裁掉（同样不报错）。
  */
 export function buildCaptionSvg(text: string, fontFamily: string, width = 1080): string {
-  return `
-      <svg width="${width}" height="${SUBTITLE_CAPTION_SVG_HEIGHT}" xmlns="http://www.w3.org/2000/svg">
-        <text x="${Math.round(width / 2)}" y="${SUBTITLE_CAPTION_SVG_BASELINE}" text-anchor="middle"
+  const rows = String(text).split('\n').filter((line) => line.length > 0)
+  const lines = rows.length ? rows : ['']
+  const height = SUBTITLE_CAPTION_SVG_HEIGHT * lines.length
+  const texts = lines
+    .map((line, index) => {
+      const y = SUBTITLE_CAPTION_SVG_BASELINE + index * SUBTITLE_CAPTION_SVG_HEIGHT
+      return `
+        <text x="${Math.round(width / 2)}" y="${y}" text-anchor="middle"
           font-family="${escapeXml(fontFamily)}" font-size="${SUBTITLE_FONT_SIZE}" font-weight="600"
           fill="white" stroke="black" stroke-width="${SUBTITLE_OUTLINE}" paint-order="stroke fill"
-          letter-spacing="0">${escapeXml(text)}</text>
+          letter-spacing="0">${escapeXml(line)}</text>`
+    })
+    .join('')
+  return `
+      <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">${texts}
       </svg>`
 }
 
