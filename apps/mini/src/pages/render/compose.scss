@@ -172,6 +172,29 @@
     line-height: 1.25;
     color: var(--td-text-color-primary);
   }
+  /* ★ 2026-09-29 新增：卡片标题后面那串「（封面、标题、文案、话题）」。
+     它是**注解**不是标题，所以不跟 `&__sectitle` 同级，而是取这一行里最轻的一档：
+     20rpx + placeholder 色（本文件里 `&__voicedesc` / `__clipmeta` 也是 20rpx）。
+     ★ 字号为什么是**算出来的、不是挑出来的**（实测 390px 视口，1rpx = 0.52px）：
+         卡片内容宽 626rpx；这一行右侧那个「重新生成」按钮恒占 86.3px（≈166rpx），
+         行内 gap 16rpx ⇒ 留给 `&__sechead` 的只有 ≈444rpx。
+         而 22rpx 时小字自己就占 286rpx（13 个全角字符），
+         加上竖条 6rpx + 标题「发布素材」单行 133rpx + 两个 gap 24rpx = 449rpx
+         ⇒ **超 5rpx**，而标题是这一行里唯一可收缩的项（`&__sechead` 带 `min-width: 0`）
+         ⇒ 标题被压成两行「发布素 / 材」（实测：标题盒 66.7px < 单行所需 69.3px）。
+         降到 20rpx 后小字占 260rpx，整行 423rpx，余 21rpx ⇒ 标题单行。
+       ⚠ 再往这串小字里加字（或把按钮文案改长）都会重新挤爆这一行 —— 改了要重算这笔账。
+     ★ `flex: none` —— 它自己不许被压扁；宁可让左边的标题折行
+       （`&__sechead` 自带 `min-width: 0`）。
+     ★ 挂载点必须是**并排的兄弟 `Text`**，不能写成 `&__sectitle::after`：
+       `Text` 在 weapp 里编译成 `<text>`，伪元素不渲染（同 `&__secbar` 的理由）。 */
+  &__pubnote {
+    flex: none;
+    font-size: 20rpx;
+    font-weight: 400;
+    letter-spacing: 0;
+    color: var(--td-text-color-placeholder);
+  }
   /* ★ 2026-09-25：`&__sectitle--flush` 删除。它原本只是抵消上面那条 `margin-bottom`，
      而下边距现在归 `&__sechead` 管 ⇒ 这个修饰类已无处可挂（tsx 里那一处也一并去掉）。 */
   /* ── 标题 + 问号成行（小字说明收进「?」后的通用排法）──
@@ -658,12 +681,23 @@
   &__pubbtn {
     margin-top: 20rpx;
   }
-  /* 封面按 3:4 展示：服务端出图就是 3:4（1086×1448），用固定高 + aspectFill 会裁掉构图，
-     所以用 aspectFill + 3:4 的高度（宽度 100% ⇒ 高度 = 宽 × 4/3）。
-     ★ 不写 aspectFit：竖版图在横向容器里 letterbox 会留两条大白边，看着像加载失败。 */
+  /* 封面按 3:4 **完整展示**（`mode='aspectFit'`）：
+     判据是「盒子比例 == 源图比例」—— 盒子比例对了，fit 与 fill 看起来一样；
+     盒子比例错了，fit 必留两条边、fill 必裁掉一条。实测线上 4 张封面全是 3:4
+     （1086×1448 ×3 张、1024×1365 ×1 张）。
+     ★★ 高度必须与卡片内容宽**同源推导**（改了页边距 / 卡片 padding / 描边都要一起重算）。
+        把每一项都列出来，别只写结论：
+          页面横向 padding 36rpx × 2（`.rcompose`）
+          + 卡片 padding  24rpx × 2（基类写 32rpx，被文件末尾 `.rcompose__card` 覆写成 24rpx）
+          + 卡片描边       1rpx × 2（`.rcompose__card { border: 1rpx solid … }`）
+          = 122rpx
+        ⇒ 封面可用宽 = 750 − 122 = 628rpx
+        ⇒ 3:4 的高度 = 628 × 4/3 = 837.33 ⇒ **837rpx**
+     ★ 2026-09-29 之前不是这样：基类写 812rpx（那是卡片 padding 还是 32rpx 时的 3:4），
+       而末尾覆写块又压成 720rpx（≈7:8）⇒ 630×720 的盒子里 aspectFill 上下各裁 ~7%。 */
   &__pubcover {
     width: 100%;
-    height: 812rpx;
+    height: 837rpx;
     margin-top: 20rpx;
     border-radius: var(--td-radius-default);
     background: var(--td-bg-color-page);
@@ -814,8 +848,11 @@
 .rcompose > .rcompose__card--ai { order: 9; }
 .rcompose > .rcompose__card--color { order: 10; }
 .rcompose > .rcompose__card--active { order: 11; }
-.rcompose > .rcompose__card--history { order: 12; }
-.rcompose > .rcompose__card--publish { order: 13; }
+/* ★ 2026-09-29：这两行的数值**对调**过 —— 「发布素材」提到「成片记录」之前。
+   用户那句「发布素材整个模块放在成片记录上面」，唯一实现点就是这里：
+   改的是视觉顺序，tsx 里两块代码的先后**没有动**（它们共用轮询与错误提示状态）。 */
+.rcompose > .rcompose__card--publish { order: 12; }
+.rcompose > .rcompose__card--history { order: 13; }
 .rcompose > .rcompose__lightbox { order: 20; }
 .rcompose > .ds-footer { order: 30; }
 
@@ -893,8 +930,13 @@
   box-shadow: var(--ds-shadow-card);
 }
 
-.rcompose > .rcompose__card--history { margin-top: 32rpx; }
+/* ★ 2026-09-29：第 ④ 组「产出」的头一张换成了「发布素材」⇒ 间距也跟着换角色：
+   头一张吃「换组 32rpx」，第二张吃「同组 16rpx」（就是本条注释上面那条规则说的 2 倍关系）。
+   ★ 这样写在两种数据下都对：发布素材这张卡**永远渲染**，而成片记录**可能一条都没有**
+     （`renders.length === 0`）。原来是反的 —— 若照旧把 16rpx 给发布素材，
+     成片记录为空时它会紧跟「进行中」，组界就看不出来了。 */
 .rcompose > .rcompose__card--publish { margin-top: 32rpx; }
+.rcompose > .rcompose__card--history { margin-top: 16rpx; }
 
 /* ★★ 卡片区标题：规格写在基础块的 `&__sectitle`（34rpx/700 + 左侧品牌色竖条）。
    这里**故意不再重复一遍**字号 —— 同一个标题两处各写一次，
@@ -928,7 +970,12 @@
 .rcompose__history-title { font-size: 25rpx; }
 .rcompose__history-go { margin-top: 8rpx; font-size: 21rpx; }
 
-.rcompose__pubcover { height: 720rpx; border-radius: var(--td-radius-default); }
+/* ★★ 2026-09-29：原来这里是 `.rcompose__pubcover { height: 720rpx; ... }`，**已删除**。
+   它是本文件「末尾覆写块吃掉基类改动」的又一个实例：与基类**同选择器**、写在后面 ⇒ 一直赢，
+   把基类按 3:4 算出的高度压成 720rpx（630×720 ≈ 7:8）⇒ `aspectFill` 上下各裁 ~7% 的构图，
+   而改基类的人根本看不出效果。
+   ★ 封面高度（以及其它任何 `__pubcover` 的属性）只在上面的 `&__pubcover` 里写一份，
+     **不要再在这里复写**；写死的高度必须与「卡片内容宽」同源推导，算式见那一条。 */
 .rcompose__pubbtn { width: 100%; height: 88rpx; }
 
 /* 固定底栏只承担结算和唯一主动作，保持内容区不被遮挡。 */

@@ -1449,7 +1449,10 @@ export default function RenderCompose() {
       {/* ── 成片记录 ──
           ★ 默认只展示最近 3 条（新任务在数组头部，unshift + 按时间倒序），
             更早的折叠在一行「展开」后面 —— 记录会越攒越多，全部铺开会把
-            「发布素材」等后续模块顶到很深。 */}
+            后面的模块顶到很深。
+          ★ 2026-09-29：它现在**视觉上排在「发布素材」之后**（`order: 13`），
+            而这个块在 JSX 里仍然写在前面 —— 这种「JSX 顺序 ≠ 视觉顺序」是本页
+            一贯的做法（见文件末尾「产品化页面编排」那段注释）。 */}
       {renders.length > 0 && (
         <View className='rcompose__card rcompose__card--history'>
           <View className='rcompose__history-heading'>
@@ -1517,8 +1520,12 @@ export default function RenderCompose() {
         </View>
       )}
 
-      {/* ── 发布素材：标题 / 封面 / 文案 ──
-          放在成片记录之后，因为它是整条链路的**最后一步**（视频出来了才谈发布包装）。
+      {/* ── 发布素材：封面 / 标题 / 文案（话题在文案里） ──
+          ★ 2026-09-29：用户要求「整个模块放在成片记录上面」。搬家**没有动 JSX 顺序** ——
+            只改了文件末尾 `order` 那两个数（publish 12 / history 13）。
+            为什么不搬代码块：这两块共用轮询与错误提示状态，动位置容易连带改到数据流。
+          ★ 为什么它该排在历史前面：成片一出来，用户**下一步就是去发布**
+            （封面可直接长按存、标题/文案可直接复制），成片记录是往后翻的历史。
           ★ 它依赖的是**口播文案**（服务端会重新读一遍创作的门店/菜品上下文），
             与档位、调色都无关 —— 所以没有必要跟三档/调色并排挤在一起。 */}
       <View className='rcompose__card rcompose__card--publish'>
@@ -1526,6 +1533,13 @@ export default function RenderCompose() {
           <View className='rcompose__sechead'>
             <View className='rcompose__secbar' />
             <Text className='rcompose__sectitle'>发布素材</Text>
+            {/* ★ 这串小字是「这块产出什么」的**清单**，不是新字段：话题（#标签）
+                目前就拼在**文案尾部**（见 `__pubcaption` 的 `white-space: pre-wrap`
+                说明），页面上没有独立的「话题」块。
+                ★ 必须与标题**同级并排**（都放在 `__sechead` 这个 flex 行里）。
+                  不能写成 `&__sectitle::after` —— `Text` 在 weapp 里编译成 `<text>`，
+                  伪元素根本不渲染（这正是上面竖条要单独一个 `View` 的同一条理由）。 */}
+            <Text className='rcompose__pubnote'>（封面、标题、文案、话题）</Text>
           </View>
           {!!publishMat && !publishLoading && (
             <Button className='rcompose__headbtn' size='mini' onClick={() => void doGeneratePublish('ALL')}>重新生成</Button>
@@ -1582,9 +1596,15 @@ export default function RenderCompose() {
                     ★ previewImage 要把被点的那张放在 urls[0]：`current` 靠「能在 urls 里精确
                       匹配到」定位，匹配不上会**静默回落到第一张**（见 pages/dish/edit.tsx 的说明）；
                       这里只有一张，天然满足。 */}
+                {/* ★ 2026-09-29：`aspectFill` → `aspectFit`（用户要求「完整展示」）。
+                    上面那条「不写 aspectFit，否则竖版图留两条大白边」的旧结论，
+                    前提是**盒子比例不对** —— 那时盒子被末尾覆写块压成 720rpx（7:8），
+                    而源图是 3:4。现在盒子按 3:4 给（见 `__pubcover` 的算式注释），
+                    两者相等 ⇒ `aspectFit` 既不裁也不留边；反倒是 `aspectFill` 会裁掉上下各 ~7%。
+                    ★ 实测线上 4 张封面：1086×1448（3 张）与 1024×1365（1 张），都是 3:4。 */}
                 <Image
                   className='rcompose__pubcover'
-                  mode='aspectFill'
+                  mode='aspectFit'
                   src={publishMat.coverUrl}
                   onClick={() => Taro.previewImage({ current: publishMat.coverUrl!, urls: [publishMat.coverUrl!] })}
                   onLongPress={() => void saveCover()}
