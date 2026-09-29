@@ -41,6 +41,7 @@ import {
   ffmpegSupportsFilter,
   ffmpegSupportsSubtitles,
 } from './ffmpeg.js'
+import { ENCODE_DELIVERY, ENCODE_INTERMEDIATE } from './encode-quality.js'
 import { applyAiSynthesis, fitShotDurationsToTimeline, shouldExtendForNarration, type SynthesisShot } from './synthesis.js'
 import { resolveBgmTrack } from './bgm-library.js'
 import { selectBgmFromPool } from './bgm-select.service.js'
@@ -715,7 +716,18 @@ async function processTask(
     await reportProgress(task.id, 75, fence)
     const concatPath = join(dir, 'concat.mp4')
     const transition = isAutoEdit ? 'CLEAN' : (aiMode ? effectiveChatcut.transitions : 'CLEAN')
-    await ffmpegConcatWithTransitions(tmpClips, concatPath, transition, TASK_TIMEOUT_MS)
+    /**
+     * 拼接 / 调色这两步之后**还有没有**「再编一次画面」的工序？
+     *   · AI 档：`applyAiSynthesis` 烧字幕必然重编码 ⇒ 这两步只是中间产物 ⇒ 按**近无损**编；
+     *   · 其余档（BASIC / 重调色）：这两步就是最后一趟 ⇒ 按**交付档**编。
+     *
+     * ★★ 判据刻意取「是不是 AI 档」而不是更精细地去复算 applyAiSynthesis 内部那个 if：
+     *   算错的后果应当落在「文件偏大」那一侧，而不是落在「画质变差」那一侧。
+     *   AI 档内层 if 不成立的边角情况下，成片会是**中间档质量**（更大更清楚），
+     *   这比反过来（该交付的却按中间档压）安全得多。取舍理由见 encode-quality.ts。
+     */
+    const preFinalTier = aiMode ? ENCODE_INTERMEDIATE : ENCODE_DELIVERY
+    await ffmpegConcatWithTransitions(tmpClips, concatPath, transition, TASK_TIMEOUT_MS, preFinalTier)
 
     // 3) 整片调色：放在拼接后做单一 pass，而不是逐镜头各做一次。
     //    这样 N 个镜头只编码 1 次；重调色时可完全复用归一化缓存，只跑「拼接 + 一遍调色」，
@@ -723,7 +735,7 @@ async function processTask(
     let finalPath = concatPath
     if (buildColorFilter(color)) {
       finalPath = join(dir, 'final.mp4')
-      await ffmpegApplyColor(concatPath, finalPath, color, TASK_TIMEOUT_MS)
+      await ffmpegApplyColor(concatPath, finalPath, color, TASK_TIMEOUT_MS, preFinalTier)
     }
 
     // 3.5) AI 合成：支持多音色、自定义配音和独立的原声 ASR 字幕。

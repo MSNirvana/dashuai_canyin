@@ -31,8 +31,15 @@ export const INTERMEDIATE_CACHE_PREFIX = 'renders/_cache/'
  *   新旧 raw 字符串结构不同，旧条目**天然**不会被命中 ⇒ 再递增一次只是重复一遍同样的作废，
  *   而每次作废都意味着「线上每段素材重跑一次归一化」的真实成本。
  *   （代价同样是全线重跑一次归一化 —— 这次改动本身就换了产物内容，躲不掉。）
+ *
+ *   v3 → v4（2026-09-29 画质改造）：归一化从「交付档 crf 23」改为「**近无损 crf 12**」，
+ *           音频 128k → 192k。产物字节变了，**必须**递增 —— 否则线上会继续命中 crf 23 的旧
+ *           中间产物，等于「改了跟没改一样」，而且不报任何错。
+ *           代价：全线重跑一次归一化，且新产物体积约为旧的 **6 倍**
+ *           （2026-09-29 在服务器上拿真实素材实测：同一段 4.13s 源，crf 23 = 1.84MB，
+ *             crf 12 = 11.28MB ⇒ 6.1×。这是本次改造的已知代价，不是笔误）。
  */
-export const INTERMEDIATE_CACHE_VERSION = 'v3'
+export const INTERMEDIATE_CACHE_VERSION = 'v4'
 
 /**
  * 中间产物缓存键：(缓存版本, assetId, trim 起止, **口播保留区间指纹**, 输出尺寸) → sha1
@@ -103,8 +110,11 @@ export function normalizedClipKey(
  *
  * ★ 键里不含输出尺寸：这一步只做 trim+concat 重编码，与最终画布无关，
  *   预览与正式合成因此能共用同一份产物（它们**必须**共用，否则又会同键不同内容）。
+ *
+ * ★ v1 → v2（2026-09-29 画质改造）：口播裁剪产物同样从 crf 23 改为**近无损 crf 12**。
+ *   不递增 ⇒ 会命中按 crf 23 编出来的旧裁剪产物，白白丢掉一代质量的修复。
  */
-export const SPEECH_CUT_VERSION = 'v1'
+export const SPEECH_CUT_VERSION = 'v2'
 
 export function speechCutKey(merchantId: bigint, clip: RenderClip): string {
   const startMs = clip.trimStartMs ?? 0

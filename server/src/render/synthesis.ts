@@ -26,6 +26,7 @@ import {
 } from './ffmpeg.js'
 import { transcribeAudio, type TranscriptionSegment } from './transcription.js'
 import type { TtsProviderConfig } from '../services/tts-provider.service.js'
+import { ENCODE_DELIVERY, audioEncodeArgs, audioEncodeArgsStereo, videoEncodeArgs } from './encode-quality.js'
 
 const execFileP = promisify(execFile)
 
@@ -560,7 +561,7 @@ async function processVoiceTrack(input: string, output: string, targetDurationMs
   await execFileP(ffmpegBin(), [
     '-i', input, '-vn', '-af', filters,
     '-t', (Math.max(1, targetDurationMs) / 1000).toFixed(3),
-    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-y', output,
+    ...audioEncodeArgsStereo(), '-y', output,
   ], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
 }
 
@@ -775,8 +776,8 @@ async function muxWithDrawtext(
   if (audioPath) args.push('-map', '1:a')
   else args.push('-map', '0:a?')
   args.push(
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-    '-c:a', 'aac', '-b:a', '128k', '-shortest', '-y', outPath,
+    ...videoEncodeArgs(ENCODE_DELIVERY), '-movflags', '+faststart',
+    ...audioEncodeArgs(), '-shortest', '-y', outPath,
   )
   await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
   return true
@@ -854,8 +855,8 @@ async function muxWithCaptionOverlays(
   const durationMs = await probeDurationMs(videoPath)
   if (durationMs) args.push('-t', (durationMs / 1000).toFixed(3))
   args.push(
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-    '-c:a', 'aac', '-b:a', '128k', '-shortest', '-y', outPath,
+    ...videoEncodeArgs(ENCODE_DELIVERY), '-movflags', '+faststart',
+    ...audioEncodeArgs(), '-shortest', '-y', outPath,
   )
   await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
   return true
@@ -899,7 +900,7 @@ async function mixAudioTracks(
   filters.push(`${inputs.join('')}amix=inputs=${inputs.length}:duration=longest:dropout_transition=2,loudnorm=I=-16:TP=-1.5:LRA=11,alimiter=limit=0.95[aout]`)
   args.push(
     '-filter_complex', filters.join(';'),
-    '-map', '[aout]', '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
+    '-map', '[aout]', ...audioEncodeArgsStereo(),
     '-shortest', '-y', outPath,
   )
   await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
@@ -912,7 +913,7 @@ async function synthSilence(durMs: number, outPath: string, timeoutMs: number): 
     [
       '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
       '-t', (durMs / 1000).toFixed(3),
-      '-c:a', 'aac', '-b:a', '128k',
+      ...audioEncodeArgs(),
       '-y', outPath,
     ],
     { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
@@ -943,8 +944,8 @@ async function muxWithSubtitles(
       if (durationMs) args.push('-t', (durationMs / 1000).toFixed(3))
     }
     args.push(
-      '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-      '-c:a', 'aac', '-b:a', '128k',
+      ...videoEncodeArgs(ENCODE_DELIVERY), '-movflags', '+faststart',
+      ...audioEncodeArgs(),
       '-shortest', '-y', outPath,
     )
     await execFileP(
@@ -971,7 +972,7 @@ async function processVideoAudio(videoPath: string, outPath: string, options: Sy
     [
       '-i', videoPath,
       '-map', '0:v', '-map', '0:a',
-      '-c:v', 'copy', '-af', audioFilter(options), '-c:a', 'aac', '-b:a', '128k',
+      '-c:v', 'copy', '-af', audioFilter(options), ...audioEncodeArgs(),
       '-movflags', '+faststart', '-y', outPath,
     ],
     { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
@@ -989,7 +990,7 @@ async function muxAudioOnly(
     [
       '-i', videoPath, '-i', audioPath,
       '-map', '0:v', '-map', '1:a',
-      '-c:v', 'copy', '-c:a', 'aac', '-b:a', '128k',
+      '-c:v', 'copy', ...audioEncodeArgs(),
       '-shortest', '-y', outPath,
     ],
     { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },

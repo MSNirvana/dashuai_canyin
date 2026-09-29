@@ -25,7 +25,15 @@ import type { ColorGrade, RenderClip } from '../services/render.service.js'
 /** 单步 ffmpeg 的超时。预览是同步 HTTP 请求，失败也要尽快把话说明白 */
 const PREVIEW_STEP_TIMEOUT_MS = 120_000
 
-/** 预览用编码档位：ultrafast 换速度，crf 32 换体积。**不改分辨率、不改帧率** */
+/**
+ * 预览用编码档位：ultrafast 换速度，crf 32 换体积。**不改分辨率、不改帧率**
+ *
+ * ★ 预览**不该**用成片那套档位：它是「看一眼调色大概什么样」的临时产物，同步等在一个
+ *   HTTP 请求里，体积和速度优先。所以这里**刻意保持 crf 32**，不受 encode-quality.ts 影响。
+ * ★ 但要注意：归一化那一步是**与正式合成共用缓存**的，它已经改成近无损（crf 12）——
+ *   也就是说预览的中间产物变大了。这是有意接受的代价：中间产物要么两边一起近无损，
+ *   要么就会出现「同一个键、两种质量的字节」，那才是真正会造成同键不同内容的坑。
+ */
 const PREVIEW_ENCODE = { preset: 'ultrafast', crf: 32 } as const
 
 export class ColorPreviewNoopError extends Error {
@@ -182,8 +190,10 @@ async function renderPreview(args: {
     }
 
     // 2) 拼接（-c copy，不重编码）→ 3) 调色（唯一的重编码，参数与成片完全同源）
+    // ★ 拼接这里显式传预览档：正常同质会走 `-c copy`（不编码、档位无意义），
+    //   但一旦判据不成立回退重编码，默认档位是「交付档」—— 预览不该按交付体积编。
     const concatPath = join(dir, 'concat.mp4')
-    await ffmpegConcat(normPaths, concatPath, PREVIEW_STEP_TIMEOUT_MS)
+    await ffmpegConcat(normPaths, concatPath, PREVIEW_STEP_TIMEOUT_MS, PREVIEW_ENCODE)
     const outPath = join(dir, 'preview.mp4')
     await ffmpegApplyColor(concatPath, outPath, color, PREVIEW_STEP_TIMEOUT_MS, PREVIEW_ENCODE)
 

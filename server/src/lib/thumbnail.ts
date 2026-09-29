@@ -72,7 +72,10 @@ export async function generateVideoCover(
         '-frames:v', '1',
         // 等比缩放到宽 640，高自动取偶数（jpg 要求）
         '-vf', `scale=${width}:-2`,
-        '-q:v', '4',
+        // ★ 候选帧由 `-q:v 4` 提到 `2`（2026-09-29 画质改造）：这几帧不只是给人看，
+        //   还要喂给「图生图」生成封面 —— 底图先糊一层，成品再清晰也回不来。
+        //   数量少（每段视频几帧）、体积增加可忽略。
+        '-q:v', '2',
         outPath,
       ])
       const s = await stat(outPath)
@@ -197,7 +200,10 @@ export async function extractCandidateFrames(
         '-frames:v', '1',
         // 等比缩放到指定宽，高自动取偶数（jpg 要求）
         '-vf', `scale=${width}:-2`,
-        '-q:v', '4',
+        // ★ 候选帧由 `-q:v 4` 提到 `2`（2026-09-29 画质改造）：这几帧不只是给人看，
+        //   还要喂给「图生图」生成封面 —— 底图先糊一层，成品再清晰也回不来。
+        //   数量少（每段视频几帧）、体积增加可忽略。
+        '-q:v', '2',
         framePath,
       ])
       const s = await stat(framePath)

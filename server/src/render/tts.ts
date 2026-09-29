@@ -5,7 +5,9 @@
 //     新版 API Key 鉴权（X-Api-Key），响应为 NDJSON 流（每行 {code, data=base64}，20000000=结束）
 //     音色/语速等经 extra 配置：resourceId(seed-tts-1.0/2.0)/sampleRate/bitRate/speechRate
 // - tencent：腾讯云 TTS 暂未实现（需要 TC3 签名，待接入）
-// 合成结果统一 ffmpeg 转 aac（44.1kHz 立体声 128k，与静音兜底轨参数一致，保证拼接 copy），
+// 合成结果统一 ffmpeg 转 aac（44.1kHz 立体声 192k —— 与静音兜底轨参数一致，保证拼接 copy），
+// ★ 192k 而不是 128k：配音音频后面还要过混音、再过成片，**同样是多代编码**；
+//   音频多给 64kbps 在交付件里只占不到 3% 码率，所以这里不该省（见 encode-quality.ts）。
 // 供应商原始语音先完整落盘，不在这里用 -t 硬截；最终由 synthesis 根据整条视频时间轴
 // 统一限速/补静音。这样句尾不会因为单个镜头估算偏小而被截掉。
 import { execFile } from 'node:child_process'
@@ -13,6 +15,7 @@ import { promisify } from 'node:util'
 import { randomUUID } from 'node:crypto'
 import { writeFile, rm } from 'node:fs/promises'
 import type { TtsProviderConfig } from '../services/tts-provider.service.js'
+import { audioEncodeArgs, audioEncodeArgsStereo } from './encode-quality.js'
 import { ffmpegBin, probeDurationMs } from './ffmpeg.js'
 
 const execFileP = promisify(execFile)
@@ -59,7 +62,7 @@ async function synthSilence(durMs: number, outPath: string, timeoutMs: number): 
     [
       '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
       '-t', (durMs / 1000).toFixed(3),
-      '-c:a', 'aac', '-b:a', '128k',
+      ...audioEncodeArgs(),
       '-y', outPath,
     ],
     { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
@@ -163,7 +166,7 @@ async function synthesizeVolcano(
       ffmpegBin(),
       [
         '-i', mp3Path,
-        '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
+        ...audioEncodeArgsStereo(),
         '-y', outPath,
       ],
       { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },

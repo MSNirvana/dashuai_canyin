@@ -22,6 +22,7 @@ import {
   INTERMEDIATE_CACHE_PREFIX,
 } from '../src/render/cache-keys.js'
 import { buildColorFilter, buildApplyColorArgs } from '../src/render/ffmpeg.js'
+import { ENCODE_DELIVERY } from '../src/render/encode-quality.js'
 import type { ColorGrade, RenderClip } from '../src/services/render.service.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -75,8 +76,14 @@ console.log('\n① 调色滤镜：预览与成片必须逐字节相同')
   // 编码参数确实被换掉了（否则「低码率预览」名不副实）
   check('预览确实换了编码 preset', previewArgs[previewArgs.indexOf('-preset') + 1] === 'ultrafast')
   check('预览确实换了 crf', previewArgs[previewArgs.indexOf('-crf') + 1] === '32')
-  check('成片仍是 veryfast/crf23（默认值没被顺手改掉）',
-    finalArgs[finalArgs.indexOf('-preset') + 1] === 'veryfast' && finalArgs[finalArgs.indexOf('-crf') + 1] === '23')
+  /**
+   * ★ 断言写**常量**而不是字面量 `'23'`：编码档位集中在 encode-quality.ts，
+   *   这里若继续钉死旧数字，改档位时这条会红 —— 而它本来要防的是「预览把成片档位也改了」，
+   *   不是「成片档位不许变」。钉常量之后，两个意图才各自成立。
+   */
+  check(`成片仍用交付档（${ENCODE_DELIVERY.preset}/crf${ENCODE_DELIVERY.crf}，没被预览档顺手改掉）`,
+    finalArgs[finalArgs.indexOf('-preset') + 1] === ENCODE_DELIVERY.preset &&
+    finalArgs[finalArgs.indexOf('-crf') + 1] === String(ENCODE_DELIVERY.crf))
 }
 
 // ───────────── ② 归一化缓存键：格式与两侧一致性 ─────────────

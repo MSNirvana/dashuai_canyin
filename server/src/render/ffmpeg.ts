@@ -7,6 +7,15 @@ import { writeFile, rm, rename } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { ColorGrade } from '../services/render.service.js'
+import {
+  AUDIO_SAMPLE_RATE,
+  ENCODE_DELIVERY,
+  ENCODE_INTERMEDIATE,
+  audioEncodeArgs,
+  audioEncodeArgsStereo,
+  videoEncodeArgs,
+  type EncodeTier,
+} from './encode-quality.js'
 
 const execFileP = promisify(execFile)
 
@@ -142,8 +151,8 @@ export async function ffmpegNormalize(input: string, output: string, opts: Norma
   }
   args.push('-shortest')
   args.push(
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
+    ...videoEncodeArgs(ENCODE_INTERMEDIATE), '-movflags', '+faststart',
+    ...audioEncodeArgsStereo(),
     '-y', output,
   )
   await runFfmpeg(args, opts.timeoutMs ?? 120_000)
@@ -165,8 +174,8 @@ export async function ffmpegExtendVideo(
     '-vf', `tpad=stop_mode=clone:stop_duration=${(target / 1000).toFixed(3)}`,
     '-af', 'apad',
     '-t', (target / 1000).toFixed(3),
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-movflags', '+faststart',
+    ...videoEncodeArgs(ENCODE_INTERMEDIATE),
+    ...audioEncodeArgsStereo(), '-movflags', '+faststart',
     '-y', output,
   ], timeoutMs)
 }
@@ -200,7 +209,7 @@ export async function ffmpegGenerateBackgroundMusic(
   await runFfmpeg([
     '-f', 'lavfi', '-i', `aevalsrc=${expr}:s=44100:d=${duration.toFixed(3)}`,
     '-af', `lowpass=f=1800,highpass=f=80,volume=0.22,afade=t=in:st=0:d=0.8,afade=t=out:st=${Math.max(0, duration - 1.5).toFixed(3)}:d=1.5`,
-    '-ac', '2', '-ar', '44100', '-c:a', 'aac', '-b:a', '96k', '-t', duration.toFixed(3),
+    '-ac', '2', '-ar', AUDIO_SAMPLE_RATE, ...audioEncodeArgs(), '-t', duration.toFixed(3),
     '-y', output,
   ], timeoutMs)
 }
@@ -334,8 +343,8 @@ export async function ffmpegRemoveTimeRanges(
     '-i', input,
     '-filter_complex', filters.join(';'),
     '-map', '[v]', '-map', '[a]',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-movflags', '+faststart',
+    ...videoEncodeArgs(ENCODE_INTERMEDIATE),
+    ...audioEncodeArgsStereo(), '-movflags', '+faststart',
     '-y', output,
   ], timeoutMs)
 }
@@ -435,7 +444,16 @@ export interface ColorEncodeOpts {
   crf?: number
 }
 
-const COLOR_ENCODE_DEFAULT: Required<ColorEncodeOpts> = { preset: 'veryfast', crf: 23 }
+/**
+ * ★ 默认 = **交付档**（不是中间档）。
+ *
+ * 为什么默认给交付档：`buildApplyColorArgs` 的调用方有两类 ——
+ *   · `worker.ts`：调色之后**还会**烧字幕（AI 档），那一趟才是最后一趟，所以它**显式**传中间档；
+ *   · 其余（含这个纯函数的测试断言）：算作「这一步就是最后一趟」。
+ * ★★ 默认值取「更大体积 / 更高质量」那一侧是刻意的：选错的后果只是文件偏大，
+ *   而反过来（该交付的却按中间档压）是**静默的画质问题**。
+ */
+const COLOR_ENCODE_DEFAULT: Required<ColorEncodeOpts> = { ...ENCODE_DELIVERY }
 
 /**
  * 构建「调色」这一步的 ffmpeg 参数。抽成纯函数是为了让它**可被测试断言**：
@@ -454,7 +472,7 @@ export function buildApplyColorArgs(
   return [
     '-i', input,
     '-vf', cf,
-    '-c:v', 'libx264', '-preset', preset, '-crf', String(crf), '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
+    ...videoEncodeArgs({ preset, crf }), '-movflags', '+faststart',
     '-c:a', 'copy',
     '-y', output,
   ]
@@ -513,16 +531,25 @@ async function probeVideoSignature(file: string): Promise<string | null> {
  *     走这条逐输入复位后拼接   → 帧间隔 496×0.033333 + 248×0.033334，**零异常**
  *   ⚠ 只在外层加一条 `fps=30` 是修不掉的（实测仍有 0.400000s×1 空洞）—— 必须逐输入复位。
  * ⚠ 代价是整段重编码，比 `-c copy` 慢，所以只在判据命中时才走这里。
+ *
+ * ★ 档位由调用方决定（`tier`）：这条路径的产物**不一定**是交付物 ——
+ *   AI 档拼完还要烧字幕，那时它只是中间产物，应该按近无损编（见 encode-quality.ts）。
  */
-async function concatWithPtsReset(inputs: string[], output: string, timeoutMs: number, fps = 30): Promise<void> {
+async function concatWithPtsReset(
+  inputs: string[],
+  output: string,
+  timeoutMs: number,
+  fps = 30,
+  tier: EncodeTier = ENCODE_DELIVERY,
+): Promise<void> {
   const filters = inputs.map((_, index) => perInputResetFilter(index, fps)).join('')
   const labels = inputs.map((_, index) => `[v${index}][a${index}]`).join('')
   await runFfmpeg([
     ...inputs.flatMap((input) => ['-i', input]),
     '-filter_complex', `${filters}${labels}concat=n=${inputs.length}:v=1:a=1[v][a]`,
     '-map', '[v]', '-map', '[a]',
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2', '-movflags', '+faststart',
+    ...videoEncodeArgs(tier),
+    ...audioEncodeArgsStereo(), '-movflags', '+faststart',
     '-y', output,
   ], timeoutMs)
 }
@@ -536,8 +563,16 @@ async function concatWithPtsReset(inputs: string[], output: string, timeoutMs: n
  *   接缝处丢帧、画面定住，就是用户反馈的「中间卡顿」。
  *   所以这里补一条判据：签名不一致（或取不到）就不敢 copy，改走逐输入复位的重编码路径。
  *   代价只在真正异质时才付，同质的正常单还是会走 `-c copy`。
+ *
+ * ★ `tier` 只在**回退重编码**那条路上有用（走 `-c copy` 时无所谓）。默认交付档；
+ *   AI 档还有后续烧字幕时，调用方应显式传中间档。
  */
-export async function ffmpegConcat(inputs: string[], output: string, timeoutMs = 120_000): Promise<void> {
+export async function ffmpegConcat(
+  inputs: string[],
+  output: string,
+  timeoutMs = 120_000,
+  tier: EncodeTier = ENCODE_DELIVERY,
+): Promise<void> {
   const signatures = await Promise.all(inputs.map((input) => probeVideoSignature(input)))
   const first = signatures[0]
   const homogeneous = Boolean(first) && signatures.every((signature) => signature === first)
@@ -546,7 +581,7 @@ export async function ffmpegConcat(inputs: string[], output: string, timeoutMs =
       `[ffmpeg] 片段帧率/时间基不一致（${signatures.map((s) => s ?? '未知').join(', ')}），` +
       `改用逐输入复位的重编码拼接，避免接缝丢帧`,
     )
-    await concatWithPtsReset(inputs, output, timeoutMs)
+    await concatWithPtsReset(inputs, output, timeoutMs, 30, tier)
     return
   }
   const listPath = `${output}.list.txt`
@@ -566,26 +601,30 @@ export type TransitionStyle = 'CLEAN' | 'SMOOTH' | 'DYNAMIC'
  * 拼接并应用真实的镜头转场。CLEAN 保持无损硬切；其余两档用 xfade/acrossfade
  * 同步处理画面和声音。素材过短、缺少时长或当前 ffmpeg 不支持滤镜时回退硬切，
  * 保证选项不会把任务变成不可恢复的失败。
+ *
+ * ★ `tier` 决定**这一趟重编码**的档位。转场必须重编码（xfade 无法流拷贝），
+ *   所以这里比硬切路径更常走到编码；AI 档还有烧字幕在后面时，调用方应传中间档。
  */
 export async function ffmpegConcatWithTransitions(
   inputs: string[],
   output: string,
   transition: TransitionStyle,
   timeoutMs = 120_000,
+  tier: EncodeTier = ENCODE_DELIVERY,
 ): Promise<void> {
   if (transition === 'CLEAN' || inputs.length < 2) {
-    await ffmpegConcat(inputs, output, timeoutMs)
+    await ffmpegConcat(inputs, output, timeoutMs, tier)
     return
   }
   const durations = await Promise.all(inputs.map((input) => probeDurationMs(input)))
   if (durations.some((duration) => !duration || duration <= 700)) {
-    await ffmpegConcat(inputs, output, timeoutMs)
+    await ffmpegConcat(inputs, output, timeoutMs, tier)
     return
   }
   const durationSec = transition === 'DYNAMIC' ? 0.28 : 0.35
   const transitionName = transition === 'DYNAMIC' ? 'wipeleft' : 'fade'
   if (durations.some((duration) => (duration as number) / 1000 <= durationSec + 0.1)) {
-    await ffmpegConcat(inputs, output, timeoutMs)
+    await ffmpegConcat(inputs, output, timeoutMs, tier)
     return
   }
   const args = inputs.flatMap((input) => ['-i', input])
@@ -614,14 +653,14 @@ export async function ffmpegConcatWithTransitions(
   args.push(
     '-filter_complex', filter,
     '-map', `[${videoLabel}]`, '-map', `[${audioLabel}]`,
-    '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', '-shortest', '-y', output,
+    ...videoEncodeArgs(tier),
+    ...audioEncodeArgs(), '-movflags', '+faststart', '-shortest', '-y', output,
   )
   try {
     await runFfmpeg(args, timeoutMs)
   } catch (error) {
     console.warn(`[ffmpeg] ${transition} 转场不可用，回退硬切：`, (error as Error).message)
-    await ffmpegConcat(inputs, output, timeoutMs)
+    await ffmpegConcat(inputs, output, timeoutMs, tier)
   }
 }
 
@@ -1039,7 +1078,7 @@ export async function retimeAudioTo(
         '-i', filePath,
         '-af', filters,
         '-t', (target / 1000).toFixed(3),
-        '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
+        ...audioEncodeArgsStereo(),
         '-y', tmpPath,
       ],
       { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
