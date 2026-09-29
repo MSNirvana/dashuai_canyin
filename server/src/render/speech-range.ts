@@ -377,8 +377,21 @@ export interface ShotSpeechPlan {
  * ★ 放在纯函数模块里（只读 `process.env`、零 I/O），这样阈值解析本身也能被守护脚本覆盖。
  */
 export function shotSpeechOptions(): Required<SpeechKeepOptions> {
+  /**
+   * ★★ 空串必须当「**没配**」处理 —— `Number('')` 是 **0**，而 0 在本模块里是个合法阈值，
+   *   所以 `?? fallback` 那一类写法会**静默把阈值全变成 0**：
+   *     · `pauseMs = 0`        ⇒ 每个词各成一句，剪得比设计狠得多
+   *     · `minSpeechRatio = 0` ⇒ 人声覆盖率闸门**直接失效**（纯环境音素材也会被剪）
+   *   2026-09-29 在服务器上实测踩到，`shotSpeechOptions()` 原样打印出来就是
+   *   `{"pauseMs":0,"padMs":0,"minGainMs":0,"minSpeechRatio":0}`，
+   *   同一条素材剪掉 57.2%，而设计值是 47%。
+   *   ⚠ 但仍然要支持**显式写 0**（那是「任何停顿都剪」的合法取值）
+   *   ⇒ 判据只能是「字符串为空」，不能是「数值为 0」。
+   */
   const num = (raw: string | undefined, fallback: number): number => {
-    const value = Number((raw ?? '').trim())
+    const text = (raw ?? '').trim()
+    if (!text) return fallback
+    const value = Number(text)
     return Number.isFinite(value) && value >= 0 ? value : fallback
   }
   return {

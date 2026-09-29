@@ -23,11 +23,13 @@ import {
   cutRangesInWindow,
   isSentenceBoundary,
   parseShotSpeechPlan,
+  shotSpeechOptions,
   sliceKeepRanges,
   speechKeepRanges,
   toSourceSegments,
   SHOT_SPEECH_VERSION,
   SPEECH_MIN_GAIN_MS,
+  SPEECH_MIN_RATIO,
   SPEECH_MIN_SENTENCE_CHARS,
   SPEECH_PAD_MS,
   SPEECH_PAUSE_MS,
@@ -273,6 +275,44 @@ eq('默认句界阈值 = 300ms（用户 2026-09-29 拍板「判句更细、剪�
 eq('默认 pad = 200ms', SPEECH_PAD_MS, 200)
 eq('最短句长 = 4 字（字幕断句专用，剪废片不受它约束）', SPEECH_MIN_SENTENCE_CHARS, 4)
 eq('落库版本 = 2（v1 那批 500ms 的结论必须作废重算）', SHOT_SPEECH_VERSION, 2)
+
+/**
+ * ★★ 环境变量「没配」时必须回落默认值 —— 2026-09-29 线上实测踩到的坑：
+ *   `Number('')` 是 **0**，而 0 在本模块里是**合法阈值** ⇒ 少了这条断言，
+ *   `.env` 里不写这几个变量就会把阈值**静默全变成 0**：
+ *   `pauseMs=0` ⇒ 每个词各成一句（同一条素材剪 57.2% 而不是 47%），
+ *   `minSpeechRatio=0` ⇒ 覆盖率闸门直接失效。
+ *   ⚠ 但**显式写 0 必须被尊重**（「任何停顿都剪」是有意义的取值）⇒ 判据只能是「字符串为空」。
+ */
+{
+  const keys = ['SHOT_SPEECH_PAUSE_MS', 'SHOT_SPEECH_PAD_MS', 'SHOT_SPEECH_MIN_GAIN_MS', 'SHOT_SPEECH_MIN_RATIO']
+  const saved = keys.map((key) => [key, process.env[key]] as const)
+  for (const [key] of saved) delete process.env[key]
+
+  const fallback = shotSpeechOptions()
+  eq('★★ 没配环境变量 ⇒ pauseMs 回落 300（不是 0！）', fallback.pauseMs, SPEECH_PAUSE_MS)
+  eq('  └ padMs 回落 200', fallback.padMs, SPEECH_PAD_MS)
+  eq('  └ minGainMs 回落 400', fallback.minGainMs, SPEECH_MIN_GAIN_MS)
+  eq('  └ minSpeechRatio 回落 0.12（覆盖率闸门不能失效）', fallback.minSpeechRatio, SPEECH_MIN_RATIO)
+
+  process.env.SHOT_SPEECH_PAUSE_MS = '   '
+  eq('  └ 写成空白串也当「没配」', shotSpeechOptions().pauseMs, SPEECH_PAUSE_MS)
+
+  process.env.SHOT_SPEECH_PAUSE_MS = '0'
+  eq('  └ ★ 显式写 0 必须被尊重（那是有意义的配置）', shotSpeechOptions().pauseMs, 0)
+
+  process.env.SHOT_SPEECH_PAUSE_MS = 'abc'
+  eq('  └ 非数字回落默认值', shotSpeechOptions().pauseMs, SPEECH_PAUSE_MS)
+
+  process.env.SHOT_SPEECH_PAUSE_MS = '600'
+  eq('  └ 正常数值按配置生效', shotSpeechOptions().pauseMs, 600)
+
+  for (const [key, value] of saved) {
+    if (value === undefined) delete process.env[key]
+    else process.env[key] = value
+  }
+  eq('还原后仍回落默认值（别把 env 泄漏给后面的断言）', shotSpeechOptions().pauseMs, SPEECH_PAUSE_MS)
+}
 
 /**
  * ★★ 「更狠」的**实测边界**（诚实记录，别把它说成大改）：

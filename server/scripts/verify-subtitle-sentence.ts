@@ -10,10 +10,12 @@
  *   词表就是线上那条素材实测的 25 个词（与 `verify-speech-range.ts` 同一份），
  *   配上 ASR 会返回的带标点 `Result`。于是这里验的是「真数据走真函数」。
  *
- * 改之前的行为（对照）：只认 `/[。！？!?；;，、,:：]/` —— **逗号也算句界**，
- * 于是「咱固安的老乡，在外头待久了，」被切成两条 cue，一串连贯的话被打碎。
+ * 改之前的行为（对照）：只认 `/[。！？!?；;，、,:：]/` —— **逗号也算句界**。
+ * 于是「是不是就馋那一口炖菜碗棒子面儿粥，」成了**一条 16 字**的超长 cue，
+ * 只能靠下游「凑满 10 字」机械拆行 —— 断点跟着**字数**走，而不是跟着人怎么说话走。
  */
 import { alignPunctuatedAsrText } from '../src/render/transcription.js'
+import { splitSubtitleText } from '../src/render/synthesis.js'
 
 let pass = 0
 let fail = 0
@@ -66,21 +68,40 @@ const REAL_DURATION_MS = 19411
 // ── ① 真实形状：改前 6 条、改后 5 条 ────────────────────────────────────────
 console.log('\n① 真实形状（线上那条素材的 25 个词 + ASR 会返回的带标点整句）')
 {
-  const RESULT = '你是哪里人？咱固安的老乡，在外头待久了，是不是就馋那一口炖菜？碗棒子面儿粥，多久没吃着了？'
+  const RESULT = '你是哪里人？咱固安的老乡在外头待久了，是不是就馋那一口炖菜碗棒子面儿粥，多久没吃着了？'
   const segments = alignPunctuatedAsrText(RESULT, REAL_WORDS, REAL_DURATION_MS)
   ok('能对齐（不是 null）', segments !== null)
   if (segments) {
-    // 改前：逗号也算句界 ⇒ 「咱固安的老乡，」「在外头待久了，」各占一条 ⇒ 6 条
-    eq('★★ 只切出 5 条（改前是 6 条：逗号把第 2 句劈成了两条）', segments.length, 5)
-    eq('第 1 句 = 你是哪里人？', segments[0]!.text, '你是哪里人？')
+    eq('切成 5 条', segments.length, 5)
+    eq('第 1 条 = 你是哪里人？（句末问号断的）', segments[0]!.text, '你是哪里人？')
     eq(
-      '★★ 第 2 句把「咱固安的老乡，在外头待久了，」合成**一整条**（这就是「不被切成好几条」）',
+      '★ 第 2 条 = 咱固安的老乡在外头待久了，（逗号留在行内，没有被当成句界）',
       segments[1]!.text,
-      '咱固安的老乡，在外头待久了，',
+      '咱固安的老乡在外头待久了，',
     )
-    eq('第 3 句 = 是不是就馋那一口炖菜？', segments[2]!.text, '是不是就馋那一口炖菜？')
-    eq('第 4 句 = 碗棒子面儿粥，', segments[3]!.text, '碗棒子面儿粥，')
-    eq('第 5 句 = 多久没吃着了？', segments[4]!.text, '多久没吃着了？')
+    /**
+     * ★★ 这条是本节的**核心证据**：第 3 条**一个标点都没有**，
+     *    它是被 11400→14350 那处 **2950ms 停顿**断出来的。
+     *    改前（只按标点断）它后面会连着「碗棒子面儿粥，」变成一条 **16 字**的超长 cue，
+     *    只能靠下游「凑满 10 字」机械拆行 —— 断点落在哪儿纯看字数，不看人怎么说话。
+     */
+    eq('★★ 第 3 条 = 是不是就馋那一口炖菜（**没有标点**，纯靠停顿断出来的）', segments[2]!.text, '是不是就馋那一口炖菜')
+    eq('  └ 第 4 条 = 碗棒子面儿粥，（2950ms 停顿之后）', segments[3]!.text, '碗棒子面儿粥，')
+    eq('第 5 条 = 多久没吃着了？', segments[4]!.text, '多久没吃着了？')
+
+    ok(
+      '★ 字的顺序与数量一个不差（拼回去 === 原句去掉标点）',
+      segments.map((s) => s.text).join('').replace(/[，。！？；、：]/g, '') ===
+        RESULT.replace(/[，。！？；、：]/g, ''),
+    )
+    ok(
+      '★ 逗号从不成为某条 cue 的**开头**（标点永远挂在前一句尾巴上）',
+      segments.every((segment) => !/^[，。！？；、：]/.test(segment.text)),
+    )
+    ok(
+      '★ 改前那条 16 字的超长 cue 已不存在（改后没有任何一条超过 13 字）',
+      segments.every((segment) => segment.text.replace(/[，。！？；、：]/g, '').length <= 13),
+    )
     ok(
       '★ 逗号从不成为某条 cue 的**开头**（标点永远挂在前一句尾巴上）',
       segments.every((segment) => !/^[，。！？；、：]/.test(segment.text)),
@@ -176,6 +197,34 @@ console.log('\n⑤ 文本与词表对不上 ⇒ 返回 null')
   ok('空文本', alignPunctuatedAsrText('', [{ Word: '你', StartTime: 0, EndTime: 300 }], 1000) === null)
   ok('空词表', alignPunctuatedAsrText('你是哪里人', [], 1000) === null)
   ok('词表缺一半（只消费了不到 90% 的字）⇒ 不给残缺结果', alignPunctuatedAsrText('你是哪里人', [{ Word: '你是', StartTime: 0, EndTime: 800 }], 1000) === null)
+}
+
+// ── ⑥ ★★ 这才是本次改动的真正价值：断点跟着**说话**走，而不是跟着字数走 ────
+console.log('\n⑥ 停顿不在「凑满一行」的位置时，两种做法的断点明显不同')
+{
+  const words = [
+    { Word: '今天', StartTime: 0, EndTime: 400 },
+    { Word: '我们', StartTime: 400, EndTime: 800 },
+    { Word: '讲', StartTime: 800, EndTime: 1000 },
+    { Word: '三个', StartTime: 1600, EndTime: 2000 },
+    { Word: '特别', StartTime: 2000, EndTime: 2400 },
+    { Word: '重要', StartTime: 2400, EndTime: 2800 },
+    { Word: '的', StartTime: 2800, EndTime: 2950 },
+    { Word: '事情', StartTime: 2950, EndTime: 3350 },
+  ]
+  const text = '今天我们讲三个特别重要的事情'
+  const byPause = alignPunctuatedAsrText(text, words, 4000)
+  eq('按停顿断 ⇒ 2 条', byPause?.length, 2)
+  eq('  └ ★ 第 1 条只有 6 个字（断在说话停顿处）', byPause?.[0]?.text, '今天我们讲')
+  eq('  └ ★ 第 2 条 12 个字（停顿之后的全部内容）', byPause?.[1]?.text, '三个特别重要的事情')
+
+  const byWidth = splitSubtitleText(text)
+  eq('按「凑满一行」机械装箱 ⇒ 断在字数预算（10 字）处', byWidth.join('|'), '今天我们讲三个特别|重要的事情')
+  ok(
+    '★★ 两者断点不同：一个跟着**口播停顿**（第 6 字），一个跟着**字数预算**（第 9 字）—— 这就是本次改动的价值',
+    byPause?.[0]?.text !== byWidth[0],
+    `停顿版「${byPause?.[0]?.text}」 vs 宽度版「${byWidth[0]}」`,
+  )
 }
 
 console.log(`\n${fail === 0 ? '✅ 全部通过' : '❌ 有失败项'}：${pass} 通过 / ${fail} 失败`)
