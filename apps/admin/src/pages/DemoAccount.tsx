@@ -362,9 +362,19 @@ export default function DemoAccountPage() {
                   ? '有改动未保存'
                   : savedAt
                     ? `已保存 ${savedAt}`
-                    : ''}
+                    : // ★ 刚加载完、还没动过时也要给一句话：否则状态位置是空的，
+                      //   而「保存」按钮此时是禁用的 —— 运营会以为按钮坏了。
+                      loading
+                      ? ''
+                      : '与库里一致'}
           </span>
-          <Button theme="primary" disabled={!canSave} loading={saving} onClick={() => void persist()}>
+          <Button
+            className="demo-save"
+            theme="primary"
+            disabled={!canSave}
+            loading={saving}
+            onClick={() => void persist()}
+          >
             保存
           </Button>
         </div>
@@ -428,7 +438,10 @@ export default function DemoAccountPage() {
                       >
                         <DeleteIcon />
                       </Button>
-                      <span className="muted">第 {i + 1} 个</span>
+                      {/* ★ 必须写成**一整个**模板串：写成 `第 {i+1} 个` 时 JSX 会插出
+                          「第 」/「1」/「 个」三个文本节点，两个字间的空格成了可换行点，
+                          窄一点就把「第 1」和「个」折成两行。 */}
+                      <span className="demo-phones__index">{`第 ${i + 1} 个`}</span>
                     </div>
                   )
                 })}

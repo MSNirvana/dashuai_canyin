@@ -308,6 +308,9 @@ button, input, textarea { font-family: inherit; }
 .demo-editor__form { flex: 1 1 430px; min-width: 0; padding: 20px 22px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); }
 .demo-phones { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
 .demo-phones__row { display: flex; align-items: center; gap: 6px; }
+/* ★ nowrap 是必须的：这个标签里带空格，允许换行时窄一点就折成「第 1」/「个」两行。
+   （JSX 那边也别写成 `第 {n} 个` —— 那会插出三个文本节点，空格同样成换行点。） */
+.demo-phones__index { color: var(--ds-subtle); font-size: 12px; white-space: nowrap; }
 .demo-window { display: flex; align-items: center; gap: 8px; }
 .demo-help--warn { color: #c4892c; }
 .demo-status { flex: 0 0 auto; width: 400px; max-width: 100%; padding: 16px 18px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); }
@@ -355,6 +358,22 @@ button, input, textarea { font-family: inherit; }
 .t-button.t-button--theme-primary, .t-button--variant-base.t-button--theme-primary { background: var(--ds-red) !important; border-color: var(--ds-red) !important; color: #fff !important; }
 .t-button.t-button--theme-primary:hover, .t-button--variant-base.t-button--theme-primary:hover { background: var(--ds-red-strong) !important; border-color: var(--ds-red-strong) !important; }
 .t-button--theme-danger { color: var(--ds-red-strong); }
+/* ★ 抢回「禁用态」的主色按钮外观。
+   本文件上面那条 `.t-button.t-button--theme-primary { background: … !important }` 用了
+   `!important` 铺底色，把 TDesign 自己的禁用态
+   （`.t-button--variant-base.t-button--theme-primary.t-is-disabled`）压掉了
+   ⇒ 全站的**禁用**主色按钮看起来仍然是「可点的实心红」。
+   这一页把「保存」的可用/不可用当作主要提示，所以只给这一颗按钮把禁用态抢回来：
+     · 选择器比全局那条更具体（多一个 `t-button--variant-base`），两边都带 `!important` 时按具体度胜出；
+     · 同时**必须排在那条全局规则之后**（同具体度时后写的赢），所以这一条放在这里而不是文件前半段。
+   ⚠ 只加 `.demo-save` 这一个类，不改共享选择器 —— 免得动到别的页面的按钮观感。 */
+.demo-save.t-button--variant-base.t-is-disabled,
+.demo-save.t-button--variant-base.t-is-disabled:hover {
+  background: #d9dbde !important;
+  border-color: #d9dbde !important;
+  color: #fff !important;
+  cursor: not-allowed;
+}
 .t-input, .t-textarea__inner, .t-input-number, .t-select-input, .t-date-picker__input { border-color: #dfe2e6; border-radius: 7px; }
 .t-input:focus, .t-input--focused, .t-textarea__inner:focus, .t-input-number--focused, .t-select-input--focused { border-color: var(--ds-red); box-shadow: 0 0 0 2px rgb(201 42 33 / 12%); }
 .t-table { overflow: hidden; border: 1px solid var(--ds-line); border-radius: var(--ds-radius); background: var(--ds-surface); }
