@@ -238,24 +238,49 @@ for (const word of ['千万', '香油', '七上', '八下', '火锅', '划走', 
   )
 }
 
-// ★★ 2026-09-29 第二版新增回归：`balanceSubtitleTail` 给末行「补短」时会从上一行搬词下来，
-//    而它假设「原子＝词」—— **ICU 不保证**。真机实测它把 `秘制` 切成两个原子，
-//    旧实现于是搬走 1 个字的 `制`，成片里出现 `蘸上老板这个秘` / `制香油啊`
-//    —— 「秘制」被劈在接缝上，正是用户抱怨的那种。
-//    修法是 `SUBTITLE_MIN_MOVE_WIDTH = 2`（1 个字的原子一律不许搬）。这条断言钉住它。
-//    ⚠ 判据取 `秘制` 而不是 `制香`：正确输出 `蘸上老板这个秘制` / `香油啊` 的接缝**就是** `制香`
-//      （`制` 是「秘制」的尾、`香` 是「香油」的头，本就是两个词）—— 拿 `制香` 当判据会**假红**。
-{
-  const pieces = splitSubtitleText('蘸上老板这个秘制香油啊')
-  assert.equal(pieces.join(''), '蘸上老板这个秘制香油啊', '★ 拆条不得丢字、不得重字')
-  assert.ok(pieces.length >= 2, '★ 11 个字必须拆成多条（连播）')
+// ★★ 2026-09-29 第三版：**末行过短 ⇒ 整个子句重新均分**（不再从上一行搬词）。
+//    走过两条弯路，下面这组样本把它们各自的失败形态都钉住：
+//      ① 初版「搬词补短」：搬的单位是**分词原子**，而 ICU 的原子 ≠ 词 ——
+//         它把 `秘制` 切成 `秘`|`制`，于是搬走 1 个字的碎片
+//         ⇒ 成片出过 `蘸上老板这个秘` / `制香油啊`（**劈词**）。
+//      ② 次版加闸门「1 个字的原子不许搬」：`秘制` 是修好了，却**踩坏另一类** ——
+//         末行只剩 `一口` 时本该把 `第` 搬下去拼回 `第一口`，闸门一挡就成
+//         `来大帅火锅旗舰店试第` / `一口`（**劈词 ＋ 末条只剩 2 字宽**，两个问题一起来）。
+//    ⇒ 根本矛盾：「这个 1 字碎片该不该搬」在宽度与原子粒度上**完全无法区分**（两种场景同形）。
+//      正解是不再逐个搬，而是把**整个子句**按 `总量 / 行数` 在**词边界**上重新均分。
+//    ⚠ 判据取 `秘制` 而不是 `制香`：正确输出的接缝本来就可能出现 `制香`
+//      （`制` 是「秘制」的尾、`香` 是「香油」的头，本就是两个词）—— 拿它当判据会**假红**。
+const seamOf = (pieces: string[]): string[] =>
+  pieces.slice(1).map((text, index) => {
+    const previous = [...(pieces[index] ?? '')]
+    return `${previous[previous.length - 1] ?? ''}${[...text][0] ?? ''}`
+  })
+const REBALANCE_CASES: ReadonlyArray<readonly [string, readonly string[], string]> = [
+  ['蘸上老板这个秘制香油啊', ['蘸上老板这个', '秘制香油啊'], '秘制'],
+  ['沾上老板这个秘制香油啊', ['沾上老板这个', '秘制香油啊'], '秘制'],
+  ['来大帅火锅旗舰店试第一口', ['来大帅火锅旗舰店', '试第一口'], '试第'],
+]
+for (const [clause, expected, forbiddenSeam] of REBALANCE_CASES) {
+  const pieces = splitSubtitleText(clause)
+  assert.deepEqual(pieces, [...expected], `★★ 末行过短必须重新均分：${clause}`)
+  assert.equal(pieces.join(''), clause, '★ 拆条不得丢字、不得重字')
   assert.ok(pieces.every((text) => !text.includes('\n')), '★ 拆出的每一条都必须是一行')
-  for (let index = 1; index < pieces.length; index += 1) {
-    const previous = [...(pieces[index - 1] ?? '')]
-    const seam = `${previous[previous.length - 1] ?? ''}${[...(pieces[index] ?? '')][0] ?? ''}`
-    assert.notEqual(seam, '秘制', '★★ 不得把「秘制」劈在接缝上（搬 1 个字原子那个回归）')
-  }
+  assert.ok(
+    pieces.every((text) => subtitleDisplayWidth(text) <= SUBTITLE_MAX_WIDTH),
+    '★ 重排后的每一条都不得超宽',
+  )
+  assert.ok(
+    !seamOf(pieces).includes(forbiddenSeam),
+    `★★ 不得把词劈在接缝上：${forbiddenSeam}（实得 ${JSON.stringify(pieces)}）`,
+  )
 }
+// ★ 反向：**不能**把「末行过短才重排」扩大成「一律均分」——
+//   用户 09-25 明确要过「每行尽量填满」，24 字那种 `10+10+4`（末行 4 ≥ 阈值）必须原样不动。
+assert.deepEqual(
+  splitSubtitleText('廊坊想吃火锅的千万别划走这盘牛肚'),
+  ['廊坊想吃火锅的千万别', '划走这盘牛肚'],
+  '★ 末行够长时**不得**重排：仍要填满 10 字（用户 09-25 的口径）',
+)
 
 // ★★ 「合并连续语流」不得把句界吃掉 —— 2026-09-29 复核探针里那条 `6小时到店0°锁鲜` 时确认：
 //    `mergeSubtitleSegments` 会把「6小时到店，」「0°锁鲜，」合成一份文本（无句末标点 +

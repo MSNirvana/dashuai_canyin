@@ -362,51 +362,48 @@ export function toSubtitleAtoms(text: string): string[] {
   return atoms
 }
 
-/** 末行短于这个宽度就要从上一行搬词下来；上一行搬空到这个宽度以下就停手。 */
+/** 子句被拆成多条时，**末行**短于这个宽度就认为「尾重」⇒ 把整个子句重新均分。 */
 export const SUBTITLE_MIN_TAIL_WIDTH = 4
-export const SUBTITLE_MIN_PREV_WIDTH = 5
-/**
- * 能被搬下去的**最小原子宽度**（2026-09-29 新增）。
- *
- * ★★ 为什么必须有它（真机实测）：这套搬运的假设是「原子＝词」，但 **ICU 不保证**——
- *    实测它把 `秘制` 切成 `秘` | `制` 两个原子。于是搬 1 个字的 `制` 下去，成片里就出现
- *    `蘸上老板这个秘` / `制香油啊` —— **把「秘制」劈在了接缝上**，正是用户 09-25 抱怨的
- *    「一句话的最后一个字跑到下一行字幕的第一个字了」。
- *    ★ 判据：**1 个字的原子多半是某个词被切碎的碎片**，而搬它只让末行长 1 个字 ⇒ 收益极小、
- *      风险极大 ⇒ 一律不许搬。
- * ★ 副作用：末行可能停在略短处（实测 `蘸上老板这个秘制`(8) / `香油啊`(3)）。
- *    这比把词劈开好得多，而且 3 个字已经不算「一闪而过的残句」。
- */
-export const SUBTITLE_MIN_MOVE_WIDTH = 2
 
 /**
- * 末尾残行收口。
+ * 末尾残行收口：**把整个子句按词边界重新均分**，而不是从上一行搬词。
  *
- * ★★ 贪心填满的固有毛病：**末行可能只剩两三个字**，一闪而过就是「残句」，
- *    历史上那条 0.37s 的「吃呢」就是这么来的。这里从上一行搬**整个词**下来，
- *    搬到末行不再过短为止；搬不动就算了（整段本来就短）。
- * ★ 搬的是**词**不是字 ⇒ 正常情况下不会把词劈开；但 ICU 会偶尔把词切成碎片，
- *   所以还要过 `SUBTITLE_MIN_MOVE_WIDTH` 这道闸（见上，`秘制` 就是这么被劈的）。
- * ★ 搬完还要保证两行都不超上限。
+ * ★★ 为什么不是「从上一行搬词补短」（2026-09-29 真机实测，先后走了两条弯路）：
+ *   ① 初版「搬词补短」搬的单位是**分词原子**，而 ICU 的原子 **≠ 词** ——
+ *      它会把 `秘制` 切成 `秘` | `制`，于是搬走 1 个字的碎片，成片出过
+ *      `蘸上老板这个秘` / `制香油啊`（**把词劈在接缝上**）。
+ *   ② 加闸门「1 个字的原子一律不许搬」：`秘制` 是修好了，却**踩坏另一类** ——
+ *      贪心填满 10 字后末行只剩 `一口`（2 字宽），本该把 `第` 搬下去拼回 `第一口`，
+ *      闸门一挡就成 `来大帅火锅旗舰店试第` / `一口` ⇒ **劈词 ＋ 2 字残句，两个问题一起来**。
+ *   ⇒ 根本矛盾：**「这个 1 字碎片该不该搬」在宽度和原子粒度上完全无法区分**（两种场景同形）。
+ *      所以别再一个一个搬了 —— 直接把**整个子句**按 `总量 / 行数` 在**词边界**上重排：
+ *      · `沾上老板这个秘制香油啊`(11) ⇒ `沾上老板这个`(6) / `秘制香油啊`(5)
+ *      · `来大帅火锅旗舰店试第一口`(12) ⇒ `来大帅火锅旗舰店`(8) / `试第一口`(4)
+ *      两条都既没劈词、也没留下残句。
+ * ★ 只在**末行过短**时触发 ⇒ 正常情况仍是「每行尽量填满 `maxWidth`」：
+ *   24 字那种 `10+10+4`（末行 4 ≥ `SUBTITLE_MIN_TAIL_WIDTH`）**完全不受影响**。
+ * ★ 切点仍只取**词边界**（原子边界）⇒ 不会退回「按字数均分把 `千万` 劈开」的老毛病。
  */
-function balanceSubtitleTail(lines: string[][], maxWidth: number): void {
-  if (lines.length < 2) return
-  for (let guard = 0; guard < 16; guard += 1) {
-    const last = lines[lines.length - 1]
-    const previous = lines[lines.length - 2]
-    if (!last || !previous) return
-    const lastWidth = subtitleDisplayWidth(last.join(''))
-    if (lastWidth >= SUBTITLE_MIN_TAIL_WIDTH) return
-    if (previous.length < 2) return
-    const moved = previous[previous.length - 1]
-    if (moved === undefined) return
-    // ★ 1 个字的原子不许搬：ICU 常把词切成碎片（实测「秘制」→「秘」「制」），搬它必劈词
-    if (subtitleDisplayWidth(moved) < SUBTITLE_MIN_MOVE_WIDTH) return
-    if (lastWidth + subtitleDisplayWidth(moved) > maxWidth) return
-    if (subtitleDisplayWidth(previous.slice(0, -1).join('')) < SUBTITLE_MIN_PREV_WIDTH) return
-    previous.pop()
-    last.unshift(moved)
+function rebalanceLines(lines: string[][], maxWidth: number): string[][] {
+  const tokens = lines.flat()
+  const target = subtitleDisplayWidth(tokens.join('')) / lines.length
+  const result: string[][] = []
+  let current: string[] = []
+  let width = 0
+  for (const token of tokens) {
+    const tokenWidth = subtitleDisplayWidth(token)
+    // 前 n-1 行凑够「均分目标」就收口；再加一个会超上限也必须收口（最后一行全收）
+    const enough = result.length < lines.length - 1 && width >= target
+    if (current.length && (enough || width + tokenWidth > maxWidth)) {
+      result.push(current)
+      current = []
+      width = 0
+    }
+    current.push(token)
+    width += tokenWidth
   }
+  if (current.length) result.push(current)
+  return result
 }
 
 /**
@@ -418,7 +415,7 @@ function balanceSubtitleTail(lines: string[][], maxWidth: number): void {
  *    而它的切点也不认识词和标点，所以 `千万` 被劈开、逗号被甩到行首。
  * ★ 现在的边界：① 行宽 ≤ `maxWidth`；② 只在词边界断；③ 标点永远不在行首；
  *    ④ 标点在上游 `splitSubtitleText` 就被整个去掉了，这里**不**再处理标点；
- *    ⑤ 末行不留残句（见 `balanceSubtitleTail`）。
+ *    ⑤ 末行不留残句（见 `rebalanceLines`）。
  * ★★ 出口逐行 `trim()`：ASCII 词之间的空格是**粘在前一个词尾巴上**的
  *    （见 `toSubtitleAtoms` ②），若断行正好落在那个空格之后就成 `iPhone 15 `——
  *    行末空格既渲染成「字幕块莫名偏左」，又会多算 0.55 行宽。行内空格保留、行首尾一律去掉。
@@ -449,8 +446,13 @@ function packSubtitleLines(text: string, maxWidth: number): string[] {
     width += atomWidth
   }
   if (current.length) lines.push(current)
-  balanceSubtitleTail(lines, maxWidth)
-  return lines.map((line) => line.join('').trim()).filter(Boolean)
+  // ★ 末行过短 ⇒ **整个子句**按词边界重新均分（为什么不是搬词，见 `rebalanceLines` 的注释）
+  const lastLine = lines[lines.length - 1]
+  const balanced = lines.length >= 2 && lastLine !== undefined
+    && subtitleDisplayWidth(lastLine.join('')) < SUBTITLE_MIN_TAIL_WIDTH
+    ? rebalanceLines(lines, maxWidth)
+    : lines
+  return balanced.map((line) => line.join('').trim()).filter(Boolean)
 }
 
 /**
