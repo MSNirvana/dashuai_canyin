@@ -15,6 +15,14 @@ import { formatDateInfo } from '../lib/festival.js'
 import { formatTopicInfo } from '../lib/topic.js'
 // 套餐判断复用同一个常量：`kind === 'COMBO'` 这种字面量散在两处，哪天改了值只会有一处跟着变
 import { DISH_KIND_COMBO } from './dish.service.js'
+// ★ 选了菜却没讲这道菜的兜底：空值注解的取值 + 正文里「报出菜名」的判据 + 重试时间闸门。
+//   背景与 A/B 数据见该文件头部；模板侧的对应变量是 {{dishEmptyNote}}。
+import {
+  DISH_GUARD_RETRY_BUDGET_MS,
+  dishEmptyNoteFor,
+  dishMentionGuard,
+  mentionsDish,
+} from '../lib/dish-mention.js'
 
 export const SCENE_COPY = SCENE.copy_generate
 export const SCENE_STORYBOARD = SCENE.storyboard_generate
@@ -964,12 +972,22 @@ export async function buildVariables(
   const topic = mode === 'TOPIC'
   /** 门店与菜品资料一律清空（话题稿 + 款式稿两种形态） */
   const noMaterial = topic || mode === 'STYLE'
+  const dishName = noMaterial ? '' : (c.dish?.name ?? '')
   return {
     storeName: noMaterial ? '' : c.store.name,
     storeIntro: noMaterial ? '' : (c.store.intro ?? ''),
     category: noMaterial ? '' : (c.store.category ?? ''),
     city: noMaterial ? '' : (c.store.city ?? ''),
-    dishName: noMaterial ? '' : (c.dish?.name ?? ''),
+    dishName,
+    /**
+     * ★★ «【菜品】那一行的空值注解»：**只在没选菜时**有内容，选了菜就是空串。
+     *   模板里它紧跟在 `{{dishName}}` 后面（prisma/prompts.ts 的 CONTEXT_BLOCK）。
+     *   原来这段说明是写死在模板里的静态文本，于是菜品有值时渲染成
+     *   「锅巴土豆（空 = 这次没选具体菜品…改讲门店本身；…）」—— 模型把「改讲门店本身」
+     *   当成了这次的指令，整篇改写【门店介绍】。实测报出菜名率因此从 92% 掉到 75%
+     *   （同一条真实创作、每臂 12 次；完整数据见 lib/dish-mention.ts 文件头）。
+     */
+    dishEmptyNote: dishEmptyNoteFor(dishName),
     dishIntro: noMaterial ? '' : (c.dish?.intro ?? ''),
     sellingPoints: noMaterial ? '' : (c.dish?.sellingPoints ?? ''),
     comboInfo: noMaterial ? '' : formatComboInfo(c.dish),
@@ -1074,6 +1092,8 @@ export async function generateCopy(
   }
 
   const vars = await buildVariables(prisma, creationId, { track: finalTrack })
+  /** ★ 兜底重试的时间闸门算的是「这次 AI 花了多久」，所以计时从发请求前开始 */
+  const aiStartedAt = Date.now()
   const r = await runBilledScene(prisma, gateway, {
     sceneCode,
     merchantId,
@@ -1089,7 +1109,55 @@ export async function generateCopy(
    */
   const picked = mode === 'TOPIC' && r.text ? parseTopicCopy(r.text) : null
   // ★ 收窄成 string：`r.text` 在类型上是 `string | undefined`，而落库字段不接受 undefined
-  const copyText: string = picked ? picked.copy : (r.text ?? '')
+  let copyText: string = picked ? picked.copy : (r.text ?? '')
+
+  /**
+   * ★★ 生成后兜底：选了菜、正文里却一个字都没提它 ⇒ **再要一次**。
+   *
+   * 为什么除了改提示词还要有这一层：改完模板后实测「报出菜名」率是 **92%**（原 75%），
+   * 剩下那 8% 是采样本身的抖动 —— 同一份提示词、同一份资料，模型就是偶尔会整篇去写门店。
+   * 靠继续加措辞压不下去（试过：把空值那条约束也删掉反而降到 83%），
+   * 而这类「随机失败」恰恰是重试最擅长的事：再采一次，两次同时失败约 0.6%。
+   *
+   * ★ 重试**不再扣用户积分**：这里直接调 `gateway.runScene`，绕开 `runBilledScene`
+   *   的预留/结算（它按 requestId 幂等，用同一个 requestId 只会拿回上一份坏稿）。
+   *   代价是系统自己吃掉这一次的上游成本（约 ¥0.03），换用户看不到跑偏的稿子。
+   * ★ 重试也**必须**有时间闸门：前端 120s 是按「候选 2 × 45s」算出来的上限，
+   *   不设闸门可能顶穿前端，届时现象是「前端超时、服务端其实成功」——
+   *   比文案跑偏更难查。闸门取值与算式见 lib/dish-mention.ts。
+   * ★ 重试也失败就**保留原稿**，不做第三次：宁可给一份没提菜的稿子（用户能改），
+   *   也不要为了凑判据把延迟拖到前端超时。
+   */
+  const elapsedMs = Date.now() - aiStartedAt
+  const decision = dishMentionGuard({
+    sceneCode,
+    dishName: vars.dishName,
+    text: copyText,
+    elapsedMs,
+    isFallbackTemplate: Boolean(r.isFallbackTemplate),
+  })
+  if (decision === 'OVER_BUDGET') {
+    console.warn(
+      `[copy] 未报出菜名「${vars.dishName}」但已耗时 ${elapsedMs}ms（> ${DISH_GUARD_RETRY_BUDGET_MS}ms 闸门），放弃重试：creation=${creationId} scene=${sceneCode}`,
+    )
+  } else if (decision === 'RETRY') {
+    const again = await gateway.runScene({
+      sceneCode,
+      merchantId,
+      requestId: `${requestId}#dish`,
+      variables: vars,
+    })
+    if (again.ok && again.text && mentionsDish(again.text, vars.dishName)) {
+      copyText = again.text.trim()
+      console.warn(
+        `[copy] 未报出菜名「${vars.dishName}」，重试一次命中（未二次扣积分）：creation=${creationId} scene=${sceneCode} 首次耗时=${elapsedMs}ms`,
+      )
+    } else {
+      console.warn(
+        `[copy] 未报出菜名「${vars.dishName}」，重试仍未命中，保留原稿：creation=${creationId} scene=${sceneCode}`,
+      )
+    }
+  }
   /**
    * ★「有结构、没正文」时**不写库**（见 `parseTopicCopy` 的最后一个分支）：
    *   写一条空文案等于把用户原来那份稿子清掉，比什么都不做更糟。

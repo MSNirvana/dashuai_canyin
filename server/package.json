@@ -68,6 +68,7 @@
     "transient-retry:verify": "tsx scripts/verify-transient-retry.ts",
     "shot-skip:verify": "tsx scripts/verify-shot-skip.ts",
     "dish-combo:verify": "tsx scripts/verify-dish-combo.ts",
+    "dish-mention:verify": "tsx scripts/verify-dish-mention.ts",
     "render-errors:verify": "tsx scripts/verify-render-errors.ts",
     "auto-edit:verify": "tsx scripts/verify-auto-edit.ts",
     "auto-edit:smoke": "tsx scripts/verify-default-auto-edit.ts",

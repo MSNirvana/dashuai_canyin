@@ -80,6 +80,10 @@ import {
   StyleCreationTrackForbiddenError,
 } from '../src/services/creation.service.js'
 import { upsertAiScene, AdminAiInvalidTemplateError } from '../src/services/admin-ai.service.js'
+// ★ 菜品空值注解：模板侧是 {{dishEmptyNote}}，取值在 src/lib/dish-mention.ts。
+//   这里钉的是「buildVariables 真的把它接上了」——纯离线脚本（verify-dish-mention.ts）
+//   只能验判据与模板，验不了变量装配这一步（漏接线的后果是：没选菜时那段说明**整段消失**）。
+import { DISH_EMPTY_NOTE, dishEmptyNoteFor } from '../src/lib/dish-mention.js'
 
 const prisma = new PrismaClient()
 /** 一次性测试账号：本脚本专用，跑完硬删。与其他 verify 脚本的号段刻意错开 */
@@ -414,6 +418,14 @@ if (dbReady) {
     )
     check(v.dishName === '契约测试菜品-full', '菜品名称仍在变量里')
     check(v.sellingPoints === '分量实在 / 价格透明', '菜品卖点仍在变量里')
+    // ★★ 2026-09-29：选了菜时，那段「空 = 这次没选具体菜品…改讲门店本身」的说明**必须消失**。
+    //    它原来写死在模板里，于是菜名后面紧跟着一句「改讲门店本身」，模型照做 ⇒ 整篇改写门店介绍。
+    //    实测报出菜名率因此从 92% 掉到 75%（数据见 src/lib/dish-mention.ts）。
+    check(
+      v.dishEmptyNote === '',
+      '★★ 选了菜时「菜品空值注解」为空串（否则提示词里菜名后会跟着一句「改讲门店本身」）',
+      `dishEmptyNote=${JSON.stringify(v.dishEmptyNote).slice(0, 34)}`,
+    )
 
     // 渲染一次真模板，确认值真的落到了提示词里（而不只是变量对象里有）
     const rendered = renderTemplate(COPY_PRODUCT_PROMPT, v as unknown as Record<string, string>)
@@ -516,6 +528,14 @@ if (dbReady) {
       `dishName=${JSON.stringify(vNoDish.dishName)} comboInfo=${JSON.stringify(vNoDish.comboInfo)}`,
     )
     check(vNoDish.storeName === '契约测试门店-没选菜', '没选菜品不影响门店信息仍然喂进提示词')
+    // ★ 反向的另一半：没选菜时那段说明**必须还在**。
+    //   上面那条（选了菜 ⇒ 空串）很容易被「把变量整个删掉」满足 —— 那样没选菜的稿子会失去
+    //   「改讲门店本身」的指引，模型又会去菜单里随手挑一道菜。两条一起才钉得住。
+    check(
+      vNoDish.dishEmptyNote === DISH_EMPTY_NOTE,
+      '★ 没选菜时「菜品空值注解」仍是那段说明（空值路径与改动前逐字一致）',
+      `dishEmptyNote=${JSON.stringify(vNoDish.dishEmptyNote).slice(0, 24)}…`,
+    )
     const rdCopy = renderTemplate(COPY_PRODUCT_PROMPT, vNoDish as unknown as Record<string, string>)
     const rdStory = renderTemplate(STORY_PROMPT, vNoDish as unknown as Record<string, string>)
     check(!rdCopy.includes('{{') && !rdStory.includes('{{'), '没选菜品的提示词渲染后无残留占位符')
@@ -1276,8 +1296,31 @@ section('⑦ 菜品可选项：空菜名的提示词契约与兜底渲染')
 // 7.1 提示词必须写明空值语义 —— 六份共用上下文块的模板（含分镜）逐份断言。
 //     用**同一句子串**断言是刻意的：两个块（CONTEXT_BLOCK 与分镜手写的那份）必须说同一件事，
 //     各改各的措辞就会让「同一份资料、两个模型看到不同的空值含义」。
+//
+// ★★ 2026-09-29：判据从「**模板字符串**里含这句话」改成「**渲染之后**含这句话」。
+//    那段空值说明已经从模板文本搬进了变量 `{{dishEmptyNote}}`（只在没选菜时才有值），
+//    原因是菜品有值时它会和菜名自相矛盾（详见 src/lib/dish-mention.ts）。
+//    老写法有两个毛病，换掉后都堵上了：
+//      · 搬到变量后**必然假红**（模板里再也搜不到那句话）；
+//      · 更糟的是**假绿** —— 产品型的硬约束段里恰好也有「老板这次没选具体菜品」这几个字，
+//        所以它一直是靠那句蒙混过关的：真把资料区那段说明整段删掉，这条断言照样全绿。
 for (const t of dishTemplates) {
-  check(t.tpl.includes('这次没选具体菜品'), `${t.label} 写明了空菜品语义（这次没选具体菜品）`)
+  const rdEmpty = renderTemplate(t.tpl, { dishName: '', dishEmptyNote: DISH_EMPTY_NOTE })
+  check(rdEmpty.includes('这次没选具体菜品'), `${t.label} 渲染后写明了空菜品语义（这次没选具体菜品）`)
+}
+// ★★ 反向的一半（新增）：**选了菜时，那一行不许再出现空值语义**。
+//    只断言「没选菜时在」会把「永远打印」当成合格 —— 而那正是本次故障：
+//    模型看到「锅巴土豆（空 = 这次没选具体菜品…改讲门店本身）」，整篇去写门店。
+//    只查【菜品】那一行而**不查整篇**：产品型的硬约束段里本来就有一条
+//    「★ 菜品资料为空时…改讲门店本身」，那是**该留**的（实测删掉反而更差，见 dish-mention.ts）。
+for (const t of dishTemplates) {
+  const rdDish = renderTemplate(t.tpl, { dishName: '契约测试菜品', dishEmptyNote: dishEmptyNoteFor('契约测试菜品') })
+  const line = rdDish.split('\n').find((l) => l.startsWith('【菜品】')) ?? ''
+  check(
+    line.includes('契约测试菜品') && !line.includes('这次没选具体菜品') && !line.includes('改讲门店本身'),
+    `${t.label} 选了菜时「【菜品】」那一行不带任何空值说明`,
+    line.slice(0, 46),
+  )
 }
 // 7.2 分镜还要额外区分「门店有、菜品空」与「两样都空」这两种情况：前者的画面里
 //     **不该出现某道菜**，后者才是「纯话题视频」（不许出现店名/招牌）。
