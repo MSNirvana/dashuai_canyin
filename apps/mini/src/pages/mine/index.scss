@@ -255,23 +255,26 @@
     font-size: 30rpx;
     flex: none;
     margin-left: 12rpx;
+    // 「联系我们」那一行展开/收起时原地转 90°（› 变 ⌄）。
+    // ★ 只转 transform、不动字号：改字号会让整行的高度抖一下。
+    transition: transform 0.2s ease;
   }
-  // ─────────── 联系我们（二维码 + 客服电话） ───────────
-  // ★ 2026-09-29 新增：接在「学习中心」下面（需求：「在学习中心下面增加一个【联系我们】」）。
-  // ★ 骨架刻意与上面的「学习中心」列表**同一套**（白卡片 + 1rpx 描边 + 行内「图标/内容/右侧」），
-  //   因为它们是同一屏里上下相邻的两块信息，用两套卡片样式会立刻显得散。
-  // ★ margin / 描边 / 圆角取的是本文件**末尾那段产品化覆写块**给 `.mine__menu` 的值
-  //   （`margin: 0 32rpx` / `border: 1rpx` / `box-shadow: none`），不是上面基础块里的
-  //   `36rpx` + `--ds-shadow-card`。**写在基础块里就得直接写最终值** —— 新类名不会被末尾那块
-  //   覆写，若照着基础块抄，这一块会比邻居多出 8rpx 缩进和一层投影，很显眼。
-  //   ⇒ 改这里之前先看末尾那块给 `.mine__menu` 的现值。
+  // ★ 单类名，与 `&__arrow` **同权重** ⇒ 靠**书写顺序在后**取胜，不是靠特异性。
+  //   所以：① 别把它挪到 `&__arrow` 前面；② 也别用「它更具体」来论证它一定生效。
+  &__arrow--open {
+    transform: rotate(90deg);
+  }
+  // ─────────── 更多服务 →「联系我们」的**展开区**（二维码 + 客服电话） ───────────
+  // ★ 2026-09-29 改版：它不再是页尾的独立卡片，而是**挂在 `.mine__menu` 卡片内部**的一层展开区
+  //   （需求原话：「把现在这个联系我们这个模块放进去，不要放外面」）。
+  // ★ 因此这里**不能再带** margin / 描边 / 圆角 / 底色 —— 否则就是「卡片里再套一张卡」，
+  //   一展开就能看出两张卡叠着。现在只留一点上下内边距；行与行之间的分隔线由 `&__contact-row`
+  //   自己给，而「联系我们」那一行与展开区之间的分隔线由 `.mine__item` 的 border-bottom 提供
+  //   （展开时它不再是 :last-child ⇒ 线自动出现；收起时是 :last-child ⇒ 线自动消失，不用额外写规则）。
+  // ★ 横向节奏不用另调：`&__contact-row` 与 `.mine__item` 的最终内边距都是 `22rpx 20rpx`
+  //   （后者由本文件末尾那段产品化覆写块给出），展开区的文字天然与上面那行标题对齐。
   &__contact {
-    margin: 0 32rpx;
-    background: var(--td-bg-color-container);
-    border-radius: var(--td-radius-large);
-    border: 1rpx solid var(--td-component-stroke);
-    box-shadow: none;
-    overflow: hidden;
+    padding: 2rpx 0 6rpx;
   }
   &__contact-row {
     display: flex;

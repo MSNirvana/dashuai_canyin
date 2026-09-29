@@ -59,6 +59,13 @@ export default function Mine() {
    * ★ null = 不渲染整块（接口挂了 / 运营还没配 / 值不是合法 JSON 都归到这里）。
    */
   const [contact, setContact] = useState<ContactInfo | null>(null)
+  /**
+   * 「联系我们」那一行的展开态（默认收起）。
+   * ★ 为什么要收起：它现在跟「学习中心」一样是**分组列表里的一行**，而不再是页尾一张常驻卡片。
+   *   二维码（216rpx）+ 电话行加起来把页尾撑得很高，常驻会把「退出登录」推远；
+   *   而真要点它的人（有搞不定的要找客服）点一下也就展开了。
+   */
+  const [contactOpen, setContactOpen] = useState(false)
   /** 一键拨打的再入闸门：连点会连开两次系统拨号确认框，用户只会以为是卡了 */
   const dialLock = useRef(false)
   const loginRequest = useRef(0)
@@ -479,51 +486,70 @@ export default function Mine() {
           </View>
         ))}
       </View>
-      {/* ── 联系我们：运营在后台配的二维码 + 客服电话 ──
-          ★ 2026-09-29 新增（需求原话：「在学习中心下面增加一个【联系我们】，然后放上二维码和电话」）。
-          ── 为什么插在「学习中心」与「退出登录」之间 ──
-            教学内容刚讲完，用户下一个问题就是「有搞不定的找谁」；再往下是页尾的
-            协议 / 运营主体与退出登录，把求助入口放在「离开」旁边是错的。
+      {/* ── 更多服务：分组列表里的「联系我们」一行（点一下原地展开）──
+          ★ 2026-09-29 改版（需求原话：「联系我们文字改成其他，然后在下面放一行选项，
+            跟上面学习中心一样，文字是联系我们，然后把现在这个联系我们这个模块放进去，不要放外面」）
+            ⇒ 分组小标题改名「更多服务」，模块从「页尾独立卡片」降为「列表行内的展开区」。
+          ── 为什么收进列表里 ──
+            二维码 + 电话常驻时，页尾是三张卡竖着叠（学习中心卡 / 联系我们卡 / 退出登录），
+            而它跟学习中心本就是同一类东西：**点一下才知道里面有什么**。收进去后页尾只剩两张卡。
+          ── 行骨架复用 .mine__item / .mine__menu，不新写一套 ──
+            这两块上下相邻，样式一漂就立刻显得散。展开区（.mine__contact）挂在**同一张
+            __menu 卡片内部** ⇒ 它自己不再带 margin / 描边 / 圆角 / 底色（见 index.scss）。
           ── 二维码：长按识别 ──
             `showMenuByLongpress` 是**微信原生**能力：长按图片弹出系统菜单，里面有
             「识别图中二维码」（以及保存图片）。这是小程序里唯一能做到「长按扫码」的路子 ——
             小程序**没有**「扫自己屏幕上这张码」的 API，而自绘长按手势只能弹自己的菜单，
             识别二维码那一步微信不会代劳。
           ── 电话：一键拨打 ──
-            整行都是可点区（不只那颗「拨打」），点按高度 ≥ 88rpx（微信建议的最小可点尺寸）。
-            号码用 contact.dial（已清洗），不是展示用的 contact.phone，见 dialPhone 的注释。
+            整行都是可点区（不只那颗「拨打」）。号码用 contact.dial（已清洗），
+            不是展示用的 contact.phone，见 dialPhone 的注释。
           ── 三种「没东西可显示」都不渲染 ──
-            contact === null ⇒ 连「联系我们」这个小标题都不出现；
-            只配了电话 ⇒ 只出电话那一行；只配了二维码 ⇒ 只出二维码那一行。
+            contact === null ⇒ 连「更多服务」这个分组小标题都不出现；
+            只配了电话 ⇒ 展开后只有电话那一行；只配了二维码 ⇒ 只有二维码那一行。
             ★ 判据是 contact.qrcode / contact.phone 两个字段本身，**不是** contact 是否非空。 */}
       {!!contact && (
         <>
-          <View className='ds-label'>联系我们</View>
-          <View className='mine__contact'>
-            {!!contact.qrcode && (
-              <View className='mine__contact-row' hoverClass='ds-hover' onClick={previewQrcode}>
-                <Image
-                  className='mine__qr'
-                  src={contact.qrcode}
-                  mode='aspectFit'
-                  showMenuByLongpress
-                />
-                <View className='mine__contact-copy'>
-                  <Text className='mine__contact-title'>微信客服</Text>
-                  <Text className='mine__contact-hint'>长按识别二维码，添加客服微信</Text>
-                </View>
-              </View>
-            )}
-            {!!contact.phone && (
-              <View className='mine__contact-row' hoverClass='ds-hover' onClick={dialPhone}>
-                <View className='mine__item-icon mine__item-icon--red'>
-                  <t-icon name='call' size='32rpx' />
-                </View>
-                <View className='mine__contact-copy'>
-                  <Text className='mine__contact-title'>电话咨询</Text>
-                  <Text className='mine__contact-num'>{contact.phone}</Text>
-                </View>
-                <Text className='mine__contact-dial'>拨打</Text>
+          <View className='ds-label'>更多服务</View>
+          <View className='mine__menu'>
+            <View
+              className='mine__item'
+              hoverClass='ds-hover'
+              onClick={() => setContactOpen((v) => !v)}
+            >
+              <View className='mine__item-icon'><t-icon name='service' size='32rpx' /></View>
+              <View className='mine__item-copy'><Text className='mine__item-title'>联系我们</Text></View>
+              {/* 收起是 ›、展开是 ⌄（同一个字形转 90°）。★ 用 transform 而不是换字形，否则会跳一下 */}
+              <Text className={`mine__arrow${contactOpen ? ' mine__arrow--open' : ''}`}>›</Text>
+            </View>
+            {contactOpen && (
+              <View className='mine__contact'>
+                {!!contact.qrcode && (
+                  <View className='mine__contact-row' hoverClass='ds-hover' onClick={previewQrcode}>
+                    <Image
+                      className='mine__qr'
+                      src={contact.qrcode}
+                      mode='aspectFit'
+                      showMenuByLongpress
+                    />
+                    <View className='mine__contact-copy'>
+                      <Text className='mine__contact-title'>微信客服</Text>
+                      <Text className='mine__contact-hint'>长按识别二维码，添加客服微信</Text>
+                    </View>
+                  </View>
+                )}
+                {!!contact.phone && (
+                  <View className='mine__contact-row' hoverClass='ds-hover' onClick={dialPhone}>
+                    <View className='mine__item-icon mine__item-icon--red'>
+                      <t-icon name='call' size='32rpx' />
+                    </View>
+                    <View className='mine__contact-copy'>
+                      <Text className='mine__contact-title'>电话咨询</Text>
+                      <Text className='mine__contact-num'>{contact.phone}</Text>
+                    </View>
+                    <Text className='mine__contact-dial'>拨打</Text>
+                  </View>
+                )}
               </View>
             )}
           </View>
