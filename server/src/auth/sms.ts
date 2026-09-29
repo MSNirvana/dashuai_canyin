@@ -4,6 +4,7 @@
 import type { PrismaClient } from '@prisma/client'
 import { createHash, randomInt } from 'node:crypto'
 import { smsProviderMode, readTencentSmsConfig, sendSmsViaTencent } from './sms-provider.js'
+import { demoLoginCode, loadDemoPolicy } from '../lib/demo-account.js'
 
 const TTL_MINUTES = 5
 const MAX_ATTEMPTS = 5
@@ -133,8 +134,19 @@ export function smsTestCodeFor(phone: string, env: NodeJS.ProcessEnv = process.e
   return cfg && cfg.phones.includes(phone) ? cfg.code : null
 }
 
-/** 发送验证码；开发环境打印日志，生产环境未配置真实供应商时拒绝发送。 */
-export async function sendCode(prisma: PrismaClient, phone: string, ip?: string): Promise<{ cooldownSec: number }> {
+/**
+ * 发送验证码；开发环境打印日志，生产环境未配置真实供应商时拒绝发送。
+ *
+ * ★ 返回值里的 `demoLogin` 是给「演示账号不发短信」留的自描述标记：
+ *   当前小程序客户端**忽略它**（它只看 `cooldownSec` 起倒计时），
+ *   留着是为了以后能把那声「验证码已发送」换成「请使用演示账号的固定验证码」——
+ *   那需要重新出小程序包，届时服务端不用再改。
+ */
+export async function sendCode(
+  prisma: PrismaClient,
+  phone: string,
+  ip?: string,
+): Promise<{ cooldownSec: number; demoLogin?: boolean }> {
   const since = new Date(Date.now() - RESEND_COOLDOWN_SEC * 1000)
   const recent = await prisma.smsCode.findFirst({
     where: { phone, scene: 'LOGIN', createdAt: { gte: since } },
@@ -150,8 +162,34 @@ export async function sendCode(prisma: PrismaClient, phone: string, ip?: string)
     if (ipCount >= DAILY_LIMIT_PER_IP) throw new SmsDailyLimitError(DAILY_LIMIT_PER_IP)
   }
 
-  // 测试码模式下直接把记录里的码值设成那个固定码 ⇒ `verifyCode()` 一行都不用改：
-  // 常规的「比对哈希 → 记 usedAt → 累计 attempts」全部照旧生效。
+  /**
+   * ★★ 演示账号（在 `demo.config.phones` 里、且配了固定登录码）**不发短信、也不落记录**，
+   *   直接返回成功。
+   *
+   * 为什么必须在这里拦：
+   *   ① 不拦的话，试用者点「获取验证码」会走进真实通道 —— 要么真发一条**用不上的**短信
+   *      （登录时只认固定码，那条短信里的码输进去必然「验证码错误」），要么因为签名
+   *      未过审而回 1004「短信服务未配置」。两种都会把人绕晕。
+   *   ② 演示码**不走 `smsCode` 表**（见 lib/demo-account.ts 顶部的说明），
+   *      这里建一条记录毫无意义，还会白白占用该号当日的发送配额。
+   *
+   * ★ 位置在配额检查**之后**、生成码值**之前**：那几项配额对演示号天然不触发
+   *   （从不建记录 ⇒ 计数恒为 0），保留它们只是让两条路的代码形状一致。
+   * ★★ 与 `loginByPhone` 用**同一个** `demoLoginCode()` 做判断。若两边各写一遍，
+   *   就会出现「这边不发码、那边也不认任何码」的静默死锁，用户只看到「验证码错误」。
+   * ★ 返回 cooldownSec 是为了让客户端照常进入倒计时 —— 「点了完全没反应」比
+   *   「假装发了」更像坏了。真正的说明在服务端日志里，运营会转告试用者。
+   */
+  const demoCode = demoLoginCode(await loadDemoPolicy(prisma), phone)
+  if (demoCode) {
+    console.log(
+      `[SMS demo] phone=${maskPhone(phone)} 是演示账号且已配置固定登录码 ⇒ 不发短信、不落记录（请直接用固定码登录）`,
+    )
+    return { cooldownSec: RESEND_COOLDOWN_SEC, demoLogin: true }
+  }
+
+  // ★ 测试码模式下直接把记录里的码值设成那个固定码 ⇒ `verifyCode()` 一行都不用改：
+  //   常规的「比对哈希 → 记 usedAt → 累计 attempts」全部照旧生效。
   const testCode = smsTestCodeFor(phone)
   const code = testCode ?? genCode()
   const record = await prisma.smsCode.create({

@@ -842,6 +842,9 @@ async function seedSettings() {
   //   `POST|PUT /admin/api/v1/settings`，其 schema 是 `settingVal: z.string().min(1)`
   //   —— 不允许存空串。两行的方案里，运营想「关掉演示」只能存空串 ⇒ 400，
   //   页面上只显示「保存失败」而看不出原因（轮播图 / 联系我们踩过同一个坑）。
+  // ★ `login_code` 也要写进**同一条 JSON**（默认空串 = 不启用固定码）：
+  //   它同样不能被单独存成空串（想「关掉固定码」就是清空它），而且它与 phones 是
+  //   **与关系**——必须放进同一条记录才能被 parseDemoConfig 一起读出来。
   // ★ `demo.activated_at` **故意不在这里建**：它是运行时状态，由代码在首次登录时写入。
   //   若让 seed 给它一个值，重跑 seed 就等于把演示窗口**重开一遍**（「一次性」语义被
   //   悄悄破坏，且没有任何提示）。首次登录后它才会出现在后台配置页里。
@@ -850,11 +853,11 @@ async function seedSettings() {
     create: {
       groupKey: 'demo',
       settingKey: 'config',
-      settingVal: JSON.stringify({ phones: [], window_hours: 24 }),
+      settingVal: JSON.stringify({ phones: [], window_hours: 24, login_code: '' }),
       valueType: 'JSON',
       displayName: '演示账号',
       description:
-        'phones=演示账号手机号数组（留空即关闭演示，不是"所有号"）；window_hours=窗口时长(小时)，从首次登录起算且全局一次性。首次登录后会自动出现 demo.activated_at，重开窗口＝把它的值改成当前时间，或删掉那一行。',
+        'phones=演示账号手机号数组（留空即关闭演示，不是"所有号"）；window_hours=窗口时长(小时)，从首次登录起算且全局一次性；login_code=固定登录码（恰好 6 位数字），配了它白名单号登录时不必获取短信验证码（留空=不启用，绝不是"任何码都行"）。首次登录后会自动出现 demo.activated_at，重开窗口＝把它的值改成当前时间，或删掉那一行。',
       sort: 0,
       isPublic: false, // 绝不能公开：这是账号白名单，客户端不需要也不该知道
     },

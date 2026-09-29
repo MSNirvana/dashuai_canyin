@@ -5,9 +5,16 @@
 import type { PrismaClient } from '@prisma/client'
 import type { Redis } from 'ioredis'
 import { code2Session, verifyPhoneNumber } from './wechat.js'
-import { verifyCode } from './sms.js'
+import { verifyCode, SmsCodeInvalidError } from './sms.js'
 import { signAccess, signRefresh, verifyToken } from '../lib/jwt.js'
-import { demoSessionDeadline } from '../lib/demo-account.js'
+import { demoLoginCode, demoSessionDeadline, DemoLoginThrottledError, loadDemoPolicy } from '../lib/demo-account.js'
+import {
+  checkLoginAllowed,
+  clearDemoLoginFailures,
+  merchantDemoLoginKey,
+  MERCHANT_DEMO_LOGIN_POLICY,
+  recordLoginFailure,
+} from '../lib/login-throttle.js'
 import * as bean from '../bean/bean.service.js'
 import { getNumber } from '../lib/settings.js'
 
@@ -92,9 +99,45 @@ export async function loginByWechat(
   return buildLoginResult(prisma, merchant)
 }
 
-/** 手机号验证码登录（兜底通道） */
-export async function loginByPhone(prisma: PrismaClient, phone: string, code: string): Promise<LoginResult> {
-  await verifyCode(prisma, phone, code)
+/**
+ * 手机号验证码登录（兜底通道）。
+ *
+ * ★★ 演示账号的**固定登录码**在这里分流 —— 这是「不需要点『获取验证码』」能成立的唯一地方。
+ *
+ * 判据全部来自 `demoLoginCode()`（**与 `sendCode()` 用的是同一个函数**，两边不会打架）：
+ *   · 该号不在 `demo.config.phones` 里，或没配 `login_code` ⇒ 返回 null ⇒
+ *     走**原封不动**的短信验证码流程（普通账号零行为变化，连一次 Redis 都不多花）；
+ *   · 否则用那枚固定码比对，**不查 `smsCode` 表**。
+ *
+ * ★★ 为什么不能复用短信码那条路（只把码值换成固定的）：`smsCode` 是**一次性**的，
+ *   第一次登录就把记录消费掉了，第二次又得去点「获取验证码」—— 正是要避免的事。
+ *   演示码是**可重复使用的共享码**，所以它根本不进那张表。
+ *
+ * ★★ 为什么必须在这里限速：6 位固定码可重复使用，不限速就是穷举必中。
+ *   短信码那条路不需要 —— `verifyCode()` 自带「同记录错 5 次作废」+ 5 分钟 TTL。
+ * ★ 顺序是「先查限速、再比对码值」：已被锁住的请求不该再去比对（同后台登录的口径）。
+ */
+export async function loginByPhone(
+  prisma: PrismaClient,
+  redis: Redis,
+  phone: string,
+  code: string,
+): Promise<LoginResult> {
+  const demoCode = demoLoginCode(await loadDemoPolicy(prisma), phone)
+
+  if (demoCode) {
+    const checks = [{ key: merchantDemoLoginKey(phone), policy: MERCHANT_DEMO_LOGIN_POLICY }]
+    const verdict = await checkLoginAllowed(redis, checks)
+    if (!verdict.allowed) throw new DemoLoginThrottledError(verdict.retryAfterSec)
+    if (code !== demoCode) {
+      await recordLoginFailure(redis, checks)
+      throw new SmsCodeInvalidError()
+    }
+    // 成功即清零。否则「错 9 次 + 对 1 次 + 再错 1 次」会立刻被锁 —— 计数必须跟着成功归零。
+    await clearDemoLoginFailures(redis, phone)
+  } else {
+    await verifyCode(prisma, phone, code)
+  }
 
   const merchant = await upsertMerchantByPhone(prisma, phone)
   await grantRegisterBeanIfNeeded(prisma, merchant.id)

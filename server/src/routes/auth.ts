@@ -3,7 +3,7 @@ import { createRouter } from '../lib/async-router.js'
 import { z } from 'zod'
 import { prisma, redis } from '../db.js'
 import { loginByPhone, loginByWechat, refresh, devLogin, WxLoginFailedError } from '../auth/auth.service.js'
-import { DemoExpiredError } from '../lib/demo-account.js'
+import { DemoExpiredError, DemoLoginThrottledError } from '../lib/demo-account.js'
 import { sendCode, SmsSendTooFrequentError, SmsDailyLimitError, SmsProviderNotConfiguredError } from '../auth/sms.js'
 import { SmsSendFailedError } from '../auth/sms-provider.js'
 import { ok, fail } from '../lib/result.js'
@@ -15,8 +15,13 @@ const phoneSchema = z.string().regex(/^1\d{10}$/, 'invalid phone')
 router.post('/sms/send', async (req, res) => {
   try {
     const phone = phoneSchema.parse(req.body?.phone)
-    const { cooldownSec } = await sendCode(prisma, phone, req.ip)
-    ok(res, { cooldownSec })
+    const { cooldownSec, demoLogin } = await sendCode(prisma, phone, req.ip)
+    // ★ demoLogin 是**自描述标记**：这个号是演示号、服务端压根没发短信。
+    //   小程序端据此把「验证码已发送」换成「演示账号无需验证码，直接输码登录」
+    //   （见 apps/mini/src/pages/mine/index.tsx）—— 否则用户会盯着一台不会响的手机等短信。
+    //   顺手也便于排障：用户说「没收到短信」时不必连数据库，一眼能分辨是
+    //   「这个号本来就收不到」还是「管道真出问题了」。
+    ok(res, demoLogin ? { cooldownSec, demoLogin: true } : { cooldownSec })
   } catch (e) {
     if (e instanceof SmsSendTooFrequentError || e instanceof SmsDailyLimitError) {
       fail(res, 1003, e.message, 429)
@@ -41,7 +46,7 @@ router.post('/login', async (req, res) => {
   try {
     const phone = phoneSchema.parse(req.body?.phone)
     const code = z.string().length(6).parse(req.body?.code)
-    const result = await loginByPhone(prisma, phone, code)
+    const result = await loginByPhone(prisma, redis, phone, code)
     ok(res, result)
   } catch (e) {
     // ★ 演示账号到期必须**先于** 1002 判：它的 message 是「演示账号已到期，请联系管理员」，
@@ -49,6 +54,13 @@ router.post('/login', async (req, res) => {
     //   而短信发得出去、码也没错，只是这个号已经不能再登录了。
     if (e instanceof DemoExpiredError) {
       fail(res, 1006, e.message, 403)
+      return
+    }
+    // ★ 演示固定码被撞爆：回 1003（与「发送过于频繁」同码，客户端已有该码的文案），429。
+    //   排在 1006 之后：窗口关了就该说「已到期」，而不是「试太多次」—— 后者会让人
+    //   以为「歇一会儿再来就能登进去」，白等一场。
+    if (e instanceof DemoLoginThrottledError) {
+      fail(res, 1003, e.message, 429)
       return
     }
     fail(res, 1002, '验证码错误或已过期', 400)

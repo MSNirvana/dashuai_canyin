@@ -37,6 +37,7 @@ import {
   SmsCodeInvalidError,
   SmsProviderNotConfiguredError,
 } from '../src/auth/sms.js'
+import { isDemoPhone, loadDemoPolicy } from '../src/lib/demo-account.js'
 
 let pass = 0
 let fail = 0
@@ -140,6 +141,19 @@ async function main(): Promise<void> {
   }
 
   if (dbReady) {
+    /**
+     * ★★ 前提断言：D / F 两段都真调 `sendCode()`，而它现在会先问一句
+     *   「这个号是不是**配了固定登录码**的演示号」—— 命中就直接返回、**不发短信也不落记录**。
+     *
+     *   若 TEST_PHONE / NON_WHITELIST 恰好落在 `demo.config.phones` 里，症状会很有迷惑性：
+     *   D 段变成「没有抛 SmsSendFailedError」、F2 变成「落库 0 条」——**看起来是代码坏了，
+     *   真因却在配置**（谁在后台把这两个测试号填进了演示白名单）。
+     *   把前提钉成断言，真因就能自己说话。
+     */
+    const demoPolicy = await loadDemoPolicy(prisma)
+    check('前提：TEST_PHONE 未被配成演示号（否则 sendCode 走固定码分支，D/F 段会「看不懂地」红）', isDemoPhone(demoPolicy, TEST_PHONE), false)
+    check('前提：NON_WHITELIST 未被配成演示号', isDemoPhone(demoPolicy, NON_WHITELIST), false)
+
     // 注入假密钥环境（sendCode 内部读 process.env）
     const saved: Record<string, string | undefined> = {}
     for (const [k, v] of Object.entries(SMS_OK)) {

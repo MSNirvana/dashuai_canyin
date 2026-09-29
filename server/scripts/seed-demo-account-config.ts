@@ -27,10 +27,10 @@ const prisma = new PrismaClient()
 
 const GROUP = 'demo'
 const KEY = 'config'
-const VALUE = JSON.stringify({ phones: [], window_hours: 24 })
+const VALUE = JSON.stringify({ phones: [], window_hours: 24, login_code: '' })
 const DISPLAY = '演示账号'
 const DESC =
-  'phones=演示账号手机号数组（留空即关闭演示，不是"所有号"）；window_hours=窗口时长(小时)，从首次登录起算且全局一次性。首次登录后会自动出现 demo.activated_at，重开窗口＝把它的值改成当前时间，或删掉那一行。'
+  'phones=演示账号手机号数组（留空即关闭演示，不是"所有号"）；window_hours=窗口时长(小时)，从首次登录起算且全局一次性；login_code=固定登录码（恰好 6 位数字），配了它白名单号登录时不必获取短信验证码（留空=不启用，绝不是"任何码都行"）。首次登录后会自动出现 demo.activated_at，重开窗口＝把它的值改成当前时间，或删掉那一行。'
 
 async function main(): Promise<void> {
   const yes = process.argv.includes('--yes')
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
       isPublic: false,
     },
   })
-  console.log('已创建。到后台「系统配置」里把 phones 填成演示手机号即可启用。')
+  console.log('已创建。到后台左侧「演示账号」页把手机号（和可选的 6 位登录验证码）填好并保存即可启用。')
 }
 
 main()

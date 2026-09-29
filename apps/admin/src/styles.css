@@ -311,7 +311,9 @@ button, input, textarea { font-family: inherit; }
 /* ★ nowrap 是必须的：这个标签里带空格，允许换行时窄一点就折成「第 1」/「个」两行。
    （JSX 那边也别写成 `第 {n} 个` —— 那会插出三个文本节点，空格同样成换行点。） */
 .demo-phones__index { color: var(--ds-subtle); font-size: 12px; white-space: nowrap; }
-.demo-window { display: flex; align-items: center; gap: 8px; }
+/* `.demo-code` 与 `.demo-window` 刻意共用一条规则：都是「一个控件 + 一个后缀说明/按钮」的横排。
+   分开写迟早会有一边改了一边没改，两行长得不一样。 */
+.demo-window, .demo-code { display: flex; align-items: center; gap: 8px; }
 .demo-help--warn { color: #c4892c; }
 .demo-status { flex: 0 0 auto; width: 400px; max-width: 100%; padding: 16px 18px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); }
 .demo-status__caption { margin-bottom: 10px; color: var(--ds-subtle); font-size: 12px; }

@@ -214,7 +214,14 @@ export default function Mine() {
       const r = await authApi.sendSmsCode(phone)
       const sec = typeof r?.cooldownSec === 'number' && r.cooldownSec > 0 ? r.cooldownSec : 60
       startCooldown(sec)
-      Taro.showToast({ title: '验证码已发送', icon: 'success' })
+      if (r?.demoLogin) {
+        // ★ 服务端**没有**发短信：这是演示账号，后台给它配了固定登录验证码。
+        //   照旧弹「验证码已发送」会让人盯着一台不会响的手机等短信，
+        //   而正确的做法（直接把那枚码敲进去）就在眼前。这里必须说真话。
+        Taro.showToast({ title: '演示账号无需验证码，直接输码登录', icon: 'none', duration: 3000 })
+      } else {
+        Taro.showToast({ title: '验证码已发送', icon: 'success' })
+      }
     } catch (err) {
       toastErr(err, '发送失败，请稍后重试')
     } finally {

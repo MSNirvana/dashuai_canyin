@@ -24,9 +24,20 @@ export function wechatLogin(data: { phoneCode: string; wxLoginCode: string }) {
   return http.post<LoginResult>('/auth/wechat-login', data, { silent: true })
 }
 
-/** 发送短信验证码 */
+/**
+ * 发送短信验证码。
+ *
+ * ★ `demoLogin: true` 表示服务端**根本没有发短信** —— 这个手机号是演示账号、且后台给它配了
+ *   固定登录验证码，请直接用那枚码登录。调用方**必须**据此换掉「验证码已发送」那句提示：
+ *   否则用户会盯着一台永远不会响的手机等短信，而正确的做法（直接输码）就摆在眼前。
+ *   ★ 服务端仍然返回 `cooldownSec`，所以倒计时照常走 —— 「点了完全没反应」比「假装发了」更像坏了。
+ */
 export function sendSmsCode(phone: string) {
-  return http.post<{ cooldownSec: number }>('/auth/sms/send', { phone, scene: 'LOGIN' }, { silent: true })
+  return http.post<{ cooldownSec: number; demoLogin?: boolean }>(
+    '/auth/sms/send',
+    { phone, scene: 'LOGIN' },
+    { silent: true },
+  )
 }
 
 /** 手机号 + 验证码登录（兜底通道） */

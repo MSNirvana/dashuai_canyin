@@ -29,6 +29,26 @@ export interface LoginThrottlePolicy {
 export const ADMIN_LOGIN_POLICY: LoginThrottlePolicy = { maxFailures: 5, windowSec: 15 * 60 }
 export const ADMIN_LOGIN_GLOBAL_POLICY: LoginThrottlePolicy = { maxFailures: 30, windowSec: 15 * 60 }
 
+/**
+ * 商家端「演示账号固定登录码」的失败限速。
+ *
+ * ★ 为什么只有这一条路需要它（普通的短信验证码登录不需要）：
+ *   · 短信码是**一次性**的，`verifyCode()` 自带「同一条记录错 5 次即作废」+ 5 分钟 TTL
+ *     ⇒ 本来就猜不动；
+ *   · 演示固定码是**可重复使用的共享码**、没有 TTL、也没有「用掉即废」——
+ *     不限速就是「10^6 次以内必中」。限速是它唯一真正的防线。
+ *
+ * ★ 为什么是 10 次 / 15 分钟（而不是像后台登录那样 5 次）：
+ *   这一枚码是**发给多个试用者共用**的。5 次会把「一个人手滑」升级成
+ *   「所有人都进不来 15 分钟」。10 次 / 15 分钟下，穷举完 10^6 约需 2.85 年，
+ *   同时给试用者留出打错字的余地；再加上演示窗口本身只有 N 小时，时间预算远远不够。
+ *
+ * ★ 按**手机号**计数、不按 IP：与后台登录同样的理由（本服务在 nginx 后面而没有
+ *   `trust proxy`，`req.ip` 拿到的是反代自己的地址，用它做维度会把所有人挤进同一个桶）。
+ *   而演示号只有一个、且本来就是公开的 ⇒ 按号计数不会误伤别人。
+ */
+export const MERCHANT_DEMO_LOGIN_POLICY: LoginThrottlePolicy = { maxFailures: 10, windowSec: 15 * 60 }
+
 export interface ThrottleVerdict {
   allowed: boolean
   /** 还需等待的秒数（allowed=false 时才有意义） */
@@ -39,6 +59,9 @@ export interface ThrottleVerdict {
 const PREFIX = 'login:fail'
 export const adminUserKey = (username: string): string => `${PREFIX}:admin:user:${username.toLowerCase()}`
 export const adminGlobalKey = (): string => `${PREFIX}:admin:global`
+
+/** 演示账号固定登录码的失败计数键（按手机号，见 MERCHANT_DEMO_LOGIN_POLICY） */
+export const merchantDemoLoginKey = (phone: string): string => `${PREFIX}:merchant:demo:phone:${phone}`
 
 /**
  * 原子自增并只在**第一次**设置 TTL。
@@ -100,4 +123,15 @@ export async function recordLoginFailure(
  */
 export async function clearLoginFailures(redis: Redis, username: string): Promise<void> {
   await redis.del(adminUserKey(username))
+}
+
+/**
+ * 演示号登录成功后清空**它自己**的失败计数。
+ *
+ * ★ 单独一个函数而不是复用 `clearLoginFailures`：那个按**后台用户名**建键，
+ *   拿它去清手机号的桶会键名不符、静默清不掉（下一次失败继续累加，
+ *   表现为「明明登成功了，再错一次就被锁」）。键必须从同一个 helper 来。
+ */
+export async function clearDemoLoginFailures(redis: Redis, phone: string): Promise<void> {
+  await redis.del(merchantDemoLoginKey(phone))
 }

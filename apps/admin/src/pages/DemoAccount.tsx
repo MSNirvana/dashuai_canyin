@@ -40,6 +40,24 @@ import { request } from '../lib/http'
  * 状态卡上标的「当前生效」必须真的是库里那份；草稿与已保存不一致时，
  * 单独给一条「有未保存的改动」提示，别把两者混成一个数字。
  *
+ * ── ★★ 固定登录验证码（`login_code`）：演示号**不需要点「获取验证码」**────────
+ * 演示账号是当场给客户试的，让他去等一条短信（签名没过审时甚至根本发不出来）是纯粹的阻力。
+ * 配了这个 6 位码之后，白名单号直接用这枚码登录，服务端对该号**不发短信、也不落记录**。
+ *
+ * ★ 它与短信验证码的语义**相反**，这是本页最要紧的一条：
+ *   短信码是**一次性**的（用掉即废、5 分钟过期、同一条错 5 次作废），
+ *   而这是一枚**可重复使用的共享码**（同一个码发给多个试用者、整段窗口内反复用）。
+ *   ⇒ 它**不进** `smsCode` 表。别有人「顺手」把它接进短信流程 ——
+ *     那样第一次登录就把记录消费掉了，第二次又得去点「获取验证码」，回到原来那个问题。
+ * ★ 正因为它可重复使用，服务端给它配了**失败限速**（见 `lib/login-throttle.ts`）。
+ *   这一页不需要关心限速，但要知道：**码能被猜** ⇒ 只发给真正要试用的人。
+ *
+ * ⚠ 三件事这一页必须说清（都已**逐条镜像**服务端 `parseDemoLoginCode` / `demoLoginCode`）：
+ *   ① 留空 = **没有**固定码（该号回到正常短信验证码），**绝不是**「任何码都行」；
+ *   ② 只有**白名单里**的号才走固定码 —— 白名单解析后为空时整块功能关闭；
+ *   ③ 码必须**恰好 6 位数字**。`1234567` / `abcdef` / 带空格 服务端一律当没配。
+ *   ①②③ 合起来就是「配了却登不进、且毫无提示」的全部来源，所以在保存前就拦下来。
+ *
  * ── 「不会干扰其他账号」是怎么保证的（这一页要在文案里讲清楚）──────────────────
  *   ① `phones` 解析后为空 ⇒ **功能整体关闭**（不是「所有号都算演示账号」）；
  *   ② 只有白名单里的号过闸门，`dst`（绝对截止）只写进**该账号自己**签发的 token；
@@ -72,13 +90,29 @@ const DEFAULT_WINDOW_HOURS = 24
  */
 const PHONE_RE = /^1\d{10}$/
 
+/**
+ * 固定登录码判据。**必须与服务端 `parseDemoLoginCode` 逐字一致**（`/^\d{6}$/`）。
+ *
+ * ★ 镜像一旦漂移，两个方向都是静默的：
+ *   · 这边放宽（例如允许 4 位）⇒ 后台显示「已配置」，服务端解析成 null ⇒
+ *     该号回到短信验证码，而运营以为固定码在生效，试用者一路「验证码错误」；
+ *   · 这边收紧 ⇒ 运营被拦住不让保存，但配置本来是服务端认的。
+ */
+const CODE_RE = /^\d{6}$/
+
 /** 单个手机号输入行。带 id 是为了让 React 的 key 稳定 —— */
 type PhoneRow = { id: string; value: string }
 
 /** 落库形状（= 存进 settingVal 的 JSON 的对象形状） */
-type DemoValues = { phones: string[]; windowHours: number }
+type DemoValues = { phones: string[]; windowHours: number; loginCode: string }
 /** 编辑态（phones 多一层行包装） */
-type DemoDraft = { rows: PhoneRow[]; windowHours: number }
+type DemoDraft = { rows: PhoneRow[]; windowHours: number; loginCode: string }
+
+/**
+ * 一份「什么都没配」的值。★ 做成函数而不是共享常量：`phones` 是数组，
+ * 共享同一个引用迟早会被某处就地改动，而那种 bug 只会在特定操作顺序下出现。
+ */
+const emptyValues = (): DemoValues => ({ phones: [], windowHours: DEFAULT_WINDOW_HOURS, loginCode: '' })
 
 let seq = 0
 const nextRowId = () => `p${++seq}`
@@ -86,13 +120,16 @@ const nextRowId = () => `p${++seq}`
 /** 至少留一个空行：一个都没有时页面会显示成「什么都没配」，运营不知道点哪儿 */
 function draftFromValues(v: DemoValues): DemoDraft {
   const rows = v.phones.length ? v.phones.map((value) => ({ id: nextRowId(), value })) : [{ id: nextRowId(), value: '' }]
-  return { rows, windowHours: v.windowHours }
+  return { rows, windowHours: v.windowHours, loginCode: v.loginCode }
 }
 
 function valuesFromDraft(d: DemoDraft): DemoValues {
   return {
     phones: dedupe(d.rows.map((r) => r.value.trim()).filter(Boolean)),
     windowHours: d.windowHours,
+    // ★ 存**原文**、不在这里过滤：填错的码要能在保存前被指出来（见 codeInvalid）。
+    //   真落库的形态由服务端 `parseDemoLoginCode` 决定，这边只做「提前拦」。
+    loginCode: d.loginCode.trim(),
   }
 }
 
@@ -133,7 +170,8 @@ function parseConfigValues(raw: string): DemoValues {
     obj = JSON.parse(raw)
     parsed = true
   } catch {
-    return { phones: splitPhones(raw), windowHours: DEFAULT_WINDOW_HOURS }
+    // 整串不是 JSON ⇒ 服务端把它当手机号列表、且**没有**固定码（login_code 无从谈起）
+    return { phones: splitPhones(raw), windowHours: DEFAULT_WINDOW_HOURS, loginCode: '' }
   }
   const rec =
     parsed && obj && typeof obj === 'object' && !Array.isArray(obj) ? (obj as Record<string, unknown>) : {}
@@ -141,6 +179,9 @@ function parseConfigValues(raw: string): DemoValues {
   return {
     phones: splitPhones(rec.phones),
     windowHours: Number.isFinite(hours) && hours > 0 ? hours : DEFAULT_WINDOW_HOURS,
+    // ★ 原样读出（留空 ⇒ ''）。形态是否合法由 `codeInvalid` 与服务端各自判 —— 这里不替它判，
+    //   否则「后台显示空、服务端却读到值」这类镜像漂移就看不出来了。
+    loginCode: String(rec.login_code ?? '').trim(),
   }
 }
 
@@ -167,9 +208,9 @@ const MAX_WINDOW_HOURS = 720
 export default function DemoAccountPage() {
   const [row, setRow] = useState<Setting | null>(null)
   const [actRow, setActRow] = useState<Setting | null>(null)
-  const [draft, setDraft] = useState<DemoDraft>(() => draftFromValues({ phones: [], windowHours: DEFAULT_WINDOW_HOURS }))
+  const [draft, setDraft] = useState<DemoDraft>(() => draftFromValues(emptyValues()))
   /** 库里那份（已保存）。状态卡与 dirty 判据都读它，**不读 draft** */
-  const [saved, setSaved] = useState<DemoValues>({ phones: [], windowHours: DEFAULT_WINDOW_HOURS })
+  const [saved, setSaved] = useState<DemoValues>(emptyValues)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   /** 三个窗口动作共用一个 busy，避免连点重开两次 */
@@ -187,9 +228,7 @@ export default function DemoAccountPage() {
       const list = await request<Setting[]>({ url: '/settings' })
       const cfg = list.find((s) => s.groupKey === GROUP_KEY && s.settingKey === CONFIG_KEY) ?? null
       const act = list.find((s) => s.groupKey === GROUP_KEY && s.settingKey === ACTIVATED_KEY) ?? null
-      const values = cfg
-        ? parseConfigValues(cfg.settingVal)
-        : { phones: [], windowHours: DEFAULT_WINDOW_HOURS }
+      const values = cfg ? parseConfigValues(cfg.settingVal) : emptyValues()
       setRow(cfg)
       setActRow(act)
       setDraft(draftFromValues(values))
@@ -225,8 +264,15 @@ export default function DemoAccountPage() {
   const badEntries = draftValues.phones.filter((p) => !PHONE_RE.test(p))
   const windowInvalid = !(Number.isFinite(draft.windowHours) && draft.windowHours > 0)
   const windowTooLarge = !windowInvalid && draft.windowHours > MAX_WINDOW_HOURS
+  /**
+   * 填了码、但不是**恰好 6 位数字**。服务端 `parseDemoLoginCode` 会把它当成「没配」——
+   * 该号于是回到短信验证码，而运营以为固定码在生效 ⇒ 试用者一路「验证码错误」。
+   * 这是本页最容易产生「配了却不生效」的一处，所以**拦在保存之前**。
+   */
+  const codeInvalid = draftValues.loginCode !== '' && !CODE_RE.test(draftValues.loginCode)
+
   /** 输入过程中必然经过「位数不够」的中间态，所以**只在保存时**报错，不边敲边红 */
-  const canSave = dirty && !windowInvalid && !windowTooLarge && badEntries.length === 0 && !busy
+  const canSave = dirty && !windowInvalid && !windowTooLarge && badEntries.length === 0 && !codeInvalid && !busy
 
   // ── 当前生效（读**已保存**那份 + 已保存的启用时刻）────────────────────────
   const effPhones = saved.phones.filter((p) => PHONE_RE.test(p))
@@ -239,6 +285,13 @@ export default function DemoAccountPage() {
   const now = Date.now()
   const remainingMs = deadlineMs === null ? null : deadlineMs - now
   const demoOn = effPhones.length > 0
+  /**
+   * ★★ 镜像服务端 `demoLoginCode()`：**两条同时成立**才算「这个号会用固定码」——
+   *   ① 白名单非空（`demoOn`）；② 已保存的码是恰好 6 位数字。
+   *   这里读的是 `saved`（库里那份），与状态卡其余各行同一口径：
+   *   草稿里刚敲进去的码**不算生效**，避免「看着配好了、其实还没保存」。
+   */
+  const effCode = demoOn && CODE_RE.test(saved.loginCode) ? saved.loginCode : null
   const expired = remainingMs !== null && remainingMs <= 0
 
   // ── 写配置 ──────────────────────────────────────────────────────────────
@@ -247,11 +300,20 @@ export default function DemoAccountPage() {
     const payload = {
       groupKey: GROUP_KEY,
       settingKey: CONFIG_KEY,
-      settingVal: JSON.stringify({ phones: values.phones, window_hours: values.windowHours }),
+      // ★ 一条 JSON 里同时带 phones / window_hours / login_code。
+      //   登录码**不能**单独一行：`settingVal` 是 `z.string().min(1)`（不许空串），
+      //   想「清掉固定码」就得存空串 ⇒ 400 ⇒ 页面上只显示「保存失败」而看不出原因。
+      //   放进同一条 JSON 后，「清空码」就是 `login_code: ''`，长度远大于 1。
+      settingVal: JSON.stringify({
+        phones: values.phones,
+        window_hours: values.windowHours,
+        login_code: values.loginCode,
+      }),
       valueType: 'JSON' as const,
       displayName: '演示账号',
       description:
-        '演示账号白名单手机号与可用窗口（小时）。phones 解析后为空即整个功能关闭；窗口从首次使用算、全局一次性。',
+        '演示账号白名单手机号、可用窗口（小时）与固定登录码。phones 解析后为空即整个功能关闭；' +
+        '窗口从首次使用算、全局一次性；login_code 是 6 位数字，配了它白名单号不必获取短信验证码。',
       sort: 0,
       isPublic: false, // ★ 必须 false：公开接口 /api/v1/system/settings 只回 isPublic=1 的项
     }
@@ -387,6 +449,9 @@ export default function DemoAccountPage() {
         演示账号的能力：<b>可以多端同时登录</b>（本项目的登录是无状态的，不需要额外开）。
         区别只在于它带着一段<b>全局一次性</b>的可用窗口：从<b>第一次使用</b>算起（不是每次登录都重置），
         窗口一过，<b>任何设备都无法再登录</b>，必须回这一页重开。<br />
+        配了下面<b>「登录验证码」</b>的号，登录时<b>直接输入那枚 6 位码</b>即可，
+        <b>不需要点「获取验证码」</b>，系统也<b>不会</b>给它发短信。
+        ⚠ 这枚码可以<b>反复使用</b>、且是给多个试用者<b>共用</b>的 —— 请只发给真正要试用的人。<br />
         ⚠ 到点退出靠的是<b>登录凭证里写死的绝对截止时间</b>。所以在窗口内改配置或重开窗口，
         只对<b>此后新登录</b>的端生效；当时已经登录着的端仍按原来的时间退出。
       </div>
@@ -474,6 +539,37 @@ export default function DemoAccountPage() {
                 </div>
               ) : null}
             </Field>
+
+            <Field
+              label="登录验证码"
+              status={codeInvalid ? 'error' : undefined}
+              help="6 位数字。配上它，上面的号登录时不必再点「获取验证码」"
+            >
+              <div className="demo-code">
+                <Input
+                  value={draft.loginCode}
+                  status={codeInvalid ? 'error' : undefined}
+                  placeholder="留空 = 不启用"
+                  onChange={(val) => setDraft((d) => ({ ...d, loginCode: val as string }))}
+                  style={{ maxWidth: 240 }}
+                />
+                <Button
+                  size="small"
+                  variant="text"
+                  disabled={busy || draft.loginCode === ''}
+                  title="留空即让这个号回到正常的短信验证码"
+                  onClick={() => setDraft((d) => ({ ...d, loginCode: '' }))}
+                >
+                  清空
+                </Button>
+              </div>
+              {codeInvalid ? (
+                <div className="form-row__help demo-help--warn">
+                  必须是 <b>恰好 6 位数字</b>。照现在这样存下去，服务端会当成「没配」——
+                  该号会回到短信验证码，而不是「任何码都能登」。
+                </div>
+              ) : null}
+            </Field>
           </FieldGroup>
 
           {badEntries.length ? (
@@ -501,6 +597,19 @@ export default function DemoAccountPage() {
               ) : (
                 <b className="danger-text">未配置 ⇒ 演示功能整体关闭</b>
               )}
+            </span>
+          </div>
+
+          <div className="demo-status__row">
+            <span className="demo-status__key">登录验证码</span>
+            <span className="demo-status__val">
+              {/* ★ 写成**一整个**模板串：`已配置 <b>{code}</b>，…` 会插出三个文本节点，
+                  码前面的空格成了可换行点，窄屏上会折在难看的字缝里。 */}
+              {!demoOn
+                ? '—（先配好白名单手机号）'
+                : effCode
+                  ? `已配置 ${effCode}，登录时不用点「获取验证码」`
+                  : '未配置 ⇒ 这些号仍走短信验证码'}
             </span>
           </div>
 

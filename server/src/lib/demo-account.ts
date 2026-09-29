@@ -9,6 +9,35 @@
 //     不存会话 —— 同一账号本来就允许多端同时在线，服务端**也没有踢人能力**。
 //     所以「到点自动退出」不能靠服务端主动踢，只能靠「token 里带绝对截止 + 每次请求校验」。
 //
+// ── ★★ 固定登录验证码（`login_code`）：演示号**不需要点「获取验证码」**────────────
+//   演示账号是发给客户当场试的，让他去等一条短信（签名没过审还根本发不出来）是纯粹的阻力。
+//   所以 `demo.config` 里多一个 `login_code`：配了它，**白名单号**就能用这枚码直接登录，
+//   且 `sendCode()` 对该号**不发短信、不落记录**。
+//
+//   ★★ 它与短信验证码的语义**相反**，这是本设计最要紧的一点：
+//       短信码 = 一次性（`smsCode.usedAt` 用掉即废、5 分钟过期、错 5 次作废）；
+//       演示码 = **可重复使用的共享码**（同一个码要给多个试用者、在整段窗口内反复用）。
+//     ⇒ 它**绝不能**走 `smsCode` 表。想「复用短信流程、只是把码值换成固定的」是不行的：
+//       那样第一次登录就把记录消费掉了，第二次又得去点「获取验证码」—— 正是要避免的事。
+//       （对照：`SMS_TEST_CODE` 后门就是「只换码值、仍要求先发码」，所以它解决不了这个需求。）
+//
+//   ★★ 因此**必须**配失败限速：6 位固定码不限速就是「10^6 次以内必中」。
+//       策略在 `lib/login-throttle.ts` 的 `MERCHANT_DEMO_LOGIN_POLICY`，
+//       判据接在 `auth.service.ts::loginByPhone`（那里也写了为什么只对演示号生效）。
+//
+//   ★ 三道闸门，缺一即关（与 `SMS_TEST_CODE` 同一套纪律）：
+//       ① 白名单命中（`phones` 解析后为空 ⇒ 整体关闭，绝不是「所有号」）；
+//       ② 码必须是**恰好 6 位数字**（留空 / 5 位 / `true` / 带空格 一律作废）；
+//       ③ 两者**同时**成立才生效 —— 缺任一条 ⇒ 该号回落到正常短信验证码。
+//     ⇒ 「留空 = 万能码」「任意号输固定码就登」这两件事在本设计里**表达不出来**。
+//
+//   ★ 它**不豁免**窗口：码对了照样要走 `buildLoginResult()` 里那道 `dst` 闸门。
+//     两个机制是叠加的 —— 码让人进得来，窗口保证他待不久。
+//
+//   ⚠ 演示号一旦配了 `login_code`，**真实短信码对它不再生效**（分支不再查 `smsCode` 表）。
+//     这是刻意的：否则「固定码 + 短信码」两条路并存，限速就被绕过了一半。
+//     想让某个号改回短信登录：把 `login_code` 留空即可。
+//
 // ── 为什么截止时间写进 token（`dst` claim），而不是每次查库 ─────────────
 //   ① 鉴权中间件零额外查询即可判死（merchant 表那次查询本来就有，不该再加一次设置读取）；
 //   ② 不受 settings 的 60s 进程内缓存影响 ⇒ 到点**立即**生效，不会出现「缓存还没过期所以还能用」。
@@ -63,6 +92,23 @@ export class DemoExpiredError extends Error {
   }
 }
 
+/**
+ * 演示账号的**固定登录码**猜错次数过多，被限速锁住。
+ *
+ * ★ 为什么不能让它安静地返回 1002「验证码错误」：固定码是 6 位且**可重复使用**的，
+ *   没限速就是「穷举必中」。这条错误让「被锁住」与「码输错了」在客户端可区分，
+ *   否则试用者会一直重试、永远不知道为什么那个明明正确的码突然不管用了。
+ * ★ 文案里**必须带还要等多久**：只报「失败」会让人立刻再试一次。
+ */
+export class DemoLoginThrottledError extends Error {
+  readonly code = 'DEMO_LOGIN_THROTTLED'
+  constructor(readonly retryAfterSec: number) {
+    const minutes = Math.max(1, Math.ceil(retryAfterSec / 60))
+    super(`验证码错误次数过多，请 ${minutes} 分钟后再试`)
+    this.name = 'DemoLoginThrottledError'
+  }
+}
+
 export interface DemoPolicy {
   /**
    * 白名单手机号（已解析、去重）。
@@ -73,6 +119,14 @@ export interface DemoPolicy {
   windowHours: number
   /** 窗口启用时刻；null = 尚未启用（第一台设备登录演示账号时才激活） */
   activatedAt: Date | null
+  /**
+   * 演示号的**固定登录验证码**；null = 未配置 ⇒ 该号仍走正常短信验证码。
+   *
+   * ★★ 这是一枚**可重复使用的共享码**，与一次性短信码的语义相反 ——
+   *   所以本文件只负责「这一号该不该用固定码」，真正的比对与限速在
+   *   `auth.service.ts::loginByPhone`，**不经过 smsCode 表**。
+   */
+  loginCode: string | null
 }
 
 /**
@@ -93,6 +147,21 @@ export function parseDemoPhones(raw: string | unknown[]): Set<string> {
   return out
 }
 
+/**
+ * 解析固定登录码。
+ *
+ * ★★ **恰好 6 位数字**，别的什么都不认。这是安全判据、不是格式洁癖：
+ *   `''` / `'  '` / `'12345'` / `'1234567'` / `'abcdef'` / `'true'` / `12 456`
+ *   全都必须落成 `null`（= 该号回落到短信验证码）。否则会出现两种都不报错的坏结果：
+ *   · 留空被当成「不校验」⇒ **任何 6 位码都能登进演示账号**（最坏的一种）；
+ *   · 超长 / 带空格的码永远匹配不上 ⇒ 配了却登不进，运营只看到「验证码错误」。
+ *   （同 `SMS_TEST_CODE` 的老教训：码值形态必须自己判，别指望配置的人写对。）
+ */
+export function parseDemoLoginCode(raw: unknown): string | null {
+  const s = String(raw ?? '').trim()
+  return /^\d{6}$/.test(s) ? s : null
+}
+
 function parseIso(raw: string): Date | null {
   if (!raw || !raw.trim()) return null
   const t = Date.parse(raw)
@@ -103,17 +172,22 @@ function parseIso(raw: string): Date | null {
  * 解析 `demo.config`。
  *
  * ★ 容错口径（宁可多认一点，也不要静默失效）：
- *   · 合法 JSON 对象 ⇒ 读 `phones` / `window_hours`；
+ *   · 合法 JSON 对象 ⇒ 读 `phones` / `window_hours` / `login_code`；
  *   · **整串不是 JSON** ⇒ 把整串当手机号列表（运营很可能只填一串号）；
- *   · `window_hours` 非正数/非数字 ⇒ 回落默认 24。
+ *   · `window_hours` 非正数/非数字 ⇒ 回落默认 24；
+ *   · `login_code` 形态不合法 ⇒ null（该号回落短信验证码，见 parseDemoLoginCode）。
  */
-export function parseDemoConfig(raw: string): { phones: Set<string>; windowHours: number } {
+export function parseDemoConfig(raw: string): {
+  phones: Set<string>
+  windowHours: number
+  loginCode: string | null
+} {
   let obj: unknown = null
   try {
     obj = JSON.parse(raw)
   } catch {
     // 不是 JSON：整串当手机号列表（`parseDemoPhones` 会把非法片段全部丢掉）
-    return { phones: parseDemoPhones(raw), windowHours: DEMO_DEFAULT_WINDOW_HOURS }
+    return { phones: parseDemoPhones(raw), windowHours: DEMO_DEFAULT_WINDOW_HOURS, loginCode: null }
   }
   const rec = obj && typeof obj === 'object' && !Array.isArray(obj) ? (obj as Record<string, unknown>) : {}
   const phones = parseDemoPhones(
@@ -123,6 +197,7 @@ export function parseDemoConfig(raw: string): { phones: Set<string>; windowHours
   return {
     phones,
     windowHours: Number.isFinite(hours) && hours > 0 ? hours : DEMO_DEFAULT_WINDOW_HOURS,
+    loginCode: parseDemoLoginCode(rec.login_code),
   }
 }
 
@@ -131,10 +206,11 @@ export async function loadDemoPolicy(prisma: DemoDb): Promise<DemoPolicy> {
     getString(prisma, DEMO_GROUP, DEMO_CONFIG_KEY, ''),
     getString(prisma, DEMO_GROUP, DEMO_ACTIVATED_AT_KEY, ''),
   ])
-  const { phones, windowHours } = parseDemoConfig(rawConfig)
+  const { phones, windowHours, loginCode } = parseDemoConfig(rawConfig)
   return {
     phones,
     windowHours,
+    loginCode,
     // ★★ 值填坏了（非空但解析不出时间）⇒ 当作**早已过期**（拒绝登录），而不是当作
     //   「未激活」。后者会让一次手抖写错的配置把演示账号**永久开放**，
     //   而且没有任何日志会提示。默认值必须落在「更保守 / 会被发现」的那一侧。
@@ -144,6 +220,22 @@ export async function loadDemoPolicy(prisma: DemoDb): Promise<DemoPolicy> {
 
 export function isDemoPhone(policy: DemoPolicy, phone: string | null | undefined): boolean {
   return !!phone && policy.phones.has(phone)
+}
+
+/**
+ * 该手机号本次登录**应当使用的固定码**；不适用时返回 `null`（⇒ 调用方回落到短信验证码）。
+ *
+ * ★ 判据是两条**同时**成立：白名单命中 ∧ 已配置合法固定码。
+ *   缺任何一条都返回 null，于是：
+ *   · 白名单空 ⇒ 功能整体关闭（同 `phones` 的老口径：空 ≠ 全部放行）；
+ *   · 码没配 / 配坏 ⇒ 该号走正常短信，而不是「任何码都行」。
+ * ★ 纯函数，且 `loginByPhone` 与 `sendCode` **都**拿它做同一个判断 ——
+ *   否则会出现「发码那边认为该号用固定码、登录那边认为不用」这种两边不一致的静默故障
+ *   （表现为：不发短信，且输什么码都登不进）。
+ */
+export function demoLoginCode(policy: DemoPolicy, phone: string | null | undefined): string | null {
+  if (!policy.loginCode) return null
+  return isDemoPhone(policy, phone) ? policy.loginCode : null
 }
 
 /** 窗口截止时刻（毫秒）；未启用时返回 null。 */
@@ -212,11 +304,15 @@ export async function demoSessionDeadline(prisma: DemoDb, phone: string): Promis
 
 /** 供守护脚本 / 排障使用：把一个策略渲染成一句人话。 */
 export function describeDemoPolicy(policy: DemoPolicy, nowMs: number = Date.now()): string {
+  // ★ 只说「有没有配」，**绝不打印码值本身** —— 这句话会被写进日志。
+  const codeState = policy.loginCode ? '固定登录码已配置' : '无固定登录码'
   if (policy.phones.size === 0) return '演示账号：未配置（phones 解析后为空 ⇒ 功能关闭）'
   const deadline = demoDeadlineMs(policy)
-  if (deadline === null) return `演示账号：已配置 ${policy.phones.size} 个号，窗口 ${policy.windowHours}h，尚未启用`
+  if (deadline === null) {
+    return `演示账号：已配置 ${policy.phones.size} 个号，窗口 ${policy.windowHours}h，尚未启用，${codeState}`
+  }
   const left = deadline - nowMs
-  return `演示账号：已配置 ${policy.phones.size} 个号，窗口 ${policy.windowHours}h，${
+  return `演示账号：已配置 ${policy.phones.size} 个号，窗口 ${policy.windowHours}h，${codeState}，${
     left > 0 ? `剩余 ${(left / 3600_000).toFixed(2)}h` : `已过期 ${(-left / 3600_000).toFixed(2)}h`
   }`
 }
