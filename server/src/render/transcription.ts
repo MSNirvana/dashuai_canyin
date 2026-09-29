@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { safeFetch } from '../lib/outbound-url.js'
 import { probeDurationMs } from './ffmpeg.js'
+import { isSentenceBoundary } from './speech-range.js'
 import { deleteObject, signedObjectUrl, uploadFile } from '../lib/cos.js'
 import { isLocalStorage } from '../lib/local-storage.js'
 import tencentcloud from 'tencentcloud-sdk-nodejs-asr'
@@ -85,9 +86,11 @@ function tencentSegmentsFromWords(words: Array<{ Word?: string; StartTime?: numb
     if (!text) start = wordStart
     text += value
     end = wordEnd
-    // 只在明确句末标点、明显停顿或达到较宽的保护上限时结束；18 字会把正常口语
-    // 强行切成半句话，后续字幕层会再按屏幕宽度做安全拆分。
-    if (/[。！？!?；;]$/.test(value) || (gapMs >= 700 && text.length >= 10) || text.length >= 32) {
+    // ★★ 句界判据与「剪废片」「标点对齐」三处**共用同一个函数**（2026-09-29）：
+    //   这里原来硬编码 `gapMs >= 700 && text.length >= 10`，而标点对齐那条路径用的是
+    //   「逗号也算句界」—— 同一段音频在两条路径上分句结果不同，正是「字幕与剪辑对不上」的来源。
+    //   32 字是最后一道保护上限（防 ASR 给出无标点的超长串）。
+    if (isSentenceBoundary({ char: value, gapMs, chars: text.length }) || text.length >= 32) {
       segments.push({ startMs: start, endMs: Math.min(durationMs || end, end), text })
       text = ''
     }
@@ -96,8 +99,17 @@ function tencentSegmentsFromWords(words: Array<{ Word?: string; StartTime?: numb
   return segments.filter((item) => item.text && item.endMs > item.startMs)
 }
 
-/** 子句断点：句末标点 + 逗号类停顿，字幕层据此切分 */
-const ASR_CLAUSE_BREAK = /[。！？!?；;，、,:：]/
+/**
+ * 句界判据已上移到 `speech-range.ts::isSentenceBoundary` —— **剪废片与字幕断句共用它**。
+ *
+ * ★★ 2026-09-29 的改动（用户：「按停顿自动分句」）：
+ *   这里原来是 `ASR_CLAUSE_BREAK = /[。！？!?；;，、,:：]/` —— **逗号、顿号、冒号也算句界**。
+ *   后果是「一串连贯的话」被标点打成好几条短字幕（每条都填不满一行），
+ *   而且每条的时间轴还要各自按字数摊分。
+ *   现在只认**句末标点**（。！？；…）＋ **真实停顿**（字间空白 ≥ 300ms 且已攒够 4 个字），
+ *   逗号留在行内 ⇒ 一句话攒成一整条 cue，再由下游按屏宽装箱（`packSubtitleLines`）。
+ * ★ 保留 `ASR_PUNCT_ONLY`：标点仍在**没有时间轴**的那一类里，需要对位到时间轴上（见下）。
+ */
 /** `Result` 里可能有、但 `WordList` 里一定没有的字符（标点/空白）——对齐时跳过，不消耗词 */
 const ASR_PUNCT_ONLY = /[。！？!?；;，、,:：.」』】》…—\s]/
 
@@ -165,6 +177,8 @@ export function alignPunctuatedAsrText(
   const segments: TranscriptionSegment[] = []
   let index = 0
   let text = ''
+  /** 当前 cue 里的**正文字数**（不含标点）—— 供「最短句长」判据用（见 `isSentenceBoundary`） */
+  let textChars = 0
   let start = 0
   let end = 0
   /** 最后一个「有字」字符的结束时间：标点自己没有时间轴，只能沿用它的 */
@@ -174,6 +188,7 @@ export function alignPunctuatedAsrText(
     if (!text) return
     segments.push({ startMs: start, endMs: Math.min(durationMs || end, Math.max(start + 1, end)), text })
     text = ''
+    textChars = 0
   }
 
   for (const char of clean) {
@@ -186,17 +201,28 @@ export function alignPunctuatedAsrText(
       }
       text += char
       if (lastCharEnd) end = lastCharEnd
-    } else {
-      const timed = chars[index]
-      // 对齐失败：音频念的字与 Result 对不上，交给调用方回退
-      if (!timed || timed.char !== char) return null
-      index += 1
-      if (!text) start = timed.startMs
-      text += char
-      end = timed.endMs
-      lastCharEnd = timed.endMs
+      // ★ 标点里只有**句末标点**收口；逗号 / 顿号 / 冒号留在行内（2026-09-29 改动）
+      if (isSentenceBoundary({ char })) close()
+      continue
     }
-    if (ASR_CLAUSE_BREAK.test(char)) close()
+
+    const timed = chars[index]
+    // 对齐失败：音频念的字与 Result 对不上，交给调用方回退
+    if (!timed || timed.char !== char) return null
+    index += 1
+    /**
+     * ★★ 停顿断句（2026-09-29）：上一个字收口 → 这个字开口之间的空白够大 ⇒ 上一句到此为止。
+     *
+     * `expandWordsToChars` 把每个词**按字数均分**成逐字时间轴 ⇒ 词内相邻字的间隔恒为 0，
+     * 于是这个差值**只会在词与词之间**出现非零值 —— 正好是要找的「停顿」，不需要额外数据。
+     * ⚠ 必须 `text` 非空才判：本句第一个字之前没有「上一句」可收口（此时 lastCharEnd=0 会算出巨大 gap）。
+     */
+    if (text && isSentenceBoundary({ gapMs: timed.startMs - lastCharEnd, chars: textChars })) close()
+    if (!text) start = timed.startMs
+    text += char
+    textChars += 1
+    end = timed.endMs
+    lastCharEnd = timed.endMs
   }
   close()
 

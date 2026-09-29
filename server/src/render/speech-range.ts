@@ -71,14 +71,26 @@ export interface SpeechKeepPlan {
   speechEndMs: number
   /** 被判定为「长停顿」的**内部**区间（已扣掉两侧 pad，仅用于日志/用户提示） */
   pauses: KeepRange[]
+  /**
+   * 识别出的**句子数**（= 保留区间数）。
+   * ★ 用途：「按停顿自动分句」这条需求里，「句子」不能只活在代码的变量名里 ——
+   *   有了它，日志能直接说「这段口播有 N 句」，成片长短也能对上。
+   */
+  sentenceCount: number
 }
 
 /**
- * 词间空白 ≥ 此值就算废片。
- * ★ 500ms 的依据：正常口语的句内换气在 150~350ms，跨句停顿普遍 > 600ms。
- *   取 500 正好落在两者之间 —— 再低会把正常断句节奏也剪掉。
+ * 词间空白 ≥ 此值就算**句界** —— 既剪掉这段空白，也用它给字幕断句。
+ *
+ * ★★ 2026-09-29 用户拍板 **500 → 300**（原话：「判句更细、剪得更狠」）。
+ *   沿革：初版取 500 的依据是「口语句内换气 150~350ms、跨句停顿普遍 > 600ms，500 正好落在两者之间」。
+ *   用户看过成片后要求判得更细 ⇒ 取 300：代价是**部分正常换气也会被剪**（听感上更「赶」），
+ *   换来的是无人声区间剪得更干净。⚠ 这是**取舍**，不是「300 比 500 更对」——
+ *   要回退只改这一行（或线上 `SHOT_SPEECH_PAUSE_MS`），不必改代码。
+ * ★ 它与「字幕按停顿断句」共用同一个值（见 `isSentenceBoundary`）：
+ *   两边必须是同一个「句界」概念，否则会出现「字幕在这里断了、声音里那口气却没剪」。
  */
-export const SPEECH_PAUSE_MS = 500
+export const SPEECH_PAUSE_MS = 300
 
 /**
  * 切口两侧保留的余量。
@@ -101,6 +113,64 @@ export const SPEECH_MIN_GAIN_MS = 400
  *   纯环境音（覆盖率 ≈ 0）会被干净地挡在外面。
  */
 export const SPEECH_MIN_RATIO = 0.12
+
+/**
+ * 句末标点 —— 见到就**无条件断句**（它比停顿更强的信号）。
+ * ★★ 只认真正的句末标点，**逗号 / 顿号 / 冒号不在其列**：那是子句内部的顿挫，
+ *   按它们切会把「一串连贯的话」打成好几条短字幕 —— 2026-09-29 用户要的正是不再这样切。
+ */
+export const SPEECH_SENTENCE_END_PUNCT = /[。！？；!?;]/
+
+/**
+ * 停顿断句时的**最短句长**（字）。短于这个长度就不在停顿处断句，
+ * 免得「好」「嗯」各占一条字幕。
+ * ★ 只约束**停顿**这条判据；句末标点不受它约束（有标点就是明确的句界，多短都断）。
+ */
+export const SPEECH_MIN_SENTENCE_CHARS = 4
+
+/**
+ * ⚠ 它是**字幕断句**专用的，`speechKeepRanges` 的聚合**故意不用它**：
+ *   剪废片只看「空白够不够大」—— 哪怕那句话只剩三个字，中间的空白照样是废片、照样要剪；
+ *   而字幕把三字碎句单独拎成一条 cue 只会更晃眼。两件事的标准本就不同，
+ *   共用的是「句界怎么判」（`isSentenceBoundary`），不是「多短算一句」。
+ */
+
+/**
+ * ★★ 「这里是不是一句话的结尾」—— **剪法与字幕共用的唯一判据**。
+ *
+ * ★ 为什么必须共用：剪法按 A 标准分句、字幕按 B 标准断句，用户就会看到
+ *   「字幕在这一句断了，可声音里那口气没被剪掉」（或反过来），而两处各自看代码都"对"。
+ *   共用之后，「句界」在整套链路里只有一个含义。
+ *
+ * 两条判据，命中任意一条即断：
+ *   ① `char` 里含句末标点（。！？；!?;）—— 无条件断，与长短无关；
+ *   ② 上一个字收口 → 当前字开口之间的空白 ≥ `pauseMs`，**且**已攒够 `minChars` 个字。
+ *
+ * ⚠ `gapMs` 必须是**同一时间轴上相邻两字的真实空白**。
+ *   在已经过口播裁剪的成片上，≥ `pauseMs` 的空白早已被剪掉 ⇒ 判据 ② 自然不再命中，
+ *   此时由判据 ①（标点）兜底 —— 这是**正确行为**，不是判据失效。
+ */
+export function isSentenceBoundary(input: {
+  /** 当前 token（单个字符，或整个词 —— 由调用方的时间轴粒度决定） */
+  char?: string
+  /** 上一个字收口 → 当前 token 开口之间的空白（ms） */
+  gapMs?: number
+  /** 已累积的正文字数（不含标点） */
+  chars?: number
+  /** 句界停顿阈值（ms），默认 `SPEECH_PAUSE_MS` */
+  pauseMs?: number
+  /** 最短句长（字），默认 `SPEECH_MIN_SENTENCE_CHARS` */
+  minChars?: number
+}): boolean {
+  const char = input?.char ?? ''
+  if (SPEECH_SENTENCE_END_PUNCT.test(char)) return true
+  const pauseMs = Number(input?.pauseMs ?? SPEECH_PAUSE_MS)
+  const minChars = Number(input?.minChars ?? SPEECH_MIN_SENTENCE_CHARS)
+  const gapMs = Number(input?.gapMs ?? 0)
+  const chars = Number(input?.chars ?? 0)
+  if (!Number.isFinite(gapMs) || !Number.isFinite(chars)) return false
+  return gapMs >= pauseMs && chars >= minChars
+}
 
 /** 区间长度（ms），非法值按 0。 */
 function spanMs(range: KeepRange): number {
@@ -197,7 +267,7 @@ export function speechKeepRanges(input: {
   // 收益太小 ⇒ 不剪（见 SPEECH_MIN_GAIN_MS 的依据）
   if (cutMs < minGainMs) return null
 
-  return { ranges, keptMs, cutMs, speechStartMs, speechEndMs, pauses }
+  return { ranges, keptMs, cutMs, speechStartMs, speechEndMs, pauses, sentenceCount: groups.length }
 }
 
 /**
@@ -281,8 +351,12 @@ export function toSourceSegments(
 /**
  * 判定版本：**判据或聚合方式变化时必须递增**，否则线上会继续命中旧结论。
  *   v1（2026-09-29）：初版。词间空白 ≥ 500ms 判为废片、切口两侧各留 200ms。
+ *   v2（2026-09-29）：句界阈值 500 → 300（用户「判句更细、剪得更狠」）。
+ *     ★ 参数指纹（`pauseMs` 随计划落库）其实已经能让 v1 的结论失效，这里再递增一次是**双保险**：
+ *       指纹只管得住两个数值，版本号管得住「判据逻辑本身」——
+ *       将来若只在**聚合方式**上动刀而阈值没变，就只有版本号挡得住旧结论。
  */
-export const SHOT_SPEECH_VERSION = 1
+export const SHOT_SPEECH_VERSION = 2
 
 /** 落库的计划结构（`Shot.keepRanges`）。存的是**素材绝对坐标**，与任何 trim 窗口无关。 */
 export interface ShotSpeechPlan {

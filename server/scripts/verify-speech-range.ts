@@ -21,12 +21,14 @@
  */
 import {
   cutRangesInWindow,
+  isSentenceBoundary,
   parseShotSpeechPlan,
   sliceKeepRanges,
   speechKeepRanges,
   toSourceSegments,
   SHOT_SPEECH_VERSION,
   SPEECH_MIN_GAIN_MS,
+  SPEECH_MIN_SENTENCE_CHARS,
   SPEECH_PAD_MS,
   SPEECH_PAUSE_MS,
   type SpeechWordSpan,
@@ -267,8 +269,63 @@ console.log('\n③ 停顿聚合（自然呼吸必须留、pad 造成的贴合段
   eq('pauseMs=1000 ⇒ 中间 2000ms 停顿被剪（2 段）', strict?.ranges.length, 2)
   eq('pauseMs=3000 ⇒ 同一处停顿不算废片（并回 1 段）', loose?.ranges.length, 1)
 }
-eq('默认停顿阈值 = 500ms（不是随便定的，见模块注释）', SPEECH_PAUSE_MS, 500)
+eq('默认句界阈值 = 300ms（用户 2026-09-29 拍板「判句更细、剪得更狠」）', SPEECH_PAUSE_MS, 300)
 eq('默认 pad = 200ms', SPEECH_PAD_MS, 200)
+eq('最短句长 = 4 字（字幕断句专用，剪废片不受它约束）', SPEECH_MIN_SENTENCE_CHARS, 4)
+eq('落库版本 = 2（v1 那批 500ms 的结论必须作废重算）', SHOT_SPEECH_VERSION, 2)
+
+/**
+ * ★★ 「更狠」的**实测边界**（诚实记录，别把它说成大改）：
+ *   把阈值 500 → 300，对线上那条真实素材**一点变化都没有** ——
+ *   它的词间空白只有一处 50ms（其余全是 0），另加 4 处 1.65~2.95s 的大停顿；
+ *   50 < 300 ⇒ 同样不算句界。真正的差别只会出现在「词间有 300~500ms 小停顿」的素材上。
+ */
+{
+  const at500 = speechKeepRanges({ durationMs: REAL_DURATION_MS, words: REAL_WORDS, options: { pauseMs: 500 } })!
+  const at300 = speechKeepRanges({ durationMs: REAL_DURATION_MS, words: REAL_WORDS })!
+  eq('★ 500 → 300 在这条素材上段数不变（它本来就没有 300~500ms 的小停顿）', at300.ranges.length, at500.ranges.length)
+  eq('  └ 剪掉时长也不变', at300.cutMs, at500.cutMs)
+  eq('  └ 句子数报出来（= 保留区间数）', at300.sentenceCount, at300.ranges.length)
+  const smallGap = [
+    { startMs: 1000, endMs: 2000 },
+    { startMs: 2450, endMs: 3450 },
+  ]
+  const strict = speechKeepRanges({ durationMs: 6000, words: smallGap, options: { pauseMs: 500 } })
+  const loose = speechKeepRanges({ durationMs: 6000, words: smallGap })
+  ok(
+    '★ 而 300 确实更狠：词间 450ms 的小停顿，500 留着、300 剪掉',
+    strict?.ranges.length === 1 && loose?.ranges.length === 2,
+    `500⇒${strict?.ranges.length} 段、300⇒${loose?.ranges.length} 段`,
+  )
+}
+
+// ── ③′ 句界判据（剪废片与字幕断句共用的**唯一**判据）──────────────────────────
+console.log('\n③′ 句界判据 isSentenceBoundary（剪辑与字幕必须按同一个「句界」行事）')
+{
+  ok('句末标点无条件断：。', isSentenceBoundary({ char: '。' }))
+  ok('句末标点无条件断：？', isSentenceBoundary({ char: '？' }))
+  ok('句末标点无条件断：；', isSentenceBoundary({ char: '；' }))
+  ok('★ 句末标点即使句很短也断（标点是比停顿更强的信号）', isSentenceBoundary({ char: '。', chars: 1 }))
+  ok(
+    '★★ 逗号**本身不构成**句界 —— 这正是「一串连贯的话被切成好几条短字幕」的根因',
+    !isSentenceBoundary({ char: '，', gapMs: 50, chars: 20 }),
+  )
+  ok('  └ 顿号同理', !isSentenceBoundary({ char: '、', gapMs: 50, chars: 20 }))
+  ok('  └ 冒号同理', !isSentenceBoundary({ char: '：', gapMs: 50, chars: 20 }))
+  ok(
+    '  └ 但逗号处若真有长停顿（≥ 阈值）照样断 —— 认的是**停顿**，不是标点',
+    isSentenceBoundary({ char: '，', gapMs: 900, chars: 20 }),
+  )
+  ok('停顿够大且已攒够字 ⇒ 断', isSentenceBoundary({ gapMs: 300, chars: 8 }))
+  ok('  └ 恰好等于阈值就断（边界含等）', isSentenceBoundary({ gapMs: 300, chars: 4 }))
+  ok('停顿差 1ms 就不算', !isSentenceBoundary({ gapMs: 299, chars: 8 }))
+  ok('★ 停顿够大但只攒了 3 个字 ⇒ 不断（防「好」「嗯」各占一条字幕）', !isSentenceBoundary({ gapMs: 2000, chars: 3 }))
+  ok('攒够 4 个字就断', isSentenceBoundary({ gapMs: 2000, chars: 4 }))
+  ok('阈值可覆盖：pauseMs=1000 时 300ms 不算句界', !isSentenceBoundary({ gapMs: 300, chars: 8, pauseMs: 1000 }))
+  ok('最短句长可覆盖', isSentenceBoundary({ gapMs: 300, chars: 2, minChars: 2 }))
+  ok('全空入参 ⇒ 不断（判据不凭空制造句界）', !isSentenceBoundary({}))
+  ok('gapMs 是 NaN ⇒ 不断（脏数据不能拿来断句）', !isSentenceBoundary({ gapMs: Number.NaN, chars: 10 }))
+}
 
 // ── ④ 窗口夹取 ─────────────────────────────────────────────────────────────
 console.log('\n④ 窗口夹取（语音区间不能越过上游已经选好的时间窗）')

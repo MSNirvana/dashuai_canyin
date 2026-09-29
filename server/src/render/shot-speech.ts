@@ -161,8 +161,12 @@ export async function resolveShotSpeech(input: {
     }
     // 探测成功（哪怕结论是「没什么可剪的」）⇒ 写回库，下次不再花 ASR
     const persisted = await persistShotSpeech(input.shotId ?? null, stored)
+    // ★ 「按停顿自动分句」的结果要**看得见**：日志里直接说分出了几句话。
+    //   否则「句子」这个概念只活在代码的变量名里 ——
+    //   `sentenceCount` 与 `ranges.length` 不等时，差值就是被 pad 并回去的碎片段。
     const note = plan
-      ? `识别 ${words.words.length} 词 → 保留 ${plan.ranges.length} 段（剪掉 ${plan.cutMs}ms）${persisted}`
+      ? `识别 ${words.words.length} 词 → 分出 ${plan.sentenceCount} 句` +
+        `、保留 ${plan.ranges.length} 段（剪掉 ${plan.cutMs}ms）${persisted}`
       : `识别 ${words.words.length} 词 → 无可剪空白${persisted}`
     return { keepRanges: stored.ranges, resolved: true, source: 'PROBE', note }
   } catch (error) {
