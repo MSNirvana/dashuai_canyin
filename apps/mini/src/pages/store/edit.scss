@@ -145,6 +145,16 @@
   background: var(--td-bg-color-secondary);
   border: 1rpx solid var(--td-component-stroke);
 
+  /* ★ 2026-09-28 已有视频时：盒子高度按**视频自身宽高比**撑（与门店详情页同一套做法），
+     真实比例由 tsx 的内联 padding-top 覆盖，这里的 56.25% 只是元数据未到时的兜底。
+     ⚠ 必须同时取消 aspect-ratio：否则高度会被算两次 —— aspect-ratio 先按宽度定一次高，
+       padding-top 再往上加一次。 */
+  &--fit {
+    aspect-ratio: auto;
+    height: auto;
+    padding-top: 56.25%;
+  }
+
   &--empty {
     display: flex;
     align-items: center;
@@ -154,7 +164,12 @@
     border-style: dashed;
   }
 
+  /* ★ 绝对定位才吃得到 padding 撑出来的高度（容器在 --fit 下已无 aspect-ratio，
+     静态流里自身内容高为 0）；100% 的基准是包容块的 padding box。 */
   &__player {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
     height: 100%;
   }

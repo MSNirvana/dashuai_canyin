@@ -41,14 +41,14 @@
     box-shadow: var(--ds-shadow-card);
   }
 
-  &__title {
-    display: flex;
-    align-items: center;
-    gap: 12rpx;
-    flex-wrap: wrap;
-  }
-
+  /* ★ 2026-09-28 视觉层级整理：`&__title`（flex + wrap + gap:12rpx 的包裹层）已删除。
+     它原本是给「门店名 + 默认/当前标签 + 「品类 · 省市县」副标题」排一行用的；
+     那两样东西随单店模型先后下线（见上方两条注释）⇒ 这层只剩 `&__name` 一个子节点，
+     成了**空壳包裹**：flex / gap / wrap 对一个孤立文本没有任何作用。
+     ⚠ 本页之前没有这一层也能正常显示，是因为门店名的 `<text>` 后面紧跟的都是块级节点；
+       现在补 `display: block` 是为了不依赖「后面恰好是块级」这个巧合。 */
   &__name {
+    display: block;
     font-size: 40rpx;
     font-weight: 700;
     letter-spacing: -0.025em;
@@ -61,28 +61,88 @@
 
   /* ★ 2026-09-24：`&__health` / `-copy` / `-title` / `-desc` / `-value` 整组随
      「品牌资料完整度」模块一起删除，tsx 不再渲染。 */
-  &__section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20rpx; margin-top: 36rpx; }
-  &__section-no { padding-top: 4rpx; color: var(--td-text-color-disabled); font-size: 22rpx; font-weight: 700; }
-  &__section-desc { display: block; margin-top: 6rpx; color: var(--td-text-color-placeholder); font-size: 21rpx; }
 
-  &__label {
-    display: block;
-    margin: 0;
+  /* ── 区块标题：「品牌色竖条 + 文字」成组 ──
+     ★★ 与创作页 `&__spec-head` / `&__spec-bar`、合成页 `&__sechead` / `&__secbar` 是
+       **同一套规格**（那是用户已认可的「标题样」）：6rpx × 30rpx 品牌色圆角竖条 + 34rpx/700。
+     ★★ 改前这里是「26rpx / 600 的黑字 + 行右侧 22rpx 的灰序号」，两个问题：
+       ① **标题比正文还小**：正文（`&__intro` / `&__row-value`）都是 28rpx，标题只有 26rpx；
+          全页除门店名（40rpx）外全部挤在 21~28rpx 一个窄带里 ⇒ 读起来是「一堆一样大的黑字」，
+          这就是用户说的「标题没有标题样」；
+       ② 它是**全站孤例**：另两页都是「竖条 + 34rpx/700」⇒ 三页并排，本页立刻露馅。
+     ★ 竖条为什么必须单独一个 `<View>`，而不是 `::before` / `border-left`：
+       `Text` 在 weapp 里编译成 `<text>`，**伪元素不渲染**；`border-left` 会跟着行盒长到
+       ~42rpx 且是方的，与另两页那条 30rpx 圆角竖条不是一个东西 —— 并排看会明显不齐。 */
+  &__section-head {
+    display: flex;
+    /* ★ 从 flex-start 改成 center：行内现在是两个高度不同的东西（30rpx 竖条 / 34rpx 文字），
+       flex-start 会让竖条顶着行顶，看起来比文字高一头。 */
+    align-items: center;
+    justify-content: space-between;
+    gap: 20rpx;
+    /* ★ 从 36rpx 提到 40rpx，与下面 `&__sechead` 的 18rpx 构成两级节奏（题上 40 / 题下 18，约 2.2 倍）。
+       改前是「题上 36 / 题下 0」—— 标题跟**自己的内容**贴死、却离上一块内容 36rpx，
+       于是三个标题全被读成「上一块的收尾」，这正是「分不清哪是标题哪是正文」的机理。
+       2 倍关系是让人读得出分组、又不至于像两个页面的量级。 */
+    margin-top: 40rpx;
+  }
+  /* 竖条 + 文字**必须收成一个 flex 项**再交给上面的行容器：
+     否则它俩作为两个兄弟节点会被 `space-between` 撕到行两端（合成页踩过这个坑）。
+     `min-width: 0` 同理 —— 标题长起来时让它自己折行，而不是把右侧序号顶出容器。
+     `margin-bottom` 归这里管（不再由标题自己给），全页只有这一个主人。 */
+  &__sechead { display: flex; align-items: center; gap: 12rpx; min-width: 0; margin-bottom: 18rpx; }
+  &__secbar { flex: none; width: 6rpx; height: 30rpx; border-radius: 3rpx; background: var(--td-brand-color); }
+  &__sectitle {
+    font-size: 34rpx;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.25;
     color: var(--td-text-color-primary);
-    font-size: 26rpx;
-    font-weight: 600;
   }
+  /* 行右侧序号（01 / 02 / 03）：**保留**。它承载「这是第几块」的顺序感，删它等于删一个可见元素，
+     超出「视觉层级整理」的范围（那属于内容取舍，要走另一条路）。
+     ★ 删掉了原来的 `padding-top: 4rpx` —— 那是配合上面 `align-items: flex-start` 手动把序号压下来对齐的；
+       行容器改成 `center` 之后，这一条反而会让序号比标题中线低 4rpx。 */
+  &__section-no { color: var(--td-text-color-disabled); font-size: 22rpx; font-weight: 700; }
+  /* ★ 2026-09-28 删除 `&__section-desc`（21rpx 的标题下小字说明）：`grep -rn store-detail__section-desc`
+     全仓只命中它自己这一条定义，tsx 从未渲染过 ⇒ **死规则**。按约定真删、不留注释壳
+     （留壳会让人以为页面上还有第三种标题规格）。 */
 
+  /* ★ 2026-09-28 视频自适应：盒子高度改为按**视频自身宽高比**撑。
+     做法是「百分比 padding-top + 播放器绝对定位填满」——
+     百分比 padding 的基准是包容块宽度 ⇒ 高 = 宽 ÷ 比例，**不需要**知道本盒是 614rpx。
+     这里的 56.25%（16/9）只是**元数据未到时的兜底**（播放器还没解析出宽高），
+     真实比例一到就由 tsx 里的内联 padding-top 覆盖。
+     ⚠ 别再改回写死高度：写死 360rpx 时竖版视频只会缩成中间一条。 */
   &__video {
+    position: relative;
     width: 100%;
+    padding-top: 56.25%;
+    overflow: hidden;
+    border-radius: var(--td-radius-default);
+    background: #000;
   }
 
+  /* ★ 绝对定位才吃得到上面 padding 撑出来的高度（100% 基准是包容块的 padding box）。
+     再按 objectFit='contain' 播放 ⇒ 比例万一不匹配，留的是黑边而不是被裁掉。
+     ★ 圆角**必须留在播放器自己身上**：外层虽然写了 overflow:hidden + 圆角，
+       但小程序原生组件常常**不吃父层的裁剪**（渲染在独立层），只靠外层会露出直角。 */
   &__video-player {
+    position: absolute;
+    top: 0;
+    left: 0;
     width: 100%;
-    height: 360rpx;
+    height: 100%;
     border-radius: var(--td-radius-default);
   }
 
+  /* 门店故事的正文。
+     ★ 2026-09-28 刻意**不动**这个 28rpx：区块标题提到 34rpx 后两者只差 6rpx（<8rpx），
+       按「相邻两档差 8rpx」的判据像是没层级 —— 但这里不敢靠调正文字号来凑差距，原因有二：
+       ① 34rpx 是项目已认可的**规格**（不是可以为了凑差值而动的数），要动的是本页就范于它；
+       ② 28rpx 与 `&__row-value` 的 28rpx 是**同角色同规格**（都是正文），降它会变成
+          「两处正文两个字号」，那才是真的不整齐。
+       标题与正文的层级由另外三重信号承担：品牌色竖条锚点 + 700 字重 + primary vs secondary 颜色。 */
   &__intro {
     display: block;
     color: var(--td-text-color-secondary);
@@ -108,17 +168,35 @@
 
   &__row {
     display: flex;
-    align-items: flex-start;
+    /* ★ 2026-09-28：从 flex-start 改成 **baseline**。
+       名与值的字号不同（24 / 28），字体盒高度也随之不同（≈14 / 16.5px）——
+       在 `flex-start` 下两者只是**盒顶**对齐，**首行基线**反而差 **4rpx**（实测），
+       看上去就是「地址」比右边的值略微偏高一点。baseline 对齐后实测差 **0**。
+       ⚠ 别改回 flex-start：值换成两行时，baseline 会把名对齐到**第一行**，这正是列表该有的读法。
+       ⚠ 判断「有没有对齐」要量**基线**，不能量「文字盒中心」—— 两个字号不同，
+         中心天然差 (16.5−14)/2 ≈ 1.25px，与对不对齐无关（拿它当判据会看不出差别）。 */
+    align-items: baseline;
     gap: 24rpx;
     padding: 22rpx 24rpx;
     background: var(--td-bg-color-container);
   }
 
+  /* 字段名：对齐项目规格（合成页 `&__fieldlabel` 那条）—— 24rpx / 600 / secondary。
+     ★ 改前是 26rpx / 400 / placeholder：与右侧的值（28rpx）只差 2rpx 且同为常规字重，
+       单靠一档灰色撑不起「名 / 值」的区分 ⇒ 现在区分是**三重**的：
+       字号 24 vs 28、字重 600 vs 400、颜色 secondary vs primary。
+       （2rpx 的字号差在手机上读不出来，所以层级要落在字重和颜色上，不是落在字号上。）
+     ★ `line-height: 1.6` 与右侧的值取**同一比例**。⚠ 它不是对齐的承担者 ——
+       对齐已由上面 `&__row` 的 `align-items: baseline` 负责（实测基线差 0），
+       这一条只是让「名 / 值」万一各自折行时，行距节奏一致（值那列本来就常折行）。
+       别把它当成修对齐的旋钮：不写它也照样基线对齐（默认 normal ≈1.2 只改自己的行盒高）。 */
   &__row-label {
     width: 140rpx;
     flex-shrink: 0;
-    color: var(--td-text-color-placeholder);
-    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+    font-size: 24rpx;
+    font-weight: 600;
+    line-height: 1.6;
   }
 
   &__row-value {
@@ -129,6 +207,10 @@
     word-break: break-all;
   }
 
+  /* ★ 2026-09-28 刻意**保留**这里的半透明白（`rgba(255,255,255,0.96)` + backdrop-filter）。
+     第 5 步那条「卡片别用半透明白」针对的是**卡片**（压在同色页底上会读成「没渲染干净」）；
+     这里是 `position: fixed` 的**底栏**，半透明 + 模糊正是「内容从它下面滚过去时隐约可见」
+     这个效果本身 —— 换成纯白就丢掉了「悬浮在内容之上」的信号。两者不是一回事，别混改。 */
   &__footer {
     position: fixed;
     left: 0;

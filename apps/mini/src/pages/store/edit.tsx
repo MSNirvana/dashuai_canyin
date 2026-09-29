@@ -7,6 +7,7 @@ import { uploadMediaFile } from '../../services/upload'
 import { cityOptions, districtOptions, provinceOptions, resolveAreaNames } from '../../services/area'
 import { useMerchantStore } from '../../store/merchant'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
+import { ratioToPaddingTop, readRatioFromMeta } from '../../utils/video-ratio'
 import './edit.scss'
 
 interface FormState {
@@ -58,6 +59,8 @@ export default function StoreEditPage() {
   const [coverPreview, setCoverPreview] = useState('')
   const [pendingVideo, setPendingVideo] = useState<{ path: string; size: number; durationMs?: number; thumb?: string } | null>(null)
   const [videoPreview, setVideoPreview] = useState('')
+  /** 预览视频的真实宽高比（宽/高）；null = 元数据还没到，样式层退回 16:9 兜底 */
+  const [videoRatio, setVideoRatio] = useState<number | null>(null)
   const [uploadingVideo, setUploadingVideo] = useState(false)
 
   /**
@@ -102,6 +105,22 @@ export default function StoreEditPage() {
     }
     loadDetail()
   }, [id])
+
+  // ★ 换源（选新视频 / 加载到已有视频 / 删除）先清掉上一次的比例：否则旧视频的比例
+  //   会先套到新视频上，预览盒会先错一下再跳正。null → 样式层退回 16:9 兜底。
+  useEffect(() => {
+    setVideoRatio(null)
+  }, [videoPreview])
+
+  /**
+   * 预览视频的元数据（宽/高）到了 —— 按视频自身比例撑预览盒，横版竖版都自动适配。
+   * ★ 与门店详情页用同一套：小程序 `bindloadedmetadata` / H5 `loadedmetadata` 两端载荷一致，
+   *   所以这里不需要平台判断。
+   */
+  const onVideoMeta = (e: unknown) => {
+    const ratio = readRatioFromMeta(e)
+    if (ratio) setVideoRatio(ratio)
+  }
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
@@ -297,8 +316,15 @@ export default function StoreEditPage() {
         <View className='field'>
           <Text className='field__label'>门店视频</Text>
           {videoPreview ? (
-            <View className='store-video'>
-              <Video className='store-video__player' src={videoPreview} controls showCenterPlayBtn={false} />
+            <View className='store-video store-video--fit' style={{ paddingTop: ratioToPaddingTop(videoRatio) }}>
+              <Video
+                className='store-video__player'
+                src={videoPreview}
+                controls
+                showCenterPlayBtn={false}
+                objectFit='contain'
+                onLoadedMetaData={onVideoMeta}
+              />
               <View className='store-video__actions'>
                 <View className='store-video__action' onClick={pickVideo}>更换</View>
                 <View className='store-video__action store-video__action--danger' onClick={removeVideo}>删除</View>
