@@ -194,18 +194,6 @@ const PAGE_GUIDES: Array<{ match: string; content: PageGuideContent }> = [
     },
   },
   {
-    match: '/home-slogan-banner',
-    content: {
-      title: '先看这里：首页口号图',
-      intro: '这里管理首页的品牌口号图。替换图片后记得点击保存。',
-      items: [
-        { term: '预览', description: '当前已经保存、正在使用的图片。' },
-        { term: '未保存改动', description: '表示你刚上传的图片还没有正式生效。' },
-        { term: '图片地址', description: '系统保存图片的位置，一般不用手动修改。' },
-      ],
-    },
-  },
-  {
     match: '/tutorials',
     content: {
       title: '先看这里：教学中心',
@@ -226,18 +214,6 @@ const PAGE_GUIDES: Array<{ match: string; content: PageGuideContent }> = [
         { term: '文本', description: '给系统使用的普通文字配置。' },
         { term: '数字', description: '数量、时长或金额等数字配置。' },
         { term: '开关', description: '控制某项功能是否打开。' },
-      ],
-    },
-  },
-  {
-    match: '/tts-providers',
-    content: {
-      title: '先看这里：TTS 供应商',
-      intro: 'TTS 就是“文字转语音”。这里设置视频口播使用的语音服务。',
-      items: [
-        { term: '供应商', description: '提供文字转语音服务的平台。' },
-        { term: '音色 ID', description: '决定声音像谁、用什么语气说话。' },
-        { term: '启用 / 停用', description: '控制合成视频时是否使用这家语音服务。' },
       ],
     },
   },

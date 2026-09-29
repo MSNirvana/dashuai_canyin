@@ -34,10 +34,13 @@ export const MAX_PUBLIC_IMAGE_BYTES = 5 * 1024 * 1024
 
 /**
  * 对象键前缀。⚠ 必须与 lib/local-storage.ts 的 ALLOWED_PREFIXES 对齐
- * （好在两个前缀都落在已放行的 `static/` 下，加新的运营图只需在这里登记）。
+ * （前缀落在已放行的 `static/` 下，加新的运营图只需在这里登记）。
+ *
+ * ★ 2026-09-29：首页口号图那一支（原 `static/admin/slogan-banner`）已随该功能整体下线，
+ *   这里只剩轮播图。口号图的消费端（小程序首页）2026-09-24 就摘掉了、别处也没有第二个
+ *   上传入口，所以不需要保留一支空转的前缀。
  */
 const CAROUSEL_KEY_PREFIX = 'static/admin/carousel'
-const SLOGAN_BANNER_KEY_PREFIX = 'static/admin/slogan-banner'
 
 /** 本地模式的令牌有效期，见 publicUrl() 的说明 */
 const LOCAL_MEDIA_TTL_SECONDS = 10 * 365 * 24 * 3600
@@ -120,9 +123,9 @@ function publicUrl(key: string): string {
 /**
  * 保存一张运营公开图，返回可直接写进配置的公开直链。
  *
- * 校验与建键只此一处：轮播图、首页口号图都走它，避免第二个调用方自己抄一遍
+ * 校验与建键只此一处：后台运营图都走它，避免第二个调用方自己抄一遍
  * 「大小 / 魔数 / 建键」而漏掉其中一条（漏掉魔数那条就等于开了一个「任意文件
- * 存进公网可读桶」的口子）。
+ * 存进公网可读桶」的口子）。目前唯一的调用方是后台轮播图。
  *
  * 键里带随机段（而不是用 slideId 之类的稳定名）是**故意的**：小程序与微信都会按 URL
  * 缓存图片，若用固定键覆盖上传，运营换了图、用户那边**还显示旧图**，且没有任何报错。
@@ -146,7 +149,6 @@ export function saveCarouselImage(buffer: Buffer): Promise<PublicImage> {
   return savePublicImage(CAROUSEL_KEY_PREFIX, buffer)
 }
 
-/** 后台「首页口号图」用 */
-export function saveSloganBannerImage(buffer: Buffer): Promise<PublicImage> {
-  return savePublicImage(SLOGAN_BANNER_KEY_PREFIX, buffer)
-}
+// ★ 2026-09-29：`saveSloganBannerImage`（首页口号图上传）已随功能下线删除。
+//   它原来的路由 `/uploads/slogan-banner-image` 也从 routes/admin.ts 的
+//   PUBLIC_IMAGE_ROUTES 里摘掉了；这里不再有第二处引用。

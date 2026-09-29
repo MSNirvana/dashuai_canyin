@@ -33,27 +33,21 @@ const DRY_RUN = process.argv.includes('--dry-run')
 
 /** 需要上 CDN 的图（相对 src/assets）。
  *
- * ★ 7 张展示图全部上 CDN，logo 与 tabBar 图标**故意留在包里**：
+ * ★ 6 张展示图全部上 CDN，logo 与 tabBar 图标**故意留在包里**：
  *   - `app.json` 的 `tabBar.iconPath` 只接受**本地路径**，压根没法上 CDN；
  *   - `logo.png` 展示尺寸最大 64rpx(=32pt)，96px 已是 3x 屏的极限，14KB；
  *   两者合计约 32KB，离微信 200K 的建议线还差得远，
  *   而留在本地能让品牌标与 tabBar **零延迟渲染**，不用等网络。
  *
- * ★ `home/slogan-banner-v3.png` 为什么在 CDN 上：
- *   它是首页口号海报（红/白/黑三色，1125×411，**不透明纯白底**，19KB 调色板 PNG）。
- *   代码合成而非模型出图 —— **源码是 `scripts/slogan-banner.html`，用 `npm run assets:slogan` 生成**，
- *   别手工改这个 PNG（中文文案、字重与三色都锁在 HTML 里）。宽高比 2.737 ⇒ 卡片里展示高 248rpx。
- *
  * ★★ 换图必须换文件名（所以有 `-v2`）：
  *   本脚本上传时带 `CacheControl: public, max-age=604800`（7 天），而对象 Key 是固定的。
  *   沿用同名 = 小程序端与 CDN 都会继续吐**旧图**，而且开发者工具里清缓存也不一定管用。
- *   换图流程：改 slogan-banner.html → 改这里的文件名（v3…）→ `assets:slogan` + 上传
- *   → 同步 `src/constants/static-assets.ts`（本脚本自动生成）与页面里的常量引用。
+ *   换图流程：改源文件 → 在这里改文件名（-v2 / -v3…）→ 上传，
+ *   再同步 `src/constants/static-assets.ts`（本脚本自动生成）与页面里的常量引用。
  *   旧对象留在桶里不用删：老版本客户端可能还在读它。
  */
 const FILES = [
   'home/create-hero.jpg',
-  'home/slogan-banner-v3.png',
   'home/work-food.jpg',
   'home/work-education.jpg',
   'home/work-beauty.jpg',

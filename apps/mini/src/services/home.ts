@@ -1,17 +1,18 @@
-// 首页运营配置：轮播图（首页顶部「创作入口」那张卡片）+ 口号图（再上面那张海报）。
+// 首页运营配置：轮播图（首页顶部「创作入口」那张卡片）。
 //
 // 数据源复用**公开系统配置**（`GET /api/v1/system/settings`，免登录）——
-// 不新建表、不新开接口：运营在后台「首页轮播图」/「首页口号图」页里改，小程序拉到的就是同一份。
+// 不新建表、不新开接口：运营在后台「首页轮播图」页里改，小程序拉到的就是同一份。
 //
-// ★ 两块配置来自**同一个接口**，所以合并成一个 `getHomeLayout()` 一次拉完，
-//   不要写两个各拉一次的函数 —— 首页每次 useDidShow 都会跑，等于白多一次请求。
+// ★ 2026-09-29：原来的**口号图**（`home.sloganBanner`，`valueType='STRING'`）整条数据线
+//   已删除。它的消费端 2026-09-24 就摘掉了（首页第一屏直接从轮播开始），这里只是善后：
+//   后台页、上传接口、seed 配置行、内置图常量与生成脚本一并清理，`getHomeLayout()` 也
+//   不再返回 `sloganBanner` 字段。下面只剩轮播一块配置。
 //
 // ⚠ 服务端对 `valueType='JSON'` 的项做了一次「简化」：它 `JSON.parse` 之后又
 //   `JSON.stringify` 回去，所以拿到手的是**字符串**而不是对象
 //   （见 server/src/routes/system-settings.ts::coerceValue）。这里必须自己再 parse 一次。
-//   （口号图那张是 `valueType='STRING'`，值就是地址本身，不用 parse。）
 import { getPublicSettings } from './account'
-import { HOME_CREATE_HERO, HOME_SLOGAN_BANNER_V3 } from '../constants/static-assets'
+import { HOME_CREATE_HERO } from '../constants/static-assets'
 
 /**
  * 轮播的跳转目标。**这是一份白名单**，必须与后台下拉里的选项逐一对应
@@ -97,25 +98,12 @@ function normalize(raw: unknown): HomeCarouselSlide[] {
     .filter((s) => s.title !== '')
 }
 
-/**
- * 后台没配（或配得不合法）时用的**内置口号图**。
- *
- * 内置图不是「也存一份到库里」而是**留在代码里**：这样它跟着版本走，
- * 背景/文案改版时改代码即可，不会被库里一条陈旧地址永久遮住。
- */
-export const DEFAULT_SLOGAN_BANNER = HOME_SLOGAN_BANNER_V3
-
-/** 只认完整的 http(s) 直链 —— 小程序这边是 `<Image src>`，别的值只会白图且无迹可循 */
-const isHttpUrl = (v: string) => /^https?:\/\//i.test(v)
-
 export interface HomeLayoutConfig {
   slides: HomeCarouselSlide[]
-  /** **已解析好**的口号图地址：运营配了就用运营的，否则是内置默认图 */
-  sloganBanner: string
 }
 
 /**
- * 一次性拉齐首页的两块运营配置（轮播 + 口号图）。
+ * 拉齐首页的运营配置（当前只有轮播一块，口号图那条线 2026-09-29 已整体删除）。
  *
  * 三条失败路径都必须**不抛**，且都退到内置默认：
  *   1. 接口失败（离线 / 后端没起）—— 首页是 App 第一屏，不能因此空白或弹错误；
@@ -135,14 +123,8 @@ export async function getHomeLayout(): Promise<HomeLayoutConfig> {
       slides = normalize(raw)
     }
 
-    // 口号图：STRING 类型，空串 = 没配 = 用内置图（seed 建的默认值就是空串）
-    const banner = asText(home.find((i) => i.key === 'sloganBanner')?.value)
-
-    return {
-      slides: slides.length > 0 ? slides : [FALLBACK_SLIDE],
-      sloganBanner: isHttpUrl(banner) ? banner : DEFAULT_SLOGAN_BANNER,
-    }
+    return { slides: slides.length > 0 ? slides : [FALLBACK_SLIDE] }
   } catch {
-    return { slides: [FALLBACK_SLIDE], sloganBanner: DEFAULT_SLOGAN_BANNER }
+    return { slides: [FALLBACK_SLIDE] }
   }
 }

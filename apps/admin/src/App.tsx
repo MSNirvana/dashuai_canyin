@@ -38,9 +38,7 @@ const AiCallLogsPage = lazy(() => import('./pages/AiCallLogs'))
 const ShotLibraryPage = lazy(() => import('./pages/ShotLibrary'))
 const WorksPage = lazy(() => import('./pages/Works'))
 const HomeCarouselPage = lazy(() => import('./pages/HomeCarousel'))
-const HomeSloganBannerPage = lazy(() => import('./pages/HomeSloganBanner'))
 const SettingsPage = lazy(() => import('./pages/Settings'))
-const TtsProvidersPage = lazy(() => import('./pages/TtsProviders'))
 const TutorialsPage = lazy(() => import('./pages/Tutorials'))
 
 export default function App() {
@@ -80,10 +78,8 @@ export default function App() {
           <Route path="/shot-library" element={<ShotLibraryPage />} />
           <Route path="/works" element={<WorksPage />} />
           <Route path="/home-carousel" element={<HomeCarouselPage />} />
-          <Route path="/home-slogan-banner" element={<HomeSloganBannerPage />} />
           <Route path="/tutorials" element={<TutorialsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/tts-providers" element={<TtsProvidersPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -716,7 +716,11 @@ export default function WorksPage() {
               placeholder="套用同款时预填的创作标题"
             />
           </Field>
-          <Field label="推荐音色" help="填 TTS 供应商的 voiceId，选填">
+          {/* ★ 2026-09-29：原 help 写「填 TTS 供应商的 voiceId」—— 后台「TTS 供应商」页
+              已随该模块下线，这句指路现在已经是个死链接。改成本地描述：
+              运营要填的是系统里已配置的那家语音服务的音色 ID（现取自 tts_provider.voice_id，
+              后台已无查询入口，需要时找技术同事要）。 */}
+          <Field label="推荐音色" help="填配音音色 ID（voiceId），选填">
             <Input value={form.voiceId} onChange={(v) => set('voiceId', v as string)} placeholder="选填" />
           </Field>
           <Field label="运营点评" help="展示在作品详情页的「这条作品好在哪」">

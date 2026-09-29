@@ -1,6 +1,18 @@
 // TTS 供应商后台配置服务（腾讯云 / 火山引擎）
 // API Key 用 AES-256-GCM 加密落库（复用 lib/secret 的 APP_MASTER_KEY），对外只暴露掩码；
 // 运行时解密仅在合成链路（render/synthesis）使用，绝不下发明文。
+//
+// ★★ 2026-09-29 后台入口下线后的存活面（改本文件前先看这段）：
+//   · **仍在用**：`activeTtsProvider()`（`render/worker.ts`、`render/chatcut-driver.ts`
+//     取当前生效的配音供应商）与 `providerForVoice()`（对外音色档位 → 供应商 speaker id）。
+//     ★ 只要渲染链路还在，本文件与 `tts_provider` 表就**不能删**。
+//   · **已成死代码**：下面这五个函数的唯一调用方是已删除的 `/admin/tts/providers` 后台 CRUD，
+//     现在**一个调用方都没有**（`grep -rn "<名字>" server/src apps` 只剩定义本身）：
+//     `listTtsProviders` / `getTtsProvider` / `upsertTtsProvider` / `setTtsEnabled` /
+//     `removeTtsProvider`，以及只服务它们的 `toView()` / `TtsProviderView` / 掩码那条线
+//     （`maskSecret` 本身在别处仍在用，别一起删）。
+//     保留是有意为之 —— 将来若恢复后台配置页，不用重写；代价是 TTS 配置**现在只能直接改库**
+//     （线上 volcano 行是 enabled=1 且有密钥的生效行，改音色/换 key/停用都靠 UPDATE）。
 // 凭证语义（两种厂商共用一套通用字段）：
 //   - tencent：appId=腾讯云 AppId，secretId=SecretId，apiKey=SecretKey
 //   - volcano：appId=火山 AppId，apiKey=AccessToken（secretId 可空）

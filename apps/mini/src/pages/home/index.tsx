@@ -16,8 +16,9 @@ import {
 // 图片源文件仍在 src/assets/home/ 下，改图后跑 `npm run assets:upload` 重新上传即可。
 // ⚠ 轮播这张**不再由页面直接引用 static-assets**：它改由后台配置，
 //   取值与兜底都在 services/home.ts（页面只拿解析好的地址）。
-// ★ 2026-09-24 按需求：**口号图整块下线**（连它那条数据线一起）——
-//   页面不再渲染，也不再读 getHomeLayout() 里的 sloganBanner 字段。
+// ★ 2026-09-24 按需求：**口号图整块下线**（页面不再渲染）。
+//   2026-09-29 善后完成：`getHomeLayout()` 也不再返回 sloganBanner 字段 ——
+//   后台页 / 上传接口 / seed 配置行 / 内置图常量与生成脚本都已一并删除。
 import {
   HOME_WORK_FOOD as workFoodPng,
   HOME_WORK_EDUCATION as workEducationPng,
@@ -78,8 +79,8 @@ export default function HomePage() {
   const bannerKeyRef = useRef('')
   // ★ 2026-09-24：原来这里还有一个 sloganBanner 状态（口号图）。口号图整块下线后一并删除 ——
   //   留着它等于每次 useDidShow 都把一个没人看的字符串 setState 一遍。
-  //   注意 getHomeLayout() 仍然会返回 sloganBanner 字段：它的下线属于 services/home.ts 那条线
-  //   （同一个 getPublicSettings 请求，不额外发请求），这里先只摘页面的消费端。
+  //   2026-09-29 已补齐善后：`getHomeLayout()` 的返回类型里也不再带 sloganBanner
+  //   （见 services/home.ts），整条数据线在代码里已无残留。
   // 优秀作品：分类来自接口，列表按页拉取（真分页，不再本地切片）
   const [workCats, setWorkCats] = useState<WorkCategory[]>([])
   const [workCategory, setWorkCategory] = useState(WORK_CATEGORY_ALL)
@@ -354,10 +355,11 @@ export default function HomePage() {
   const hasWorks = workCats.length > 0 || workTotal > 0
 
   return <View className='home'>
-    {/* ── 口号图整块下线（2026-09-24 按需求）──
+    {/* ── 口号图整块下线（2026-09-24 按需求，2026-09-29 连数据线一并清完）──
         原来这里是一张「顶部口号海报」：运营可在后台「首页口号图」上传替换，
         没配时用内置那张红/白/黑海报（代码合成，源码 scripts/slogan-banner.html）。
-        它现在连同 sloganBanner 那条数据线一起删掉了，首页第一屏直接从轮播开始。
+        现在这张图、后台页、上传接口、内置图常量与生成脚本**全部已删除**，
+        首页第一屏直接从轮播开始。
         原顶栏（门店切换 pill + 圆形头像按钮）更早之前已去掉，理由见 git 历史。 */}
 
     <View className='home__body'>

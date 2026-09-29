@@ -270,7 +270,7 @@
 
 | 能力 | 配置入口 | 说明 |
 |---|---|---|
-| TTS 配音 | 后台「TTS 供应商」页（`TtsProviders.tsx` / `tts_provider` 表） | 独立于 AI 网关的供应商体系；未配置真实服务时合成链路退化为等长静音轨 |
+| TTS 配音 | **后台「TTS 供应商」页已于 2026-09-29 下线**（配置仍在 `tts_provider` 表，只能直接改库） | 独立于 AI 网关的供应商体系；未配置真实服务时合成链路退化为等长静音轨。渲染链路（`render/worker.ts` / `render/chatcut-driver.ts`）仍在读该表 |
 | 通道测试 | 后台「AI 供应商」页一键测试 | `PROVIDER_TEST` / `TEST` 是系统内置的探测场景，非业务 Skill；发 `ping` 极短请求，不参与毛利统计、不影响熔断 |
 
 ---
@@ -428,7 +428,7 @@
 **后台**
 - `src/pages/AiScenes.tsx`（场景列表 + 多行提示词编辑；分组含「发布素材」，列表带「类型」列，
   编辑弹窗按 `kind` 过滤模型候选池）
-- `src/pages/AiProviders.tsx` / `AiModels.tsx` / `AiCallLogs.tsx` / `TtsProviders.tsx`
+- `src/pages/AiProviders.tsx` / `AiModels.tsx` / `AiCallLogs.tsx`
 
 **小程序**
 - `src/services/creation.ts`（`generateCopy` / `generateStoryboard`）

@@ -29,7 +29,9 @@ import * as workSvc from '../services/work.service.js'
 import * as publicAssetSvc from '../services/public-asset.service.js'
 import * as tutorialSvc from '../services/tutorial.service.js'
 import { getSharedPlayUrlByKey } from '../services/media.service.js'
-import * as ttsSvc from '../services/tts-provider.service.js'
+// ★ TTS 供应商的后台 CRUD 已于 2026-09-29 下线（见下方「已下线」段落），
+//   所以这里不再 import services/tts-provider.service.js —— 但那个 service 本身**必须保留**：
+//   渲染链路（render/worker.ts、render/chatcut-driver.ts）仍在用它读配音供应商。
 import { PackageNotFoundError } from '../services/order.service.js'
 import * as payReconcile from '../services/pay-reconcile.service.js'
 import * as opsAlert from '../services/ops-alert.service.js'
@@ -1108,7 +1110,6 @@ interface PublicImageRoute {
 
 const PUBLIC_IMAGE_ROUTES: readonly PublicImageRoute[] = [
   { path: '/uploads/carousel-image', label: '轮播图', save: publicAssetSvc.saveCarouselImage },
-  { path: '/uploads/slogan-banner-image', label: '口号图', save: publicAssetSvc.saveSloganBannerImage },
 ]
 
 for (const route of PUBLIC_IMAGE_ROUTES) {
@@ -1200,49 +1201,16 @@ router.delete('/settings/:id', async (req, res) => {
   }
 })
 
-// ──────────────────────── TTS 供应商（沿用上一轮实现） ────────────────────────
-router.get('/tts/providers', async (_req, res) => {
-  try {
-    ok(res, await ttsSvc.listTtsProviders(prisma))
-  } catch {
-    fail(res, 500, '查询失败', 500)
-  }
-})
-const ttsInput = z.object({
-  name: z.string().min(1).optional(),
-  appId: z.string().nullable().optional(),
-  secretId: z.string().optional(),
-  apiKey: z.string().optional(),
-  voiceId: z.string().nullable().optional(),
-  extra: z.record(z.unknown()).optional(),
-  enabled: z.boolean().optional(),
-  priority: z.number().int().optional(),
-})
-router.put('/tts/providers/:code', async (req, res) => {
-  try {
-    const input = ttsInput.parse(req.body)
-    ok(res, await ttsSvc.upsertTtsProvider(prisma, { code: req.params.code, ...input }))
-  } catch (e) {
-    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
-    fail(res, 500, '保存失败', 500)
-  }
-})
-router.post('/tts/providers/:code/enable', async (req, res) => {
-  try {
-    const { enabled } = z.object({ enabled: z.boolean() }).parse(req.body)
-    ok(res, await ttsSvc.setTtsEnabled(prisma, req.params.code, enabled))
-  } catch (e) {
-    if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)
-    fail(res, 500, '操作失败', 500)
-  }
-})
-router.delete('/tts/providers/:code', async (req, res) => {
-  try {
-    ok(res, await ttsSvc.removeTtsProvider(prisma, req.params.code))
-  } catch {
-    fail(res, 500, '删除失败', 500)
-  }
-})
+// ─── 已下线（2026-09-29）───
+// 后台 TTS 供应商 CRUD（GET/PUT/POST enable/DELETE 四条）整条删除，配套的后台菜单、
+// 页面与帮助文案一并摘除。
+//
+// ★ 保留项（不要顺手删）：`services/tts-provider.service.ts` 与 `tts_provider` 表。
+//   渲染链路仍在实时读它 —— `render/worker.ts` 与 `render/chatcut-driver.ts` 都调
+//   `activeTtsProvider()` 取配音供应商。也就是说：改音色 / 换 key / 停用现在**只能改库**
+//   （线上 volcano 行是 enabled=1 且有密钥的生效行）。
+//   若将来要恢复后台配置入口，从这里 + apps/admin 侧一起加回。
+
 
 // ──────────────────────── 教学中心（平台级教学视频） ────────────────────────
 //

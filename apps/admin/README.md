@@ -33,7 +33,13 @@ npm run build
 | `/ai/call-logs` | 全平台 AI 调用日志（含 TEST） |
 | `/shot-library` | 六类镜头手法 CRUD |
 | `/settings` | `system_setting` 配置 CRUD（写入即失效缓存） |
-| `/tts-providers` | 腾讯云/火山 TTS 供应商 |
+
+> ★ 2026-09-29 删除两个页面：`/tts-providers`（TTS 供应商，原列在上表）与
+> `/home-slogan-banner`（首页口号图，此前未列入上表）。两者都**只删后台入口**——
+> 口号图是整条功能线全清（小程序消费端 2026-09-24 就已摘掉）；TTS 则是
+> `tts_provider` 表与 `services/tts-provider.service.ts` **必须保留**，
+> 渲染链路（`render/worker.ts` / `render/chatcut-driver.ts`）仍在读它，
+> 所以改音色 / 换 key / 停用现在**只能直接改库**。
 
 ## 与 weapp 共用 admin API
 
