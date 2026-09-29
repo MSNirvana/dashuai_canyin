@@ -799,6 +799,36 @@ async function seedSettings() {
     update: {}, // 不覆盖：运营改过的轮播必须能在重跑 seed 后活下来
   })
   console.log('[seed] home carousel: 已保证存在（不覆盖已有配置）')
+
+  // ── 联系我们（二维码 + 电话）：与轮播**同一个理由**，也走「不存在才建」 ──
+  // 二维码图与客服电话是**运营内容**，不是代码默认值：重跑 seed 把它们清掉，
+  // 用户端「我的 → 联系我们」那一整块会凭空消失，且没有任何报错。
+  //
+  // ★ 为什么是**一条 JSON** 而不是两条 STRING（qrcode / phone）：
+  //   后台写配置走 `POST|PUT /admin/api/v1/settings`，它的 schema 是
+  //   `settingVal: z.string().min(1)` —— **不允许存空串**。两条 STRING 的方案里，
+  //   运营想「把电话删掉」就只能存空串 ⇒ 400，页面上表现为「保存失败」而看不出原因。
+  //   一条 JSON 天然没有这个洞：清空后是 `{"qrcode":"","phone":""}`，长度远大于 1。
+  //   （首页轮播图是同一个原因、同一套写法。）
+  //
+  // ★ 初始值给**空串**而不是示例二维码/示例电话：小程序端对「两个字段都为空」的处理是
+  //   **整块不渲染**（见 apps/mini/src/services/contact.ts），所以空 = 干净的「还没配」，
+  //   不会让用户看到一个假客服号。
+  await prisma.systemSetting.upsert({
+    where: { groupKey_settingKey: { groupKey: 'contact', settingKey: 'info' } },
+    create: {
+      groupKey: 'contact',
+      settingKey: 'info',
+      settingVal: JSON.stringify({ qrcode: '', phone: '' }),
+      valueType: 'JSON',
+      displayName: '联系我们',
+      description: '小程序「我的」页最下方「联系我们」的二维码与客服电话。两项都为空时整块不显示。',
+      sort: 0,
+      isPublic: true, // 必须公开：小程序是免登录拉取的
+    },
+    update: {}, // 不覆盖：运营填过的二维码/电话必须能在重跑 seed 后活下来
+  })
+  console.log('[seed] contact info: 已保证存在（不覆盖已有配置）')
 }
 
 async function main() {

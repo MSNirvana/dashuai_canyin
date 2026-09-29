@@ -1084,8 +1084,9 @@ router.get('/media/preview', async (req, res) => {
 
 // ──────────────────────── 运营公开图上传 ────────────────────────
 /**
- * 上传一张运营公开图（首页轮播图 / 首页口号图），返回可匿名访问的 CDN 直链。
+ * 上传一张运营公开图（首页轮播图 / 联系我们二维码），返回可匿名访问的 CDN 直链。
  * 存储策略与「为什么不能复用商家那套上传」见 services/public-asset.service.ts 顶部。
+ * ★ 新增一种运营图 = 只往下面的 PUBLIC_IMAGE_ROUTES 加一行，本段其余代码不动。
  *
  * ── 为什么收 raw body 而不是 multipart ────────────────────────────────────
  * 只有一个文件、没有别的字段，multipart 纯属多余；而 raw 让字节直接以 Buffer 到手，
@@ -1110,6 +1111,7 @@ interface PublicImageRoute {
 
 const PUBLIC_IMAGE_ROUTES: readonly PublicImageRoute[] = [
   { path: '/uploads/carousel-image', label: '轮播图', save: publicAssetSvc.saveCarouselImage },
+  { path: '/uploads/contact-qrcode', label: '联系我们二维码', save: publicAssetSvc.saveContactQrcodeImage },
 ]
 
 for (const route of PUBLIC_IMAGE_ROUTES) {

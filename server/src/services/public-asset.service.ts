@@ -42,6 +42,13 @@ export const MAX_PUBLIC_IMAGE_BYTES = 5 * 1024 * 1024
  */
 const CAROUSEL_KEY_PREFIX = 'static/admin/carousel'
 
+/**
+ * ★ 2026-09-29 新增：后台「联系我们」的二维码。
+ * 同一套存储策略（公开直链 + 只给单对象设 ACL），只是换一个前缀做人工归组 ——
+ * 本文件里加新的运营图**只需要加一个常量 + 一个 save 函数**，不用改上面任何逻辑。
+ */
+const CONTACT_KEY_PREFIX = 'static/admin/contact'
+
 /** 本地模式的令牌有效期，见 publicUrl() 的说明 */
 const LOCAL_MEDIA_TTL_SECONDS = 10 * 365 * 24 * 3600
 
@@ -152,3 +159,8 @@ export function saveCarouselImage(buffer: Buffer): Promise<PublicImage> {
 // ★ 2026-09-29：`saveSloganBannerImage`（首页口号图上传）已随功能下线删除。
 //   它原来的路由 `/uploads/slogan-banner-image` 也从 routes/admin.ts 的
 //   PUBLIC_IMAGE_ROUTES 里摘掉了；这里不再有第二处引用。
+
+/** 后台「联系我们」用：二维码图 */
+export function saveContactQrcodeImage(buffer: Buffer): Promise<PublicImage> {
+  return savePublicImage(CONTACT_KEY_PREFIX, buffer)
+}

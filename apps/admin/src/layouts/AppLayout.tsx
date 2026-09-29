@@ -15,6 +15,7 @@ import {
   ImageIcon,
   AssignmentUserIcon,
   ErrorCircleFilledIcon,
+  LogoWechatIcon,
 } from 'tdesign-icons-react'
 import { useAuth } from '../context/AuthContext'
 import RouteFallback from '../components/RouteFallback'
@@ -58,6 +59,8 @@ const MENU_GROUPS = [
     label: '页面与系统',
     items: [
       { label: '首页轮播图', icon: <ImageIcon />, path: '/home-carousel' },
+      // 与「首页轮播图」同属「小程序上长什么样」这一类，所以同组相邻放
+      { label: '联系我们', icon: <LogoWechatIcon />, path: '/contact' },
       { label: '教学中心', icon: <VideoIcon />, path: '/tutorials' },
       { label: '系统设置', icon: <SettingIcon />, path: '/settings' },
     ],

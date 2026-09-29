@@ -282,6 +282,43 @@ button, input, textarea { font-family: inherit; }
 .upload-field__preview { object-fit: cover; background: #eee; }
 .upload-field__empty { display: flex; align-items: center; justify-content: center; border: 1px dashed #cfd2d6; background: #fafafa; }
 .upload-field__actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+
+/* 二维码字段（「联系我们」页专用）。与 .upload-field 只差一处，但那一处是致命的：
+   轮播图是 16:6 横图，cover 裁掉一点无所谓；二维码是**方**图，裁掉一角就扫不出来。
+   所以这里 object-fit 必须 contain（宁可留白），尺寸也按方图给。
+   ⚠ 别为了「省一行」把 .upload-field 的 cover 借过来用 —— 那会让运营上传的二维码
+     在后台看着正常、在小程序里缺一个角。108px 是小程序里它真实显示的尺寸
+     （216rpx @375px 宽），不是随手取的数。 */
+.qr-field { display: flex; align-items: flex-start; gap: 16px; }
+.qr-field__preview { width: 108px; height: 108px; flex: 0 0 auto; border: 1px solid var(--ds-line); border-radius: 8px; background: #fff; object-fit: contain; }
+.qr-field__preview--empty { display: flex; align-items: center; justify-content: center; border: 1px dashed #cfd2d6; background: #fafafa; }
+.qr-field__actions { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+
+/* 「联系我们」编辑器：左表单 + 右「小程序效果示意」 */
+.contact-editor { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 28px; margin-top: 4px; }
+.contact-editor__form { flex: 1 1 380px; min-width: 0; padding: 20px 22px 4px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); }
+
+/* ── 效果示意 ─────────────────────────────────────────────────────────────
+   ★ 这只是一张**版式示意**，不是像素级渲染，别拿它当验收依据（真机要另测）。
+     但它内部是**按 1:1 折算**的，所以「这块多大」在它上面是能读的：
+     容器固定 375px 宽，小程序那边的 rpx 值一律取一半写成 px
+     （375px 宽下 1rpx = 0.5px）⇒ 216rpx 的二维码 = 108px，13px 标题 = 26rpx。
+     颜色取小程序主题的品牌红与三级文字灰，与那边同一套语义。 */
+.contact-preview { flex: 0 0 auto; width: 375px; max-width: 100%; padding: 14px 0 16px; background: var(--ds-fill); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); }
+.contact-preview__caption { margin-bottom: 10px; padding: 0 16px; color: var(--ds-subtle); font-size: 12px; }
+.contact-preview__label { margin: 0 16px 8px; color: var(--ds-subtle); font-size: 13px; font-weight: 700; letter-spacing: .06em; }
+.contact-preview__list { margin: 0 16px; overflow: hidden; background: #fff; border: 1px solid var(--ds-line); border-radius: 10px; }
+.contact-preview__card { display: flex; align-items: center; gap: 11px; padding: 11px 10px; border-bottom: 1px solid var(--ds-line-light); }
+.contact-preview__card:last-child { border-bottom: none; }
+.contact-preview__qr { width: 108px; height: 108px; flex: 0 0 auto; border: 1px solid var(--ds-line); border-radius: 4px; background: #fff; object-fit: contain; }
+.contact-preview__qr--empty { display: flex; align-items: center; justify-content: center; border: 1px dashed #cfd2d6; background: #fafafa; color: var(--ds-subtle); font-size: 12px; }
+.contact-preview__icon { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 10px; background: var(--ds-red-soft); color: var(--ds-red); font-size: 16px; line-height: 1; }
+.contact-preview__copy { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.contact-preview__title { color: var(--ds-ink); font-size: 13px; font-weight: 600; }
+.contact-preview__hint { color: var(--ds-subtle); font-size: 11px; line-height: 1.5; }
+.contact-preview__num { color: var(--ds-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.contact-preview__dial { flex: 0 0 auto; padding: 5px 13px; border-radius: 999px; background: var(--ds-red-soft); color: var(--ds-red); font-size: 12px; font-weight: 600; }
+.contact-preview__note { margin: 10px 16px 0; padding: 8px 10px; color: var(--ds-red-strong); background: var(--ds-red-soft); border: 1px solid var(--ds-red-border); border-radius: 8px; font-size: 12px; line-height: 1.6; }
 .ops-alert-count { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 2px 8px; color: #fff; background: var(--ds-red); border-radius: 10px; font-size: 11px; font-weight: 600; vertical-align: middle; }
 .ops-alert-pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; color: var(--ds-red-strong); background: var(--ds-red-soft); border: 1px solid var(--ds-red-border); border-radius: 7px; font-family: inherit; font-size: 12px; line-height: 1.5; cursor: pointer; }
 .ops-alert-pill:hover { background: #ffe3df; }
@@ -337,6 +374,11 @@ button, input, textarea { font-family: inherit; }
   .form-row__label { width: auto; padding-top: 0; text-align: left; }
   .upload-field { flex-direction: column; }
   .upload-field__preview, .upload-field__empty { width: min(100%, 300px); }
+  /* 两个字段一起竖排：二维码在上、按钮在下，别让 108px 的方图把说明文字挤成一条 */
+  .qr-field { flex-direction: column; align-items: stretch; }
+  .qr-field__actions { flex-direction: row; flex-wrap: wrap; align-items: center; }
+  /* 效果示意固定 375px 宽，窄屏下会溢出 ⇒ 让它跟着容器缩（它只是示意，缩了不影响可读） */
+  .contact-preview { width: 100%; }
   .page-guide__summary { min-height: 48px; padding-left: 12px; padding-right: 12px; }
   .page-guide__summary-action { display: none; }
   .page-guide__body { padding-left: 36px; padding-right: 12px; }

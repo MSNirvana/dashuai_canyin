@@ -5,6 +5,7 @@ import * as authApi from '../../services/auth'
 import { pickAndUploadAvatar } from '../../services/profile'
 import { listMembershipReminders, markMembershipReminderRead, type MembershipReminder } from '../../services/account'
 import { TUTORIAL_CATEGORIES, listTutorialStats } from '../../services/tutorial'
+import { getContactInfo, type ContactInfo } from '../../services/contact'
 import { type StoreItem } from '../../services/store'
 import { STORAGE_KEYS } from '../../config'
 import { platform } from '../../platform'
@@ -53,6 +54,13 @@ export default function Mine() {
   const [reminders, setReminders] = useState<MembershipReminder[]>([])
   /** 学习中心每个分类的课程数（code → 节数）。拿不到就是空对象，四宫格照常渲染 */
   const [tutorialCounts, setTutorialCounts] = useState<Record<string, number>>({})
+  /**
+   * 「联系我们」的二维码与客服电话（运营在后台配）。
+   * ★ null = 不渲染整块（接口挂了 / 运营还没配 / 值不是合法 JSON 都归到这里）。
+   */
+  const [contact, setContact] = useState<ContactInfo | null>(null)
+  /** 一键拨打的再入闸门：连点会连开两次系统拨号确认框，用户只会以为是卡了 */
+  const dialLock = useRef(false)
   const loginRequest = useRef(0)
 
   // ── 短信登录（备选通道）──
@@ -77,6 +85,11 @@ export default function Mine() {
     const currentToken = Taro.getStorageSync<string>(STORAGE_KEYS.token) || ''
     if (!currentToken && useMerchantStore.getState().token) logout()
     setShowLogin(!currentToken)
+    // ★ 「联系我们」是**公开配置**（免登录可读），与登录态无关 ⇒ 刻意放在下面那个
+    //   `if (currentToken)` **外面**：登录不了恰恰是最需要客服的时候，关掉登录弹窗后
+    //   这一块必须是好的。同样是「单独发、单独吞错」，不并进页面的 Promise.all。
+    //   （getContactInfo 自身失败即返回 null，这里的 catch 只是兜住「它意外抛了」）
+    void getContactInfo().then(setContact).catch(() => undefined)
     if (currentToken) {
       // 学习中心的课程数是**锦上添花**：单独发、单独吞错，绝不并进下面的 Promise.all
       // ——否则教学接口一慢，整页「加载中…」跟着一起等。
@@ -283,6 +296,46 @@ export default function Mine() {
   }
 
   /**
+   * 一键拨打客服电话（「联系我们」那一行）。
+   *
+   * ★ 号码用 `contact.dial`（已清洗），**不是**展示用的 `contact.phone` ——
+   *   运营很可能填 `400-123-4567` 这种给人看的写法，带分隔符的号码在部分机型上会被
+   *   `tel:` 协议截断，而这类问题**只在真机上现形**（见 services/contact.ts::toDialable）。
+   *
+   * ★ 失败要**分辨着**处理：用户在系统拨号确认框上点「取消」时，微信回的是
+   *   `makePhoneCall:cancel`（走 reject）—— 那是用户的正常选择，不是故障。
+   *   对它弹错了信息，用户会以为号码有问题。只有真正拨不出去才提示。
+   *
+   * ★ 末尾那个 .catch 与上面 `go` 同理：Taro 的 API 除了回调**还会返回 Promise**，
+   *   不接住失败会以「未处理的 Promise 拒绝」冒到 App.onError。
+   */
+  const dialPhone = () => {
+    if (!contact?.dial || dialLock.current) return
+    dialLock.current = true
+    Taro.makePhoneCall({ phoneNumber: contact.dial })
+      .catch((e: unknown) => {
+        const errMsg = String((e as { errMsg?: string })?.errMsg ?? '')
+        if (errMsg.includes('cancel')) return
+        Taro.showToast({ title: `拨号失败，请手动拨打 ${contact.phone}`, icon: 'none', duration: 2500 })
+      })
+      .finally(() => { dialLock.current = false })
+  }
+
+  /**
+   * 点二维码放大预览（长按识别那条路走的是 Image 的 `showMenuByLongpress`，见下面的 JSX）。
+   * 预览页里微信同样提供「识别图中二维码」，所以点按与长按都能到同一个结果，
+   * 只是点按多给了一次「看清这张码」的机会。
+   *
+   * ★ 单张图也要走 previewImage 的 `current` + `urls[0]` 同为这张：
+   *   `current` 靠「能在 urls 里精确匹配到」定位，匹配不上会静默回落到第一张
+   *   （见 pages/dish/detail.tsx 的说明）。只有一张时天然满足。
+   */
+  const previewQrcode = () => {
+    if (!contact?.qrcode) return
+    Taro.previewImage({ current: contact.qrcode, urls: [contact.qrcode] })
+  }
+
+  /**
    * 退出登录。
    *
    * 只清**本地**会话（store.logout() → clearSession() 清 token/refreshToken/商户信息 +
@@ -426,6 +479,57 @@ export default function Mine() {
           </View>
         ))}
       </View>
+      {/* ── 联系我们：运营在后台配的二维码 + 客服电话 ──
+          ★ 2026-09-29 新增（需求原话：「在学习中心下面增加一个【联系我们】，然后放上二维码和电话」）。
+          ── 为什么插在「学习中心」与「退出登录」之间 ──
+            教学内容刚讲完，用户下一个问题就是「有搞不定的找谁」；再往下是页尾的
+            协议 / 运营主体与退出登录，把求助入口放在「离开」旁边是错的。
+          ── 二维码：长按识别 ──
+            `showMenuByLongpress` 是**微信原生**能力：长按图片弹出系统菜单，里面有
+            「识别图中二维码」（以及保存图片）。这是小程序里唯一能做到「长按扫码」的路子 ——
+            小程序**没有**「扫自己屏幕上这张码」的 API，而自绘长按手势只能弹自己的菜单，
+            识别二维码那一步微信不会代劳。
+          ── 电话：一键拨打 ──
+            整行都是可点区（不只那颗「拨打」），点按高度 ≥ 88rpx（微信建议的最小可点尺寸）。
+            号码用 contact.dial（已清洗），不是展示用的 contact.phone，见 dialPhone 的注释。
+          ── 三种「没东西可显示」都不渲染 ──
+            contact === null ⇒ 连「联系我们」这个小标题都不出现；
+            只配了电话 ⇒ 只出电话那一行；只配了二维码 ⇒ 只出二维码那一行。
+            ★ 判据是 contact.qrcode / contact.phone 两个字段本身，**不是** contact 是否非空。 */}
+      {!!contact && (
+        <>
+          <View className='ds-label'>联系我们</View>
+          <View className='mine__contact'>
+            {!!contact.qrcode && (
+              <View className='mine__contact-row' hoverClass='ds-hover' onClick={previewQrcode}>
+                <Image
+                  className='mine__qr'
+                  src={contact.qrcode}
+                  mode='aspectFit'
+                  showMenuByLongpress
+                />
+                <View className='mine__contact-copy'>
+                  <Text className='mine__contact-title'>微信客服</Text>
+                  <Text className='mine__contact-hint'>长按识别二维码，添加客服微信</Text>
+                </View>
+              </View>
+            )}
+            {!!contact.phone && (
+              <View className='mine__contact-row' hoverClass='ds-hover' onClick={dialPhone}>
+                <View className='mine__item-icon mine__item-icon--red'>
+                  <t-icon name='call' size='32rpx' />
+                </View>
+                <View className='mine__contact-copy'>
+                  <Text className='mine__contact-title'>电话咨询</Text>
+                  <Text className='mine__contact-num'>{contact.phone}</Text>
+                </View>
+                <Text className='mine__contact-dial'>拨打</Text>
+              </View>
+            )}
+          </View>
+        </>
+      )}
+
       {/* ── 退出登录 ── 只在已登录时显示（未登录态本页被登录弹窗覆盖） */}
       {token && <View className='mine__logout' onClick={onLogout}>退出登录</View>}
 
