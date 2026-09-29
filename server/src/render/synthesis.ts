@@ -365,6 +365,19 @@ export function toSubtitleAtoms(text: string): string[] {
 /** 末行短于这个宽度就要从上一行搬词下来；上一行搬空到这个宽度以下就停手。 */
 export const SUBTITLE_MIN_TAIL_WIDTH = 4
 export const SUBTITLE_MIN_PREV_WIDTH = 5
+/**
+ * 能被搬下去的**最小原子宽度**（2026-09-29 新增）。
+ *
+ * ★★ 为什么必须有它（真机实测）：这套搬运的假设是「原子＝词」，但 **ICU 不保证**——
+ *    实测它把 `秘制` 切成 `秘` | `制` 两个原子。于是搬 1 个字的 `制` 下去，成片里就出现
+ *    `蘸上老板这个秘` / `制香油啊` —— **把「秘制」劈在了接缝上**，正是用户 09-25 抱怨的
+ *    「一句话的最后一个字跑到下一行字幕的第一个字了」。
+ *    ★ 判据：**1 个字的原子多半是某个词被切碎的碎片**，而搬它只让末行长 1 个字 ⇒ 收益极小、
+ *      风险极大 ⇒ 一律不许搬。
+ * ★ 副作用：末行可能停在略短处（实测 `蘸上老板这个秘制`(8) / `香油啊`(3)）。
+ *    这比把词劈开好得多，而且 3 个字已经不算「一闪而过的残句」。
+ */
+export const SUBTITLE_MIN_MOVE_WIDTH = 2
 
 /**
  * 末尾残行收口。
@@ -372,7 +385,9 @@ export const SUBTITLE_MIN_PREV_WIDTH = 5
  * ★★ 贪心填满的固有毛病：**末行可能只剩两三个字**，一闪而过就是「残句」，
  *    历史上那条 0.37s 的「吃呢」就是这么来的。这里从上一行搬**整个词**下来，
  *    搬到末行不再过短为止；搬不动就算了（整段本来就短）。
- * ★ 搬的是**词**不是字 ⇒ 不会把词劈开；搬完还要保证两行都不超上限。
+ * ★ 搬的是**词**不是字 ⇒ 正常情况下不会把词劈开；但 ICU 会偶尔把词切成碎片，
+ *   所以还要过 `SUBTITLE_MIN_MOVE_WIDTH` 这道闸（见上，`秘制` 就是这么被劈的）。
+ * ★ 搬完还要保证两行都不超上限。
  */
 function balanceSubtitleTail(lines: string[][], maxWidth: number): void {
   if (lines.length < 2) return
@@ -385,6 +400,8 @@ function balanceSubtitleTail(lines: string[][], maxWidth: number): void {
     if (previous.length < 2) return
     const moved = previous[previous.length - 1]
     if (moved === undefined) return
+    // ★ 1 个字的原子不许搬：ICU 常把词切成碎片（实测「秘制」→「秘」「制」），搬它必劈词
+    if (subtitleDisplayWidth(moved) < SUBTITLE_MIN_MOVE_WIDTH) return
     if (lastWidth + subtitleDisplayWidth(moved) > maxWidth) return
     if (subtitleDisplayWidth(previous.slice(0, -1).join('')) < SUBTITLE_MIN_PREV_WIDTH) return
     previous.pop()
@@ -458,24 +475,31 @@ const SUBTITLE_CLAUSE_BREAK = /[。．，、；：！？…⋯·!?～~]+/u
 const SUBTITLE_STRIP_PUNCT = /[。．，、；：！？…⋯·!?～~“”‘’"'「」『』【】《》〈〉（）()\[\]{}—–,;:.]/gu
 
 /**
- * 把一段文本切成**字幕屏**：一屏 = 一句话（1 行，或**同屏两行** —— 两行用 `\n` 分隔）。
+ * 把一段文本切成**逐条字幕**：每条**只占一行**，一句话放不下就拆成**先后连续的多条**。
  *
- * ★★ 2026-09-29 用户要求（原话）：
- *   「要像自然语言表达那样，一句一行，如果超过12个字，则一句两行，
- *     禁止两句话同时出现，然后去除标点符号。」
- *   ⇒ 三条硬规则，缺一条都会被一眼看出来：
+ * ★★ 2026-09-29 用户原话（分两次，第二次是对第一次的更正，**以第二次为准**）：
+ *   ① 「要像自然语言表达那样，一句一行，如果超过12个字，则一句两行，
+ *       禁止两句话同时出现，然后去除标点符号。」
+ *   ② 看过成片后：「我说的一句话是逗号就算分割了，直接就跳下一个字幕了，**而不是分成两行**。」
+ *   ⇒ 我第一版把①理解成「同屏上下两行」，② 是明确的更正：**长句要连播，不要同屏两行**。
+ *     于是这里不再产出 `\n`（`\n` 那套能力仍在，但现在是**兜底/可回退**，见 `escapeAssText`）。
  *
- *   ① **一句一屏** —— 按**标点**断句（含逗号/顿号/冒号），每句单独一屏。
+ * 三条硬规则，缺一条都会被一眼看出来：
+ *
+ *   ① **标点即句界** —— 按**标点**断句（含逗号/顿号/冒号），每句独立成条。
  *      ✗ 旧实现按「10 字宽」装箱，切点不认识标点后的语义停顿，成片里产出过
  *        「土豆是切块炸的，火候」＝「一个完整子句 ＋ 下一个子句的头两个字」，
  *        用户看到的就是「两句话同时出现」。
- *   ② **超长才两行** —— 一句话超过 `maxWidth` 个字时**同屏**折两行
- *      （`\n`，ASS 出口转 `\N`）；两行各自仍 ≤ `maxWidth`。
+ *   ② **一句超一行 ⇒ 连播多条** —— 子句超过 `maxWidth` 时按**词边界**装箱，每行各成一条，
+ *      时间由 `normalizeSubtitleSegments` 按显示宽度摊分（前后紧接、不重叠）。
  *      ★ `maxWidth` 仍是 **10**、不是用户口头说的 12 —— 这是**画布的物理约束**：
  *        `10 × 104px ＋ 描边 12 = 1052 ≤ 1080`，而 12 字要 1248px、超出画布 168px，
  *        `WrapStyle: 2` 下不会折行、只会把两头静默裁掉。用户已拍板「保字号、按 10 字」。
  *   ③ **去掉所有标点** —— 句读标点 + 引号括号一并去掉。
  *      ✗ 旧实现只吃**行末**标点，行内逗号原样留着 —— 那正是用户截图里的「香料，香脆脆的」。
+ *
+ * ⚠ **返回值是「字幕条」不是「屏」**（2026-09-29 起）。仍按 `split('\n')` 去拆的调用方要改，
+ *   否则会把一条正常字幕当成两行；断言也要改成「每条只有一行」而不是「一屏最多两行」。
  */
 export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): string[] {
   const clean = text.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
@@ -485,15 +509,12 @@ export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): 
     .split(SUBTITLE_CLAUSE_BREAK)
     .map((clause) => clause.replace(SUBTITLE_STRIP_PUNCT, '').trim())
     .filter(Boolean)
-  const screens: string[] = []
+  const subtitles: string[] = []
   for (const clause of clauses) {
-    // ② 词边界装箱 ⇒ 每行 ≤ maxWidth（不劈词、行首不出标点）；③ 每**两行**合成一屏
-    const lines = packSubtitleLines(clause, maxWidth)
-    for (let index = 0; index < lines.length; index += 2) {
-      screens.push(lines.slice(index, index + 2).join('\n'))
-    }
+    // ② 词边界装箱 ⇒ 每行 ≤ maxWidth（不劈词、行首不出标点）；③ **每行各成一条**（连播）
+    for (const line of packSubtitleLines(clause, maxWidth)) subtitles.push(line)
   }
-  return screens
+  return subtitles
 }
 
 /** 将字幕归一为单行、非重叠、连续替换的 cue，避免 libass 自动换成多行。 */
@@ -573,10 +594,13 @@ function segmentsToSrt(segments: TranscriptionSegment[]): string {
 /**
  * ASS 事件文本转义。
  *
- * ★★ `\n` 必须转成 ASS 的换行符 `\N`，**不能**再压成空格 ——
- *   那是「一句两行」唯一的表达方式。`WrapStyle: 2` 表示 libass **不自动折行**，
- *   所以没有 `\N` 就没有第二行；反过来把它压成空格就是「两行静默变一行」，
- *   而且**不报错**（2026-09-29）。
+ * ★★ `\n` 必须转成 ASS 的换行符 `\N`，**不能**压成空格 —— 压成空格就是「两行静默变一行」，
+ *   而且**不报错**（2026-09-29 实测过这个坑）。
+ * ★★ 2026-09-29 用户改成「长句连播、不要同屏两行」之后，**管线已不再产出 `\n`**
+ *   （见 `splitSubtitleText`）⇒ 这段映射现在是**兜底**，不是主路径。
+ *   为什么还留着：原始 `\n` 直接进 ASS 的 `Dialogue` 行会把**文件格式本身**弄坏
+ *   （换行就是事件分隔符），那比「多一行字」严重得多；留着它成本为 0。
+ *   ★ 守护脚本另有一条「产出的每条字幕都不许含 `\N`」的断言盯着主路径。
  * ⚠ 顺序：先转义反斜杠、再处理换行 —— 反了会把刚生成的 `\N` 里的反斜杠再转义一次。
  */
 function escapeAssText(text: string): string {
