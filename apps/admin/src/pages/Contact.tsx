@@ -419,7 +419,7 @@ export default function ContactPage() {
               )}
               <div className="contact-preview__copy">
                 <div className="contact-preview__title">微信客服</div>
-                <div className="contact-preview__hint">长按识别二维码，添加客服微信</div>
+                <div className="contact-preview__hint">识别二维码，添加客服微信</div>
               </div>
             </div>
             <div className="contact-preview__card">

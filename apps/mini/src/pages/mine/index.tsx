@@ -534,7 +534,7 @@ export default function Mine() {
                     />
                     <View className='mine__contact-copy'>
                       <Text className='mine__contact-title'>微信客服</Text>
-                      <Text className='mine__contact-hint'>长按识别二维码，添加客服微信</Text>
+                      <Text className='mine__contact-hint'>识别二维码，添加客服微信</Text>
                     </View>
                   </View>
                 )}
