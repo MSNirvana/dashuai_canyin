@@ -65,6 +65,70 @@ function comparable(text: string): string {
   return text.replace(PUNCT_AND_SPACE, '')
 }
 
+/** 两字以内的口水词/尾巴不应独占一屏；它们必须与相邻语义合并后重新均分。 */
+const WEAK_STANDALONE = new Set(['哎呀', '哎哟', '哎呦', '嗯', '啊', '呀', '哦', '呃', '额', '这个', '那个'])
+const BAD_LINE_END = /[的了着啊呀呢吧嘛么和与及又就把给在是只别不也都还]$/
+const BAD_LINE_START = /^[的了着啊呀呢吧嘛么和与及又就把给在是只别不也都还]/
+
+function isWeakStandalone(line: string): boolean {
+  return WEAK_STANDALONE.has(line) || subtitleDisplayWidth(line) <= 2
+}
+
+/** 原文标点后的字符位置；重新均分时优先沿用真实语气停顿，避免从词中间劈开。 */
+function punctuationBoundaries(original: string): Set<number> {
+  const boundaries = new Set<number>()
+  let offset = 0
+  for (const char of original) {
+    if (comparable(char) === '') {
+      if (offset > 0) boundaries.add(offset)
+      continue
+    }
+    offset += char.length
+  }
+  return boundaries
+}
+
+function bestSplit(text: string, maxWidth: number, preferred: Set<number>): [string, string] | null {
+  const candidates: Array<{ left: string; right: string; score: number }> = []
+  for (let index = 1; index < text.length; index += 1) {
+    const left = text.slice(0, index)
+    const right = text.slice(index)
+    const leftWidth = subtitleDisplayWidth(left)
+    const rightWidth = subtitleDisplayWidth(right)
+    if (leftWidth > maxWidth || rightWidth > maxWidth) continue
+    const isPreferredBoundary = preferred.has(index)
+    if (!isPreferredBoundary && (BAD_LINE_END.test(left) || BAD_LINE_START.test(right))) continue
+    const punctuationBonus = isPreferredBoundary ? -100 : 0
+    const shortPenalty = Math.min(leftWidth, rightWidth) < 4 ? 40 : 0
+    candidates.push({ left, right, score: punctuationBonus + shortPenalty + Math.abs(leftWidth - rightWidth) })
+  }
+  candidates.sort((a, b) => a.score - b.score)
+  const best = candidates[0]
+  return best ? [best.left, best.right] : null
+}
+
+/**
+ * 修复模型偶发的「哎呀」/「扣一」孤屏：保持逐字不变，只移动相邻两行的边界。
+ * 修不了就返回原结果，交给后面的质量闸门拒绝，而不是硬吞一个更差的断点。
+ */
+export function rebalanceWeakLines(lines: string[], original: string, maxWidth: number): string[] {
+  const result = [...lines]
+  const preferred = punctuationBoundaries(original)
+  for (let index = 0; index < result.length; index += 1) {
+    if (!isWeakStandalone(result[index] ?? '') || result.length < 2) continue
+    const neighborIndex = index === result.length - 1 ? index - 1 : index + 1
+    const firstIndex = Math.min(index, neighborIndex)
+    const combined = `${result[firstIndex]}${result[firstIndex + 1]}`
+    const offset = result.slice(0, firstIndex).join('').length
+    const localPreferred = new Set([...preferred].map((value) => value - offset).filter((value) => value > 0 && value < combined.length))
+    const split = bestSplit(combined, maxWidth, localPreferred)
+    if (!split) continue
+    result.splice(firstIndex, 2, ...split)
+    index = Math.max(-1, firstIndex - 1)
+  }
+  return result
+}
+
 /** 从模型输出里抠出 JSON 对象；抠不到返回 null */
 function extractJson(text: string): unknown {
   const raw = String(text ?? '').trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
@@ -98,7 +162,10 @@ export function acceptLines(raw: unknown, original: string, maxWidth: number): s
   }
   // ★★ 逐字相同才算过：这是本模块唯一的硬底线（丢字/改字会让字幕与口播对不上）
   if (comparable(lines.join('')) !== comparable(original)) return null
-  return lines
+  const balanced = rebalanceWeakLines(lines, original, maxWidth)
+  if (balanced.some((line) => subtitleDisplayWidth(line) > maxWidth || isWeakStandalone(line))) return null
+  if (comparable(balanced.join('')) !== comparable(original)) return null
+  return balanced
 }
 
 /** 待分行文本 → 提示词里的编号清单 */

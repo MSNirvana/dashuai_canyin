@@ -532,6 +532,36 @@ export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): 
 /** 把「一条文本」换成「行数组」的外部分行器；返回 null = 这一条没有可用结果 */
 export type SubtitleLineSplitter = (text: string) => string[] | null
 
+/** 正常阅读所需的最低展示时间；总时长不足时才退回纯比例分配。 */
+export const SUBTITLE_MIN_CUE_MS = 700
+
+/**
+ * 在一个原始语音段内部重新分配各字幕条时长：先保证最低阅读时间，剩余时间再按字宽分。
+ * 返回值之和必须严格等于 span，避免累计取整把后续字幕推离原声时间轴。
+ */
+export function allocateSubtitleDurations(span: number, weights: number[], minCueMs = SUBTITLE_MIN_CUE_MS): number[] {
+  if (!weights.length) return []
+  const safeSpan = Math.max(weights.length, Math.round(span))
+  const safeWeights = weights.map((value) => Math.max(1, Number.isFinite(value) ? value : 1))
+  const totalWeight = safeWeights.reduce((sum, value) => sum + value, 0)
+  const canGuaranteeMinimum = safeSpan >= minCueMs * safeWeights.length
+  const base = canGuaranteeMinimum ? minCueMs : 0
+  const distributable = safeSpan - base * safeWeights.length
+  const exact = safeWeights.map((weight) => base + (distributable * weight) / totalWeight)
+  const result = exact.map(Math.floor)
+  let remainder = safeSpan - result.reduce((sum, value) => sum + value, 0)
+  const order = exact
+    .map((value, index) => ({ index, fraction: value - Math.floor(value) }))
+    .sort((a, b) => b.fraction - a.fraction || a.index - b.index)
+  for (let index = 0; remainder > 0; index = (index + 1) % order.length) {
+    const targetIndex = order[index]?.index
+    if (targetIndex === undefined) break
+    result[targetIndex] = (result[targetIndex] ?? 0) + 1
+    remainder -= 1
+  }
+  return result
+}
+
 /**
  * 将字幕归一为单行、非重叠、连续替换的 cue，避免 libass 自动换成多行。
  *
@@ -556,15 +586,15 @@ export function normalizeSubtitleSegments(
     const end = Math.max(start + 300, Math.round(segment.endMs))
     const span = Math.max(1, end - start)
     const weights = chunks.map((chunk) => Math.max(1, subtitleDisplayWidth(chunk)))
-    const totalWeight = weights.reduce((sum, value) => sum + value, 0)
-    let consumedWeight = 0
+    const durations = allocateSubtitleDurations(span, weights)
+    let cursor = start
     chunks.forEach((chunk, index) => {
-      const chunkStart = start + Math.round((span * consumedWeight) / totalWeight)
-      consumedWeight += weights[index] ?? 1
-      const chunkEnd = index === chunks.length - 1 ? end : start + Math.round((span * consumedWeight) / totalWeight)
+      const chunkStart = cursor
+      const chunkEnd = index === chunks.length - 1 ? end : Math.min(end, chunkStart + (durations[index] ?? 1))
+      cursor = chunkEnd
       expanded.push({
         startMs: chunkStart,
-        endMs: Math.max(chunkStart + 250, chunkEnd),
+        endMs: Math.max(chunkStart + 1, chunkEnd),
         text: chunk,
         // ★ 只有 AI 分的行才带标记（理由见上面的函数注释与 TranscriptionSegment.locked）
         ...(aiLines ? { locked: true } : {}),
@@ -576,7 +606,7 @@ export function normalizeSubtitleSegments(
   let cursor = 0
   for (const segment of expanded) {
     const start = Math.max(cursor, segment.startMs)
-    const end = Math.max(start + 250, segment.endMs)
+    const end = Math.max(start + 1, segment.endMs)
     if (end <= start) continue
     result.push({ ...segment, startMs: start, endMs: end })
     cursor = end

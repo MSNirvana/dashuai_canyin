@@ -6,6 +6,7 @@
 //    和**判据**（丢字/加字/改字/超宽一律拒绝）分开断言。
 import assert from 'node:assert/strict'
 import {
+  allocateSubtitleDurations,
   mergeSubtitleSegments,
   normalizeSubtitleSegments,
   splitSubtitleText,
@@ -13,7 +14,7 @@ import {
   SUBTITLE_MAX_WIDTH,
   type SubtitleLineSplitter,
 } from '../src/render/synthesis.js'
-import { acceptLines, buildLineInput } from '../src/render/subtitle-split.service.js'
+import { acceptLines, buildLineInput, rebalanceWeakLines } from '../src/render/subtitle-split.service.js'
 import { LIVE_SCENE_CODES, SCENE } from '../src/ai/scene-codes.js'
 import { SCENE_VARIABLES, validateTemplate } from '../src/ai/prompt-vars.js'
 import { SUBTITLE_SPLIT_PROMPT, SUBTITLE_SPLIT_SCENE } from '../prisma/prompts.js'
@@ -111,7 +112,36 @@ assert.deepEqual(
   '★ 放得下就只给一行（不要为了「看起来满」把短句拆开）',
 )
 
-// ── ⑤ 提示词 / 场景契约 ────────────────────────────────────────────────────────
+// ── ⑤ 任务 #52 真实坏例：孤立口水词/两字尾巴必须被重新均分 ────────────────────
+const task52Middle = rebalanceWeakLines(
+  ['哎呀', '卷边了卷边就捞出来', '蘸上老板这个秘制', '香油啊又脆又爆汁'],
+  '哎呀，卷边了，卷边就捞出来，蘸上老板这个秘制香油啊，又脆又爆汁，',
+  SUBTITLE_MAX_WIDTH,
+)
+assert.deepEqual(
+  task52Middle,
+  ['哎呀卷边了', '卷边就捞出来', '蘸上老板这个秘制', '香油啊又脆又爆汁'],
+  '★★ 任务 #52：不能让“哎呀”独占一屏，应与后文重排且不丢字',
+)
+const task52Ending = acceptLines(
+  ['哎呀太香了想听这个', '脆的有多脆的评论区', '扣一'],
+  '哎呀，太香了，想听这个脆的有多脆的，评论区扣一。',
+  SUBTITLE_MAX_WIDTH,
+)
+assert.deepEqual(
+  task52Ending,
+  ['哎呀太香了想听这个', '脆的有多脆的', '评论区扣一'],
+  '★★ 任务 #52：两字尾巴“扣一”必须并回 CTA，且原声字符一个不能丢',
+)
+assert.ok(task52Ending?.every((line) => subtitleDisplayWidth(line) >= 4), '★ 修复后每条至少有可读信息量')
+
+// 时长分配：总时长充足时每条至少 700ms；不足时仍要严格守住原段总时长。
+assert.deepEqual(allocateSubtitleDurations(2_100, [1, 8, 8]), [700, 700, 700], '★ 三条字幕各至少 700ms')
+const tightDurations = allocateSubtitleDurations(1_200, [2, 8])
+assert.equal(tightDurations.reduce((sum, value) => sum + value, 0), 1_200, '★★ 分配后总时长不得漂移')
+assert.ok(tightDurations.every((value) => value > 0), '★ 总时长不足时按权重退化，但不能出现零时长')
+
+// ── ⑥ 提示词 / 场景契约 ────────────────────────────────────────────────────────
 assert.ok(LIVE_SCENE_CODES.includes(SCENE.subtitle_split), '★ `subtitle_split` 必须在「已接入」清单里')
 assert.equal(SUBTITLE_SPLIT_SCENE.code, 'subtitle_split')
 assert.equal(SUBTITLE_SPLIT_SCENE.kind, 'TEXT', '★ 它是文本场景（走 chat/completions），不能进图像场景表')
