@@ -19,6 +19,7 @@ import { join } from 'node:path'
 import { downloadToFile, uploadFile, objectExists } from '../lib/cos.js'
 import { ffmpegNormalize, ffmpegApplyColor, ffmpegConcat, buildColorFilter } from './ffmpeg.js'
 import { normalizedClipKey, colorPreviewHash, colorPreviewKey } from './cache-keys.js'
+import { ensureSpeechCutClipIfKnown } from './speech-cut.js'
 import type { ColorGrade, RenderClip } from '../services/render.service.js'
 
 /** 单步 ffmpeg 的超时。预览是同步 HTTP 请求，失败也要尽快把话说明白 */
@@ -148,17 +149,31 @@ async function renderPreview(args: {
         missCount++
         const raw = join(dir, `in_${i}.mp4`)
         await downloadToFile(clip.cosKey, raw)
-        await ffmpegNormalize(raw, local, {
+        /**
+         * ★★ 缓存未命中时**必须复刻正式合成的裁剪步骤**（2026-09-29）：
+         *   正式合成写进这个键的产物是「**已经剪掉口播空白**并归一化」的片段
+         *   （见 worker 的口播裁剪段）。预览若直接归一化原素材，就会把**没剪过**的内容
+         *   写进同一个键 ⇒ 正式合成命中预览写的那份 ⇒ 语音裁剪在线上看起来没生效，
+         *   而且不报任何错。这是「同键不同内容」的典型形态。
+         *
+         * ★ 只在**库里已经有结论**时裁，绝不在这里触发一次 ASR：
+         *   预览是滑一下调色就发起的轻操作，不该为此卡几秒。库里还没有结论时，
+         *   两边算出的键本来就不同（指纹 `n` vs 真实指纹），互不污染。
+         */
+        const cut = await ensureSpeechCutClipIfKnown({ merchantId, clip, workDir: dir, timeoutMs: PREVIEW_STEP_TIMEOUT_MS })
+        const normalizeSource = cut?.localPath ?? raw
+        await ffmpegNormalize(normalizeSource, local, {
           width: output.width,
           height: output.height,
-          startMs: clip.trimStartMs ?? 0,
-          endMs: clip.trimEndMs ?? 0,
+          startMs: cut ? 0 : clip.trimStartMs ?? 0,
+          endMs: cut ? 0 : clip.trimEndMs ?? 0,
           // ★ 预览产物与正式合成**共用同一份缓存键**，参数也必须同口径，
           //   否则预览写进缓存的片段会和正式合成期望的帧率不一致（见 ffmpegNormalize 注释）
           fps: output.fps,
           timeoutMs: PREVIEW_STEP_TIMEOUT_MS,
         })
         await rm(raw, { force: true })
+        if (cut) await rm(cut.localPath, { force: true })
         await uploadFile(local, cacheKey, 'video/mp4').catch((e) =>
           console.warn(`[color-preview] 归一化缓存回写失败 ${cacheKey}:`, (e as Error).message),
         )

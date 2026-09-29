@@ -269,11 +269,77 @@ async function transcribeTencent(input: string, durationMs: number, timeoutMs: n
   }
 }
 
+/** 短音频分支的两条硬上限：时长 ≤ 60s 且字节 ≤ 3MB（与 `transcribeTencent` 的判据同源） */
+const ASR_SHORT_LIMIT_MS = 60_000
+const ASR_SHORT_LIMIT_BYTES = 3 * 1024 * 1024
+
+export interface WordSpan {
+  word: string
+  startMs: number
+  endMs: number
+}
+
+export interface WordLevelTranscription {
+  text: string
+  audioDurationMs: number
+  words: WordSpan[]
+  provider: string
+}
+
+/**
+ * **只走短音频**接口拿词级时间戳（`WordInfo: 1`）—— 供「判定素材里哪一段有人在说话」使用
+ * （见 `speech-range.ts` / `shot-speech.ts`）。
+ *
+ * ★★ 为什么要和 `transcribeAudio` 分开，而不是复用它再从中抠时间：
+ *   `transcribeAudio` 的产出是**给字幕用的**（会做标点对齐、按语义切子句、必要时走长音频任务），
+ *   它的 `segments` 是子句粒度、且带「按屏宽摊分」的痕迹 —— 拿它来判停顿会把整句当成一段，
+ *   恰好丢掉我们要找的那个东西（句内长停顿）。这里要的是**原始逐词边界**。
+ *
+ * ★★ 为什么超限时**直接返回 null、绝不降级到长音频**：
+ *   调用方的语义是「判不出来就不剪」（保守）。一条 90 秒的素材为了省两秒空白去跑一次
+ *   分钟级的异步识别任务，代价与风险都不划算 —— 返回 null 让调用方原样保留，是正确行为。
+ *   本项目镜头上限 15s（`EDL_SHOT_MAX_MS`），实际几乎不会碰到这条上限。
+ */
+export async function transcribeWordsShort(input: string): Promise<WordLevelTranscription | null> {
+  if (!tencentConfigured()) return null
+  const durationMs = (await probeDurationMs(input)) ?? 0
+  if (durationMs <= 0 || durationMs > ASR_SHORT_LIMIT_MS) return null
+  const bytes = await readFile(input).catch(() => null)
+  if (!bytes || bytes.length === 0 || bytes.length > ASR_SHORT_LIMIT_BYTES) return null
+
+  const response = await tencentClient().SentenceRecognition({
+    EngSerViceType: process.env.TENCENT_ASR_SHORT_ENGINE?.trim() || '16k_zh',
+    SourceType: 1,
+    VoiceFormat: 'wav',
+    Data: bytes.toString('base64'),
+    DataLen: bytes.length,
+    WordInfo: 1,
+    FilterPunc: 0,
+    FilterModal: 0,
+  })
+  const audioDurationMs = Math.round(response.AudioDuration ?? durationMs)
+  const words: WordSpan[] = []
+  for (const word of response.WordList ?? []) {
+    const value = (word.Word ?? '').trim()
+    if (!value) continue
+    const startMs = Math.max(0, Math.round(word.StartTime ?? 0))
+    const endMs = Math.max(startMs, Math.round(word.EndTime ?? startMs))
+    words.push({ word: value, startMs, endMs })
+  }
+  return {
+    text: response.Result?.trim() ?? '',
+    audioDurationMs: audioDurationMs > 0 ? audioDurationMs : durationMs,
+    words,
+    provider: 'tencent-asr',
+  }
+}
+
 /**
  * 调用 OpenAI-compatible /audio/transcriptions。没有配置时返回 null，调用方可以安全降级。
  * ASR_API_URL 必须是完整 endpoint，例如 https://api.openai.com/v1/audio/transcriptions。
  */
 export async function transcribeAudio(input: string, timeoutMs = 120_000): Promise<TranscriptionResult | null> {
+
   const durationMs = (await probeDurationMs(input)) ?? 0
   if (tencentConfigured()) return transcribeTencent(input, durationMs, timeoutMs)
   const url = process.env.ASR_API_URL?.trim()

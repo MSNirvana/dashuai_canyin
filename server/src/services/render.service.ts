@@ -17,6 +17,8 @@ import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } fr
 import { ChatCutOptionsSchema, DEFAULT_CHATCUT_OPTIONS, chatCutConfigured, type ChatCutOptions } from '../render/chatcut.js'
 import type { AutoEditProfile } from '../render/auto-edit.js'
 import { userFacingRenderError } from '../render/user-errors.js'
+import { parseShotSpeechPlan, shotSpeechOptions } from '../render/shot-speech.js'
+import type { KeepRange } from '../render/speech-range.js'
 
 // 计费点数（后台可配置化见 docs/05，此处为默认值）
 export const RENDER_BEAN_FULL = 30n
@@ -140,6 +142,19 @@ export interface RenderClip {
   durationMs: number | null
   /** 该分镜的口播文案（Shot.line），AI 合成用于配音与字幕 */
   line: string | null
+  /**
+   * 素材口播探针的结论：这条素材里哪几段真的有人在说话（**素材绝对坐标**）。
+   *
+   * ★ 三态，别压成两态（见 `Shot.keepRanges` 的注释）：
+   *   · `null` / 缺省 = **还没探测过** ⇒ 合成任务里会去探一次并落库
+   *   · `[]`          = 探测过、结论是「没什么可剪的」⇒ 不要重复探测（白花 ASR）
+   *   · `[{…}, …]`    = 探测过、按这些区间保留
+   *
+   * ★ 为什么必须随任务参数一起带下去，而不是让 worker 每次现查库：
+   *   `preview.ts`（调色预览）与 worker 必须用**同一份**结论算归一化缓存键，
+   *   否则预览永远判定缓存未命中。两者都从 `buildRenderClips` 拿，键就必然同源。
+   */
+  keepRanges?: KeepRange[] | null
   /** 用于自动剪辑规划的分镜语义元数据 */
   shotType?: string | null
   shotSize?: string | null
@@ -355,6 +370,9 @@ export async function buildRenderClips(
         coverKey: a.coverKey,
         trimStartMs: s.trimStartMs,
         trimEndMs: s.trimEndMs,
+        // ★ 这里**只解析、不探测**：探测要走 ASR（秒级 + 花钱），绝不能放在提交合成的请求线程里。
+        //   解析失败（版本旧 / 参数指纹不符 / 形状脏）一律当「没探测过」⇒ 由 worker 重探。
+        keepRanges: parseShotSpeechPlan(s.keepRanges, shotSpeechOptions())?.ranges ?? null,
         durationMs: a.durationMs ?? null,
         line: s.line,
         shotType: s.shotType,

@@ -48,6 +48,8 @@ import { dispatchBgmFromPool, noteBgmDispatched } from './bgm-dispatch.js'
 import { recentBgmTracksForMerchant, storeBgmTrack } from './bgm-history.js'
 import { activeTtsProvider, providerForVoice } from '../services/tts-provider.service.js'
 import { estimateSpeechMs } from './tts.js'
+import { resolveShotSpeech } from './shot-speech.js'
+import { ensureSpeechCutClip } from './speech-cut.js'
 import { signedObjectUrl } from '../lib/cos.js'
 import {
   chatCutConfigured,
@@ -467,6 +469,10 @@ async function processTask(
   const customVoiceKey = p.chatcut?.editMode === 'ADVANCED' ? p.customVoiceKey : undefined
   const voiceEnabled = Boolean(customVoiceKey) || effectiveChatcut.voiceId !== 'none'
   // 紧凑节奏只压缩无台词画面；有台词的镜头以完整语句时长为硬下限。
+  //
+  // ⚠ 这里算出来的 trim 用的是**原素材坐标**。逐镜头循环里若命中了「口播裁剪」
+  //   （素材被换成剪掉废片的那一份），这一层会被**整段丢掉** —— 理由与「为什么不能叠加」
+  //   写在循环内 `effectiveClip = { trimStartMs: 0 … }` 那里，改这里之前先读那段。
   const clips = aiMode && effectiveChatcut.pacing === 'FAST'
     ? plannedClips.map((clip) => {
         const start = Math.max(0, clip.trimStartMs ?? 0)
@@ -547,21 +553,83 @@ async function processTask(
       await reportProgress(task.id, 10 + Math.round((i / clips.length) * 60), fence)
 
       const rawPath = join(dir, `in_${i}.mp4`)
+      /**
+       * ★★ 三个变量必须**分开记**，别合并成一个 `effectiveClip`（2026-09-29 语音裁剪引入）：
+       *   · `keyClip`       —— **缓存键**用。口径是「库里那条素材的原值」，
+       *                        不含任何渲染期推导出来的窗口 ⇒ worker 与 preview 算出的键必然同源。
+       *                        （原来这里用的是 `effectiveClip`，等于把探针结果塞进了键里，
+       *                          而预览只看库里的值 ⇒ 探针一旦改动窗口，预览就永远缓存未命中。）
+       *   · `effectiveClip` —— **实际渲染**用。带语音裁剪与视觉探针推导出的窗口。
+       *   · `sourcePath`    —— 真正要解码的文件。语音裁剪命中时换成「已经剪掉废片」的产物。
+       */
+      let keyClip: RenderClip = clip
       let effectiveClip = clip
+      let sourcePath = rawPath
       // 默认模式先识别首尾明显无效区间，再把裁切写回本次 EDL。
       // 只剪首尾，避免把中间一句话切断；没有可靠信号时保留原始时间窗。
       if (aiMode) {
         await downloadToFile(clip.cosKey, rawPath)
-        const range = await probeMeaningfulRange(rawPath, TASK_TIMEOUT_MS).catch(() => null)
+
+        // ── ① 口播裁剪：把「没人说话」的区间（首尾空白 + 中间长停顿）剪掉
+        const speech = await resolveShotSpeech({
+          cosKey: clip.cosKey,
+          durationMs: clip.durationMs,
+          cached: clip.keepRanges,
+          localPath: rawPath,
+          shotId: /^\d+$/.test(clip.shotId) ? BigInt(clip.shotId) : null,
+        })
+        if (speech.source === 'PROBE') {
+          console.log(`[render-worker] task ${task.id} 素材 ${clip.shotId} 口播探针：${speech.note}`)
+        }
+        if (speech.keepRanges) keyClip = { ...clip, keepRanges: speech.keepRanges }
+        if (speech.keepRanges?.length) {
+          const cut = await ensureSpeechCutClip({
+            merchantId: task.merchantId,
+            clip: keyClip,
+            workDir: dir,
+            timeoutMs: TASK_TIMEOUT_MS,
+            localSourcePath: rawPath,
+          }).catch((error) => {
+            console.warn(`[render-worker] task ${task.id} 素材 ${clip.shotId} 口播裁剪失败，按原素材继续：`, (error as Error).message)
+            return null
+          })
+          if (cut) {
+            sourcePath = cut.localPath
+            /**
+             * ⚠ trim 直接归零/null —— 这是**故意丢掉**上面那段「紧凑节奏」的预裁剪，理由：
+             *   · 那段规则（`available * 0.78`）算的是**原素材坐标**；素材已经被换成短的那份，
+             *     坐标口径不同，沿用就是剪错位置（而且不会报错，只是内容不对）。
+             *   · 它存在的意义本来就是「去掉没人说话的空白」，而口播裁剪对同一件事做得更准
+             *     （按词级时间戳，而不是按比例猜）。两条叠加 = 先按比例砍一刀、再按语音砍一刀，
+             *     第二刀很可能砍进**台词**里，用户会听到句子被咬掉半句。
+             *   ⇒ 有精确判据时，就不要再叠一层启发式。
+             */
+            effectiveClip = {
+              ...clip,
+              trimStartMs: 0,
+              trimEndMs: null,
+              durationMs: cut.durationMs ?? clip.durationMs,
+              keepRanges: speech.keepRanges,
+            }
+            console.log(
+              `[render-worker] task ${task.id} 剪掉素材 ${clip.shotId} 的 ${cut.cutMs}ms 无人声区间` +
+              `（${clip.durationMs ?? 0}ms → ${cut.durationMs ?? 0}ms）`,
+            )
+          }
+        }
+
+        // ── ② 视觉（黑屏/长冻结）：在**已经剪过口播**的素材上再收缩窗口
+        const range = await probeMeaningfulRange(sourcePath, TASK_TIMEOUT_MS).catch(() => null)
         if (range) {
-          const requestedStart = Math.max(0, clip.trimStartMs ?? 0)
-          const requestedEnd = clip.trimEndMs && clip.trimEndMs > requestedStart
-            ? clip.trimEndMs
+          const base = effectiveClip
+          const requestedStart = Math.max(0, base.trimStartMs ?? 0)
+          const requestedEnd = base.trimEndMs && base.trimEndMs > requestedStart
+            ? base.trimEndMs
             : range.durationMs
           const candidateStart = Math.min(requestedEnd - 300, Math.max(requestedStart, range.startMs))
           const candidateEnd = Math.max(candidateStart + 300, Math.min(requestedEnd, range.endMs))
           if (candidateStart > requestedStart + 450 || candidateEnd < requestedEnd - 450) {
-            effectiveClip = { ...clip, trimStartMs: candidateStart, trimEndMs: candidateEnd }
+            effectiveClip = { ...base, trimStartMs: candidateStart, trimEndMs: candidateEnd }
             console.log(
               `[render-worker] task ${task.id} 裁掉素材 ${clip.shotId} 首尾无效区间 ` +
               `(${requestedStart}-${requestedEnd}ms -> ${candidateStart}-${candidateEnd}ms)`,
@@ -574,15 +642,16 @@ async function processTask(
       const endMs = effectiveClip.trimEndMs ?? 0
       const normPath = join(dir, `norm_${i}.mp4`)
 
-      // 中间产物缓存：key 由 (assetId, trim, 尺寸) 决定，与调色无关，故重调色可复用。
-      // ⚠ 键的计算在 render/cache-keys.ts —— 调色预览要用**同一个键**才能命中这里的产物
-      const cacheKey = normalizedClipKey(task.merchantId, effectiveClip, output)
+      // 中间产物缓存：key 由 (assetId, trim, **口播区间**, 尺寸) 决定，与调色无关，故重调色可复用。
+      // ⚠ 键的计算在 render/cache-keys.ts —— 调色预览要用**同一个键**才能命中这里的产物。
+      // ⚠ 必须传 `keyClip`（库里的原值），不是 `effectiveClip`（带探针推导的窗口）—— 见上面的注释。
+      const cacheKey = normalizedClipKey(task.merchantId, keyClip, output)
       if (await objectExists(cacheKey)) {
         await downloadToFile(cacheKey, normPath)
         hitCount++
       } else {
         if (!aiMode) await downloadToFile(effectiveClip.cosKey, rawPath)
-        await ffmpegNormalize(rawPath, normPath, {
+        await ffmpegNormalize(sourcePath, normPath, {
           width: output.width,
           height: output.height,
           startMs,
@@ -912,18 +981,77 @@ async function processChatCutTask(
    *    而下面的注释写得很清楚「进度倒退比停在原地更让人以为出了故障」。
    */
   const phase = makePhaseReporter(task.id, fence)
-  const sourceCosKeys = clips.map((clip) => clip.cosKey)
+
+  /**
+   * ── 0) 口播裁剪：把「没人说话」的区间剪掉（2026-09-29）。
+   *
+   * ★★ 为什么必须放在**最前面**（在「本地打底」与「推素材」之前）：
+   *   裁剪产出的是一段**连续**的新素材，下游（本地打底、ChatCut 排轨）看到的仍是一条普通素材，
+   *   于是 ChatCut 那套「单区间 clip + 逐镜头转场余量 + A1 配音轨对齐」的逻辑**一行都不用改**。
+   *   若放到后面做，就等于要把一条素材排队成多条 clip 再重算这一整套 —— 见 `speech-cut.ts` 的对比。
+   *
+   * ★ `keepRanges` 与 `cosKey` 的一致性是一条**不变量**，别破坏：
+   *   `cosKey` 是原素材 ⟺ `keepRanges` 为空；`cosKey` 是裁剪产物 ⟺ `keepRanges` 非空。
+   *   `normalizedFullClipKey` / `speechCutKey` 都靠它成立（否则会「同键不同内容」）。
+   */
+  const prepared: RenderClip[] = []
+  for (let index = 0; index < clips.length; index += 1) {
+    const clip = clips[index]!
+    const speech = await resolveShotSpeech({
+      cosKey: clip.cosKey,
+      durationMs: clip.durationMs,
+      cached: clip.keepRanges,
+      shotId: /^\d+$/.test(clip.shotId) ? BigInt(clip.shotId) : null,
+    }).catch((error) => {
+      console.warn(`[render-worker] task ${task.id} 素材 ${clip.shotId} 口播探针失败：`, (error as Error).message)
+      return { keepRanges: null } as { keepRanges: null }
+    })
+    let cut: { cosKey: string; durationMs: number | null; cutMs: number } | null = null
+    if (speech.keepRanges?.length) {
+      // 裁剪产物落在 COS 上（键由 `speechCutKey` 决定），本地临时文件用完即删
+      const dir = await mkdtemp(join(tmpdir(), 'dashuai-speechcut-'))
+      try {
+        cut = await ensureSpeechCutClip({
+          merchantId: task.merchantId,
+          clip: { ...clip, keepRanges: speech.keepRanges },
+          workDir: dir,
+          timeoutMs: TASK_TIMEOUT_MS,
+        })
+      } catch (error) {
+        console.warn(`[render-worker] task ${task.id} 素材 ${clip.shotId} 口播裁剪失败，按原素材继续：`, (error as Error).message)
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+    prepared.push(cut
+      ? {
+          ...clip,
+          cosKey: cut.cosKey,
+          trimStartMs: 0,
+          trimEndMs: null,
+          durationMs: cut.durationMs ?? clip.durationMs,
+          keepRanges: speech.keepRanges,
+        }
+      // ⚠ 没裁成时要把 keepRanges 清掉：留着一个「声称已裁」的区间集而 cosKey 还是原素材，
+      //   会让下游的缓存键与内容对不上（同键不同内容）。
+      : { ...clip, keepRanges: null })
+    if (cut) {
+      console.log(`[render-worker] task ${task.id} ChatCut 前置：剪掉素材 ${clip.shotId} 的 ${cut.cutMs}ms 无人声区间`)
+    }
+  }
+
+  const sourceCosKeys = prepared.map((clip) => clip.cosKey)
   if (clipPrep === 'NORMALIZED') {
     // ★ 串行而不是并发：6 路 ffmpeg 同时抢 CPU 会把更吃时间的编码阶段拖慢，
     //   而这里每一步都要占满一个核。打底阶段占启动阶段的前四成（5%→15%），
     //   余量留给驱动自己的阶段（它最高会报到 29%）。
-    for (let index = 0; index < clips.length; index += 1) {
-      const clip = clips[index]!
+    for (let index = 0; index < prepared.length; index += 1) {
+      const clip = prepared[index]!
       sourceCosKeys[index] = await prepClipLocally(task.merchantId, task.id, clip, output)
-      phase({ ratio: 0.4 * ((index + 1) / clips.length), label: `素材本地打底 ${index + 1}/${clips.length}` })
+      phase({ ratio: 0.4 * ((index + 1) / prepared.length), label: `素材本地打底 ${index + 1}/${prepared.length}` })
     }
   }
-  const sourceClips = await Promise.all(clips.map(async (clip, index) => ({
+  const sourceClips = await Promise.all(prepared.map(async (clip, index) => ({
     shotId: clip.shotId,
     assetId: clip.assetId,
     sourceUrl: await signedObjectUrl(sourceCosKeys[index]!, 6 * 3600),

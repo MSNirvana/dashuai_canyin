@@ -62,6 +62,7 @@
     "chatcut:call": "tsx scripts/chatcut-call.ts",
     "chatcut:smoke": "tsx scripts/chatcut-smoke.ts",
     "chatcut-timing:verify": "tsx scripts/verify-chatcut-timing.ts",
+    "speech-range:verify": "tsx scripts/verify-speech-range.ts",
     "edl:verify": "tsx scripts/verify-edl.ts",
     "clip-rotation:verify": "tsx scripts/verify-clip-rotation.ts",
     "clip-prep:verify": "tsx scripts/verify-clip-prep.ts",

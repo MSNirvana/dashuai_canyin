@@ -313,6 +313,17 @@ model Shot {
   assetId         BigInt?  @map("asset_id") @db.UnsignedBigInt()
   trimStartMs     Int      @default(0) @map("trim_start_ms") @db.UnsignedInt()
   trimEndMs       Int?     @map("trim_end_ms") @db.UnsignedInt()
+  // 素材口播探针的结论（`render/shot-speech.ts` 的 ShotSpeechPlan）：这条素材里哪几段真的有人在说话。
+  // ★ 为什么必须落库而不是每次合成现算：
+  //   ① 现算 = 每次重合成都多花一次 ASR；
+  //   ② 更严重的是**不稳定** —— 同一素材两次识别的词边界可能差几十毫秒，
+  //      于是「只改调色重合成」会把剪辑点也一起改掉，而用户预期只变颜色。
+  // ★ 三态语义，别把它压成两态：
+  //   NULL          = **还没探测过**（要用时去探）
+  //   { ranges: [] } = 探测过、结论是「没什么可剪的」（不要再去探）
+  //   { ranges: [...] } = 探测过、按这些区间保留
+  // ★ 存的是**素材绝对坐标**，与 trimStartMs/trimEndMs 这个窗口无关（应用时再夹）。
+  keepRanges      Json?    @map("keep_ranges")
   // 「这个分镜我不拍了」——用户主动跳过素材上传。
   // ★ 必须落库：跳过只写在客户端 state 里的话，一刷新（或换设备）就没了，
   //   而合成页按「有没有 assetId」判断素材是否齐全 ⇒ 跳过等于没跳过，用户被永久挡在合成页外。

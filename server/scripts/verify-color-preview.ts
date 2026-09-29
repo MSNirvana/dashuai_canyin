@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url'
 import {
   intermediateKey,
   normalizedClipKey,
+  normalizedFullClipKey,
   colorPreviewHash,
   colorPreviewKey,
   INTERMEDIATE_CACHE_VERSION,
@@ -83,15 +84,61 @@ console.log('\n① 调色滤镜：预览与成片必须逐字节相同')
 console.log('\n② 归一化缓存键：预览与合成必须算出同一个键')
 {
   const key = intermediateKey(CLIP, 500, 4200, OUTPUT)
-  // 独立写一遍「期望的原文」，不复制实现 —— 字段顺序/分隔符变了就会失配
-  const expectedRaw = `${INTERMEDIATE_CACHE_VERSION}:4242:500:4200:1080x1920`
+  /**
+   * 独立写一遍「期望的原文」，不复制实现 —— 字段顺序/分隔符变了就会失配。
+   * ⚠ 第 5 段是**口播保留区间指纹**（2026-09-29 加）：`n` = 不裁。
+   *   这里显式传 `'n'` 而不是依赖默认值，就是为了把「字段顺序」也钉住 ——
+   *   默认值实现改错（比如拼到了末尾）时这一条会红。
+   */
+  const expectedRaw = `${INTERMEDIATE_CACHE_VERSION}:4242:500:4200:n:1080x1920`
   const expected = createHash('sha1').update(expectedRaw).digest('hex')
-  check('缓存键原文格式未变（版本:assetId:起始:结束:宽x高）', key === expected, `实际 ${key}`)
+  check('缓存键原文格式未变（版本:assetId:起始:结束:口播指纹:宽x高）', key === expected, `实际 ${key}`)
+  check(
+    '不传指纹时默认 = 「不裁」（keepRanges 为空）',
+    intermediateKey(CLIP, 500, 4200, OUTPUT) === intermediateKey(CLIP, 500, 4200, OUTPUT, 'n'),
+  )
+
+  /**
+   * ★★ 这一段是 2026-09-29 加的最重要的一条：**剪法不同 ⇒ 键必须不同**。
+   *
+   * 反例（键里不带口播指纹）会造成的后果是**静默的**：先按「不裁」产出一份归一化产物写进桶，
+   * 之后按「裁掉中间 4 段」算出同一个键、直接命中那份没裁的产物
+   * ⇒ 语音裁剪上线后看起来完全没生效，不报任何错。
+   */
+  const speechCut: RenderClip = { ...CLIP, keepRanges: [{ startMs: 1350, endMs: 2750 }, { startMs: 4800, endMs: 7900 }] }
+  const speechCutAgain: RenderClip = { ...CLIP, keepRanges: [{ startMs: 1350, endMs: 2750 }, { startMs: 4800, endMs: 7900 }] }
+  const speechOther: RenderClip = { ...CLIP, keepRanges: [{ startMs: 1350, endMs: 2750 }] }
+  check(
+    '★★ 剪法不同 ⇒ 归一化缓存键必须不同（否则同键不同内容、语音裁剪静默失效）',
+    intermediateKey(speechCut, 500, 4200, OUTPUT) !== key,
+    'keepRanges 没进键里',
+  )
+  check(
+    '   └ 不同剪法之间也不同',
+    intermediateKey(speechCut, 500, 4200, OUTPUT) !== intermediateKey(speechOther, 500, 4200, OUTPUT),
+  )
+  check(
+    '★ 同剪法 ⇒ 同键（否则每次合成都缓存未命中、10 积分的成本依据就没了）',
+    intermediateKey(speechCut, 500, 4200, OUTPUT) === intermediateKey(speechCutAgain, 500, 4200, OUTPUT),
+  )
+  check(
+    '★ `[]`（探测过、没什么可剪）与 `null`（还没探测）同键 —— 两者产物相同（都不裁）',
+    intermediateKey({ ...CLIP, keepRanges: [] }, 500, 4200, OUTPUT) === key,
+  )
 
   check(
     'normdizedClipKey 拼出的路径与旧的手写路径一致',
     normalizedClipKey(9n, CLIP, OUTPUT) === `${INTERMEDIATE_CACHE_PREFIX}9/${key}.mp4`,
     normalizedClipKey(9n, CLIP, OUTPUT),
+  )
+
+  /**
+   * ★ AI 档「本地打底」路线（`normalizedFullClipKey`）的第 5 段也必须跟着 clip 的指纹走。
+   *   理由见 `cache-keys.ts` 里那条不变量：`cosKey` 是原素材 ⟺ `keepRanges` 为空。
+   */
+  check(
+    '★★ 整段打底：原素材与「口播裁剪产物」必须是两个键（不然打底产物会互相命中）',
+    normalizedFullClipKey(9n, CLIP, OUTPUT) !== normalizedFullClipKey(9n, speechCut, OUTPUT),
   )
 
   // trimEndMs 为空 = 到素材结尾，必须与 worker 的 `?? 0` 同口径
