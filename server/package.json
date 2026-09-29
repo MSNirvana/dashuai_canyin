@@ -53,6 +53,7 @@
     "color-preview:verify": "tsx scripts/verify-color-preview.ts",
     "encode-quality:verify": "tsx scripts/verify-encode-quality.ts",
     "demo-account:verify": "tsx scripts/verify-demo-account.ts",
+    "demo-account:seed": "tsx scripts/seed-demo-account-config.ts",
     "profile:verify": "tsx scripts/verify-profile.ts",
     "creation-archive:verify": "tsx scripts/verify-creation-archive.ts",
     "render-multitask:verify": "tsx scripts/verify-render-multitask.ts",
