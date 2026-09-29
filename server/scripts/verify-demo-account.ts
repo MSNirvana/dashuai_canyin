@@ -19,7 +19,7 @@
 //     `demoDeadlineMs` / `isDemoPhone` 这些真函数，看它们**算出来的结果**；
 //   · **接线层**：读源码，断言「谁在什么时候调了它」—— 这一层无法靠调函数证明，
 //     因为「闸门在签发 token 之前」是调用点的顺序属性，不在函数体内。
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -36,9 +36,9 @@ import { signAccess, signRefresh, verifyToken } from '../src/lib/jwt.js'
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = join(here, '..', '..')
 const src = (rel: string) => readFile(join(here, '..', rel), 'utf8')
-const file = (rel: string) => readFile(join(repo, rel), 'utf8')
 
 let pass = 0
+let skipped = 0
 const failures: string[] = []
 function check(name: string, cond: boolean, detail = ''): void {
   if (cond) {
@@ -48,6 +48,16 @@ function check(name: string, cond: boolean, detail = ''): void {
     failures.push(`${name}${detail ? ` —— ${detail}` : ''}`)
     console.log(`  ✗ ${name}${detail ? ` —— ${detail}` : ''}`)
   }
+}
+
+/**
+ * 显式跳过（**只能**用在「本机没有权威的客户端源码」这一种情况，见下面第 ⑤ 节末）。
+ * ★ 刻意做成独立的计数器并打进总结行：跳过的数量必须**看得见**。
+ *   如果让「文件读不到」静默算通过，那删掉文件就能让守护变绿 —— 这是最典型的假绿。
+ */
+function skip(name: string, n: number): void {
+  skipped += n
+  console.log(`  ○ SKIP ${name}（共 ${n} 条）`)
 }
 
 /**
@@ -233,15 +243,60 @@ console.log('\n⑤ 接线态（读源码：闸门必须在签发之前，且 ref
     /auth\/refresh|refresh\(prisma, refreshToken\)[\s\S]{0,600}?1006/.test(routes),
   )
 
-  const miniReq = await file('apps/mini/src/services/request.ts')
-  check('mini：ERROR_TEXT 里有 1006 的文案', /1006: '[^']+'/.test(miniReq))
-  check('mini：1006 分支清本地登录态', /code === 1006[\s\S]{0,400}?clearLoginState\(\)/.test(miniReq))
-  check('mini：1006 分支回登录页', /code === 1006[\s\S]{0,500}?redirectToLogin\(\)/.test(miniReq))
-  check(
-    'mini：1006 分支排在「code === 0 直接返回」之前（否则永远走不到）',
-    miniReq.indexOf('code === 1006') >= 0 &&
-      miniReq.indexOf('code === 1006') < miniReq.indexOf('if (body?.code === 0) return body.data as T'),
-  )
+  /**
+   * ── 客户端那一半：**只在源码权威时才判** ──────────────────────────────
+   *
+   * ★ 这个守护跨了两个包（server + apps/mini），而**部署机上的 apps/mini 只是一份滞后副本**：
+   *   小程序包是在开发机 `build:weapp:prod` 打好之后整包上传的，部署机的源码树从来不跟着走。
+   *   第一版把它们写成无条件断言 ⇒ 在服务器上跑必然红 4 条，而那是**假报警**：
+   *   它报的不是「客户端漏改了」，而是「这台机器上没有权威的客户端源码」。
+   *   守护一旦出现固定的假红，就会被人忽略 —— 比没有守护更糟。
+   *
+   * ★ 所以判据分三层，且**跳过的条件必须窄到只有"源码不权威"这一种**：
+   *   ① 客户端源码不存在 ⇒ 跳过（部署机上确实可能没有 apps/）；
+   *   ② 存在但没有 1006 ⇒ 用 **mtime** 分辨：客户端文件比本特性的服务端模块**还旧** ⇒ 滞后副本，跳过；
+   *      比它**新**却仍无 1006 ⇒ **真的漏改了**，判红（这是唯一能让跳过程序退化成红的分支，
+   *      所以 mtime 只在"要不要跳过"这一处使用，且默认倒向"判红"）。
+   *   ③ 存在且有 1006 ⇒ 严格断言（正常情况，本机就是这一支）。
+   */
+  // ★ `DEMO_GUARD_MINI` 只为**测试「跳过 / 判红」这两个分支**而存在（见下面三层的说明）：
+  //   否则「客户端漏改 1006 ⇒ 判红」这条唯一真正的防线**没有办法被验证**，
+  //   一条没被验证过的分支等于没有。它只改**读哪个文件**，不改任何判据。
+  const miniPath = process.env.DEMO_GUARD_MINI ?? join(repo, 'apps/mini/src/services/request.ts')
+  let miniReq: string | null = null
+  try {
+    miniReq = await readFile(miniPath, 'utf8')
+  } catch {
+    miniReq = null
+  }
+
+  /** 客户端侧的四条断言（只在源码权威时执行） */
+  const miniChecks = (): Array<[string, boolean]> => [
+    ['mini：ERROR_TEXT 里有 1006 的文案', /1006: '[^']+'/.test(miniReq ?? '')],
+    ['mini：1006 分支清本地登录态', /code === 1006[\s\S]{0,400}?clearLoginState\(\)/.test(miniReq ?? '')],
+    ['mini：1006 分支回登录页', /code === 1006[\s\S]{0,500}?redirectToLogin\(\)/.test(miniReq ?? '')],
+    [
+      'mini：1006 分支排在「code === 0 直接返回」之前（否则永远走不到）',
+      (miniReq ?? '').indexOf('code === 1006') >= 0 &&
+        (miniReq ?? '').indexOf('code === 1006') < (miniReq ?? '').indexOf('if (body?.code === 0) return body.data as T'),
+    ],
+  ]
+
+  if (miniReq === null) {
+    skip('客户端源码不存在（本机没有 apps/mini：守护跨 server + mini，只能在完整仓库根判定）', 4)
+  } else if (!miniReq.includes('1006')) {
+    const [clientStat, featureStat] = await Promise.all([
+      stat(miniPath),
+      stat(join(here, '..', 'src/lib/demo-account.ts')),
+    ])
+    if (clientStat.mtimeMs < featureStat.mtimeMs) {
+      skip('客户端源码比本特性更旧（部署机上的滞后副本，包在开发机打好后整包上传）', 4)
+    } else {
+      for (const [name, cond] of miniChecks()) check(name, cond, '客户端比服务端模块新，却仍然没有 1006 ⇒ 真的漏改了')
+    }
+  } else {
+    for (const [name, cond] of miniChecks()) check(name, cond)
+  }
 }
 
 // ───────────── ⑥ 业务码不冲突：1006 只属于演示账号 ─────────────
@@ -290,7 +345,13 @@ console.log('\n⑦ 运行时真调（token 里的 dst 必须能往返，普通�
   check('端到端：未到点的 dst ⇒ 不判过期', demoDeadlinePassed(future.dst) === false)
 }
 
-console.log(`\n通过 ${pass} · 失败 ${failures.length}`)
+console.log(`\n通过 ${pass} · 失败 ${failures.length}${skipped ? ` · 跳过 ${skipped}` : ''}`)
+if (skipped) {
+  // ★ 跳过必须**看得见**，并且只在「本机没有权威的客户端源码」时允许。
+  //   如果你正在改客户端，这个跳过必须变成 PASS —— 否则它就是一块遮住真问题的布。
+  console.log(`※ 跳过 ${skipped} 条：本机的客户端源码不是权威副本（部署机上 apps/mini 是滞后副本）。`)
+  console.log('  在完整仓库根（同时有 server/ 与 apps/mini/ 的那台机器）上跑，应当 0 跳过。')
+}
 if (failures.length) {
   for (const f of failures) console.error(`  ✗ ${f}`)
   process.exitCode = 1
