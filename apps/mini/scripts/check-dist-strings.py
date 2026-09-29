@@ -23,6 +23,14 @@ r"""产物点检：确认源码里新写的中文文案真的进了小程序包�
 反向用法（确认已经删掉的旧文案**不在**包里，同样重要）：
   python3 apps/mini/scripts/check-dist-strings.py --expect-absent "已删掉的旧文案"
 
+★★ `--expect-absent` 是**按位置生效**的开关：它只管**排在它之后**的那些串。
+   `"新文案" --expect-absent "旧文案"` = 前者必须出现、后者必须缺席。
+   ★ 2026-09-29 之前它是**全局布尔**（扫描完 argv 后一个 True 污染整轮）：
+   写 `"更多服务" … --expect-absent "REPLACE_ME"` 会把前面 7 条正向串全部判成
+   MISS、rc=1（方向反了，看着像「包没出成功」）；而更坏的是反过来 ——
+   `"其实没进包的文案" --expect-absent "别的"`，前者被当成「必须缺席」且确实缺席
+   ⇒ ABSENT 通过、rc=0，**一条正向断言被静默吞掉（假绿）**。故改为按位置生效。
+
 退出码：有任何一条未达预期 = 1（可直接当发布前的闸门）；没给文案 = 2。
 """
 import io
@@ -67,12 +75,13 @@ def escaped_variants(s: str):
 
 def main() -> int:
     expect_absent = False
-    needles = []
+    needles = []  # [(文案, 该条是否期望缺席), ...] —— 逐条记，不共用全局 flag
     for arg in sys.argv[1:]:
         if arg in ('--expect-absent', '--absent'):
+            # ★ 只切换**后续**串的期望，见文件头 ★★。
             expect_absent = True
-        else:
-            needles.append(arg)
+            continue
+        needles.append((arg, expect_absent))
 
     if not needles:
         print('用法: check-dist-strings.py [--expect-absent] "文案" ...')
@@ -99,7 +108,7 @@ def main() -> int:
         blobs[path] = io.open(path, encoding='utf-8', errors='replace').read()
 
     total_bad = 0
-    for needle in needles:
+    for needle, expect_absent in needles:
         hits = []
         for form in escaped_variants(needle):
             for path, blob in blobs.items():
@@ -122,8 +131,12 @@ def main() -> int:
         print(f'{mark} {needle}{where}')
 
     print()
-    kind = '未出现' if expect_absent else '命中'
-    print(f'共 {len(needles)} 条，{kind} {len(needles) - total_bad} 条，未达预期 {total_bad} 条')
+    # ★ 混用时不能再用单一 flag 概括方向（见文件头 ★★），分开报正向 / 反向条数。
+    n_absent = sum(1 for _t, ea in needles if ea)
+    print(
+        f'共 {len(needles)} 条（正向 {len(needles) - n_absent} / 反向 {n_absent}），'
+        f'未达预期 {total_bad} 条'
+    )
     return 1 if total_bad else 0
 
 
