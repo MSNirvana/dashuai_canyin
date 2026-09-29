@@ -14,7 +14,10 @@
 //   - Every copy style uses spoken, plain language and treats user-provided business details as the source of truth.
 //   - Dish copy and topic copy have separate contexts; topic copy has no store or dish variables.
 //   - Recommended lengths are guidance, not quotas. Real facts and shootable scenes take priority over structure/count.
-//   - RECOMMEND retains its scene code for compatibility but now means an owner-authored, evidence-based recommendation.
+//   - RECOMMEND retains its scene code for compatibility but now means an evidence-based recommendation
+//     voiced by someone at the store (staff / the owner's friend / a regular), NOT the owner persona
+//     and NOT a fabricated review visit. (2026-09-29: the UI had promised "达人素人视角" since 09-24
+//     while this template still said "由老板本人讲" — the two were reconciled on the template side.)
 
 /**
  * 五份文案 + 发布素材共用的上下文块。
@@ -63,9 +66,9 @@ const CONTEXT_BLOCK = `【门店】{{storeName}}｜品类：{{category}}｜城�
  * ★ 删掉任何一条之前先想清楚：删哪条，模型就会在哪条上翻车。
  */
 const SPOKEN_RULES = `【口语化铁律 · 优先级高于下面任何一条要求】
-1. 老板照着念一遍要顺口，像在跟熟客说明白一件事，不像主持人播报或广告配音；拗口就改短、改直白
+1. 出镜的人照着念一遍要顺口，像在跟熟客说明白一件事，不像主持人播报或广告配音；拗口就改短、改直白
 2. 用日常词和自然语序；完整意思不要切碎成一串口号，也不要为了显得口语硬塞「诶、啊、呢、就是说」
-3. 按当前款式的身份说话：菜品文案以真实店家身份表达，话题文案不冒充本地人、顾客或虚构经历；允许自然用「我、你、咱」
+3. 按当前款式的身份说话：菜品文案以真实店家身份表达（**种草型例外**，按它自己那份里的身份写）；话题文案不冒充本地人、顾客或虚构经历；允许自然用「我、你、咱」
 4. 句式随内容变化；少用排比、对仗、三段式金句和每条都一样的起承转合
 5. 禁用明显书面营销套话：匠心、甄选、臻选、精挑细选、唇齿留香、令人回味、回味无穷、
    口感丰富、层次分明、极致、邂逅、解锁、不容错过、舌尖上的、舌尖美味、值得拥有、
@@ -265,12 +268,37 @@ ${SPOKEN_RULES}
  *   ⇒ ★★ 这一型必须用**正面断言**把主角钉死，光靠「不许」不够。
  *
  * ★ 位置同理：放在硬约束段里（与产品型一致）。挪到资料区之前会失效。
+ *
+ * ★★ 2026-09-29 说话人身份改回**推荐者**（「达人素人视角」）—— 一次「界面改了、正文没改」的收口。
+ *
+ * 事故现场：用户选种草型 + 话梅酥鱼，产出的分镜里写着「**老板**站在店内镜头前」。界面上
+ * 种草型的侧重点是「**达人素人视角** / 推荐理由」，而本模板当时写的是「由**老板本人**讲」
+ * 「由**老板本人**的身份介绍产品，不要假扮消费者」，`STORY_PROMPT` 又写死「按一个老板…
+ * 老板自拍口播」。三处指向两个身份，产出必然随提示词走。
+ *
+ * 来源是 **2026-09-24 第三次改 `desc`**：那一次把「老板视角」这个归属从种草型**换给了产品型**，
+ * 并给种草型写上「达人素人视角」（见 `apps/mini/src/services/creation.ts` 的注释，那里明确
+ * 写了自己是「换了归属，不是纯措辞微调」）—— 但**服务端的提示词一个字都没跟着动**。
+ * ⇒ ★★ 这与「改名不等于换归属」是同一类坑的**反面**：那次是**真换了归属**，所以除了
+ *   `label`/`desc`，`prompts.ts` 正文与 `STORY_PROMPT` 的出镜人**必须一起改**。
+ *   （对照 skill `restaurant-spoken-copy-prompts` §7 的归属核对清单。）
+ *
+ * ★ 身份放开到哪一步（用户 2026-09-29 明确选择）：**可以**有主观喜好（「我推荐」「我自个儿
+ *   就爱这一口」），**不可以**编造到店经历（具体时间/次数/经过）。理由不是文风 —— 这个产品
+ *   的画面素材都是老板自己店里的，出镜人就算是老顾客，也不代表他「昨天真来过」，
+ *   编出来就是老板替一个不存在的消费过程背书。
+ *   所以硬约束里那条「不写『我前天去吃了』『跟朋友来打卡』」**必须留着**，只是它现在的
+ *   理由从「你是老板」变成了「到店过程是编的」——**理由变了，禁令没变**。
+ *
+ * ⚠ 改这段话时三处要一起看：本模板、`SPOKEN_RULES` 第 1/3 条（那里原来也写死「老板」）、
+ *   以及 `STORY_PROMPT` 的【谁出镜】段。漏掉 `SPOKEN_RULES` 会让通用段与款式段互相打架，
+ *   而这种冲突**不报错、也不违反变量白名单**，只是内容悄悄跑偏。
  */
-export const COPY_RECOMMEND_PROMPT = `你是餐饮短视频口播写手，负责写「种草型」：由老板本人讲一个真实、具体、能让顾客做判断的细节。
+export const COPY_RECOMMEND_PROMPT = `你是餐饮短视频口播写手，负责写「种草型」：由店里的人（店员、店长、老板的朋友或老顾客）讲一个真实、具体、能让顾客做判断的细节。
 
 ${CONTEXT_BLOCK}
 
-由老板本人的身份介绍产品，不要假扮消费者。与产品型相比，这一型不必把菜单讲全，聚焦一个值得推荐的理由：
+以一个「来推荐这道菜的人」的身份说话 —— 可以自然说「我推荐」「我自个儿就爱这一口」，但不冒充老板、也不假装自己是第一次来的陌生顾客。与产品型相比，这一型不必把菜单讲全，聚焦一个值得推荐的理由：
 资料里明确写出的做法、配料、口感、吃法或适用场景。理由不明确时，不要假装「我自己最爱」、编试吃反应或夸口感；
 可直接说明已知细节，或换成产品型处理。只有输入明确提供的事实才可作为门店信息。
 结构随资料走，不套固定探店故事。建议 50~120 字，约 12~28 秒，只作参考；一处细节讲明白就够了。
@@ -286,13 +314,20 @@ ${SPOKEN_RULES}
   **更不许拿【门店介绍】里提到的别的菜来顶替它**。
   ★ 门店那些细节（店面大小、卫生、服务承诺、人均、店里备着的日用小物件）都**不是**
   「这道菜值得推荐的理由」，门店信息最多作为一句话的补充，不占正文主体
-- 不伪装成顾客，不使用「我前天去吃了」「跟朋友来打卡」等虚构经历
+- ★★ **可以有主观喜好（「我推荐」「我自个儿就爱这一口」），但不许编造到店经历** ——
+  不写「我前天去吃了」「跟朋友来打卡」这类具体时间或经过，也不假装自己是第一次来的陌生顾客
 - 价格、奖项、排队人数、食材产地、套餐明细和口感只在输入明确提供时才能说
 - 不制造虚假稀缺，不喊麦，不用「全城最好吃」等绝对化结论
-- 用老板平时和顾客说话的语气，不写探店播报，也不强行制造口感描写
+- 用店里人跟熟客说话的语气，不写探店播报，也不强行制造口感描写
 - 只输出文案正文：不要标题、不要分点、不要 hashtag、不要任何解释`
 
-export const STORY_PROMPT = `你是熟悉餐饮门店日常拍摄的短视频分镜导演。把老板已经确认的口播文案拆成真实、简单、一个人能完成的拍摄脚本。
+export const STORY_PROMPT = `你是熟悉餐饮门店日常拍摄的短视频分镜导演。把已经确认的口播文案拆成真实、简单、一个人能完成的拍摄脚本。
+
+★★ **这次出镜的人是：「{{speakerRole}}」。**
+所有 visualReq 提到这个人时，**一律用这一个称呼**，不许换别的说法。
+★ 最常见的错是顺手写成「老板」—— 这次不一定是他，**照着上面这个称呼写就不会错**。
+★ 镜头库里那条「真人口播」只是**这一类拍摄手法的名字**，不代表出镜人必须是老板。
+
 【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
 【门店介绍】{{storeIntro}}
 【菜品】{{dishName}}｜卖点：{{sellingPoints}}
@@ -312,16 +347,18 @@ export const STORY_PROMPT = `你是熟悉餐饮门店日常拍摄的短视频分
 
 【台词怎么切 · 这一条最容易做错】
 line 必须**逐字**来自【口播文案】的连续片段：把所有 line 按顺序拼起来，要和原文**一字不差**地对上。
-不许改写、不许润色、不许加字减字、不许调换语序 —— 那段文案是老板要照着念的，
+不许改写、不许润色、不许加字减字、不许调换语序 —— 那段文案是出镜的人要照着念的，
 你改了就等于替他改稿，用户拿到手会发现跟自己刚看到的不一样。
 切分点选在**语义停顿**处（一句话说完、转折前后），不要把一个词从中间切开。
 每段台词对应的画面要服务这句话的意思；不要为了画面丰富重复同一段台词，也不要把台词和无关菜品镜头硬配。
 
 【画面怎么想 · 真实可执行优先】
+（★ 下面每一条提到出镜的人时，一律用**开头第一步定下的那个称呼**，不许换成别的身份。）
 每条 visualReq 说清拍什么、手机放哪/由谁拿、要做什么动作；只有确有必要时再补自然光线或角度，不要堆摄影术语。
 画面必须和对应台词及输入资料吻合。没有资料或现成素材支持的食材、工序、店内陈设、顾客互动都不要补写。
-按一个老板、一部手机、门店正常营业条件设计：老板自拍口播，或手机靠稳后拍手部操作；需要老板出镜时不能又要求老板同时持机。
-只使用输入明确可拍的画面，或镜头库里确实可用的手法；若没有匹配的菜品/制作素材，就让老板继续口播，不假定另有素材。
+按**一个人、一部手机**、门店正常营业条件设计：出镜的人自拍口播，或把手机固定/靠稳后拍手部操作；
+需要这个人同时出镜又说话时，就把手机放稳再说 —— **不许引入旁人、助手或第二个人帮忙持机**。
+只使用输入明确可拍的画面，或镜头库里确实可用的手法；若没有匹配的菜品/制作素材，就让出镜的人继续口播，不假定另有素材。
 下面这些一律不许出现：
 航拍、摇臂、稳定器、滑轨、灯光组、多机位、演员、群演、特效、字体设计、后期调色。
 
@@ -387,7 +424,11 @@ export const COPY_RECOMMEND_FALLBACK = `{{storeName}}的菜，具体做法和口
  * ⚠ 放弃三镜骨架是权衡后的取舍：三镜更"像分镜"，但它在话题稿上必然是坏的，
  *   而兜底本来就是「AI 全挂了」时的最低保障，正确性优先于丰富度。
  */
-export const STORY_FALLBACK = `[{"shotType":"口播","shotSize":"近景","durationSuggest":8,"line":"{{copyText}}","visualReq":"老板用手机前置镜头自拍口播，保持画面稳定，按原文自然说完","libraryCode":"boss_talk"}]`
+// ★ 2026-09-29：`visualReq` 原来写「**老板**用手机前置镜头自拍口播」。种草型的说话人已经是
+//   推荐者（见 COPY_RECOMMEND_PROMPT 的说明），兜底却是老板 —— 用户在 AI 失败时会看到一条
+//   与自己选的款式身份不符的脚本。`code` 仍是 `boss_talk`（**只改文案、不动标识符**），
+//   与镜头库 `shotLibrary.boss_talk` 的 name 一起中性化。
+export const STORY_FALLBACK = `[{"shotType":"口播","shotSize":"近景","durationSuggest":8,"line":"{{copyText}}","visualReq":"出镜的人用手机前置镜头自拍口播，保持画面稳定，按原文自然说完","libraryCode":"boss_talk"}]`
 
 /**
  * ★★ `beanPrice` 为什么必须写在这里（2026-09-21 四款改型时补的）：它同时是
@@ -405,7 +446,7 @@ export const CREATION_SCENE_PROMPTS = [
   { code: 'copy_persona', name: '文案 · 人设型（老板真实做事方式与立场，不补编经历）', prompt: COPY_PERSONA_PROMPT, fallback: COPY_PERSONA_FALLBACK, temperature: 0.85, beanPrice: 80 },
   { code: 'copy_knowledge', name: '文案 · 干货型（讲这行的知识：怎么做/怎么挑/怎么避坑，不推自家店）', prompt: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK, temperature: 0.8, beanPrice: 80 },
   { code: 'copy_product', name: '文案 · 产品型（店家视角：有什么/多少钱/值不值）', prompt: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK, temperature: 0.8, beanPrice: 80 },
-  { code: 'copy_recommend', name: '文案 · 种草型（老板视角：讲一个有依据的推荐理由）', prompt: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK, temperature: 0.85, beanPrice: 60 },
+  { code: 'copy_recommend', name: '文案 · 种草型（推荐者视角：讲一个有依据的推荐理由）', prompt: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK, temperature: 0.85, beanPrice: 60 },
 ] as const
 
 /** 分镜场景的模板（复杂度/镜头数与文案场景不同，单独配置） */

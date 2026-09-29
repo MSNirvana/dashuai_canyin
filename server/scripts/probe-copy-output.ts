@@ -153,9 +153,13 @@ async function pickStore() {
       console.log('本次有套餐信息（价格来自入参，属允许）')
     }
   } else if (sceneArg === 'copy_recommend') {
-    // 种草型由老板本人介绍；拦截明显的虚构探店叙述。
+    // ★ 2026-09-29 定位改成**推荐者视角**（界面侧重点写的就是「达人素人视角」）。
+    //   仍然拦截虚构消费经历 —— 理由变了、禁令没变：出镜人就算是老顾客，
+    //   也不代表他「昨天真来过」，编出来就是老板替一个不存在的消费过程背书。
     const inventedVisit = ['朋友带我去', '我前天去吃', '跟朋友来打卡', '路过这家店'].filter(has)
-    console.log(`★ 虚构探店口吻：${inventedVisit.length ? inventedVisit.join('、') + '  ← 应改为老板真实介绍' : '未发现常见模板句'}`)
+    console.log(`★ 虚构到店经历：${inventedVisit.length ? inventedVisit.join('、') + '  ← 应改为推荐者口吻（可以有主观喜好，不能编到店过程）' : '未发现常见模板句'}`)
+    // 反向也看一眼：这句稿子有没有**真在推荐这道菜**，而不是通篇改述门店介绍。
+    console.log(`菜名是否报出：${has(dishName) ? '是' : '否  ← 种草型同样要求主角是这道菜'}`)
     // 套餐变量为空时，检测到价格只作人工核对提示；价格也可能合法地来自菜品简介或卖点。
     const comboEmpty = !(variables.comboInfo ?? '').trim()
     if (comboEmpty) {

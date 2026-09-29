@@ -78,6 +78,7 @@ import {
   isStyleTrack,
   StyleCreationDishForbiddenError,
   StyleCreationTrackForbiddenError,
+  speakerRoleFor,
 } from '../src/services/creation.service.js'
 import { upsertAiScene, AdminAiInvalidTemplateError } from '../src/services/admin-ai.service.js'
 // ★ 菜品空值注解：模板侧是 {{dishEmptyNote}}，取值在 src/lib/dish-mention.ts。
@@ -1036,8 +1037,14 @@ for (const t of TEMPLATES.filter((x) => x.code.startsWith('copy_'))) {
 }
 const recommendTpl = TEMPLATES.find((t) => t.code === 'copy_recommend')!.tpl
 check(
-  recommendTpl.includes('不要假扮消费者') && recommendTpl.includes('编试吃反应'),
-  '种草型由老板说明有依据的推荐理由，不虚构消费经历或试吃反应',
+  recommendTpl.includes('不冒充老板') && recommendTpl.includes('编试吃反应'),
+  '★ 种草型以「来推荐的人」身份说话（不冒充老板），且不虚构试吃反应',
+)
+// ★★ 反向：不许再回到「由老板本人讲」那个定位 —— 那正是与界面上「达人素人视角」打架的旧形态。
+//    只查正面词会漏：写成「由老板本人讲，但可以推荐」同样能通过上面那一条。
+check(
+  !recommendTpl.includes('由老板本人') && !recommendTpl.includes('老板本人的身份'),
+  '★ 种草型不含旧版「由老板本人讲」定位（界面侧重点写的是「达人素人视角」，两处必须指向同一人）',
 )
 const knowledgeTpl = TEMPLATES.find((t) => t.code === 'copy_knowledge')!.tpl
 check(
@@ -1049,9 +1056,22 @@ check(
   personaTpl.includes('不是替老板编一段人生故事') && personaTpl.includes('不制造苦难或反转'),
   '人设型不补造老板经历、苦难或反转',
 )
+// ★ 2026-09-29 说话人从「老板本人」改成「来推荐的人」之后，这条断言**换了判据**：
+//   原来禁的是「顾客视角」这个**定位**（当时定位是老板，写顾客视角就是跑偏）；
+//   现在定位本身就是推荐者，所以不能再禁「顾客视角」四个字。
+//   它真正要钉住的东西没变：**不许出现虚构消费经历** —— 这与说话人是谁无关。
+//   ⚠ 禁令必须举例（「不写『我前天去吃了』」）才有约束力 ⇒ 硬约束段里**必然**含这些词。
+//     所以这里查的是**硬约束段之前的正文段**：那里出现这些词，等于把模型当成了举例对象，
+//     也就是在教它写假探店（那正是旧版本的毛病）。
+const recommendBody = recommendTpl.slice(0, recommendTpl.indexOf('【这一型额外的硬约束】'))
 check(
-  !recommendTpl.includes('顾客视角') && !recommendTpl.includes('朋友带我去') && !recommendTpl.includes('装成食客'),
-  '种草型模板不含旧版顾客视角定位或示例',
+  recommendBody.length > 0 &&
+    !/朋友带我去|我前天去吃|跟朋友来打卡|装成食客|路过这家店/.test(recommendBody),
+  '★ 种草型的「写作要求」段不含虚构消费经历示例（示例只允许出现在硬约束段的禁令里）',
+)
+check(
+  recommendTpl.includes('不许编造到店经历') && /我前天去吃了|跟朋友来打卡/.test(recommendTpl),
+  '★ 「不许编造到店经历」那条禁令还在、且带着例子（去掉例子它就只剩一句空话）',
 )
 check(
   TEMPLATES.every((t) => !/朋友带我去|我前天去吃|人均不过几十|今天到店还有专属福利/.test(t.fallback)),
@@ -1122,6 +1142,49 @@ check(
   storyTpl.includes('纯话题视频'),
   '★ 分镜区分了纯话题视频：门店/菜品全空时画面不该出现店名、招牌、菜品特写',
 )
+// ★★ 2026-09-29：分镜里的「老板」是**写死**的，而界面上种草型承诺的是「达人素人视角」——
+//    用户看到的分镜原话就是「老板站在店内镜头前」，而口播是推荐者的口吻。
+//    修法**不是**给分镜传款式变量（那会破掉「分镜款式无关」的设计，三条理由见
+//    `prompt-vars.ts` 的 STORYBOARD_VARS 声明处），而是**中性化 + 一句判据**：
+//    谁出镜，由 {{copyText}} 里说「我」的那个人决定。
+//    ⚠ 这几条要成组看：只查「模板里有没有那段话」会假绿 —— 段落写了但正文里仍写着
+//      「按一个老板…老板自拍口播」，用户看到的还是老板。所以正面与反向都要查。
+check(
+  !storyTpl.includes('老板自拍口播') && !storyTpl.includes('按一个老板'),
+  '★ 分镜不再写死出镜人是老板（写死就会与种草型的「推荐者视角」打架）',
+)
+// ★★ 出镜人的称呼**不由模型推断，由服务端按款式给定** —— 实测过三版，只有这一版稳：
+//   ① 中段写一段「谁出镜」说明 → 第 1 次 6/6 条对、第 2 次 5/5 条**全写「老板」**；
+//   ② 挪到提示词**开头**并加「写完全部 visualReq 通读自检」→ 3 次里 2 次全对、仍有 1 次全错；
+//   ③ 由 `speakerRoleFor(track)` 直接给称呼（本次采用）。
+//   ⇒ 前两版失败的原因是同一个：模型不知道**这一次**是哪个款式，只能靠题材先验猜，
+//     而餐饮门店视频的先验就是「老板」。**猜不准的事实，就不要让它猜。**
+check(
+  storyTpl.includes('{{speakerRole}}'),
+  '★ 分镜用 {{speakerRole}} 拿到出镜人的称呼（不靠模型从文案里推身份）',
+)
+check(
+  speakerRoleFor('RECOMMEND') === '出镜推荐的人' && speakerRoleFor('RECOMMEND') !== '老板',
+  '★ 种草型的出镜人不是老板（与界面上那行「达人素人视角」对齐）',
+)
+let otherFourAreBoss = true
+for (const t of ['TRAFFIC', 'PERSONA', 'KNOWLEDGE', 'PRODUCT'] as const) {
+  if (speakerRoleFor(t) !== '老板') otherFourAreBoss = false
+}
+check(otherFourAreBoss, '★ 其余四款的出镜人仍是老板（本次只动种草型，别误伤）')
+check(
+  findUnknownPlaceholders('storyboard_generate', '{{speakerRole}}').length === 0 &&
+    findUnknownPlaceholders('copy_product', '{{speakerRole}}').length === 1 &&
+    findUnknownPlaceholders('copy_recommend', '{{speakerRole}}').length === 1,
+  '★ speakerRole 只在分镜白名单里（文案场景引用不到 —— 身份写在文案正文里，两个来源必然打架）',
+)
+// ★ 渲染结果要真的落进提示词：只查模板串会漏掉「白名单里有、buildVariables 却没产出」
+//   ⇒ 网关**静默**替换成空串 ⇒ 那句渲染成「这次出镜的人是：「」」。所以这里查渲染后的文本。
+const storyWithRecRole = renderTemplate(STORY_PROMPT, { speakerRole: speakerRoleFor('RECOMMEND') })
+check(
+  storyWithRecRole.includes('出镜推荐的人') && !storyWithRecRole.includes('「」'),
+  '★ 渲染后「出镜推荐的人」真的落在分镜提示词里（不是渲染成空串的病句）',
+)
 // ★ 旧版兜底引用了 {{dishName}}/{{city}}/{{storeName}}，那三个变量在话题稿里全是空串，
 //   渲染出来就是「，现做现卖」「就在」这种半句话 —— 一条模板要同时服务两种稿子就不能依赖它们。
 const storyFb = story.fallback
@@ -1135,6 +1198,23 @@ check(
 check(
   (storyFb.match(/"line":/g) ?? []).length === 1,
   '★ 分镜兜底是单镜（line 只有一条 ⇒ 所有 line 拼起来必然等于原文）',
+)
+// ★★ 2026-09-29：兜底的 visualReq 原来写「**老板**用手机前置镜头自拍口播」——
+//   种草型的说话人是推荐者，AI 失败时用户会拿到一条与所选款式身份不符的脚本。
+check(
+  !storyFb.includes('老板'),
+  '★ 分镜兜底的 visualReq 不写「老板」（兜底是静态模板，没法按款式换身份 ⇒ 只能中性化）',
+)
+check(
+  storyFb.includes('出镜的人'),
+  '★ 分镜兜底的 visualReq 用中性的「出镜的人」（五个款式共用这一条兜底）',
+)
+// ★ 「老板」的第三个来源是镜头库那行 —— `buildShotLibraryHint` 渲染成 `code｜name（category）`，
+//   所以 `shotLibrary.boss_talk` 的 name（旧值「老板口播」）会直接出现在提示词里，
+//   只要模型挑到它就会看到「老板」两个字。库名已中性化为「真人口播」，这里钉住模板侧那句澄清。
+check(
+  storyTpl.includes('真人口播') && storyTpl.includes('不代表出镜人必须是老板'),
+  '★ 分镜提示词澄清「真人口播」只是手法名、不等于出镜人是老板（库名会进提示词）',
 )
 
 // ──────────────────────── ⑥ 话题方向库（纯函数，不连库） ────────────────────────

@@ -235,7 +235,7 @@ interface MockShot {
 // 基础拍摄手法池（与 seed 的镜头库 code 对齐）
 const MOCK_POOL: Record<string, MockShot> = {
   open_storefront: { shotType: '开场', shotSize: '全景', libraryCode: 'open_storefront', visualReq: '有门头素材时，把手机靠稳拍下门店入口；没有就用口播开场' },
-  boss_talk: { shotType: '口播', shotSize: '近景', libraryCode: 'boss_talk', visualReq: '老板用手机前置镜头自拍口播，画面保持稳定' },
+  boss_talk: { shotType: '口播', shotSize: '近景', libraryCode: 'boss_talk', visualReq: '出镜的人用手机前置镜头自拍口播，画面保持稳定' },
   closeup_food: { shotType: '特写', shotSize: '特写', libraryCode: 'closeup_food', visualReq: '菜品已上桌时用手机靠近拍一段细节，不补蒸汽或食材效果' },
   make_ingredient: { shotType: '原料', shotSize: '特写', libraryCode: 'make_ingredient', visualReq: '只拍资料提到且现场有的食材，手机近距离记录真实状态' },
   make_process: { shotType: '制作', shotSize: '中景', libraryCode: 'make_process', visualReq: '将手机靠稳，只拍一段实际发生且与口播有关的制作动作' },

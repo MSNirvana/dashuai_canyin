@@ -38,7 +38,15 @@ export const SCENE_STORYBOARD = SCENE.storyboard_generate
  *   **标识符与场景码一个都没动**（`RECOMMEND` / `copy_recommend` 仍是原值）。
  *   看到代码里的 `RECOMMEND`、`copy_recommend`，界面上就是「种草型」。
  *   四型的分界线是**内容重点**：人设讲老板真实做事方式／干货讲有依据的行业知识／
- *   产品讲清在售内容／种草型由老板讲一个有依据的推荐理由。
+ *   产品讲清在售内容／种草型由店里的人以**推荐者**身份讲一个有依据的推荐理由。
+ * ★★ 2026-09-29 补记一次「只改了 desc、没改正文」的事故（正是本条注释该防住的那类）：
+ *   09-24 那天的第三次改动把 `desc` 里的「老板视角」**换了归属** —— 从种草型挪给产品型，
+ *   种草型改写成「达人素人视角 / 推荐理由」。但**服务端提示词一个字都没跟着动**：
+ *   `COPY_RECOMMEND_PROMPT` 仍写「由老板本人讲」，`STORY_PROMPT` 仍写「按一个老板…老板自拍口播」。
+ *   用户在界面上看到「达人素人视角」，产出的分镜里却是「老板站在店内镜头前」。
+ *   ⇒ ★★ `desc` 换归属 ≠ 纯措辞微调：**必须同时核对 `prisma/prompts.ts` 的正文、
+ *     `SPOKEN_RULES` 与 `STORY_PROMPT` 的出镜人**。（与 skill 里那条「改名不等于换归属」
+ *     是同一件事的两面：那次是改了名没改归属，这次是真换了归属却没改正文。）
  * ★ 2026-09-24 同日第二次只改名：`TRAFFIC` 的中文名「流量款」→「流量型」，
  *   同样是**只动 label**（`TRAFFIC` / `copy_traffic` 一个都没动）。
  *   它仍然只属于 `mode='TOPIC'` 的话题稿 —— 小程序端已取消独立的「跟热点」页，
@@ -63,6 +71,41 @@ export const COPY_TRACKS = {
  * ⇒ 下次动这块直接**删掉 `desc`**，只留小程序那一份，不要再手工同步。
  */
 export type CopyTrack = keyof typeof COPY_TRACKS
+
+/**
+ * ★★ 分镜里「出镜的人」的称呼（2026-09-29 新增）。
+ *
+ * 为什么必须是**按款式定好的变量**，而不是让分镜「读文案自己判断身份」：试过，判断不出来。
+ * 同一份提示词、同一份变量、同一通道（deepseek-v4-flash），把「谁出镜」写在提示词**中段**：
+ *   · 第 1 次 → 6/6 条写「出镜说话的人」；
+ *   · 第 2 次 → 5/5 条**全写「老板」**（7 处）。
+ * 把判据挪到提示词**最前面**并加「写完全部 visualReq 通读自检」：
+ *   · 3 次里 2 次全对、仍有 1 次 6/6 条全写「老板」。
+ * ⇒ 餐饮门店视频这个题材里「老板」的先验太强，**靠模型自己推身份达不到
+ *   「种草型一定不写老板」这个验收口径**。所以改成由服务端按款式直接给出称呼。
+ *
+ * ⚠ 这次**有据可依地破例**改了「分镜与款式无关」那条既有约定 ——
+ *   那条约定成立的前提是「分镜要贴合文案，靠的是它拿到了 {{copyText}}」（见
+ *   `ai/prompt-vars.ts` 的 STORYBOARD_VARS 处），而上面这组实测说明该前提不成立。
+ *   破例的边界也划死了：只传**一个称呼**（名词短语），
+ *   **不传款式名、不传模板选择** —— 分镜怎么切、怎么拍仍然由 copyText 决定。
+ *
+ * ★ 必须**保证非空**：网关取不到值时静默替换成空串，模板里那句会渲染成
+ *   「这次出镜的人是「」」——一条不报错、也没人发现的病句。所以这里查表 + 默认值兜底。
+ */
+export const SPEAKER_ROLE_BY_TRACK: Record<CopyTrack, string> = {
+  TRAFFIC: '老板',
+  PERSONA: '老板',
+  KNOWLEDGE: '老板',
+  PRODUCT: '老板',
+  // 种草型的说话人不是老板，而是「来推荐这道菜的人」——与界面上那行「达人素人视角」对齐。
+  // 2026-09-29 之前分镜在这里写死「老板」，用户看到的就是「老板站在店内镜头前」。
+  RECOMMEND: '出镜推荐的人',
+}
+/** 款式 → 出镜人称呼；款式认不出时给「老板」（菜品稿绝大多数就是老板在讲） */
+export function speakerRoleFor(track: CopyTrack): string {
+  return SPEAKER_ROLE_BY_TRACK[track] ?? '老板'
+}
 
 /**
  * ★★ 存量 `track` 的**读取侧**映射（2026-09-21 四款改型）。
@@ -1009,6 +1052,13 @@ export async function buildVariables(
     complexityLabel: COMPLEXITIES[complexity].label,
     shotCountRule: COMPLEXITIES[complexity].rule,
     shotLibrary: await buildShotLibraryHint(prisma),
+    /**
+     * ★ 分镜里那个出镜的人该怎么称呼 —— 只给分镜场景用（`STORYBOARD_VARS` 里有它，
+     *   四个文案场景的白名单里**故意没有**）。取值与理由见 SPEAKER_ROLE_BY_TRACK 的注释。
+     *   放在 buildVariables 里而不是分镜调用点，是为了「话题稿 / 菜品稿 / 款式稿」三条入口
+     *   自动共用同一个值 —— 少写一处就少一个「某个入口漏传 ⇒ 静默渲染成空串」的机会。
+     */
+    speakerRole: speakerRoleFor(track),
   }
 }
 

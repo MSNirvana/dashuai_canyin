@@ -498,7 +498,7 @@ async function seedShotLibrary() {
       category: '收尾',
       tips: '最后一个镜头固定：老板对镜头说一句话（如「想吃扣 1」），说完再停 1 秒切黑。互动率上去了，下一条流量才稳。',
     },
-    // 基础拍摄手法（分镜匹配的必备库：美食特写 / 老板口播 / 出锅 / 环境 / 原料 / 制作过程）
+    // 基础拍摄手法（分镜匹配的必备库：美食特写 / 真人口播 / 出锅 / 环境 / 原料 / 制作过程）
     {
       code: 'closeup_food',
       name: '美食特写',
@@ -507,7 +507,12 @@ async function seedShotLibrary() {
     },
     {
       code: 'boss_talk',
-      name: '老板口播',
+      // ★ 2026-09-29 库名中性化：原来是「老板口播」。这个名字会经 `buildShotLibraryHint`
+      //   渲染进分镜提示词的 {{shotLibrary}}（格式为 `code｜name（category）`），
+      //   于是模型只要挑到这一条，就会看到「老板口播」四个字 —— 种草型的说话人是推荐者，
+      //   这就是它写出「老板站在店内镜头前」的三个来源之一（另两个是 STORY_PROMPT 正文与
+      //   STORY_FALLBACK 的 visualReq）。`code` 仍是 `boss_talk`：**只改文案、不动标识符**。
+      name: '真人口播',
       category: '口播',
       tips: '机位与眼睛齐平，人物居中，背后留出门店环境做背景。开拍前先深呼吸、看镜头说话，别念稿；一句一个动作，手可以指着菜或价目牌。',
     },
@@ -687,9 +692,19 @@ async function seedExcellentWorks() {
 // ================= 后台管理员（单角色全权限，密码 scrypt 哈希） =================
 async function seedAdminUser() {
   const username = process.env.ADMIN_USERNAME ?? 'admin'
-  const password = process.env.ADMIN_PASSWORD ?? 'admin123456'
-  if (!process.env.ADMIN_PASSWORD) {
-    console.warn('[seed] ADMIN_PASSWORD 未配置，使用默认 admin/admin123456（生产务必修改）')
+  const explicit = process.env.ADMIN_PASSWORD?.trim()
+  /**
+   * ★ 生产环境必须**显式**提供管理员密码。
+   *   原实现回落成 `admin123456` —— 而它同时也是后台登录页的预填值，等于把凭据印在
+   *   公开页面上；任何在生产误跑一次 seed 的人，都会留下一个众所周知的全权限后台账号。
+   *   非生产保留默认值，方便本地起库。
+   */
+  if (!explicit && process.env.NODE_ENV === 'production') {
+    throw new Error('[seed] 生产环境必须显式设置 ADMIN_PASSWORD（拒绝回落到默认口令 admin123456）')
+  }
+  const password = explicit ?? 'admin123456'
+  if (!explicit) {
+    console.warn('[seed] ADMIN_PASSWORD 未配置，使用默认 admin/admin123456（**仅限本地开发**）')
   }
   await prisma.adminUser.upsert({
     where: { username },
