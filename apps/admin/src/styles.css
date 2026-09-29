@@ -298,6 +298,27 @@ button, input, textarea { font-family: inherit; }
 .contact-editor { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 28px; margin-top: 4px; }
 .contact-editor__form { flex: 1 1 380px; min-width: 0; padding: 20px 22px 4px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); }
 
+/* 「演示账号」页：左表单 + 右「当前生效」状态卡。
+   ★ 状态卡读的是**库里已保存**的那份，不是左边表单里的草稿 —— 所以它俩并排放在一起时，
+     刻意用了不同的底色（左边白卡、右边白卡但内容更紧凑 + 每条一行），避免运营把
+     「我正在改的」当成「已经生效的」。草稿与库里不一致时页面底部另有提示。 */
+.demo-tip--info { color: var(--ds-muted); background: var(--ds-fill); border-color: var(--ds-line); border-left-color: var(--ds-subtle); }
+.demo-tip--warn { color: var(--ds-red-strong); background: var(--ds-red-soft); border-color: var(--ds-red-border); border-left-color: var(--ds-red); }
+.demo-editor { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 24px; margin-top: 4px; }
+.demo-editor__form { flex: 1 1 430px; min-width: 0; padding: 20px 22px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); }
+.demo-phones { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; }
+.demo-phones__row { display: flex; align-items: center; gap: 6px; }
+.demo-window { display: flex; align-items: center; gap: 8px; }
+.demo-help--warn { color: #c4892c; }
+.demo-status { flex: 0 0 auto; width: 400px; max-width: 100%; padding: 16px 18px; background: var(--ds-surface); border: 1px solid var(--ds-line); border-radius: var(--ds-radius); }
+.demo-status__caption { margin-bottom: 10px; color: var(--ds-subtle); font-size: 12px; }
+.demo-status__row { display: flex; align-items: flex-start; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--ds-line-light); font-size: 13px; }
+.demo-status__row:last-of-type { border-bottom: none; }
+.demo-status__key { flex: 0 0 64px; width: 64px; color: var(--ds-muted); font-size: 12px; line-height: 20px; }
+.demo-status__val { flex: 1; min-width: 0; color: var(--ds-body); line-height: 20px; word-break: break-all; }
+.demo-status__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--ds-line); }
+.demo-status__note { margin-top: 10px; color: var(--ds-subtle); font-size: 11px; line-height: 1.75; }
+
 /* ── 效果示意 ─────────────────────────────────────────────────────────────
    ★ 这只是一张**版式示意**，不是像素级渲染，别拿它当验收依据（真机要另测）。
      但它内部是**按 1:1 折算**的，所以「这块多大」在它上面是能读的：
@@ -379,6 +400,10 @@ button, input, textarea { font-family: inherit; }
   .qr-field__actions { flex-direction: row; flex-wrap: wrap; align-items: center; }
   /* 效果示意固定 375px 宽，窄屏下会溢出 ⇒ 让它跟着容器缩（它只是示意，缩了不影响可读） */
   .contact-preview { width: 100%; }
+  /* 演示账号：手机号行（输入框 + 删除 + 序号）在窄屏会挤成一条 ⇒ 允许换行；
+     状态卡是固定 400px 的，窄屏下改成整行 */
+  .demo-phones__row { flex-wrap: wrap; }
+  .demo-status { width: 100%; }
   .page-guide__summary { min-height: 48px; padding-left: 12px; padding-right: 12px; }
   .page-guide__summary-action { display: none; }
   .page-guide__body { padding-left: 36px; padding-right: 12px; }

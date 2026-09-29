@@ -206,6 +206,19 @@ const PAGE_GUIDES: Array<{ match: string; content: PageGuideContent }> = [
     },
   },
   {
+    match: '/demo-account',
+    content: {
+      title: '先看这里：演示账号',
+      intro:
+        '这里给「演示 / 试用」用的账号设一段可用时间。只影响填在下面的手机号，其他账号完全不受影响。',
+      items: [
+        { term: '演示手机号', description: '只填 11 位手机号。一个都不填 = 整个演示功能关闭。' },
+        { term: '可用窗口', description: '从第一次使用那一刻开始算，不是每次登录都重新计时。' },
+        { term: '重开 / 收回', description: '重开＝重新计时；收回＝立刻失效。已登录的端不受重开影响。' },
+      ],
+    },
+  },
+  {
     match: '/settings',
     content: {
       title: '先看这里：系统设置',

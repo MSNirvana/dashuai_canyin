@@ -39,6 +39,7 @@ const ShotLibraryPage = lazy(() => import('./pages/ShotLibrary'))
 const WorksPage = lazy(() => import('./pages/Works'))
 const HomeCarouselPage = lazy(() => import('./pages/HomeCarousel'))
 const ContactPage = lazy(() => import('./pages/Contact'))
+const DemoAccountPage = lazy(() => import('./pages/DemoAccount'))
 const SettingsPage = lazy(() => import('./pages/Settings'))
 const TutorialsPage = lazy(() => import('./pages/Tutorials'))
 
@@ -80,6 +81,7 @@ export default function App() {
           <Route path="/works" element={<WorksPage />} />
           <Route path="/home-carousel" element={<HomeCarouselPage />} />
           <Route path="/contact" element={<ContactPage />} />
+          <Route path="/demo-account" element={<DemoAccountPage />} />
           <Route path="/tutorials" element={<TutorialsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Route>
