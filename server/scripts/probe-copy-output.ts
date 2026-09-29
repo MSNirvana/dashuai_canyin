@@ -135,9 +135,9 @@ async function pickStore() {
     const leak = [storeName, '我们家', '我们店'].filter(has)
     console.log(`★ 门店/生意泄漏：${leak.length ? leak.join('、') + '  ← 话题稿不该出现' : '无'}`)
   } else if (sceneArg === 'copy_knowledge') {
-    // 干货型唯一的硬规矩：不出现自家店名/菜名（一出现就变成广告，掉完播）
+    // 知识型唯一的硬规矩：不出现自家店名/菜名（一出现就变成广告，掉完播）
     const leak = [storeName, dishName].filter(has)
-    console.log(`★ 自家店/菜泄漏：${leak.length ? leak.join('、') + '  ← 干货型不许出现' : '无'}`)
+    console.log(`★ 自家店/菜泄漏：${leak.length ? leak.join('、') + '  ← 知识型不许出现' : '无'}`)
   } else if (sceneArg === 'copy_persona') {
     // 人设型卖人不卖货：不该荐菜、不该报价
     const leak = [dishName].filter(has)

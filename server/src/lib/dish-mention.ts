@@ -50,7 +50,7 @@ export function dishEmptyNoteFor(dishName: string): string {
  *   `copy_product`（产品型）与 `copy_recommend`（种草型）的硬约束段里都有
  *   「只要【菜品】一节有内容，正文里就必须出现这个菜名 —— 没出现就是不合格稿」。
  * ★ 故意**不含**这两个：
- *   · `copy_persona`（人设型）、`copy_knowledge`（干货型）—— 这两型的定义就是不荐菜不报货，
+ *   · `copy_persona`（人设型）、`copy_knowledge`（知识型）—— 这两型的定义就是不荐菜不报货，
  *     要求它们报菜名等于让它们违反自己的边界；
  *   · `copy_generate`（通用兜底）—— 它的模板里没有这条约束，代码却去强制它，
  *     会变成「反复重试必然失败」的白花钱。

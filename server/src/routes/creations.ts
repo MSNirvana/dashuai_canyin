@@ -67,7 +67,7 @@ const createInput = z.object({
   /**
    * 内容模式；不传 = 菜品稿（保持既有客户端行为不变）。
    * ★ 2026-09-28 加 `STYLE`（「不选菜品」）：门店**必填**、菜品**不许传**，
-   *   且款式只收人设型/干货型 —— 三条都由 service 一处判定（同下面 storeId 的做法）。
+   *   且款式只收人设型/知识型 —— 三条都由 service 一处判定（同下面 storeId 的做法）。
    */
   mode: z.enum(['DISH', 'TOPIC', 'STYLE']).optional(),
   /**

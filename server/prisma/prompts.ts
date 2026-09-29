@@ -172,7 +172,7 @@ ${SPOKEN_RULES}
 - 不许写成心灵鸡汤合集（连着两个金句就是失败的信号）
 - 只输出文案正文：不要标题、不要分点、不要 hashtag、不要任何解释`
 
-export const COPY_KNOWLEDGE_PROMPT = `你是餐饮短视频「干货型」文案专家，核心目标是【让看完的人真学到一样能用的东西】。
+export const COPY_KNOWLEDGE_PROMPT = `你是餐饮短视频「知识型」文案专家，核心目标是【让看完的人真学到一样能用的东西】。
 
 ${CONTEXT_BLOCK}
 
@@ -400,7 +400,7 @@ export const COPY_FALLBACK = `{{storeName}}的菜，具体信息以门店当前�
 export const COPY_TRAFFIC_FALLBACK = `你平时更愿意一个人吃饭，还是约上朋友一起？`
 // ★ 人设型兜底不假定具体经历、身份细节或门店做法。
 export const COPY_PERSONA_FALLBACK = `开店没有太多大道理，把每天手上的事一件件做好就行。`
-// ★ 干货型兜底：这一型**不许出现自家店名/菜名**，所以这条模板一个门店占位符都不能用
+// ★ 知识型兜底：这一型**不许出现自家店名/菜名**，所以这条模板一个门店占位符都不能用
 //   （用了就等于让老板念一个自家店名出来，当场破了这一型唯一的硬规矩）。
 //   内容只保留一个一般性的备菜建议，不使用未经确认的配方、温度或食品安全结论。
 export const COPY_KNOWLEDGE_FALLBACK = `做菜前先把食材和调料备齐，再开火会从容很多，也不容易忙中出错。`
@@ -444,7 +444,7 @@ export const CREATION_SCENE_PROMPTS = [
   { code: 'copy_generate', name: '短视频文案生成（通用·兼容旧客户端）', prompt: COPY_PROMPT, fallback: COPY_FALLBACK, temperature: 0.8, beanPrice: 70 },
   { code: 'copy_traffic', name: '文案 · 流量款（话题驱动：节气节日/时令/生活共识，无门店无菜品）', prompt: COPY_TRAFFIC_PROMPT, fallback: COPY_TRAFFIC_FALLBACK, temperature: 0.9, beanPrice: 80 },
   { code: 'copy_persona', name: '文案 · 人设型（老板真实做事方式与立场，不补编经历）', prompt: COPY_PERSONA_PROMPT, fallback: COPY_PERSONA_FALLBACK, temperature: 0.85, beanPrice: 80 },
-  { code: 'copy_knowledge', name: '文案 · 干货型（讲这行的知识：怎么做/怎么挑/怎么避坑，不推自家店）', prompt: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK, temperature: 0.8, beanPrice: 80 },
+  { code: 'copy_knowledge', name: '文案 · 知识型（讲这行的知识：怎么做/怎么挑/怎么避坑，不推自家店）', prompt: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK, temperature: 0.8, beanPrice: 80 },
   { code: 'copy_product', name: '文案 · 产品型（店家视角：有什么/多少钱/值不值）', prompt: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK, temperature: 0.8, beanPrice: 80 },
   { code: 'copy_recommend', name: '文案 · 种草型（推荐者视角：讲一个有依据的推荐理由）', prompt: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK, temperature: 0.85, beanPrice: 60 },
 ] as const

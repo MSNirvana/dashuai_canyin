@@ -18,7 +18,7 @@ export type Complexity = 'SIMPLE' | 'COMPLEX' | 'FINE'
  * 内容模式：`DISH` = 菜品稿（门店+可选菜品）；
  * `TOPIC` = 话题稿（流量型，不选门店菜品，靠节气/时令出稿）；
  * `STYLE` = 款式稿（2026-09-28 新增的「不选菜品」：门店与菜品资料**都不喂**给 AI，
- * 只按用户选的人设型/干货型写）。
+ * 只按用户选的人设型/知识型写）。
  * 服务端有同名枚举，这里是它的下达形态。
  */
 export type ContentMode = 'DISH' | 'TOPIC' | 'STYLE'
@@ -35,6 +35,11 @@ export type ContentMode = 'DISH' | 'TOPIC' | 'STYLE'
  *   产品型「有什么 / 多少钱 / 值不值」→「老板视角 / 真实内在」、
  *   种草型「老板视角 / 讲一个真实推荐理由」→「达人素人视角 / 推荐理由」。
  *   ⚠ 注意「老板视角」这一次是**换了归属**（原属种草型、现属产品型），不是纯措辞微调。
+ * ★ 2026-09-29 **只改名**：`KNOWLEDGE` 的中文名「干货型」→「知识型」，
+ *   **标识符与场景码一个都没动**（`KNOWLEDGE` / `copy_knowledge` 仍是原值），
+ *   与「流量款→流量型」「真诚推荐型→种草型」同一口径；同一轮把产品型的 `desc`
+ *   由「老板视角 / 真实内在」改为「老板视角 / 真材实料」——这一次**只是换措辞、归属没动**
+ *   （与上面那条「换了归属」的事故是两回事）。看到代码里的 `KNOWLEDGE`，界面上就是「知识型」。
  * ★★ `desc` 在本端**只有一个消费点**：创作页 `TrackPicker` 把每款渲染成选项下方的侧重点小字
  *   （见 `pages/creation/edit.tsx`）。所以它有一条硬约束 ——
  *   **必须能在半宽格子的一行内放下**：格子内宽约 **267rpx**
@@ -56,8 +61,8 @@ export type ContentMode = 'DISH' | 'TOPIC' | 'STYLE'
 export const COPY_TRACK_OPTIONS: { value: CopyTrack; label: string; desc: string }[] = [
   { value: 'TRAFFIC', label: '流量型', desc: '跟热点 / 话题共鸣' },
   { value: 'PERSONA', label: '人设型', desc: '立场 / 经历 / 情绪' },
-  { value: 'KNOWLEDGE', label: '干货型', desc: '怎么做 / 怎么挑' },
-  { value: 'PRODUCT', label: '产品型', desc: '老板视角 / 真实内在' },
+  { value: 'KNOWLEDGE', label: '知识型', desc: '怎么做 / 怎么挑' },
+  { value: 'PRODUCT', label: '产品型', desc: '老板视角 / 真材实料' },
   { value: 'RECOMMEND', label: '种草型', desc: '达人素人视角 / 推荐理由' },
 ]
 
@@ -116,11 +121,11 @@ export const DISH_TRACK_OPTIONS = COPY_TRACK_OPTIONS.filter((o) => o.value !== '
 export const TRAFFIC_TRACK: CopyTrack = 'TRAFFIC'
 
 /**
- * ★★ 「不选菜品」（`mode='STYLE'`）允许的款式 —— 只有**人设型与干货型**。
+ * ★★ 「不选菜品」（`mode='STYLE'`）允许的款式 —— 只有**人设型与知识型**。
  *
  * 2026-09-28 需求：菜品选择器里加一档「不选菜品」，选它就不给 AI 任何门店与菜品资料。
  * 但**不是每个款式都能站在这一档上**：
- * · 干货型模板本来就写着「不推自己的店、不推自己的菜，不许出现自家店名、菜名、价格」，
+ * · 知识型模板本来就写着「不推自己的店、不推自己的菜，不许出现自家店名、菜名、价格」，
  *   人设型讲的是老板这个人，两者没有门店/菜品资料也写得成立；
  * · 产品型与种草型天生要讲清在售内容，资料全空时只能编 —— 而且它们的兜底文案都写成
  *   `{{storeName}}的菜，…`，门店资料被清空后会渲染成「的菜，具体价格…」这种病句

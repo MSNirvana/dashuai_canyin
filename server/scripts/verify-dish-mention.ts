@@ -53,7 +53,7 @@ const TPLS: Array<{ code: string; label: string; tpl: string }> = [
   { code: 'copy_generate', label: '文案·通用', tpl: COPY_PROMPT },
   { code: 'copy_traffic', label: '文案·流量款（话题）', tpl: COPY_TRAFFIC_PROMPT },
   { code: 'copy_persona', label: '文案·人设型', tpl: COPY_PERSONA_PROMPT },
-  { code: 'copy_knowledge', label: '文案·干货型', tpl: COPY_KNOWLEDGE_PROMPT },
+  { code: 'copy_knowledge', label: '文案·知识型', tpl: COPY_KNOWLEDGE_PROMPT },
   { code: 'copy_product', label: '文案·产品型', tpl: COPY_PRODUCT_PROMPT },
   { code: 'copy_recommend', label: '文案·种草型', tpl: COPY_RECOMMEND_PROMPT },
   { code: 'storyboard_generate', label: '分镜', tpl: STORY_PROMPT },
@@ -105,7 +105,7 @@ for (const code of DISH_MENTION_SCENES) {
 for (const code of withConstraint) {
   check(DISH_MENTION_SCENES.has(code), `含该约束的 ${code} 已登记进名单（否则兜底漏接线）`)
 }
-// 反向：人设型/干货型的定义就是不荐菜，绝不能要求它们报菜名
+// 反向：人设型/知识型的定义就是不荐菜，绝不能要求它们报菜名
 for (const code of ['copy_persona', 'copy_knowledge', 'copy_traffic']) {
   check(!DISH_MENTION_SCENES.has(code), `${code} 不在名单里（这一型不荐菜/不报货）`)
 }

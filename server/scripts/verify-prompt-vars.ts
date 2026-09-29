@@ -110,7 +110,7 @@ const TEMPLATES: Array<{ code: string; label: string; tpl: string; fallback: str
   { code: 'copy_generate', label: '文案·通用（兼容旧客户端）', tpl: COPY_PROMPT, fallback: COPY_FALLBACK },
   { code: 'copy_traffic', label: '文案·流量款', tpl: COPY_TRAFFIC_PROMPT, fallback: COPY_TRAFFIC_FALLBACK },
   { code: 'copy_persona', label: '文案·人设型', tpl: COPY_PERSONA_PROMPT, fallback: COPY_PERSONA_FALLBACK },
-  { code: 'copy_knowledge', label: '文案·干货型', tpl: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK },
+  { code: 'copy_knowledge', label: '文案·知识型', tpl: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK },
   { code: 'copy_product', label: '文案·产品型', tpl: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK },
   { code: 'copy_recommend', label: '文案·种草型', tpl: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK },
   { code: 'storyboard_generate', label: '分镜', tpl: STORY_PROMPT, fallback: STORY_FALLBACK },
@@ -787,7 +787,7 @@ if (dbReady) {
 
     // ── 4.5 ★★ 「不选菜品」（`mode='STYLE'`）的真实链路（2026-09-28）──
     //   需求：菜品选择器里加一档「不选菜品」，选它就**不给 AI 任何门店与菜品资料**，
-    //   只按用户选的款式（人设型/干货型）写。要同时证明五件事：
+    //   只按用户选的款式（人设型/知识型）写。要同时证明五件事：
     //     ① 门店**照旧必填**（创作仍挂在门店下），菜品则**不许有**
     //     ② 九项门店/菜品变量全为空串，且 topicInfo 也空（用户口径：「什么都不补」）
     //     ③ 渲染后的提示词里查不到这家店的店名/品类/城市/菜名/人设
@@ -901,7 +901,7 @@ if (dbReady) {
         !isStyleTrack('PRODUCT') &&
         !isStyleTrack('RECOMMEND') &&
         !isStyleTrack(TOPIC_TRACK),
-      '★ 允许集恰好是「人设型 + 干货型」（流量型走它自己的 TOPIC 形态，不在这里）',
+      '★ 允许集恰好是「人设型 + 知识型」（流量型走它自己的 TOPIC 形态，不在这里）',
       `STYLE_TRACKS=${STYLE_TRACKS.join('/')} DEFAULT=${DEFAULT_STYLE_TRACK}`,
     )
   } finally {
@@ -1049,7 +1049,7 @@ check(
 const knowledgeTpl = TEMPLATES.find((t) => t.code === 'copy_knowledge')!.tpl
 check(
   knowledgeTpl.includes('通用知识要明确说成普遍做法') && knowledgeTpl.includes('不能说成这家店的秘方'),
-  '干货型区分可靠通用知识与本店事实，不虚构本店工艺',
+  '知识型区分可靠通用知识与本店事实，不虚构本店工艺',
 )
 const personaTpl = TEMPLATES.find((t) => t.code === 'copy_persona')!.tpl
 check(

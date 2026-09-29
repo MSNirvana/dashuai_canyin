@@ -239,7 +239,7 @@ export default function CreationEdit() {
    *
    * ★ 为什么用联合类型而不是「一个下标 + 两个哨兵值（-1/-2）」：选择器下标与 `dishes`
    *   之间本来就差一个偏移，而本次改动让偏移**随款式变化**（产品型/种草型没有「不选菜品」
-   *   那一项，偏移是 1；人设型/干货型有两项，偏移是 2）。哨兵值要跟着偏移一起改，
+   *   那一项，偏移是 1；人设型/知识型有两项，偏移是 2）。哨兵值要跟着偏移一起改，
    *   漏一处就是「选 A 提交 B」—— 那正是本页历史上出过一次的事故（旧注释里的 `-1`）。
    *   联合类型让 `dishes[...]` 的每一处读法都必须先收窄，编译器替我看着。
    */
@@ -677,10 +677,10 @@ export default function CreationEdit() {
        * ★ 三条路的**创建请求不同构**，别合并成一次调用再靠字段有无区分：
        * · 流量型 ⇒ `mode:'TOPIC'`，且**不许**带 storeId / dishId（服务端会 2002 拒绝）。
        *   宿主门店由服务端自己挑（只为媒体归属与地域钩子），用户在界面上没有选过它。
-       * · 「不选菜品」（`dishPick === 'NONE'`，只在人设型/干货型下可选）⇒ `mode:'STYLE'`。
+       * · 「不选菜品」（`dishPick === 'NONE'`，只在人设型/知识型下可选）⇒ `mode:'STYLE'`。
        *   ★ 它**要带 storeId**：服务端对这一档仍是必填（创作必须挂在门店下 ——
        *   列表归属、软删、越权校验都走它），被清空的只是**喂给 AI 的那份门店资料**。
-       *   ★ `track` 照传：款式是这一档唯一的驱动，人设型/干货型的模板就是这时候用的。
+       *   ★ `track` 照传：款式是这一档唯一的驱动，人设型/知识型的模板就是这时候用的。
        * · 其余 ⇒ 菜品稿，必须带 storeId + track，`dishId` **选填**（选了菜才发）。
        */
       const noMaterial = dishPick === 'NONE'
@@ -1093,9 +1093,9 @@ export default function CreationEdit() {
               ★ 选中流量型时整个标题行一起转灰（`--off`）：它和下面置灰的取值是**同一个信号**。 */}
           <View className={`cedit__spec-head${isTraffic ? ' cedit__spec-head--off' : ''}`}>
             <View className='cedit__spec-bar' />
-            <Text className='cedit__spec-title'>菜品</Text>
+            <Text className='cedit__spec-title'>菜品与套餐</Text>
           </View>
-          {/* 标题已经是「菜品」，行内不再重复这两个字 ⇒ 这一行整行就是选择器（描边容器） */}
+          {/* 标题已经是「菜品与套餐」，行内不再重复这两个字 ⇒ 这一行整行就是选择器（描边容器） */}
           <View className={`cedit__field${isTraffic ? ' cedit__field--off' : ''}`}>
             {/* 流量型没有菜品可选；菜品稿里菜品是**可选**的 —— range 前两项是
                 「不选菜品」「只讲门店」（产品型/种草型只有后一项，见 dishHeadOptions）。
@@ -1109,7 +1109,7 @@ export default function CreationEdit() {
                 range={dishRange}
                 /** ★★ 下标换算是这里唯一容易出错的地方：`dishes[i]` 对应 `range[i + 头部项数]`。
                     旧实现写死 `- 1`，而本次改动让头部项数**随款式变化**（1 或 2）⇒
-                    写成 `- 1` 时，人设型/干货型下选「只讲门店」会落到 `dishes[0]`（静默推错菜）。
+                    写成 `- 1` 时，人设型/知识型下选「只讲门店」会落到 `dishes[0]`（静默推错菜）。
                     所以偏移量从数组长度现取，并且**取不到就退回「只讲门店」**，
                     绝不允许在拿不准的时候落在一道具体的菜上。 */
                 onChange={(e: { detail: { value: string | number } }) => {
@@ -1286,7 +1286,7 @@ export default function CreationEdit() {
    *
    * ★ 话题稿整块不给入口（上面那条注释），而「不选菜品」（`mode='STYLE'`）**要给** ——
    *   它的驱动就是款式本身，锁死等于让用户回不去换款式。
-   * ★ 但只能列**人设型/干货型**：服务端对 STYLE 行会把其它款式直接丢弃
+   * ★ 但只能列**人设型/知识型**：服务端对 STYLE 行会把其它款式直接丢弃
    *   （`updateCreation` 的 `trackWritable`），四款全列出来就会变成「点了没反应」——
    *   与上面那条针对话题稿的顾虑是同一个，只是更隐蔽（选项看得见、点得动、就是不生效）。
    */

@@ -28,7 +28,7 @@ export const SCENE_COPY = SCENE.copy_generate
 export const SCENE_STORYBOARD = SCENE.storyboard_generate
 
 /**
- * 文案五款：流量型 + 四款菜品文案（人设型 / 干货型 / 产品型 / 种草型），
+ * 文案五款：流量型 + 四款菜品文案（人设型 / 知识型 / 产品型 / 种草型），
  * 各对应一个可在后台配置提示词的 AI 场景。
  *
  * ★ 2026-09-21 四款改型：删掉「介绍款（INTRO）」与「质量款（QUALITY）」，
@@ -37,7 +37,7 @@ export const SCENE_STORYBOARD = SCENE.storyboard_generate
  * ★ 2026-09-24 **只改名**：`RECOMMEND` 的中文名由「真诚推荐型」改为「种草型」，
  *   **标识符与场景码一个都没动**（`RECOMMEND` / `copy_recommend` 仍是原值）。
  *   看到代码里的 `RECOMMEND`、`copy_recommend`，界面上就是「种草型」。
- *   四型的分界线是**内容重点**：人设讲老板真实做事方式／干货讲有依据的行业知识／
+ *   四型的分界线是**内容重点**：人设讲老板真实做事方式／知识讲有依据的行业知识／
  *   产品讲清在售内容／种草型由店里的人以**推荐者**身份讲一个有依据的推荐理由。
  * ★★ 2026-09-29 补记一次「只改了 desc、没改正文」的事故（正是本条注释该防住的那类）：
  *   09-24 那天的第三次改动把 `desc` 里的「老板视角」**换了归属** —— 从种草型挪给产品型，
@@ -47,6 +47,10 @@ export const SCENE_STORYBOARD = SCENE.storyboard_generate
  *   ⇒ ★★ `desc` 换归属 ≠ 纯措辞微调：**必须同时核对 `prisma/prompts.ts` 的正文、
  *     `SPOKEN_RULES` 与 `STORY_PROMPT` 的出镜人**。（与 skill 里那条「改名不等于换归属」
  *     是同一件事的两面：那次是改了名没改归属，这次是真换了归属却没改正文。）
+ * ★ 2026-09-29 **只改名**：`KNOWLEDGE` 的中文名「干货型」→「知识型」，
+ *   **标识符与场景码一个都没动**（`KNOWLEDGE` / `copy_knowledge` 仍是原值）；
+ *   同一轮把 `PRODUCT` 的 `desc` 由「老板视角 / 真实内在」改为「老板视角 / 真材实料」。
+ *   两处都只是换 label —— 与上面那条「改了 desc 却没改正文」的事故不是一类。
  * ★ 2026-09-24 同日第二次只改名：`TRAFFIC` 的中文名「流量款」→「流量型」，
  *   同样是**只动 label**（`TRAFFIC` / `copy_traffic` 一个都没动）。
  *   它仍然只属于 `mode='TOPIC'` 的话题稿 —— 小程序端已取消独立的「跟热点」页，
@@ -55,8 +59,8 @@ export const SCENE_STORYBOARD = SCENE.storyboard_generate
 export const COPY_TRACKS = {
   TRAFFIC: { label: '流量型', scene: SCENE.copy_traffic, desc: '跟热点 / 话题共鸣' },
   PERSONA: { label: '人设型', scene: SCENE.copy_persona, desc: '立场 / 经历 / 情绪' },
-  KNOWLEDGE: { label: '干货型', scene: SCENE.copy_knowledge, desc: '怎么做 / 怎么挑' },
-  PRODUCT: { label: '产品型', scene: SCENE.copy_product, desc: '老板视角 / 真实内在' },
+  KNOWLEDGE: { label: '知识型', scene: SCENE.copy_knowledge, desc: '怎么做 / 怎么挑' },
+  PRODUCT: { label: '产品型', scene: SCENE.copy_product, desc: '老板视角 / 真材实料' },
   RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '达人素人视角 / 推荐理由' },
 } as const
 /**
@@ -157,7 +161,7 @@ export const DEFAULT_COPY_TRACK: CopyTrack = 'PRODUCT'
 /**
  * 内容模式：这条创作是**菜品驱动**、**话题驱动**还是**款式驱动**。
  *
- * · `DISH`  —— 选门店（+可选菜品），走四款**菜品文案**（人设型 / 干货型 / 产品型 / 种草型）。
+ * · `DISH`  —— 选门店（+可选菜品），走四款**菜品文案**（人设型 / 知识型 / 产品型 / 种草型）。
  * · `TOPIC` —— 「流量型」：不选门店、不选菜品，只靠节气/节日/时令与生活共识出稿。
  * · `STYLE` —— 「不选菜品」（2026-09-28 新增）：**只按所选款式写**，门店与菜品资料一律不喂。
  *   见 `STYLE_TRACKS` 与 `buildVariables` 里 `noMaterial` 的说明。
@@ -185,10 +189,10 @@ export function isContentMode(v: unknown): v is ContentMode {
 export const TOPIC_TRACK: CopyTrack = 'TRAFFIC'
 
 /**
- * ★★ 「不选菜品」（`mode='STYLE'`）允许的款式 —— 只有**人设型与干货型**。
+ * ★★ 「不选菜品」（`mode='STYLE'`）允许的款式 —— 只有**人设型与知识型**。
  *
  * 为什么是这两款：它们是四款里唯一**不靠门店与菜品资料也写得成立**的两款。
- * - 干货型模板本身就写着「不推自己的店、不推自己的菜，不许出现自家店名、自家菜名、自家价格」；
+ * - 知识型模板本身就写着「不推自己的店、不推自己的菜，不许出现自家店名、自家菜名、自家价格」；
  * - 人设型讲的是老板这个人与做事方式，资料全空时它自带「资料不足时只说…不强行交代
  *   姓名、籍贯、年限、创业原因」的兜底。
  *
@@ -299,14 +303,14 @@ export class StyleCreationDishForbiddenError extends Error {
 }
 
 /**
- * 「不选菜品」只支持人设型与干货型（见 `STYLE_TRACKS`）。
+ * 「不选菜品」只支持人设型与知识型（见 `STYLE_TRACKS`）。
  *
  * 抛错而不是悄悄改成默认款式：那会让用户「选了产品款、实际出的是人设款」，
  * 而且**不报错** —— 正是本仓反复拦的那种静默变味。
  */
 export class StyleCreationTrackForbiddenError extends Error {
   constructor() {
-    super('「不选菜品」只支持人设型与干货型')
+    super('「不选菜品」只支持人设型与知识型')
     this.name = 'StyleCreationTrackForbiddenError'
   }
 }
@@ -632,7 +636,7 @@ export async function createCreation(
   /**
    * ★ 「不选菜品」（`STYLE`）与话题稿的**必填性正好相反**，两条都要显式守：
    *   · 菜品**不许**有 —— 这一档的定义就是不给 AI 任何门店与菜品资料；
-   *   · 款式**必须是**人设型或干货型 —— 产品型/种草型站在这一档上必然翻车
+   *   · 款式**必须是**人设型或知识型 —— 产品型/种草型站在这一档上必然翻车
    *     （理由见 `STYLE_TRACKS`，其中一条是兜底会渲染成病句）。
    *   门店不在这条闸门里：它对两种模式都必填（下面 `storeId === undefined` 会兜住）。
    */
@@ -689,7 +693,7 @@ export async function createCreation(
         // ★ 话题稿**强制**用流量款：它是唯一一份不喂门店/菜品的文案模板。
         //   允许调用方传别的款式，会让「话题稿却走介绍款模板」这种组合悄悄生效 ——
         //   介绍款要求讲清菜名与卖点，而话题稿手里一个字都没有，模型只能编。
-        // ★ 「不选菜品」不能照抄这条：它的款式是**用户选的**（人设型/干货型），
+        // ★ 「不选菜品」不能照抄这条：它的款式是**用户选的**（人设型/知识型），
         //   强制成流量款等于把款式行上的选择静默改掉。没传款式时才落到 `DEFAULT_STYLE_TRACK`。
         track:
           mode === 'TOPIC'
@@ -1010,7 +1014,7 @@ export async function buildVariables(
    * ★★ `STYLE` 与话题稿有一处**故意的不对称**，别顺手抹平：`topicInfo` 只给话题稿。
    *   用户对「不选菜品」的验收口径是「直接按款式生成，**什么都不补**」——
    *   节气/时令/起手方向是话题款那份模板自己的素材，`STYLE` 既没有它、
-   *   拿到也用不上（人设型/干货型的模板里没有它的位置）。
+   *   拿到也用不上（人设型/知识型的模板里没有它的位置）。
    */
   const topic = mode === 'TOPIC'
   /** 门店与菜品资料一律清空（话题稿 + 款式稿两种形态） */
@@ -1126,7 +1130,7 @@ export async function generateCopy(
            */
           const safe = want === TOPIC_TRACK ? DEFAULT_COPY_TRACK : want
           /**
-           * ★★ 「不选菜品」（`STYLE`）另有一条收窄：只认人设型与干货型（`STYLE_TRACKS`）。
+           * ★★ 「不选菜品」（`STYLE`）另有一条收窄：只认人设型与知识型（`STYLE_TRACKS`）。
            *
            * 款式可能从两个地方来：入参（页面上换款式）与「同款配方」（`ExcellentWork.recipe_json`
            * 会把优秀作品的款式原样带过来，其中完全可能是产品型/种草型）。
@@ -1261,7 +1265,7 @@ export async function updateCreation(
   /**
    * ★ 「不选菜品」（`STYLE`）在款式上比话题稿**松一档**：款式**可以改** ——
    *   它这一档的驱动就是款式本身，锁死等于让用户回不去换款式。
-   *   但只收人设型与干货型；收到别的（产品型/种草型）一律丢弃、留着库里的值。
+   *   但只收人设型与知识型；收到别的（产品型/种草型）一律丢弃、留着库里的值。
    *   丢弃的写法与话题稿一致：前端换款式是**本地即时生效的高频操作**，
    *   为一个不该出现的入参把整次编辑请求打失败不划算；丢弃后返回的仍是库里的真实值。
    */
