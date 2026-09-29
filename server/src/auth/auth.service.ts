@@ -7,6 +7,7 @@ import type { Redis } from 'ioredis'
 import { code2Session, verifyPhoneNumber } from './wechat.js'
 import { verifyCode } from './sms.js'
 import { signAccess, signRefresh, verifyToken } from '../lib/jwt.js'
+import { demoSessionDeadline } from '../lib/demo-account.js'
 import * as bean from '../bean/bean.service.js'
 import { getNumber } from '../lib/settings.js'
 
@@ -184,7 +185,15 @@ export async function bindWechatOpenidByLoginCode(
   return s.openid
 }
 
-/** 刷新 token */
+/**
+ * 刷新 token。
+ *
+ * ★ 演示账号在这里**不可能**被续命：`buildLoginResult` 会过 `demoSessionDeadline`，
+ *   而截止时刻是「激活时刻 + 窗口」算出来的**绝对时间**，跟刷新几次无关 ——
+ *   窗口一过这里直接抛 `DemoExpiredError`（路由层映射成 1006）。
+ *   这正是「24h 后自动退出」能成立的原因：access 2h / refresh 30d 的滑动续期
+ *   本身是永不过期的，只有绝对截止能把它掐断。
+ */
 export async function refresh(prisma: PrismaClient, refreshToken: string): Promise<LoginResult> {
   const payload = verifyToken<{ mid: string; typ: string }>(refreshToken)
   if (payload.typ !== 'refresh') throw new Error('invalid refresh token')
@@ -243,6 +252,18 @@ async function upsertMerchantByPhone(
 }
 
 async function buildLoginResult(prisma: PrismaClient, merchant: { id: bigint; phone: string; nickname: string | null; avatarUrl: string | null }): Promise<LoginResult> {
+  /**
+   * ★★ 演示账号闸门必须在**签发任何 token 之前**。
+   *
+   * 这里是**唯一**出口（登录 / 微信一键 / 刷新 / 开发登录四条路径全走它），所以放在这一处
+   * 就等于四条路径一起接线 —— 分散到各路由去判，必然漏掉一条（最可能漏的是 `/auth/refresh`，
+   * 而它恰好是泄漏点：refresh 每次都换发新 refresh，漏了它演示窗口就形同虚设）。
+   *
+   * 顺序也重要：先判过期、后签 token。反过来的话窗口已关时会发出一个 `dst` 早已过期的 token，
+   * 用户看到的是「刚登录就被踢」，而不是「演示已结束，请联系管理员」。
+   */
+  const demoDst = await demoSessionDeadline(prisma, merchant.phone)
+
   const isNew = (await prisma.store.count({ where: { merchantId: merchant.id } })) === 1
   const m = await prisma.membership.findFirst({
     where: { merchantId: merchant.id, status: 'ACTIVE', endAt: { gt: new Date() } },
@@ -250,8 +271,8 @@ async function buildLoginResult(prisma: PrismaClient, merchant: { id: bigint; ph
   })
   const ba = await bean.getBalance(prisma, merchant.id)
   return {
-    token: signAccess({ mid: String(merchant.id), phone: merchant.phone }),
-    refreshToken: signRefresh(merchant.id),
+    token: signAccess({ mid: String(merchant.id), phone: merchant.phone, ...(demoDst ? { dst: demoDst } : {}) }),
+    refreshToken: signRefresh(merchant.id, demoDst),
     merchant: {
       id: String(merchant.id),
       phone: merchant.phone,

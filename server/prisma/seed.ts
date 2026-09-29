@@ -829,6 +829,38 @@ async function seedSettings() {
     update: {}, // 不覆盖：运营填过的二维码/电话必须能在重跑 seed 后活下来
   })
   console.log('[seed] contact info: 已保证存在（不覆盖已有配置）')
+
+  // ── 演示账号（demo account）──────────────────────────────────────────
+  // 语义：**多端可登录**（本项目 JWT 无状态、服务端不存会话，本来就支持），
+  //       但整个账号只有一段**全局一次性**的可用窗口：默认 24h，从**首次登录**起算；
+  //       窗口一过，任何设备都无法再登录，必须人工重开。
+  //
+  // ★ 走「不存在才建」（update 为空对象），**不放进上面的 items 数组**：
+  //   items 的 update 会覆盖 settingVal，重跑一次 seed 就会把运营填好的演示手机号清掉
+  //   ⇒ 演示功能**静默关闭**，而页面上看不出任何异常。
+  // ★ 配置刻意做成**一条 JSON**而不是 `phones` / `window_hours` 两行：后台写配置走
+  //   `POST|PUT /admin/api/v1/settings`，其 schema 是 `settingVal: z.string().min(1)`
+  //   —— 不允许存空串。两行的方案里，运营想「关掉演示」只能存空串 ⇒ 400，
+  //   页面上只显示「保存失败」而看不出原因（轮播图 / 联系我们踩过同一个坑）。
+  // ★ `demo.activated_at` **故意不在这里建**：它是运行时状态，由代码在首次登录时写入。
+  //   若让 seed 给它一个值，重跑 seed 就等于把演示窗口**重开一遍**（「一次性」语义被
+  //   悄悄破坏，且没有任何提示）。首次登录后它才会出现在后台配置页里。
+  await prisma.systemSetting.upsert({
+    where: { groupKey_settingKey: { groupKey: 'demo', settingKey: 'config' } },
+    create: {
+      groupKey: 'demo',
+      settingKey: 'config',
+      settingVal: JSON.stringify({ phones: [], window_hours: 24 }),
+      valueType: 'JSON',
+      displayName: '演示账号',
+      description:
+        'phones=演示账号手机号数组（留空即关闭演示，不是"所有号"）；window_hours=窗口时长(小时)，从首次登录起算且全局一次性。首次登录后会自动出现 demo.activated_at，重开窗口＝把它的值改成当前时间，或删掉那一行。',
+      sort: 0,
+      isPublic: false, // 绝不能公开：这是账号白名单，客户端不需要也不该知道
+    },
+    update: {}, // 不覆盖：运营填过的演示号必须能在重跑 seed 后活下来
+  })
+  console.log('[seed] demo account config: 已保证存在（不覆盖已有配置）')
 }
 
 async function main() {

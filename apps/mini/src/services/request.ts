@@ -54,6 +54,10 @@ export const ERROR_TEXT: Record<number, string> = {
   4013: '该档位暂不可用，请稍后再试',
   4047: '合成任务不存在',
   5001: 'AI 服务繁忙，请稍后再试',
+  // ★★ 演示账号（demo account）窗口已关。这条**不是**「登录已过期」——
+  //   重新登录也一定失败（窗口是全局一次性的，只能由管理员重开），
+  //   文案必须让用户知道「找管理员」而不是「再登一次」。
+  1006: '演示账号已到期，请联系管理员',
 }
 
 /** refresh 的结果。`sessionChanged` 表示「这次续期属于上一个会话」，调用方不得拿它的 token 重放请求。 */
@@ -230,6 +234,30 @@ export async function request<T>(options: RequestOptions<T>): Promise<T> {
     }
   }
 
+  /**
+   * ★★ 演示账号到期（1006）：登录态**已经没有救** —— 服务端窗口是全局一次性的，
+   * 再登一次也一定失败。所以必须在这里就把本地登录态清掉并回登录页。
+   *
+   * 为什么不能只走下面「通用错误 → 弹 toast」那条路：那样界面仍然认为「已登录」，
+   * 用户每点一次操作就弹一次同样的 toast，既退不出去也看不到「请联系管理员」；
+   * 而 1006 又不等于 1001，走不到上面的自动续期分支，**没有任何一条现有路径会清登录态**。
+   *
+   * `silent` 的静默调用只清状态、不弹提示（一次进页面可能并发好几个请求，
+   * 否则会连弹好几个一模一样的 toast）。`redirectToLogin` 自带 300ms 延后与幂等，
+   * 并发 1006 只会切一次 tab。
+   */
+  if (body?.code === 1006) {
+    clearLoginState()
+    redirectToLogin()
+    const err: ApiError = {
+      code: 1006,
+      message: body?.message ?? ERROR_TEXT[1006],
+      traceId: body?.traceId,
+    }
+    if (!silent) Taro.showToast({ title: err.message, icon: 'none', duration: 3000 })
+    throw err
+  }
+
   if (body?.code === 0) return body.data as T
 
   const err: ApiError = {
@@ -242,6 +270,26 @@ export async function request<T>(options: RequestOptions<T>): Promise<T> {
     else Taro.showToast({ title: err.message, icon: 'none', duration: 2000 })
   }
   throw err
+}
+
+/**
+ * 给**非 http 通道**（`Taro.uploadFile` / `Taro.downloadFile`）用的续期入口。
+ *
+ * ★ 为什么需要它：普通请求走 `request()` 的 1001 自动续期，而上传是直接调
+ *   `Taro.uploadFile`、自己读 storage 里的 access token —— token 一过期，整条上传就失败，
+ *   报的还是上游 message 或泛化的「上传失败」。用户表现是「在编辑页停留久一点，
+ *   再传头像/视频就必失败，重进一次又好了」，与其它接口的行为完全不一致。
+ * ★ 与 `request()` 共用同一把单飞锁（`refreshing`）⇒ 上传和普通请求同时撞上过期时只刷新一次。
+ * 返回新的 access token；会话已变更或续期失败时返回 null（失败路径会清登录态并引导重登）。
+ */
+export async function refreshAccessTokenForRetry(): Promise<string | null> {
+  if (!refreshing) refreshing = doRefresh().finally(() => (refreshing = null))
+  const outcome = await refreshing
+  if (outcome.sessionChanged) return null
+  if (outcome.token) return outcome.token
+  clearLoginState()
+  redirectToLogin()
+  return null
 }
 
 export const http = {
