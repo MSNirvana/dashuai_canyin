@@ -117,8 +117,20 @@ export default function ContactPage() {
    *   `POST /uploads/contact-qrcode` 只把图写进对象存储、把地址填进表单，
    *   真正下发到小程序要靠一次 PUT/POST `/settings`。少了这一步，刷新就没了，
    *   看着完全就是「被后台自动删除了」。
+   *
+   * ★★ **初始值必须是「空表单的序列化值」，不能是 `''`。**
+   *   自动保存的判据是 `JSON.stringify(form) !== savedKeyRef.current`。
+   *   这个 ref 只在 `load()` 的**成功分支**里被赋值 ⇒ 一旦 `GET /settings` 失败，
+   *   它仍是初始值。若初始值是 `''`，那么 `'{"qrcode":"","phone":""}' !== ''` 恒成立
+   *   ⇒ `dirty` 为真 ⇒ 500ms 后自动落库**凭空发一次 POST**（`row` 还是 null），
+   *   撞上 `(groupKey, settingKey)` 唯一索引报错，运营会看到一个莫名其妙的「保存失败」，
+   *   而他什么都没改。
+   *   ⇒ 写成空表单的序列化值后，「加载失败」与「表单确实是空的」在判据上等价，
+   *     不会产生任何多余的写。（本轮的验收就抓到了这一条：桩没命中时状态行卡在
+   *     「有改动未保存，正在自动保存…」，同时桩日志里冒出一条 `POST /settings`。）
+   *   ⚠ `HomeCarousel.tsx` 是同一个写法（`useRef('')`），尚未修。
    */
-  const savedKeyRef = useRef('')
+  const savedKeyRef = useRef(JSON.stringify(EMPTY_FORM))
   /** 自动保存的防抖句柄 */
   const autoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** beforeunload 里读的实时状态（那个 handler 只注册一次，读不到新的闭包值） */
