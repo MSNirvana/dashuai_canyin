@@ -183,6 +183,16 @@ export interface SynthesisOptions {
   backgroundMusicPath?: string
   /** 背景音乐相对音量，默认 -22dB 左右的存在感。 */
   backgroundMusicGain?: number
+  /**
+   * 可选：把**已合并的待分行文本**交给外部（大模型）分行，返回 `原文 → 行数组`。
+   * 由 `worker.ts` 注入 `breakSubtitleLines`（见 `subtitle-split.service.ts`）。
+   *
+   * ★★ 为什么用**注入**而不是在这里直接 import 那个服务：本模块要保持
+   *   「只有 ffmpeg 与纯函数」—— 于是守护脚本可以直接 import 它做断言，
+   *   **不需要数据库、不需要 AI 通道**。一旦在这里 import prisma，所有字幕断言都会变成集成测试。
+   * ★ 返回空 Map / 抛异常都算「不可用」⇒ 退回内建 `splitSubtitleText`（绝不拦住出片）。
+   */
+  breakSubtitleLines?: (texts: readonly string[]) => Promise<Map<string, string[]>>
 }
 
 function toSrtTime(msIn: number): string {
@@ -519,13 +529,29 @@ export function splitSubtitleText(text: string, maxWidth = SUBTITLE_MAX_WIDTH): 
   return subtitles
 }
 
-/** 将字幕归一为单行、非重叠、连续替换的 cue，避免 libass 自动换成多行。 */
-export function normalizeSubtitleSegments(segments: TranscriptionSegment[]): TranscriptionSegment[] {
+/** 把「一条文本」换成「行数组」的外部分行器；返回 null = 这一条没有可用结果 */
+export type SubtitleLineSplitter = (text: string) => string[] | null
+
+/**
+ * 将字幕归一为单行、非重叠、连续替换的 cue，避免 libass 自动换成多行。
+ *
+ * ★ `splitter`（2026-09-29 加）＝ 由 `worker.ts` 注入的 **AI 分行**结果
+ *   （见 `subtitle-split.service.ts`）；返回 `null` 表示这一条不可用 ⇒ 退回内建算法。
+ * ★★ 由 `splitter` 产出的行必须打上 `locked: true`：否则 `segmentsToAss` 内部的
+ *   **二次归一化**会把它们合回一大段、再按屏宽重切 —— AI 的分行会在最后一刻被抹掉
+ *   （完整机理见 `TranscriptionSegment.locked`）。
+ * ★ 内建算法产出的行**不打标记** ⇒ 老路径（ASR 原始段 / 分镜文案）行为完全不变。
+ */
+export function normalizeSubtitleSegments(
+  segments: TranscriptionSegment[],
+  splitter?: SubtitleLineSplitter,
+): TranscriptionSegment[] {
   const expanded: TranscriptionSegment[] = []
   for (const segment of mergeSubtitleSegments(segments)) {
     const text = String(segment.text ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
     if (!text) continue
-    const chunks = splitSubtitleText(text)
+    const aiLines = splitter ? splitter(text) : null
+    const chunks = aiLines ?? splitSubtitleText(text)
     const start = Math.max(0, Math.round(segment.startMs))
     const end = Math.max(start + 300, Math.round(segment.endMs))
     const span = Math.max(1, end - start)
@@ -536,7 +562,13 @@ export function normalizeSubtitleSegments(segments: TranscriptionSegment[]): Tra
       const chunkStart = start + Math.round((span * consumedWeight) / totalWeight)
       consumedWeight += weights[index] ?? 1
       const chunkEnd = index === chunks.length - 1 ? end : start + Math.round((span * consumedWeight) / totalWeight)
-      expanded.push({ startMs: chunkStart, endMs: Math.max(chunkStart + 250, chunkEnd), text: chunk })
+      expanded.push({
+        startMs: chunkStart,
+        endMs: Math.max(chunkStart + 250, chunkEnd),
+        text: chunk,
+        // ★ 只有 AI 分的行才带标记（理由见上面的函数注释与 TranscriptionSegment.locked）
+        ...(aiLines ? { locked: true } : {}),
+      })
     })
   }
   expanded.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
@@ -563,6 +595,9 @@ export function mergeSubtitleSegments(segments: TranscriptionSegment[]): Transcr
       startMs: Math.max(0, Math.round(segment.startMs)),
       endMs: Math.max(0, Math.round(segment.endMs)),
       text: String(segment.text ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim(),
+      // ★ 必须显式带过来：这里是一次「重建对象」的 map，不写就会把标记丢掉，
+      //   而下游正是靠它区分「AI 分好的行」与「ASR 原始段」（见 TranscriptionSegment.locked）。
+      locked: segment.locked === true,
     }))
     .filter((segment) => segment.text && segment.endMs > segment.startMs)
     .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
@@ -576,7 +611,14 @@ export function mergeSubtitleSegments(segments: TranscriptionSegment[]): Transcr
     const gapMs = Math.max(0, segment.startMs - previous.endMs)
     const previousHasSentenceEnd = /[。！？!?；;.!?]$/.test(previous.text)
     const currentSpanMs = segment.endMs - previous.startMs
-    const shouldMerge = !previousHasSentenceEnd && gapMs <= 900 && currentSpanMs <= 8_000
+    /**
+     * ★★ `locked` 两侧都要查，缺一不可：
+     *   · `previous.locked` —— 上一行是 AI 排好的最终行，再拼就把它的断行毁了；
+     *   · `segment.locked` —— 当前行是 AI 排好的最终行（上一行可能是 ASR 原始段）。
+     *   实测漏掉任何一侧，AI 的两行都会被拼回去、再按宽度重切 ⇒ 前功尽弃，且**不报错**。
+     */
+    const shouldMerge =
+      !previous.locked && !segment.locked && !previousHasSentenceEnd && gapMs <= 900 && currentSpanMs <= 8_000
     if (shouldMerge) {
       previous.text += segment.text
       previous.endMs = Math.max(previous.endMs, segment.endMs)
@@ -660,6 +702,37 @@ async function processVoiceTrack(input: string, output: string, targetDurationMs
     '-t', (Math.max(1, targetDurationMs) / 1000).toFixed(3),
     ...audioEncodeArgsStereo(), '-y', output,
   ], { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
+}
+
+/**
+ * 把「已合并的待分行文本」交给外部（大模型）分行，拿回 `原文 → 行数组`。
+ *
+ * ★ 分组必须与 `normalizeSubtitleSegments` 内部**完全一致**（同样先 `mergeSubtitleSegments`）——
+ *   否则这里问到的文本、和那边拿去查映射的文本对不上，映射永远查不到，AI 分行将**静默无效**。
+ *   所以这里不自己实现合并，直接复用同一个函数。
+ * ★ 只保留**真正被切成多行**的条目：单行结果与内建算法等价，留在映射里只会让
+ *   「AI 到底改了什么」更难对照。
+ * ★ 任何异常都吞掉并返回 null —— 分行是增强步骤，绝不能拦住出片。
+ */
+async function collectAiSubtitleLines(
+  segments: TranscriptionSegment[],
+  breaker: (texts: readonly string[]) => Promise<Map<string, string[]>>,
+): Promise<Map<string, string[]> | null> {
+  try {
+    const texts: string[] = []
+    for (const segment of mergeSubtitleSegments(segments)) {
+      const text = String(segment.text ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+      if (text) texts.push(text)
+    }
+    if (!texts.length) return null
+    const raw = await breaker(texts)
+    const multi = new Map<string, string[]>()
+    for (const [text, lines] of raw) if (lines.length > 1) multi.set(text, lines)
+    return multi.size ? multi : null
+  } catch (e) {
+    console.warn('[synthesis] AI 分行失败，改用内建分条算法：', (e as Error).message)
+    return null
+  }
 }
 
 interface CjkFont {
@@ -786,7 +859,13 @@ export async function applyAiSynthesis(
     if (!subtitleSegments.length && (subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE')) {
       subtitleSegments = lineSegments(shots)
     }
-    const normalizedSubtitleSegments = subtitleMode === 'OFF' ? [] : normalizeSubtitleSegments(subtitleSegments)
+    const aiLines = subtitleMode === 'OFF' || !options.breakSubtitleLines
+      ? null
+      : await collectAiSubtitleLines(subtitleSegments, options.breakSubtitleLines)
+    if (aiLines) console.log(`[synthesis] ${aiLines.size} 条文本使用了 AI 分行（其余走内建算法）`)
+    const normalizedSubtitleSegments = subtitleMode === 'OFF'
+      ? []
+      : normalizeSubtitleSegments(subtitleSegments, aiLines ? (text) => aiLines.get(text) ?? null : undefined)
     let mixedAudioPath = voicePath
     if (options.backgroundMusicPath) {
       mixedAudioPath = join(workDir, 'mixed-audio.m4a')

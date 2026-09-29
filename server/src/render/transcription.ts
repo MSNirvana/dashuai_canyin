@@ -11,6 +11,18 @@ export interface TranscriptionSegment {
   startMs: number
   endMs: number
   text: string
+  /**
+   * 「这一条已经是**最终字幕行**」的标记：不许再被合并、不许再被按宽度重切。
+   *
+   * ★★ 为什么需要它（2026-09-29，AI 分行上线时）：AI 分行产出的行是逐行排好的一条条短句，
+   *   相邻两条的时间是**首尾紧接**的（gap = 0）。而 `mergeSubtitleSegments` 的判据是
+   *   「上一段没有句末标点 ∧ 间隔 ≤900ms ∧ 累计 ≤8s」⇒ 它会把刚分好的行**又拼回一大段**、
+   *   然后重新按屏宽硬切 —— **AI 的分行结果会在最后一刻被自己人抹掉**。
+   *   更隐蔽的是 `segmentsToAss` 内部还会再跑一次 `normalizeSubtitleSegments`（二次归一化，
+   *   见那里的注释），所以这个标记必须一路带到**最后一次**合并为止。
+   * ★ 只有 AI 分行产出的 cue 会带上它；ASR 原始段、分镜文案段一律不带 ⇒ 老路径行为**完全不变**。
+   */
+  locked?: boolean
 }
 
 export interface TranscriptionResult {

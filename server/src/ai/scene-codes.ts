@@ -65,6 +65,24 @@ export const SCENE = {
    *   而 nginx 只给 480s —— 正是池化架构要避开的坑。
    */
   bgm_select: 'bgm_select',
+  /**
+   * 字幕分行（2026-09-29 接入）—— 把 ASR 认出来的整段口语切成一屏一条的字幕行。
+   *
+   * ★★ 为什么需要它（用户原话「**需要 AI 做好分行再添加到字幕里**」）：
+   *   AI 档的字幕文本走 `subtitleMode='SOURCE_AUDIO'`（对**原声**做 ASR），
+   *   而「一行最多几个字」是**画布像素的硬约束**（10 字封顶，见 `SUBTITLE_MAX_WIDTH`）。
+   *   中文口语句子的语义边界位置是随机的，10 字上限切断它们的概率很高；
+   *   实测已证明**任何只看宽度的规则都不可能同时满足**：
+   *     · `廊坊想吃火锅的千万别划走这盘牛肚` 需要**均衡** ⇒ `廊坊想吃火锅的`／`千万别划走这盘牛肚`
+   *     · `来大帅火锅旗舰店试第一口` 需要**填满**（专名不许拆）⇒ `来大帅火锅旗舰店`／`试第一口`
+   *   ⇒ 只有「知道哪个字串是专名、哪个位置可以断」的模型能同时命中。
+   *
+   * ★ 它在链路里的位置：`applyAiSynthesis` 拿到 ASR 段、**烧字幕之前**（见 `synthesis.ts`）。
+   *   输出是**结构化 JSON**（一组行），解析不过一律退回内建的分条算法（绝不阻塞出片）。
+   * ★ 与 `edit_plan` / `bgm_select` 同族：跑在出片链路里 ⇒ 超时与重试要按**出片预算**收，
+   *   失败的下场只是「按内建算法分」，那是个完全可接受的降级。
+   */
+  subtitle_split: 'subtitle_split',
 
   // ── 待接入：提示词已配好，业务方尚未引用 ──
   script_polish: 'script_polish',
@@ -89,6 +107,7 @@ export const LIVE_SCENE_CODES: readonly SceneCode[] = [
   SCENE.publish_cover_pick,
   SCENE.edit_plan,
   SCENE.bgm_select,
+  SCENE.subtitle_split,
 ]
 
 /**

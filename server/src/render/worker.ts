@@ -45,6 +45,7 @@ import { ENCODE_DELIVERY, ENCODE_INTERMEDIATE } from './encode-quality.js'
 import { applyAiSynthesis, fitShotDurationsToTimeline, shouldExtendForNarration, type SynthesisShot } from './synthesis.js'
 import { resolveBgmTrack } from './bgm-library.js'
 import { selectBgmFromPool } from './bgm-select.service.js'
+import { breakSubtitleLines as breakSubtitleLinesByAi } from './subtitle-split.service.js'
 import { dispatchBgmFromPool, noteBgmDispatched } from './bgm-dispatch.js'
 import { recentBgmTracksForMerchant, storeBgmTrack } from './bgm-history.js'
 import { activeTtsProvider, providerForVoice } from '../services/tts-provider.service.js'
@@ -859,6 +860,21 @@ async function processTask(
             removeSilence: effectiveChatcut.removeSilence,
             backgroundMusicPath,
             backgroundMusicGain: 0.10,
+            /**
+             * AI 分行（2026-09-29）：字幕文本仍然**来自原声 ASR**（`subtitleMode='SOURCE_AUDIO'`），
+             * 但「在哪里换行」交给模型判断 —— 用户原话「需要 AI 做好分行再添加到字幕里」。
+             * 无论成败都打 `notice`：这个功能最危险的失效方式是**静默退回内建算法**，
+             * 那时用户看到的就是「还是老样子」，而日志里什么都没有，无从判断是不是没生效。
+             */
+            breakSubtitleLines: async (texts) => {
+              const outcome = await breakSubtitleLinesByAi({
+                merchantId: task.merchantId,
+                taskId: task.id,
+                texts,
+              })
+              console.log(`[render-worker] task ${task.id} ${outcome.notice}`)
+              return outcome.lines
+            },
           },
         )
         finalPath = aiPath

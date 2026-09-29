@@ -137,6 +137,21 @@ const BGM_SELECT_VARS = ['copyText', 'bgmOptions'] as const
 const EDIT_PLAN_VARS = [...COPY_VARS, 'copyText', 'note', 'shotPlanInput', 'preferPlan'] as const
 
 /**
+ * 字幕分行场景（`subtitle_split`）：只吃**待分行的编号清单**与**每行字数上限**。
+ *
+ * ★★ 为什么**刻意不给** `COPY_VARS`（门店 / 品类 / 菜品那一套）：与 `bgm_select` 同一个理由 ——
+ *   渲染期在 `worker.ts` 里拿不到门店与菜品信息。白名单放开而模板又引用 ⇒ 渲染成**空串**，
+ *   模型看到「【门店】」后面什么都没有，会自己编一个店名补上。这是本文件反复出现的那类静默失效。
+ * ★ 为什么 `lineInput` 是**一整段编号清单**而不是 `line1` / `line2` 这些下标变量：
+ *   段数由 ASR 结果决定、每次都不一样 ⇒ 下标变量必然漏掉后面的段，
+ *   而且逐段调用会把「一次调用」变成「N 次调用」，直接压在出片预算上（同 `shotPlanInput` 的理由）。
+ * ★★ 为什么必须有 `maxWidth`：这是**画布像素算出来的硬约束**（`10 × 104px ＋ 描边 12 = 1052 ≤ 1080`）。
+ *   写死在提示词里的话，将来改字号就得**同时**改代码与库里的模板；当成变量传进来，
+ *   模型拿到的永远是此刻生效的那个值。
+ */
+const SUBTITLE_SPLIT_VARS = ['lineInput', 'maxWidth'] as const
+
+/**
  * 发布素材 · 文本场景：门店/菜品上下文 + **口播文案正文**。
  *
  * ★ 为什么必须有 `copyText` 而没有别的：这条链路的验收标准是
@@ -183,6 +198,8 @@ export const SCENE_VARIABLES: Record<string, readonly string[]> = {
   title_overlay: SYNTH_VARS,
   // ★ 配乐选曲**不是** SYNTH_VARS：它跑在渲染链路里，拿不到门店/菜品（理由见上面 BGM_SELECT_VARS）
   bgm_select: BGM_SELECT_VARS,
+  // ★ 字幕分行**不是** SYNTH_VARS：它跑在渲染链路里，拿不到门店/菜品（理由见上面 SUBTITLE_SPLIT_VARS）
+  subtitle_split: SUBTITLE_SPLIT_VARS,
   rhythm_detect: SYNTH_VARS,
   publish_material: PUBLISH_VARS,
   publish_cover: PUBLISH_COVER_VARS,

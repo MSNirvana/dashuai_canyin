@@ -16,7 +16,7 @@
 //
 // 用法：npm run ai-prompts:sync
 import { PrismaClient } from '@prisma/client'
-import { BGM_SELECT_SCENE, CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, STORYBOARD_SCENE, PUBLISH_SCENES } from '../prisma/prompts.js'
+import { BGM_SELECT_SCENE, CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, STORYBOARD_SCENE, PUBLISH_SCENES, SUBTITLE_SPLIT_SCENE } from '../prisma/prompts.js'
 import { validateTemplate } from '../src/ai/prompt-vars.js'
 
 const prisma = new PrismaClient()
@@ -54,6 +54,11 @@ const scenes: SceneSpec[] = [
   //   那正是我们要的：旧模板里那两个占位符在新白名单（`BGM_SELECT_VARS`）下会被**拒绝入库**，
   //   所以必须靠这次同步把库里的行刷新成新模板 —— 否则线上会继续用旧模板、渲染期照旧渲染成空串。
   { ...BGM_SELECT_SCENE, kind: 'TEXT' as SceneKind },
+  // 字幕分行（2026-09-29）—— 把 ASR 认出来的整段口语切成一屏一条的字幕行。
+  // ★ 它是**全新建行**的场景：库里没有 `subtitle_split` 这一行，所以第一次跑本脚本会走
+  //   「缺行 → 按能力类型现挑第一个可用 TEXT 模型 → 建行」那条分支，
+  //   候选链与正式定价留给 `npm run ai-channels:setup`。这是预期的，不是异常。
+  { ...SUBTITLE_SPLIT_SCENE, kind: 'TEXT' as SceneKind },
 ]
 
 /**
