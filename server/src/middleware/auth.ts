@@ -1,7 +1,7 @@
 // JWT 鉴权中间件：解析 access token，注入 merchantId / merchantPhone
 import type { NextFunction, Request, Response } from 'express'
 import { verifyToken, type AccessTokenPayload } from '../lib/jwt.js'
-import { DemoExpiredError, demoDeadlinePassed, demoWindowClosed, loadDemoPolicy } from '../lib/demo-account.js'
+import { DemoExpiredError, demoDeadlinePassed, demoWindowClosed, loadDemoPolicyFresh } from '../lib/demo-account.js'
 import { fail } from '../lib/result.js'
 import { prisma } from '../db.js'
 
@@ -45,9 +45,11 @@ export async function auth(req: Request, res: Response, next: NextFunction): Pro
      *
      * ★★ 只在 `p.dst` 存在时查 —— 也就是**只有演示号的 token 走这条路**。
      *   普通账号的 token 不带 `dst`，判据与开销**都**和以前一模一样（不进这个分支）。
-     * ★ 不做进程内缓存：缓存会把「收回」延迟一个 TTL，正好把这个改动的意义抵消掉。
+     * ★★★ 必须用 `loadDemoPolicyFresh`（**绕开 settings 的 60 秒缓存**）：授权决策不能吃
+     *   陈旧值。带缓存的 `loadDemoPolicy` 只靠「写的人记得调 `invalidate()`」，
+     *   而运维**直接改库**时缓存不会失效 ⇒「立即收回」会残留最长 60 秒的窗口。
      */
-    if (p.dst !== undefined && demoWindowClosed(await loadDemoPolicy(prisma))) {
+    if (p.dst !== undefined && demoWindowClosed(await loadDemoPolicyFresh(prisma))) {
       throw new DemoExpiredError()
     }
     const merchant = await prisma.merchant.findUnique({ where: { id: BigInt(p.mid) }, select: { status: true } })

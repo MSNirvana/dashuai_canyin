@@ -347,6 +347,7 @@ console.log('\n⑥ 接线态（读源码：闸门必须在签发之前，且 ref
   const mw = await src('src/middleware/auth.ts')
   const routes = await src('src/routes/auth.ts')
   const jwtSrc = await src('src/lib/jwt.ts')
+  const demoSrc = await src('src/lib/demo-account.ts')
 
   /**
    * ★★ 先把 `fnBody` 自己钉住。
@@ -426,7 +427,7 @@ console.log('\n⑥ 接线态（读源码：闸门必须在签发之前，且 ref
    *   ★ 这条不是推理出来的，是**灵敏度探针**逼出来的：把调用替换成 `false` 再跑守护，
    *   结果只有 2 条变红、这 2 条毫无反应 —— 说明它们在看注释。
    */
-  const LIVE_CALL = 'demoWindowClosed(await loadDemoPolicy(prisma))'
+  const LIVE_CALL = 'demoWindowClosed(await loadDemoPolicyFresh(prisma))'
   check('middleware：能定位到 auth 函数体', !!mwBody)
   check('middleware：★ 调 demoWindowClosed 复核实时窗口', !!mwBody && mwBody.includes(LIVE_CALL))
   check(
@@ -442,6 +443,47 @@ console.log('\n⑥ 接线态（读源码：闸门必须在签发之前，且 ref
     'middleware：实时复核也抛 DemoExpiredError ⇒ 回 1006（不能落进 1001 兜底）',
     !!mwBody && mwBody.indexOf(LIVE_CALL) >= 0 &&
       mwBody.indexOf(LIVE_CALL) < mwBody.indexOf('instanceof DemoExpiredError'),
+  )
+  /**
+   * ★★★ 授权判据**必须绕开 settings 的 60 秒缓存**。
+   *
+   * 这一条是**线上实测逼出来的**：第一版用带缓存的 `loadDemoPolicy`，结果「收回」之后
+   * 同一个 token 还能再用最长 60 秒 —— 因为缓存的新鲜度依赖「写的人记得调 `invalidate()`」，
+   * 而**直接改库**（运维排障的常见做法）不会让它失效。
+   * ⇒ 断言「用 Fresh 版」**且**「不许用带缓存的那版」，两条缺一不可：
+   *   只断言前者的话，两个调用并存（一个查一个不查）也全绿。
+   */
+  check(
+    'middleware：★★ 用**无缓存**的 loadDemoPolicyFresh（授权决策不能吃 60 秒陈旧值）',
+    !!mwBody && mwBody.includes('loadDemoPolicyFresh(prisma)'),
+  )
+  check(
+    'middleware：★★★ 且**不得**再出现带缓存的 `loadDemoPolicy(prisma)`',
+    !!mwBody && !mwBody.includes('loadDemoPolicy(prisma)'),
+  )
+  const freshBody = fnBody(demoSrc, 'async function readDemoSettingRaw')
+  check('demo-account：能定位到 readDemoSettingRaw 函数体', !!freshBody)
+  check(
+    'demo-account：★★★ 无缓存读取真的不碰 settings 的缓存（既不调 getString 也不提 cache）',
+    !!freshBody && freshBody.includes('systemSetting.findUnique') && !freshBody.includes('getString') &&
+      !freshBody.includes('cache'),
+  )
+  const freshLoader = fnBody(demoSrc, 'export async function loadDemoPolicyFresh')
+  check('demo-account：能定位到 loadDemoPolicyFresh 函数体', !!freshLoader)
+  check(
+    'demo-account：★ loadDemoPolicyFresh 两个键都走无缓存读取（漏一个就还留着陈旧窗口）',
+    !!freshLoader && (freshLoader.match(/readDemoSettingRaw\(prisma/g) ?? []).length === 2 &&
+      !freshLoader.includes('getString('),
+  )
+  /**
+   * ★ 反向对照：带缓存的那条路**必须仍然存在**且仍用 `getString`。
+   *   否则有人可能「顺手」把 `loadDemoPolicy` 也改成直读 —— 那样登录/发码路径就丢了缓存，
+   *   虽然功能不会错，但说明改动超出了必要范围（本改动只该动**授权**那一条）。
+   */
+  const cachedLoader = fnBody(demoSrc, 'export async function loadDemoPolicy')
+  check(
+    'demo-account：★ 对照：带缓存的 loadDemoPolicy 仍在、且仍走 getString（本改动只动授权路径）',
+    !!cachedLoader && (cachedLoader.match(/getString\(prisma/g) ?? []).length === 2,
   )
   check(
     'middleware：DemoExpiredError 单独回 1006（不并进 1001）',

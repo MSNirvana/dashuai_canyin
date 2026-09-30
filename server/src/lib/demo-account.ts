@@ -201,11 +201,8 @@ export function parseDemoConfig(raw: string): {
   }
 }
 
-export async function loadDemoPolicy(prisma: DemoDb): Promise<DemoPolicy> {
-  const [rawConfig, rawActivated] = await Promise.all([
-    getString(prisma, DEMO_GROUP, DEMO_CONFIG_KEY, ''),
-    getString(prisma, DEMO_GROUP, DEMO_ACTIVATED_AT_KEY, ''),
-  ])
+/** 把两条原始配置串装配成策略。两个 loader 共用，免得「解析规则」出现第二份。 */
+function buildDemoPolicy(rawConfig: string, rawActivated: string): DemoPolicy {
   const { phones, windowHours, loginCode } = parseDemoConfig(rawConfig)
   return {
     phones,
@@ -216,6 +213,48 @@ export async function loadDemoPolicy(prisma: DemoDb): Promise<DemoPolicy> {
     //   而且没有任何日志会提示。默认值必须落在「更保守 / 会被发现」的那一侧。
     activatedAt: parseIso(rawActivated) ?? (rawActivated.trim() ? new Date(0) : null),
   }
+}
+
+export async function loadDemoPolicy(prisma: DemoDb): Promise<DemoPolicy> {
+  const [rawConfig, rawActivated] = await Promise.all([
+    getString(prisma, DEMO_GROUP, DEMO_CONFIG_KEY, ''),
+    getString(prisma, DEMO_GROUP, DEMO_ACTIVATED_AT_KEY, ''),
+  ])
+  return buildDemoPolicy(rawConfig, rawActivated)
+}
+
+/**
+ * ★★★ **无缓存**的配置读取：直接 `findUnique`，既不读也不写 `lib/settings.ts` 那个
+ *   60 秒进程内缓存。
+ *
+ * 为什么不用现成的 `getString`：那层缓存的失效**依赖「写的人记得调 `invalidate()`」**。
+ *   · 后台三个写配置接口（`routes/admin.ts` 的 POST/PUT/DELETE `/settings`）确实调了
+ *     ⇒ 从后台点「立即收回」是即时的；
+ *   · 但运维排障时**直接改库**不会让它失效 ⇒ 授权决策最多多给 60 秒（线上实测复现过）；
+ *   · 将来若上 cluster 多实例，`invalidate()` 只清**当前进程**，其余实例各自陈旧 60s。
+ *   而「立即收回」的语义恰恰是**不许有任何残留窗口** ⇒ 这条**授权**路径不能挂在
+ *   别的模块的副作用上，自己读库。
+ * ★ 只用在这一处低频、正确性优先于开销的判据读取上（演示号只有一两个）。
+ */
+async function readDemoSettingRaw(prisma: DemoDb, key: string): Promise<string> {
+  const row = await prisma.systemSetting.findUnique({
+    where: { groupKey_settingKey: { groupKey: DEMO_GROUP, settingKey: key } },
+  })
+  return row?.settingVal ?? ''
+}
+
+/**
+ * 同 `loadDemoPolicy`，但**绕开 settings 的 60 秒缓存**（`readDemoSettingRaw`）。
+ *
+ * ★ 鉴权中间件必须用这个：授权决策不能吃陈旧值。判定理由见 `readDemoSettingRaw` 的说明。
+ * ★ 开销只落在**演示号**身上（中间件仅在 token 带 `dst` 时才调它），普通账号零感知。
+ */
+export async function loadDemoPolicyFresh(prisma: DemoDb): Promise<DemoPolicy> {
+  const [rawConfig, rawActivated] = await Promise.all([
+    readDemoSettingRaw(prisma, DEMO_CONFIG_KEY),
+    readDemoSettingRaw(prisma, DEMO_ACTIVATED_AT_KEY),
+  ])
+  return buildDemoPolicy(rawConfig, rawActivated)
 }
 
 export function isDemoPhone(policy: DemoPolicy, phone: string | null | undefined): boolean {
