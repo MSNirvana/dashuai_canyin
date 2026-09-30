@@ -36,6 +36,18 @@ export default defineConfig(async (merge, { mode }) => {
     (isDevelopment ? 'http://127.0.0.1:3000/api/v1' : 'https://REPLACE_ME.example.com/api/v1')
   )
   if (/REPLACE_ME/.test(apiBaseUrl)) {
+    /**
+     * ★ 生产构建必须**直接失败**，不能只警告。
+     *   旧实现打一行 warn 后照常出包：CI、临时打包机或新开发机都能产出一个
+     *   所有接口都指向 REPLACE_ME 的「正式包」，而 typecheck、构建、dist 自检全都显示通过，
+     *   故障要到体验版真机上才暴露。开发模式保持只警告（本地要能跑起来）。
+     */
+    if (!isDevelopment) {
+      throw new Error(
+        '[config] 生产构建缺少接口域名：请设置 TARO_APP_API_BASE_URL（或写入 apps/mini/.env）。' +
+          '否则产物里会写占位地址 https://REPLACE_ME.example.com/api/v1，小程序所有接口都不可用。',
+      )
+    }
     console.warn(
       '\n[config] ⚠️  未配置接口域名，产物里写的是占位地址 https://REPLACE_ME.example.com/api/v1，' +
         '小程序启动会报 ERR_CONNECTION_CLOSED。\n' +

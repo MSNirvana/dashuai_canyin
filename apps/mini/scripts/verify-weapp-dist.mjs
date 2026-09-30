@@ -160,11 +160,26 @@ if (tslibChecked === 0) {
 // ── 6. 产物里不应出现的联调地址（P0-4） ──
 const jsFiles = files.filter((f) => f.endsWith('.js'))
 const localhostHits = []
+const placeholderHits = []
 for (const f of jsFiles) {
   const t = readFileSync(f, 'utf8')
   if (/127\.0\.0\.1:\d+|localhost:\d+/.test(t)) localhostHits.push(f.replace(DIST + '/', ''))
+  if (t.includes('REPLACE_ME.example.com')) placeholderHits.push(f.replace(DIST + '/', ''))
 }
 console.log('\n[自检] 联调地址检查（P0-4）：')
+if (placeholderHits.length) {
+  /**
+   * ★ 占位域名一律判**失败**（localhost 仍只警告，因为本地 dev 包本来就该内联它）。
+   *   产物里出现 REPLACE_ME 只有一个原因：构建时没配 TARO_APP_API_BASE_URL。
+   *   这种包**所有接口都不可用** —— 而修复前它能一路「自检通过」，
+   *   直到体验版真机才暴露。
+   */
+  fail += 1
+  console.log(`    ✗ 产物里写的是占位域名 REPLACE_ME.example.com，全部接口都不可用：${placeholderHits.join(', ')}`)
+  console.log('      修法：出包前设置 TARO_APP_API_BASE_URL；正式包用 scripts/build-weapp-prod.sh <https://域名/api/v1>')
+} else {
+  console.log('    ✓ 未发现 REPLACE_ME 占位域名')
+}
 if (localhostHits.length) {
   console.log(`    ⚠ 以下产物内联了本机地址，真机会连不上：${localhostHits.join(', ')}`)
   console.log('      正式出包请用 scripts/build-weapp-prod.sh https://api.<域名>/api/v1')
