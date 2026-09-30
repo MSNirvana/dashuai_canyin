@@ -13,10 +13,20 @@
  *   逐条必然把「一次调用」变成「N 次调用」，N 次等待直接压在出片预算上（同 `editPlan` 给
  *   `shotPlanInput` 整段清单而不是 `shot1`/`shot2` 下标变量的理由）。
  *
- * ★ 为什么 requestId 只用 taskId、不带时间戳/随机数：
+ * ★ 为什么 requestId 默认只用 taskId、不带时间戳/随机数：
  *   同一任务的素材与台词是**固定**的，分行自然也该固定。用确定性 requestId 的收益是
  *   ① worker 崩溃重跑（MAX_RESUME=3）时命中幂等去重，**不会重复扣用户的积分**；
  *   ② 重跑拿到的还是同一份分行 ⇒ 用户看到的仍是「同一版片子」。
+ *
+ * ★★ 但「确定性 requestId」有一个致命副作用（2026-09-30 生产实测踩到）：
+ *   `runBilledScene` 在业务请求已是 `FAILED` 时，**不重新调用、直接返回兜底模板**
+ *   （见 `ai.service.ts` 的「!claim.created 且 status==='FAILED'」分支）。
+ *   于是**同一个 task 一旦失败过，之后每次重跑都拿不到 AI 分行**，永久退回内建算法 ——
+ *   而日志上只有一句「走了兜底模板」，分不清是「这次失败」还是「上次的失败还挂着」。
+ *   生产证据：`subtitle-split-51` / `subtitle-split-54` 两条业务请求都是 FAILED，
+ *   错误一致为三个候选各 30s 超时（`[tokenbox-deepseek/deepseek-v4-flash] request timeout after 30000ms`）。
+ *   ⇒ 修法：**成功/进行中复用原 requestId（保住幂等、不重复扣费），
+ *     仅当上一次是 FAILED 时换一个新 ID 重试**（失败路径本已全额解冻，重试不会重复扣钱）。
  *
  * ★★ 为什么校验要严到「逐字相同」：
  *   模型在这里唯一被允许做的事是**决定在哪里换行**。一旦它顺手改了字、丢了字、
@@ -198,10 +208,35 @@ export async function breakSubtitleLines(input: SubtitleSplitRequest): Promise<S
      * ★ 不能用 `Number()`：商户 id 是 bigint，超过 2^53 会**静默丢精度**、扣错账户。
      */
     const merchantId = typeof input.merchantId === 'bigint' ? input.merchantId : BigInt(input.merchantId)
+
+    /**
+     * requestId：默认 `subtitle-split-{taskId}`（确定性 ⇒ 重跑命中幂等、不重复扣费）。
+     *
+     * ★★ 但「上一次是 FAILED」时必须**换一个新 ID**：`runBilledScene` 对 FAILED 的旧请求
+     *   是**直接返回兜底模板**的（不重新调用），沿用旧 ID 等于把「上次的失败」当成
+     *   「这次的结果」⇒ AI 分行对这个 task **永久失效**，且日志只写「走了兜底模板」。
+     *   FAILED 的业务请求本就是**全额解冻**的，所以换 ID 重试不会重复扣用户的积分。
+     *   ⚠ 查询失败（例如库抖动）不该拖垮分行：catch 成 null ⇒ 退回确定性 requestId。
+     */
+    const baseRequestId = `subtitle-split-${String(input.taskId)}`
+    const previous = await prisma.businessRequest
+      .findFirst({
+        where: { merchantId, operation: 'AI_SUBTITLE_SPLIT', requestId: { startsWith: baseRequestId } },
+        orderBy: { id: 'desc' },
+        select: { requestId: true, status: true },
+      })
+      .catch(() => null)
+    const reusePrevious = previous?.status === 'COMPLETED' || previous?.status === 'PENDING'
+    const requestId = reusePrevious
+      ? (previous?.requestId ?? baseRequestId)
+      : previous
+        ? `${baseRequestId}-r${Date.now()}`
+        : baseRequestId
+
     const r = await runBilledScene(prisma, aiGateway, {
       sceneCode: SCENE.subtitle_split,
       merchantId,
-      requestId: `subtitle-split-${String(input.taskId)}`,
+      requestId,
       variables: { lineInput: buildLineInput(unique), maxWidth: String(maxWidth) },
       bizId: String(input.taskId),
     })
