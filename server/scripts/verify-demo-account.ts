@@ -16,10 +16,15 @@
 //   ④ **固定登录码退化成「留空即万能码」**：`login_code` 留空/写坏时若被读成「不校验」，
 //      **任何 6 位码都能登进演示账号**；而码值打进日志则等于把演示号公开。
 //      两个方向都不报错。见第 ⑤ 节。
+//   ⑤ **「收回」只挡住新登录**：截止时刻 `dst` 是**签发那一刻烙进 token** 的，而管理员在后台
+//      改的是**配置** ⇒ 点「立即收回」之后，已经登录着的端手里的 token 照旧有效，最多还能用
+//      2 小时（access 自身寿命），偏偏页面上写着「已登录的端在下次请求时也会被拦下」。
+//      不报错、也不易察觉（要等两小时才发现根本没赶走）。修法＝鉴权中间件对**带 `dst` 的
+//      token** 追查一次实时窗口，判据见第 ④ 节的 `demoWindowClosed`。
 //
 // 所以断言分两层：
 //   · **纯计算层**：直接调 `parseDemoPhones` / `parseDemoConfig` / `parseDemoLoginCode` /
-//     `demoLoginCode` / `describeDemoPolicy` / `demoDeadlinePassed` /
+//     `demoLoginCode` / `demoWindowClosed` / `describeDemoPolicy` / `demoDeadlinePassed` /
 //     `demoDeadlineMs` / `isDemoPhone` 这些真函数，看它们**算出来的结果**；
 //   · **接线层**：读源码，断言「谁在什么时候调了它」—— 这一层无法靠调函数证明，
 //     因为「闸门在签发 token 之前」「两边用同一个判据函数」都是调用点的属性，不在函数体内。
@@ -31,6 +36,7 @@ import {
   demoDeadlineMs,
   demoDeadlinePassed,
   demoLoginCode,
+  demoWindowClosed,
   describeDemoPolicy,
   isDemoPhone,
   parseDemoConfig,
@@ -236,6 +242,47 @@ console.log('\n④ 窗口语义（「全局一次性」＝绝对截止）')
   check('isDemoPhone：非白名单号 ⇒ false', isDemoPhone(policy(t0), '13900000000') === false)
   check('isDemoPhone：空串 / undefined ⇒ false', isDemoPhone(policy(t0), '') === false && isDemoPhone(policy(t0), undefined) === false)
   check('★★ 空白名单 ⇒ 任何号都不是演示号（空 ≠ 所有号）', isDemoPhone(policy(t0, 24, []), '13800000000') === false)
+
+  /**
+   * ── 第二条到期判据：`demoWindowClosed(policy)` ────────────────────────────
+   * 它看**当前配置**，不看 token 里烙死的值。
+   *
+   * ★★★ 为什么非有不可：管理员点「立即收回」只是把 `activated_at` 改成 1970，
+   *   而**已经发出去的 token 里那个 `dst` 纹丝不动** ⇒ 只靠上面那条 `demoDeadlinePassed`
+   *   的话，旧会话要一直活到 access token 自己过期（最长 2h）才被刷新的失败踢掉。
+   *   后台那句「已登录的端在下次请求时也会被拦下」在那之前是**不成立**的。
+   */
+  const nowMs = Date.now()
+  check(
+    '★ 实时判据：未启用（activatedAt=null）⇒ 关闭（「清除启用记录」等同一次收回）',
+    demoWindowClosed(policy(null), nowMs) === true,
+  )
+  check(
+    '实时判据：激活于 1h 前、窗口 24h ⇒ 开着',
+    demoWindowClosed(policy(new Date(nowMs - 3600_000)), nowMs) === false,
+  )
+  check(
+    '实时判据：激活于 25h 前、窗口 24h ⇒ 已关闭',
+    demoWindowClosed(policy(new Date(nowMs - 25 * 3600_000)), nowMs) === true,
+  )
+  check('★★ 实时判据：激活时刻为 epoch 0（「立即收回」写进去的就是它）⇒ 关闭', demoWindowClosed(policy(new Date(0)), nowMs) === true)
+  check(
+    '实时判据：刚好到点 ⇒ 关闭（判据是 >=，与 demoDeadlinePassed 同口径）',
+    demoWindowClosed(policy(new Date(nowMs - 24 * 3600_000)), nowMs) === true,
+  )
+  check(
+    '★ 实时判据跟随「窗口时长」：48h 窗口、激活于 25h 前 ⇒ 仍开着',
+    demoWindowClosed(policy(new Date(nowMs - 25 * 3600_000), 48), nowMs) === false,
+  )
+  /**
+   * ★★★ 反向对照（这一对才是整个改动的意义所在，缺了它会「全绿但什么也没证明」）：
+   *   收回之后，旧 token 里那个 `dst` 仍在未来（`demoDeadlinePassed` 说「没过期」），
+   *   而实时判据说「已经关了」。两条判据必须**结论相反** ——
+   *   若哪天有人把实时判据改成也去读 `dst`，这一对会同时变红，改动立刻被拦住。
+   */
+  const dstOfIssuedToken = Math.floor(nowMs / 1000) + 3600
+  check('★★ 对照：收回后旧 token 的 dst 仍被判「未过期」', demoDeadlinePassed(dstOfIssuedToken, nowMs) === false)
+  check('★★ 对照：同一次收回，实时判据必须判「已关闭」', demoWindowClosed(policy(new Date(0)), nowMs) === true)
 }
 
 // ───────────── ⑤ 固定登录码：形态 / 生效条件 / 不泄漏 / 限速 ─────────────
@@ -294,7 +341,7 @@ console.log('\n⑤ 固定登录码（★★ 它是可重复使用的共享码，
 
 // ───────────── ⑥ 接线态：谁能签发 token，谁就必须过闸门 ─────────────
 
-console.log('\n⑤ 接线态（读源码：闸门必须在签发之前，且 refresh 也得过）')
+console.log('\n⑥ 接线态（读源码：闸门必须在签发之前，且 refresh 也得过）')
 {
   const svc = await src('src/auth/auth.service.ts')
   const mw = await src('src/middleware/auth.ts')
@@ -361,6 +408,41 @@ console.log('\n⑤ 接线态（读源码：闸门必须在签发之前，且 ref
   check('auth.service：★ 只有 buildLoginResult 一处签发 token（别处不得签）', (svc.match(/signAccess\(/g) ?? []).length === 1)
 
   check('middleware：调 demoDeadlinePassed 判死', mw.includes('demoDeadlinePassed(p.dst)'))
+  /**
+   * ★★★ 实时复核（本轮新增）。只有 `demoDeadlinePassed` 是不够的 —— 它看的是 token 里
+   *   烙死的 `dst`，而管理员「立即收回」改的是**配置**，两码事。
+   *   下面四条一起，才说明「收回 ⇒ 下一个请求就 1006」这条链是接上的。
+   *
+   * ⚠⚠ 这四条**必须在 `auth()` 的函数体里**断言，不能拿整份源码比顺序 ——
+   *   `demoWindowClosed` 在 import 行里也出现一次，而 import 在函数体**之前**
+   *   ⇒ 用全文 `indexOf` 比「先 A 后 B」会永远为假（或永远为真），断言变成摆设。
+   *   这正是本文件反复强调的「同名串在别处也命中」。
+   */
+  const mwBody = fnBody(mw, 'export async function auth')
+  /**
+   * ⚠⚠ 这里比位置时**必须用「真调用」这一整串**（`LIVE_CALL`），不能用裸标识符：
+   *   `auth()` 的**文档注释里**也写了 `demoWindowClosed` 这个词，用裸标识符比位置会被注释
+   *   命中 ⇒ 把真实调用摘掉之后断言**照样全绿**。
+   *   ★ 这条不是推理出来的，是**灵敏度探针**逼出来的：把调用替换成 `false` 再跑守护，
+   *   结果只有 2 条变红、这 2 条毫无反应 —— 说明它们在看注释。
+   */
+  const LIVE_CALL = 'demoWindowClosed(await loadDemoPolicy(prisma))'
+  check('middleware：能定位到 auth 函数体', !!mwBody)
+  check('middleware：★ 调 demoWindowClosed 复核实时窗口', !!mwBody && mwBody.includes(LIVE_CALL))
+  check(
+    'middleware：★★ 实时复核被 `p.dst` 包住 ⇒ 普通账号的判据与开销都不变',
+    !!mwBody && /p\.dst !== undefined &&[\s\S]{0,80}?demoWindowClosed\(/.test(mwBody),
+  )
+  check(
+    'middleware：★ 顺序是「先烙死值、后实时」—— 到点即死不依赖数据库可用',
+    !!mwBody && mwBody.indexOf('demoDeadlinePassed(p.dst)') >= 0 &&
+      mwBody.indexOf('demoDeadlinePassed(p.dst)') < mwBody.indexOf(LIVE_CALL),
+  )
+  check(
+    'middleware：实时复核也抛 DemoExpiredError ⇒ 回 1006（不能落进 1001 兜底）',
+    !!mwBody && mwBody.indexOf(LIVE_CALL) >= 0 &&
+      mwBody.indexOf(LIVE_CALL) < mwBody.indexOf('instanceof DemoExpiredError'),
+  )
   check(
     'middleware：DemoExpiredError 单独回 1006（不并进 1001）',
     /instanceof DemoExpiredError[\s\S]{0,200}?fail\(res, 1006/.test(mw),

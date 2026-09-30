@@ -256,6 +256,27 @@ export function demoDeadlinePassed(dst: unknown, nowMs: number = Date.now()): bo
   return nowMs >= dst * 1000
 }
 
+/**
+ * ★★ 纯函数：**实时**窗口是否已经关闭（过期 / 被收回 / 被清空）。
+ *
+ * 与 `demoDeadlinePassed(dst)` 的分工，是这里最要紧的一点：
+ *   - `demoDeadlinePassed(dst)` 看的是 **token 里烙死的值**（签发那一刻算出的绝对截止）：
+ *     零延迟、不查库，负责「到点即死」。
+ *   - 本函数看的是 **当前配置**：负责「管理员在后台改了/收回了窗口 ⇒ 旧 token 立刻失效」。
+ *
+ * ★★★ 只有前者是不够的，会留下一个真实缺口：管理员点「立即收回」只是把
+ *   `activated_at` 改成 1970，而**已经发出去的 token 里那个 `dst` 纹丝不动**，
+ *   于是旧会话要一直活到 access token 自己过期（最长 2 小时）才被刷新的失败踢掉。
+ *   后台那句「已登录的端在下次请求时也会被拦下」在那之前是**不成立**的。
+ *
+ * `activatedAt` 为空 ⇒ 关（管理员点了「清除启用记录」）。
+ * ★ 这与 `loadDemoPolicy` 把「值填坏了」当作 `new Date(0)` 的兜底语义一致：都落在「关」这一侧。
+ */
+export function demoWindowClosed(policy: DemoPolicy, nowMs: number = Date.now()): boolean {
+  const live = demoDeadlineMs(policy)
+  return live === null || nowMs >= live
+}
+
 /** 首次登录时写入启用时刻（幂等；已激活则原样返回）。 */
 async function activateDemoWindowIfNeeded(prisma: DemoDb, policy: DemoPolicy): Promise<DemoPolicy> {
   if (policy.activatedAt) return policy
