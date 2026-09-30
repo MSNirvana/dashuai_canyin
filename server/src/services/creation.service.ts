@@ -1062,11 +1062,26 @@ async function buildShotLibraryHint(prisma: PrismaClient): Promise<string> {
   return lib.map((it) => `${it.code}｜${it.name}（${it.category}）`).join('\n')
 }
 
-/** 校验款式对应的场景是否存在且启用，不存在则回退通用文案场景（避免新增款式未配置时直接报错） */
+/** 缺失款式场景时的纯函数回退目标，供运行时与离线契约验证共用。 */
+export function resolveCopySceneForVerification(track: CopyTrack): string {
+  return track === DEFAULT_COPY_TRACK ? SCENE.copy_product : COPY_TRACKS[DEFAULT_COPY_TRACK].scene
+}
+
+/**
+ * 校验款式对应的场景是否存在且启用。
+ *
+ * `copy_generate` 只保留给旧客户端直接 scene 请求与历史账本/日志使用，不能再作为
+ * 新款式缺失时的隐式落点；否则新款式配置错误会静默生成通用稿。缺失时回到当前
+ * 明确默认款式 PRODUCT，再由调用方重新解析其场景。
+ */
 async function resolveCopyScene(prisma: PrismaClient, track: CopyTrack): Promise<string> {
   const scene = COPY_TRACKS[track].scene
   const hit = await prisma.aiScene.findFirst({ where: { code: scene, enabled: true }, select: { id: true } })
-  return hit ? scene : SCENE_COPY
+  if (hit) return scene
+  const fallbackScene = resolveCopySceneForVerification(track)
+  const fallbackHit = await prisma.aiScene.findFirst({ where: { code: fallbackScene, enabled: true }, select: { id: true } })
+  if (fallbackHit) return fallbackScene
+  throw new Error(`scene ${scene} unavailable and default scene ${fallbackScene} unavailable`)
 }
 
 export async function generateCopy(
@@ -1125,6 +1140,7 @@ export async function generateCopy(
            */
           return mode === 'STYLE' && !isStyleTrack(safe) ? DEFAULT_STYLE_TRACK : safe
         })()
+  // `copy_generate` 不参与款式回退；款式场景缺失时只允许回到当前默认款式 PRODUCT。
   const sceneCode = mode === 'TOPIC' ? SCENE.copy_traffic : await resolveCopyScene(prisma, finalTrack)
   if (current?.track !== finalTrack || (current && !isContentMode(current.mode))) {
     await prisma.creation.update({ where: { id: creationId }, data: { track: finalTrack, mode } })

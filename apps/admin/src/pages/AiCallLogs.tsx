@@ -41,7 +41,7 @@ export default function AiCallLogsPage() {
         <div>
           <Select placeholder="场景" clearable value={scene} onChange={(v) => setScene((v as string) || undefined)} style={{ width: 180, marginRight: 12 }}
             options={[
-              { label: 'COPY', value: 'copy_generate' },
+              { label: '通用文案（内部兼容/历史）', value: 'copy_generate' },
               { label: 'STORYBOARD', value: 'storyboard_generate' },
               { label: 'SHOT_LIBRARY', value: 'shot_library' },
               { label: 'TEST', value: 'TEST' },
