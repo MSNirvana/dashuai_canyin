@@ -9,8 +9,10 @@ interface LoginRes {
 }
 
 export default function LoginPage() {
-  const [username, setUsername] = useState('admin')
-  const [password, setPassword] = useState('admin123456')
+  // ★ 刻意留空：这里原来预填 `admin / admin123456`（与 seed 里的默认账号一字不差），
+  //   等于把后台凭据直接印在公开页面上；生产一旦误跑 seed 就是一个众所周知的全权限账号。
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
   const nav = useNavigate()
