@@ -6,7 +6,7 @@
 // 把对象键存进 merchant.avatar_key。
 import Taro from '@tarojs/taro'
 import { BASE_URL, PLATFORM, STORAGE_KEYS } from '../config'
-import { http } from './request'
+import { http, refreshAccessTokenForRetry } from './request'
 
 export interface ProfileInfo {
   id: string
@@ -36,27 +36,45 @@ export function updateProfile(input: { nickname?: string | null; avatarKey?: str
  * 小程序里 multipart 只能走 uploadFile（与 services/upload.ts 的本地模式分支同一套写法）。
  */
 export async function uploadAvatar(filePath: string): Promise<ProfileInfo> {
-  const token = Taro.getStorageSync<string>(STORAGE_KEYS.token)
-  const result = await Taro.uploadFile({
-    url: `${BASE_URL}/profile/avatar`,
-    filePath,
-    name: 'file',
-    header: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      'X-Platform': PLATFORM,
-    },
-  })
+  /**
+   * ★ 与 services/upload.ts 的本地模式同款：uploadFile 不经过 http 层，
+   *   所以必须自己处理 token 过期 —— 续期一次后原样重传，而不是把失败抛给用户。
+   *   否则「挑好图 → 停留一会儿 → 上传」这条最常见的路径会稳定失败，重进又好了。
+   */
+  const doUpload = (token: string) =>
+    Taro.uploadFile({
+      url: `${BASE_URL}/profile/avatar`,
+      filePath,
+      name: 'file',
+      header: {
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'X-Platform': PLATFORM,
+      },
+    })
 
-  let body: { code?: number; message?: string; data?: ProfileInfo }
-  try {
-    body = JSON.parse(result.data || '{}') as typeof body
-  } catch {
-    throw new Error('上传服务返回格式错误')
+  const parse = (r: Awaited<ReturnType<typeof doUpload>>) => {
+    let body: { code?: number; message?: string; data?: ProfileInfo }
+    try {
+      body = JSON.parse(r.data || '{}') as typeof body
+    } catch {
+      throw new Error('上传服务返回格式错误')
+    }
+    return { body, httpOk: r.statusCode >= 200 && r.statusCode < 300 }
   }
-  if (result.statusCode < 200 || result.statusCode >= 300 || body.code !== 0 || !body.data) {
-    throw new Error(body.message || '头像上传失败')
+
+  let result = await doUpload(Taro.getStorageSync<string>(STORAGE_KEYS.token))
+  let parsed = parse(result)
+  if (parsed.body.code === 1001 || result.statusCode === 401) {
+    const fresh = await refreshAccessTokenForRetry()
+    if (fresh) {
+      result = await doUpload(fresh)
+      parsed = parse(result)
+    }
   }
-  return body.data
+  if (!parsed.httpOk || parsed.body.code !== 0 || !parsed.body.data) {
+    throw new Error(parsed.body.message || '头像上传失败')
+  }
+  return parsed.body.data
 }
 
 /**

@@ -17,7 +17,7 @@
 import COS from 'cos-wx-sdk-v5'
 import Taro from '@tarojs/taro'
 import { BASE_URL, PLATFORM, STORAGE_KEYS } from '../config'
-import { http } from './request'
+import { http, refreshAccessTokenForRetry } from './request'
 
 export interface StsCredential {
   tmpSecretId: string
@@ -255,33 +255,58 @@ export async function uploadMediaFile(opts: {
   const ext = (opts.filePath.split('.').pop() || (opts.type === 'IMAGE' ? 'jpg' : opts.type === 'AUDIO' ? 'm4a' : 'mp4')).toLowerCase()
 
   if (sts.mode === 'local') {
-    const token = Taro.getStorageSync<string>(STORAGE_KEYS.token)
-    const uploadTask = Taro.uploadFile({
-      url: `${BASE_URL}/upload/local`,
-      filePath: opts.filePath,
-      name: 'file',
-      header: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        'X-Platform': PLATFORM,
-      },
-      formData: {
-        storeId: opts.storeId,
-        type: opts.type,
-        ...(opts.durationMs ? { durationMs: String(Math.round(opts.durationMs)) } : {}),
-        ...(opts.ownerType ? { ownerType: opts.ownerType } : {}),
-      },
-    })
-    uploadTask.onProgressUpdate((p) => opts.onProgress?.(p.progress))
-    opts.onTask?.({ abort: () => { try { uploadTask.abort() } catch { /* 已结束 */ } } })
-    const result = await uploadTask
+    /**
+     * ★ 本地模式下上传也必须走 token 续期。
+     *   原来这里直接读 storage 里的 access token：用户在编辑页停留久一点、token 过期，
+     *   这条上传就必然失败，而**其它所有接口都能自动续期**，行为完全不一致。
+     *   用户看到的现象是「重进一次又好了」，根本没法自查。
+     *   `/upload/local` 走鉴权中间件，过期时返回业务码 1001（也可能是 HTTP 401）。
+     */
+    const doUpload = (token: string) => {
+      const uploadTask = Taro.uploadFile({
+        url: `${BASE_URL}/upload/local`,
+        filePath: opts.filePath,
+        name: 'file',
+        header: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          'X-Platform': PLATFORM,
+        },
+        formData: {
+          storeId: opts.storeId,
+          type: opts.type,
+          ...(opts.durationMs ? { durationMs: String(Math.round(opts.durationMs)) } : {}),
+          ...(opts.ownerType ? { ownerType: opts.ownerType } : {}),
+        },
+      })
+      uploadTask.onProgressUpdate((p) => opts.onProgress?.(p.progress))
+      opts.onTask?.({ abort: () => { try { uploadTask.abort() } catch { /* 已结束 */ } } })
+      return uploadTask
+    }
+
+    const parseResult = (r: Awaited<ReturnType<typeof doUpload>>) => {
+      let body: { code?: number; message?: string; data?: MediaAsset }
+      try { body = JSON.parse(r.data || '{}') as typeof body } catch { throw new Error('上传服务返回格式错误') }
+      return { body, httpOk: r.statusCode >= 200 && r.statusCode < 300 }
+    }
+
+    let result = await doUpload(Taro.getStorageSync<string>(STORAGE_KEYS.token))
     aborted()
-    let body: { code?: number; message?: string; data?: MediaAsset }
-    try { body = JSON.parse(result.data || '{}') as typeof body } catch { throw new Error('上传服务返回格式错误') }
-    if (result.statusCode < 200 || result.statusCode >= 300 || body.code !== 0 || !body.data) {
-      throw new Error(body.message || '上传失败')
+    let parsed = parseResult(result)
+    // 1001（access token 过期）/ HTTP 401：续期一次后**原样重传**，而不是把失败直接抛给用户
+    if (parsed.body.code === 1001 || result.statusCode === 401) {
+      const fresh = await refreshAccessTokenForRetry()
+      if (fresh) {
+        aborted()
+        result = await doUpload(fresh)
+        aborted()
+        parsed = parseResult(result)
+      }
+    }
+    if (!parsed.httpOk || parsed.body.code !== 0 || !parsed.body.data) {
+      throw new Error(parsed.body.message || '上传失败')
     }
     opts.onProgress?.(100)
-    return body.data
+    return parsed.body.data
   }
 
   // COS 模式：服务端读不到本地视频文件，改由客户端先传封面图，再把对象键随视频上报
