@@ -29,8 +29,12 @@ export const LEGAL_OPERATOR = '廊坊大帅餐饮管理有限公司'
 export const LEGAL_EFFECTIVE_AT = '2026 年 9 月 15 日'
 export const LEGAL_UPDATED_AT = '2026 年 9 月 15 日'
 
-/** ⚠ TODO：填入对外可用的客服电话；留空则该项不显示 */
-export const LEGAL_CONTACT_PHONE = ''
+/**
+ * 对外客服电话。★ 与线上「我的 → 更多服务 → 联系我们」里那个号**同一个**
+ * （`system_setting.contact.info.phone`），两处不一致会让用户按协议上的号打过去没人接。
+ * ★★ 它同时是微信后台《用户隐私保护指引》「你的权益」里要填的联系方式 —— 两边必须一致。
+ */
+export const LEGAL_CONTACT_PHONE = '16630685127'
 /** ⚠ TODO：填入对外可用的客服邮箱；留空则该项不显示 */
 export const LEGAL_CONTACT_EMAIL = ''
 
