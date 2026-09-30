@@ -1,7 +1,16 @@
 // 系统配置读取（带进程内缓存，后台修改时调用 invalidate()）
 
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma } from '@prisma/client'
 import { decFromNumber, decFromString, type Dec } from './decimal.js'
+
+/**
+ * 读取系统配置所需的数据库能力。
+ * ★ 用 `Prisma.TransactionClient` 而不是 `PrismaClient`：配置读取经常发生在事务里
+ *   （例如上传配额校验必须与素材落库处在同一个事务），而事务客户端不满足
+ *   PrismaClient 的 `$transaction` 等成员。PrismaClient 是它的**结构超集**，
+ *   所以现有直接传 `prisma` 的调用点全部不受影响。
+ */
+type SettingsDb = Prisma.TransactionClient
 
 const CACHE_TTL_MS = 60_000
 const cache = new Map<string, { value: string; expireAt: number }>()
@@ -15,7 +24,7 @@ export function invalidate(groupKey?: string, settingKey?: string) {
   }
 }
 
-async function read(prisma: PrismaClient, groupKey: string, settingKey: string): Promise<string | null> {
+async function read(prisma: SettingsDb, groupKey: string, settingKey: string): Promise<string | null> {
   const ck = `${groupKey}.${settingKey}`
   const hit = cache.get(ck)
   if (hit && hit.expireAt > Date.now()) return hit.value
@@ -28,11 +37,11 @@ async function read(prisma: PrismaClient, groupKey: string, settingKey: string):
   return row.settingVal
 }
 
-export async function getString(prisma: PrismaClient, group: string, key: string, fallback: string) {
+export async function getString(prisma: SettingsDb, group: string, key: string, fallback: string) {
   return (await read(prisma, group, key)) ?? fallback
 }
 
-export async function getNumber(prisma: PrismaClient, group: string, key: string, fallback: number) {
+export async function getNumber(prisma: SettingsDb, group: string, key: string, fallback: number) {
   const v = await read(prisma, group, key)
   if (v === null) return fallback
   const n = Number(v)
@@ -46,7 +55,7 @@ export async function getNumber(prisma: PrismaClient, group: string, key: string
  * 而 Dec 走 {num:5n, exp:1} 全程整数。非法/缺失时回退到 fallback。
  */
 export async function getDecimal(
-  prisma: PrismaClient,
+  prisma: SettingsDb,
   group: string,
   key: string,
   fallback: number | string,
@@ -59,7 +68,7 @@ export async function getDecimal(
   return fb
 }
 
-export async function getBool(prisma: PrismaClient, group: string, key: string, fallback: boolean) {
+export async function getBool(prisma: SettingsDb, group: string, key: string, fallback: boolean) {
   const v = await read(prisma, group, key)
   if (v === null) return fallback
   return v === 'true' || v === '1'

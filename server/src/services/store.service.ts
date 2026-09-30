@@ -83,27 +83,36 @@ export async function getStore(prisma: PrismaClient, merchantId: bigint, storeId
 }
 
 export async function createStore(prisma: PrismaClient, merchantId: bigint, input: StoreInput) {
-  // ★ 单店模型：已经有门店的账号不能再建。这是产品硬约束（一个账号一家门店），
-  //   不是「可配置的上限」—— 存量多门店的账号也同样建不了第二家（多余的那些仍留在库里，
-  //   小程序永远只用默认门店，见 listStores 的排序）。
-  const count = await prisma.store.count({ where: { merchantId, deletedAt: null } })
-  if (count >= MAX_STORES_PER_MERCHANT) throw new StoreLimitError()
+  /**
+   * ★ 「一个账号一家门店」是产品硬约束，必须在**数据库层面串行化**。
+   *
+   * 旧实现是 `count → 判断 → create` 三步无锁：同一新商户的两个并发请求都能读到
+   * count=0，于是各自插入 —— 账号下出现两家门店，而且两家都被标成 `isDefault=true`，
+   * 之后依赖「唯一门店 / 唯一默认门店」的逻辑全部产生歧义。
+   * 应用层这次 count 只负责**友好报错**，真正的防线是下面的商户行锁 + 事务内重查。
+   */
+  return prisma.$transaction(async (tx) => {
+    // 锁住商户行：同商户的并发建店请求在这里排队，后到的会看到前一个已提交的门店
+    await tx.$queryRaw`SELECT id FROM merchant WHERE id = ${merchantId} FOR UPDATE`
+    const count = await tx.store.count({ where: { merchantId, deletedAt: null } })
+    if (count >= MAX_STORES_PER_MERCHANT) throw new StoreLimitError()
 
-  // 能走到这里说明这是账号的**第一家（也是唯一一家）门店** ⇒ 必然是默认门店。
-  // 旧实现里「非首店尊重 isDefault 开关 / 非默认分支」在多门店下线后已成死代码，一并删掉；
-  // 前端也不再传 isDefault（编辑页的「设为默认门店」开关已随多门店一起移除）。
-  return prisma.store.create({
-    data: {
-      merchantId,
-      name: input.name,
-      category: input.category,
-      province: input.province,
-      city: input.city,
-      district: input.district,
-      address: input.address,
-      intro: input.intro ?? null,
-      isDefault: true,
-    },
+    // 能走到这里说明这是账号的**第一家（也是唯一一家）门店** ⇒ 必然是默认门店。
+    // 旧实现里「非首店尊重 isDefault 开关 / 非默认分支」在多门店下线后已成死代码，一并删掉；
+    // 前端也不再传 isDefault（编辑页的「设为默认门店」开关已随多门店一起移除）。
+    return tx.store.create({
+      data: {
+        merchantId,
+        name: input.name,
+        category: input.category,
+        province: input.province,
+        city: input.city,
+        district: input.district,
+        address: input.address,
+        intro: input.intro ?? null,
+        isDefault: true,
+      },
+    })
   })
 }
 

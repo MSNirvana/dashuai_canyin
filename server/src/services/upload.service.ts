@@ -250,25 +250,49 @@ export async function confirmUpload(prisma: PrismaClient, merchantId: bigint, in
     )
   }
 
-  // v5：上传永远免费，但受空间配额限制（未订阅 1GB / 订阅 5GB），超限直接拒绝
-  await assertUploadAllowed(prisma, merchantId, BigInt(meta.sizeBytes))
+  /**
+   * ★ 配额校验 + 幂等复核 + 落库必须在**同一个事务、同一把商户行锁**里。
+   *
+   *   旧实现三步各自独立、无锁，两个并发的 /complete 就能同时通过：
+   *   · 幂等是「先查后建」⇒ 同一对象键出现两行（实测库里已经有这样一组数据）；
+   *   · 配额是「先汇总已用、再判断」⇒ 两边都读到同一份旧用量、都放行，
+   *     实际占用可以远超配额（单文件上限 2GB，几次并发就能超出一大截）。
+   *   应用层检查只负责**友好报错**，真正的防线是行锁 + 事务。
+   *   HEAD 请求刻意留在锁外：那是网络 IO，不该占着行锁干等。
+   */
+  return prisma.$transaction(async (tx) => {
+    // 锁住商户行：同商户的并发确认在这里排队，后到的会看到前一个已登记的素材
+    await tx.$queryRaw`SELECT id FROM merchant WHERE id = ${merchantId} FOR UPDATE`
 
-  return prisma.mediaAsset.create({
-    data: {
-      merchantId,
-      storeId: input.storeId,
-      ownerType: input.ownerType ?? 'CREATION',
-      ownerId: null,
-      type: input.type,
-      cosKey: input.cosKey,
-      bucket: process.env.COS_BUCKET ?? '',
-      region: process.env.COS_REGION ?? '',
-      sizeBytes: meta.sizeBytes,
-      durationMs: input.durationMs,
-      width: input.width,
-      height: input.height,
-      coverKey: input.coverKey ?? null,
-      status: 'READY',
-    },
+    // 锁内复核幂等（函数开头那次查询是快路径，这次才是权威判定）
+    const dup = await tx.mediaAsset.findFirst({
+      where: { merchantId, cosKey: input.cosKey, deletedAt: null },
+    })
+    if (dup) {
+      console.warn(`[upload] 并发重复确认同一对象键（锁内幂等返回）key=${input.cosKey} asset=${dup.id}`)
+      return dup
+    }
+
+    // v5：上传永远免费，但受空间配额限制（未订阅 1GB / 订阅 5GB），超限直接拒绝
+    await assertUploadAllowed(tx, merchantId, BigInt(meta.sizeBytes))
+
+    return tx.mediaAsset.create({
+      data: {
+        merchantId,
+        storeId: input.storeId,
+        ownerType: input.ownerType ?? 'CREATION',
+        ownerId: null,
+        type: input.type,
+        cosKey: input.cosKey,
+        bucket: process.env.COS_BUCKET ?? '',
+        region: process.env.COS_REGION ?? '',
+        sizeBytes: meta.sizeBytes,
+        durationMs: input.durationMs,
+        width: input.width,
+        height: input.height,
+        coverKey: input.coverKey ?? null,
+        status: 'READY',
+      },
+    })
   })
 }

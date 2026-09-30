@@ -182,12 +182,16 @@ export async function getDish(prisma: PrismaClient, merchantId: bigint, storeId:
   return row ? normalizeDish(row) : null
 }
 
-async function replaceMedia(prisma: PrismaClient, dishId: bigint, media: DishMediaInput[]) {
+/**
+ * ★ 参数类型刻意收紧为**事务客户端**：媒体「先删后插」必须与主表写入处在同一个事务里，
+ *   否则删完再失败等于把用户原有的图片直接删没（详见 createDish / updateDish）。
+ */
+async function replaceMedia(prisma: Prisma.TransactionClient, dishId: bigint, media: DishMediaInput[]) {
   await prisma.dishMedia.deleteMany({ where: { dishId } })
   if (media.length) await prisma.dishMedia.createMany({ data: media.map((m, i) => ({ dishId, type: m.type, cosKey: m.cosKey, coverKey: m.coverKey, sort: m.sort ?? i })) })
 }
 
-async function replaceComboItems(prisma: PrismaClient, comboId: bigint, items: Array<{ dishId: bigint; quantity: number; sort: number }>) {
+async function replaceComboItems(prisma: Prisma.TransactionClient, comboId: bigint, items: Array<{ dishId: bigint; quantity: number; sort: number }>) {
   // 整体替换（先删后插）而不是逐条 diff：明细是无标识的从属数据，
   // diff 要处理「删了哪条、加了哪条、改了份数」，而用户关心的是最终组合是什么。
   await prisma.dishComboItem.deleteMany({ where: { comboId } })
@@ -202,19 +206,27 @@ export async function createDish(prisma: PrismaClient, merchantId: bigint, store
   const combo = await normalizeCombo(prisma, storeId, kind, input.priceFen, input.originalPriceFen, input.comboItems)
   const images = media.filter((m) => m.type === 'IMAGE').sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
   const videos = media.filter((m) => m.type === 'VIDEO').sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
-  const dish = await prisma.dish.create({
-    data: {
-      storeId, name: input.name, intro: input.intro, sellingPoints: input.sellingPoints,
-      coverKey: images[0]?.cosKey ?? input.coverKey, videoKey: videos[0]?.cosKey ?? input.videoKey,
-      sort: input.sort ?? 0, kind, priceFen: combo.priceFen, originalPriceFen: combo.originalPriceFen,
-    },
+  /**
+   * ★ 主表 + 媒体 + 套餐明细必须**同一事务**。
+   *   旧实现是三次独立提交：主表建好后，媒体或明细任一步失败（唯一键冲突、连接抖动、
+   *   进程退出），就留下一条「有菜名、没图、没明细」的菜，API 却返回 500 ——
+   *   用户重试也回不到原状。
+   */
+  return prisma.$transaction(async (tx) => {
+    const dish = await tx.dish.create({
+      data: {
+        storeId, name: input.name, intro: input.intro, sellingPoints: input.sellingPoints,
+        coverKey: images[0]?.cosKey ?? input.coverKey, videoKey: videos[0]?.cosKey ?? input.videoKey,
+        sort: input.sort ?? 0, kind, priceFen: combo.priceFen, originalPriceFen: combo.originalPriceFen,
+      },
+    })
+    await replaceMedia(tx, dish.id, media)
+    await replaceComboItems(tx, dish.id, combo.items)
+    // 回读而不是把上面那点数据拼回去：只有走一次带 dishInclude() 的查询，
+    // 响应里的 comboItems 才与「下次读它」得到的结果完全一致（否则保存后前端会看到明细是空的）。
+    const saved = await tx.dish.findUnique({ where: { id: dish.id }, include: dishInclude() })
+    return normalizeDish(saved!)
   })
-  await replaceMedia(prisma, dish.id, media)
-  await replaceComboItems(prisma, dish.id, combo.items)
-  // 回读而不是把上面那点数据拼回去：只有走一次带 dishInclude() 的查询，
-  // 响应里的 comboItems 才与「下次读它」得到的结果完全一致（否则保存后前端会看到明细是空的）。
-  const saved = await prisma.dish.findUnique({ where: { id: dish.id }, include: dishInclude() })
-  return normalizeDish(saved!)
 }
 
 export async function updateDish(prisma: PrismaClient, merchantId: bigint, storeId: bigint, dishId: bigint, input: DishInput) {
@@ -255,18 +267,26 @@ export async function updateDish(prisma: PrismaClient, merchantId: bigint, store
   const combo = await normalizeCombo(prisma, storeId, kind, priceInput, originalInput, itemsInput)
   const images = media.filter((m) => m.type === 'IMAGE').sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
   const videos = media.filter((m) => m.type === 'VIDEO').sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0))
-  const dish = await prisma.dish.update({
-    where: { id: dishId },
-    data: {
-      name: input.name, intro: input.intro, sellingPoints: input.sellingPoints,
-      coverKey: images[0]?.cosKey ?? input.coverKey ?? null, videoKey: videos[0]?.cosKey ?? input.videoKey ?? null,
-      sort: input.sort ?? existing.sort, kind, priceFen: combo.priceFen, originalPriceFen: combo.originalPriceFen,
-    },
+  /**
+   * ★ 同一事务收口（与 createDish 同理，这里更要紧）：
+   *   更新路径的 replaceMedia / replaceComboItems 都是**先删后插** ——
+   *   删完之后插入失败，用户的原有图片、原有套餐组成就被**真的删掉了**，
+   *   而接口返回失败，用户以为「没改成」。
+   */
+  return prisma.$transaction(async (tx) => {
+    const dish = await tx.dish.update({
+      where: { id: dishId },
+      data: {
+        name: input.name, intro: input.intro, sellingPoints: input.sellingPoints,
+        coverKey: images[0]?.cosKey ?? input.coverKey ?? null, videoKey: videos[0]?.cosKey ?? input.videoKey ?? null,
+        sort: input.sort ?? existing.sort, kind, priceFen: combo.priceFen, originalPriceFen: combo.originalPriceFen,
+      },
+    })
+    await replaceMedia(tx, dishId, media)
+    await replaceComboItems(tx, dishId, combo.items)
+    const saved = await tx.dish.findUnique({ where: { id: dish.id }, include: dishInclude() })
+    return normalizeDish(saved!)
   })
-  await replaceMedia(prisma, dishId, media)
-  await replaceComboItems(prisma, dishId, combo.items)
-  const saved = await prisma.dish.findUnique({ where: { id: dish.id }, include: dishInclude() })
-  return normalizeDish(saved!)
 }
 
 export async function deleteDish(prisma: PrismaClient, merchantId: bigint, storeId: bigint, dishId: bigint) {

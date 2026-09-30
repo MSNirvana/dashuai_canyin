@@ -2,7 +2,7 @@
 // 订阅是使用「文案生成 / 分镜生成 / 合成出片」的硬前提；上传免费但受空间配额限制。
 // 规则见 docs/05 v5：订阅 ¥980/30天/赠98000积分、加油包仅订阅可买、
 // 空间 未订阅1GB / 订阅5GB —— 全部参数后台可改（SystemSetting）。
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { getNumber } from '../lib/settings.js'
 
 const GB = 1024 * 1024 * 1024
@@ -38,7 +38,7 @@ export function humanBytes(b: bigint): string {
 }
 
 /** 当前有效订阅（status=ACTIVE 且未过期） */
-export async function activeSubscription(prisma: PrismaClient, merchantId: bigint) {
+export async function activeSubscription(prisma: Prisma.TransactionClient, merchantId: bigint) {
   return prisma.membership.findFirst({
     where: { merchantId, status: 'ACTIVE', endAt: { gt: new Date() } },
     orderBy: { endAt: 'desc' },
@@ -58,7 +58,7 @@ export async function requireSubscription(
 }
 
 /** 空间配额（字节）：未订阅 1GB / 订阅 5GB，后台可改 */
-export async function quotaBytes(prisma: PrismaClient, subscribed: boolean): Promise<bigint> {
+export async function quotaBytes(prisma: Prisma.TransactionClient, subscribed: boolean): Promise<bigint> {
   const def = subscribed ? DEFAULT_QUOTA_SUBSCRIBED : DEFAULT_QUOTA_FREE
   const v = await getNumber(
     prisma,
@@ -70,7 +70,7 @@ export async function quotaBytes(prisma: PrismaClient, subscribed: boolean): Pro
 }
 
 /** 已用空间（字节）：名下所有未删除素材求和 */
-export async function usedBytes(prisma: PrismaClient, merchantId: bigint): Promise<bigint> {
+export async function usedBytes(prisma: Prisma.TransactionClient, merchantId: bigint): Promise<bigint> {
   const agg = await prisma.mediaAsset.aggregate({
     where: { merchantId, deletedAt: null },
     _sum: { sizeBytes: true },
@@ -85,7 +85,7 @@ export interface StorageView {
 }
 
 /** 空间用量快照（前端展示进度条） */
-export async function getStorage(prisma: PrismaClient, merchantId: bigint): Promise<StorageView> {
+export async function getStorage(prisma: Prisma.TransactionClient, merchantId: bigint): Promise<StorageView> {
   const sub = await activeSubscription(prisma, merchantId)
   const subscribed = !!sub
   return {
@@ -95,9 +95,14 @@ export async function getStorage(prisma: PrismaClient, merchantId: bigint): Prom
   }
 }
 
-/** 上传前校验：超配额直接拒绝（上传本身永远免费，不扣积分） */
+/**
+ * 上传前校验：超配额直接拒绝（上传本身永远免费，不扣积分）。
+ * ★ 参数类型是 `Prisma.TransactionClient`：**配额判断必须与「登记素材」在同一个事务、
+ *   同一把商户行锁里**，否则两个并发确认各自读到同一份旧用量、各自通过，实际用量超限。
+ *   `PrismaClient` 是它的结构超集，所以其它直接传 prisma 的调用点不受影响。
+ */
 export async function assertUploadAllowed(
-  prisma: PrismaClient,
+  prisma: Prisma.TransactionClient,
   merchantId: bigint,
   incomingBytes: bigint,
 ): Promise<StorageView> {

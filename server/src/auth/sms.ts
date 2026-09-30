@@ -266,5 +266,21 @@ export async function verifyCode(prisma: PrismaClient, phone: string, code: stri
     await prisma.smsCode.update({ where: { id: rec.id }, data: { attempts: { increment: 1 } } })
     throw new SmsCodeInvalidError()
   }
-  await prisma.smsCode.update({ where: { id: rec.id }, data: { usedAt: new Date() } })
+  /**
+   * ★ 消费必须是**原子条件更新**。
+   *   上面 findFirst 读到 usedAt=null，与这里写 usedAt 之间存在窗口：两个并发的登录请求
+   *   可以同时通过哈希校验、各自把 usedAt 写成新值，最后都拿到 token —— 一次性验证码
+   *   就不再是一次性（被截获的码可在并发窗口内被重复兑换）。
+   *   条件里重放全部约束（仍未被使用 / 未过期 / 次数未超限），只有 count===1 才算消费成功。
+   */
+  const consumed = await prisma.smsCode.updateMany({
+    where: {
+      id: rec.id,
+      usedAt: null,
+      expiresAt: { gt: new Date() },
+      attempts: { lt: MAX_ATTEMPTS },
+    },
+    data: { usedAt: new Date() },
+  })
+  if (consumed.count !== 1) throw new SmsCodeInvalidError()
 }
