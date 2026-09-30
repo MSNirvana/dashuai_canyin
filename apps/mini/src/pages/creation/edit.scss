@@ -666,19 +666,12 @@
   &__switch--on &__switch-knob {
     transform: translateX(28rpx);                  /* 68 - 4×2 - 32 = 28 */
   }
-  /* 「关不掉」那两款下面那一行说明。
-     ★ 必须有：一个点了不动的开关，不给原因就和「页面坏了」长得一样
-       （同 `&__field--off` 的处理原则 —— 灰着 + 一句原因才是自解释的）。
-     ★★ 间距：它是 `&__spec-head` 的**下一行**，而那一行自带 `margin-bottom: 18rpx`
-       ⇒ 负 6rpx 把它拉回 12rpx（说明紧跟标题），下面再补回 18rpx（取值行照旧）。
-       不这么做的话，标题→说明 会被撑成 30rpx、而说明→取值 是 0，那行字会像粘在输入框上。 */
-  &__switch-note {
-    display: block;
-    margin: -6rpx 0 18rpx;
-    font-size: 22rpx;
-    line-height: 1.5;
-    color: var(--td-text-color-placeholder);
-  }
+  /* ⚠ 原 `&__switch-note`（「关不掉」那两款下面那行常驻灰字）于 **2026-09-30 按用户要求删除**。
+     ★ 删除是安全的：那条规则只改自己的 `margin` 去抵消 `&__spec-head` 的 `margin-bottom`，
+       删掉之后**四态（锁定 / 开着 / 关掉 / 流量型）标题行→取值行的间距统一回到 18rpx** ——
+       原来只有「锁定」那两款多出这行字、卡片比别的态高约 23px，现在反而更整齐。
+     ★★ 但「点了没反应≠页面坏了」那条原则不能一起删：原因改由**点击时的 toast** 给
+       （见 `onToggleStoreDish`）。**别顺手把那个 toast 也删掉。** */
 
   /* 「链接编号有误」那一屏的说明段落。
      ★★ 原来复用的是 `.cedit__label`（表单标签：`width: 140rpx; flex: none`）⇒

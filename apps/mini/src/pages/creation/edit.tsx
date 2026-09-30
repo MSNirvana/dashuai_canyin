@@ -872,8 +872,11 @@ export default function CreationEdit() {
    *
    * ★ 关掉时**只翻这一个布尔**，`dishPick` 原样留着 —— 用户再打开时看到的还是他上次选的那道菜，
    *   而不是被重置回「无」。把用户已经做过的选择擦掉，比它看起来的样子更糟。
-   * ★ 不能关的款式（产品型/种草型）下也要**给一句话**：这一行同时挂着 `&__switch-note` 的
-   *   常驻说明，但用户多半是先点、后看 —— 点了没反应和页面坏了长得一模一样。
+   * ★ 不能关的款式（产品型/种草型）下，那句说明**只在这里给**（toast）——
+   *   页面上**没有**常驻说明行了：2026-09-30 按用户要求把 `&__switch-note` 删掉了。
+   *   ⇒ 这个分支是那两款**唯一的反馈**，**不能只是留着不弹**：删了常驻说明之后，
+   *     再把这个 toast 也去掉，那个开关点下去就彻底没有任何反应（＝和页面坏了长得一样）。
+   *   这也正是它保留 `switchLocked` 之外还要读它的理由（`switchLocked` 仍要给 `--locked` 上色）。
    * ★ 不落库：本页有 `localId` 时表单整块已隐藏（同 `onPickTrack`），这个开关只影响**新建**。
    */
   const onToggleStoreDish = () => {
@@ -1174,9 +1177,11 @@ export default function CreationEdit() {
               </View>
             )}
           </View>
-          {/* 产品型/种草型：开关恒为开、关不掉 —— **必须给一句原因**，
-              否则「点了没反应」和「页面坏了」长得一样（同 `&__field--off` 的处置原则）。 */}
-          {switchLocked && <Text className='cedit__switch-note'>这款要讲清在售内容，不能关闭</Text>}
+          {/* 产品型/种草型：开关恒为开、关不掉。
+              ★ 2026-09-30 用户要求删掉原来那行**常驻**灰字说明（`&__switch-note` 随之删除）——
+                它只在「锁定」那两款下出现，等于为一个恒定状态常驻占掉一行版面。
+              ★ 但「必须给原因」这条原则**没变**，只是改成**点击时给**（见 `onToggleStoreDish` 的 toast）：
+                「点了没反应」和「页面坏了」长得一样，这个风险不能靠删掉说明来消。 */}
           {/* 标题已经是「菜品与套餐」，行内不再重复这两个字 ⇒ 这一行整行就是选择器（描边容器） */}
           <View className={`cedit__field${blockOff ? ' cedit__field--off' : ''}`}>
             {/* ★ 分支顺序就是优先级：流量型（整块不适用）→ 开关关掉（不传菜品和门店）→
@@ -1186,7 +1191,11 @@ export default function CreationEdit() {
             {isTraffic ? (
               <Text className='cedit__picker'>流量型不选菜品，跟着热点出稿</Text>
             ) : noMaterial ? (
-              <Text className='cedit__picker'>不传菜品和门店，AI 按文案款式与素材出稿</Text>
+              /* ★ 2026-09-30 用户要求把原来那句「不传菜品和门店，AI 按文案款式与素材出稿」
+                 砍成核心语义。后半句是在**解释机制**，而这一行要传达的只是**这一次不发什么**。
+                 ⚠ 这里是**表达式位置**（三元的一个分支），不是 JSX 子节点位置 ——
+                   注释只能用块注释，不能写成 JSX 子节点那种带花括号的形式。 */
+              <Text className='cedit__picker'>不传菜品和门店</Text>
             ) : dishes.length && dishesStoreId === stores[storeIdx]?.id ? (
               <Picker
                 mode='selector'
