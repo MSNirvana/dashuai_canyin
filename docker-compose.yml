@@ -33,7 +33,11 @@ services:
     volumes:
       - dashuai_mysql:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pdashuai" ]
+      # ★ 口令必须与上面的 MYSQL_ROOT_PASSWORD **同源**：原来写死 `-pdashuai`，
+      #   它既不是 root 口令也不是业务用户口令 —— 健康检查的语义和配置完全脱钩，
+      #   容器状态与实际可用性可能不一致（本地/服务器共用这个文件，谁也说不清它到底在测什么）。
+      #   `$$` 是 compose 的转义写法，容器内会展开成 $MYSQL_ROOT_PASSWORD。
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
       interval: 10s
       timeout: 5s
       retries: 10
