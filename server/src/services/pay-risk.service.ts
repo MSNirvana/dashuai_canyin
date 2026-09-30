@@ -209,6 +209,17 @@ export async function scanStalePendingOrders(
  *   代价：若有人删掉了最早的那些回执，起点会后移 ⇒ 漏报（而非假报）。
  *   这个方向是刻意选的 —— 这道防线宁可漏一次，也不能因为噪音被关掉。
  */
+/**
+ * 解析 `PAY_SETTLEMENT_RECEIPT_SINCE`（回执体系上线时刻）。
+ * 非法值一律视为「未配置」并回落到自动推导 —— 不能因为运维写错格式就让整段核对静默跳过。
+ */
+function parseReceiptSinceEnv(): Date | null {
+  const raw = process.env.PAY_SETTLEMENT_RECEIPT_SINCE?.trim()
+  if (!raw) return null
+  const d = new Date(raw)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
 export async function auditPaidSettlements(
   prisma: PrismaClient,
   deps: PayRiskDeps = {},
@@ -217,7 +228,18 @@ export async function auditPaidSettlements(
   const result: AuditResult = { skipped: false, reason: null, checked: 0, missing: 0, missingNos: [] }
   const alert = deps.alert ?? ((i: RaiseOpsAlertInput) => raiseOpsAlert(prisma, i))
 
-  let since = deps.receiptSince ?? null
+  /**
+   * 起点优先级：
+   *   ① 调用方显式传入 `deps.receiptSince`（测试、人工修复）；
+   *   ② 环境变量 `PAY_SETTLEMENT_RECEIPT_SINCE`（**生产应固定配置**）；
+   *   ③ 回落：库里最早一条回执的 `createdAt`（推导值，会随回执增删漂移）。
+   *
+   * ★ 为什么必须给出「配置」这条出口：推导值**不稳定** —— 只要库里存在更早的回执
+   *   （补写、数据迁移、或测试与线上共用同一个库），起点就会前移，把回执体系上线前的
+   *   历史单也纳入核对，刷出一批「钱收了但没回执」的假 CRITICAL 告警。
+   *   这道防线一旦被当成噪音关掉，真正的支付事故就没人看了。
+   */
+  let since = deps.receiptSince ?? parseReceiptSinceEnv() ?? null
   if (!since) {
     const earliest = await prisma.orderSettlement.findFirst({
       orderBy: { createdAt: 'asc' },

@@ -385,7 +385,10 @@ async function main() {
       createdAt: inside,
     })
     const ac = alertCollector()
-    const r = await auditPaidSettlements(prisma, { alert: ac.alert }, NOW)
+    // ★ 起点显式钉在 NOW，**不依赖**「库里最早一条回执」的自动推导：
+    //   本脚本跑在共享开发库上，其它运行 / 会话留下的更早回执会把推导起点前移，
+    //   于是本节自己造的历史单也被纳入核对，稳定地刷出假告警。
+    const r = await auditPaidSettlements(prisma, { alert: ac.alert, receiptSince: NOW }, NOW)
 
     check(r.skipped === false, '有回执之后不再整体跳过', String(r.skipped))
     check(r.checked >= 1, `检查了至少 1 张已支付单（实际 ${r.checked}）`, `checked=${r.checked}`)
