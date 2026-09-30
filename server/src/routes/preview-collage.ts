@@ -46,12 +46,20 @@ router.post('/preview-collage', async (req, res) => {
     // 计算每个 shot 的预览帧 URL（按 coverKey 优先；没有 coverKey 的跳过）
     const items: ShotPreviewItem[] = []
     let devAll = true
+    // ★ 一次查完所有素材，而不是每个分镜查一次（N+1）：
+    //   十几个分镜很常见，逐个查询会让数据库往返次数线性增长，而且全是串行的。
+    const withAsset = shots.filter((s) => s.assetId)
+    const assets = withAsset.length
+      ? await prisma.mediaAsset.findMany({
+          where: { id: { in: withAsset.map((s) => s.assetId!) }, deletedAt: null },
+          select: { id: true, coverKey: true, cosKey: true },
+        })
+      : []
+    const assetById = new Map(assets.map((a) => [a.id.toString(), a]))
+
     for (const s of shots) {
       if (!s.assetId) continue
-      const asset = await prisma.mediaAsset.findFirst({
-        where: { id: s.assetId, deletedAt: null },
-        select: { coverKey: true, cosKey: true },
-      })
+      const asset = assetById.get(s.assetId.toString())
       if (!asset) continue
       // 优先用 coverKey（OSS 抓的缩略图），没有就用 cosKey（让前端用 <image> 截一帧）
       const key = asset.coverKey ?? asset.cosKey
