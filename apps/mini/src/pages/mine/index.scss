@@ -406,8 +406,9 @@
     width: 100%;
     max-width: 620rpx;
     box-sizing: border-box;
-    // ★ 2026-09-30：底边距 40 → 44rpx。协议那行字号刚从 22 提到 24（见 `&__login-tip`），
-    //   底部视觉重量跟着变大，多给 4rpx 呼吸，免得最后一行贴着卡片圆角。
+    // ★ 2026-09-30：底边距 40 → 44rpx。协议那行字号从 22 提到 24（现在那行来自
+    //   `components/agree-checkbox`，字号仍是 24rpx），底部视觉重量跟着变大，
+    //   多给 4rpx 呼吸，免得最后一行贴着卡片圆角。
     padding: 56rpx 40rpx 44rpx;
     background: var(--td-bg-color-container);
     border-radius: var(--td-radius-extra);
@@ -479,21 +480,14 @@
   }
   // ★ 2026-09-30 删掉 `&__login-dev`：本地开发登录那一路复用的就是 `&__login-primary`
   //   （见 index.tsx 的 devMode 分支），这个类在产物里同为 0 个节点 ⇒ 同样是死规则。
-  &__login-link {
-    display: inline;
-    color: var(--td-brand-color);
-  }
-  &__login-tip {
-    display: block;
-    margin-top: 28rpx;
-    // ★★ 2026-09-30：`--td-text-color-disabled` → `--td-text-color-secondary`，22rpx → 24rpx。
-    //   这是一句**法律告知**（授权即表示同意《用户协议》和《隐私政策》），不是"不可用的东西"。
-    //   disabled 灰（实测 rgb(191,195,201)）在纯白卡片上对比度太低，小屏上基本读不清 ——
-    //   而「看不清的授权条款」恰恰是最不该出现的一种含糊。
-    color: var(--td-text-color-secondary);
-    font-size: 24rpx;
-    line-height: 1.6;
-  }
+  // ★ 2026-09-30 删掉两个类：`login-link` 与 `login-tip`（书写时省略 `&__` 前缀，
+  //   免得那句「已删除」的注释自己把 grep 引回来 —— 本项目靠 grep 判「还有没有引用」）。
+  //   原来那一行「授权即表示同意《用户协议》和《隐私政策》」是**默示同意**：
+  //   它在按钮**下方**，用户是「先授权、后看见」。已换成 `components/agree-checkbox`
+  //   的主动勾选框，并上移到登录按钮**之上**。
+  //   ★ 字号/颜色那条教训跟着搬进了 `components/agree-checkbox/index.scss`：
+  //     它是**法律告知**不是"不可用的东西"，disabled 灰（实测 rgb(191,195,201)）
+  //     在纯白卡片上读不清，而「看不清的授权条款」恰恰是最不该出现的一种含糊。
   // ─── 短信登录（备选通道）───
   &__login-field {
     display: flex;

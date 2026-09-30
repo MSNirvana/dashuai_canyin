@@ -3,6 +3,7 @@ import { Button, Image, Input, View, Text } from '@tarojs/components'
 import Taro, { useDidShow } from '@tarojs/taro'
 import * as authApi from '../../services/auth'
 import { pickAndUploadAvatar } from '../../services/profile'
+import AgreeCheckbox from '../../components/agree-checkbox'
 import { listMembershipReminders, markMembershipReminderRead, type MembershipReminder } from '../../services/account'
 import { TUTORIAL_CATEGORIES, listTutorialStats } from '../../services/tutorial'
 import { getContactInfo, type ContactInfo } from '../../services/contact'
@@ -78,6 +79,15 @@ export default function Mine() {
   const [code, setCode] = useState('')
   const [cooldown, setCooldown] = useState(0)
   const [smsSubmitting, setSmsSubmitting] = useState(false)
+  /**
+   * 是否已**主动勾选**同意《用户协议》和《隐私政策》。
+   *
+   * ★★ 默认 false、且每次打开弹窗都重置（见下面那个 `useEffect [showLogin]`）——
+   *   这是「明示同意」与「默示同意」的分界线：勾过一次就永久记住，等于没让用户选。
+   * ★ 未勾选时**所有会采集手机号的入口都要挡住**：微信一键登录（原生授权框）、
+   *   「获取验证码」（会把手机号发给服务端）、「登录」。只在最后一关卡住是不够的。
+   */
+  const [agreed, setAgreed] = useState(false)
 
   // 再入闸门必须用**同步 ref**：React setState 是异步的，且 Taro 经 native setData 下发属性
   // （双异步），仅靠 state / disabled 挡不住连点。
@@ -122,6 +132,8 @@ export default function Mine() {
     // 从协议页返回时弹窗一直是 true，不会把用户正在输入的短信表单清掉。
     setMode('wechat')
     setCode('')
+    // ★ 同意勾选**每次打开都回到未勾**：它是本次登录的明示同意，不是一次性设置。
+    setAgreed(false)
   }, [showLogin])
 
   // 卸载时清掉冷却定时器：它每秒 setState，组件没了还在跑就是内存泄漏
@@ -186,6 +198,19 @@ export default function Mine() {
     Taro.showToast({ title: (err as { message?: string })?.message ?? fallback, icon: 'none', duration: 2500 })
   }
 
+  /**
+   * 未勾选同意时的统一拦截。
+   *
+   * ★ 为什么用 toast 而不是把按钮置灰：灰按钮说不出「为什么不能点」，用户只会以为坏了；
+   *   这句话正好告诉他该去勾哪里。
+   * ★★ 「微信一键登录」那一颗没法只做样式禁用 —— 它是 `open-type='getPhoneNumber'`，
+   *   一旦被触发就会弹微信的手机号授权框，那已经是"收集"了。所以未勾选时**整颗换成
+   *   普通 `<Button>`**（见下面的 JSX），点它只会弹这句提示，原生授权框根本不会出现。
+   */
+  const needAgree = () => {
+    Taro.showToast({ title: '请先阅读并勾选同意《用户协议》和《隐私政策》', icon: 'none', duration: 2500 })
+  }
+
   const startCooldown = (sec: number) => {
     if (cooldownTimer.current) clearInterval(cooldownTimer.current)
     setCooldown(sec)
@@ -204,6 +229,8 @@ export default function Mine() {
   /** 获取短信验证码。冷却时长以后端返回的 cooldownSec 为准，不在前端写死。 */
   const onSendCode = async () => {
     if (cooldown > 0) return
+    // ★ 未勾选同意就不发：这一步会把**手机号**发给服务端，属于「收集」，必须发生在取得同意之后
+    if (!agreed) return needAgree()
     if (!PHONE_RE.test(phone)) {
       Taro.showToast({ title: '请输入正确的手机号', icon: 'none' })
       return
@@ -231,6 +258,8 @@ export default function Mine() {
 
   /** 手机号 + 验证码登录（登录他人账号的唯一通道） */
   const onSmsLogin = async () => {
+    // ★ 手机号登录同理：提交给服务端前必须先取得同意
+    if (!agreed) return needAgree()
     if (!PHONE_RE.test(phone)) {
       Taro.showToast({ title: '请输入正确的手机号', icon: 'none' })
       return
@@ -588,6 +617,12 @@ export default function Mine() {
           <Image className='mine__login-logo' src={logoPng} mode='aspectFit' />
           <Text className='mine__login-title'>登录大帅餐饮</Text>
 
+          {/* ★★ 同意勾选放在**登录按钮之上**：原来那句「授权即表示同意…」在按钮下面，
+              用户是"先授权、后看见"，属于默示同意。换成可勾选框并上移之后，
+              顺序变成「先读、先选、再登录」——这才是明示同意该有的样子。
+              两个登录模式（微信 / 手机号）共用这一个勾选状态。 */}
+          <AgreeCheckbox checked={agreed} onChange={setAgreed} />
+
           {mode === 'sms' ? (
             <>
               <View className='mine__login-field'>
@@ -629,9 +664,15 @@ export default function Mine() {
                 <Button className='mine__login-primary' onClick={onDevLogin} disabled={submitting}>
                   {submitting ? '登录中…' : '进入本地开发环境'}
                 </Button>
-              ) : (
+              ) : agreed ? (
                 <Button className='mine__login-primary' openType='getPhoneNumber' onGetPhoneNumber={onGetPhoneNumber} disabled={submitting}>
                   {submitting ? '登录中…' : '微信一键登录'}
+                </Button>
+              ) : (
+                /* ★★ 未勾选同意时**换成普通按钮**：open-type 一旦触发就会弹微信的手机号授权框，
+                   而那已经是"收集"了。换掉之后原生授权框根本不会出现，点它只弹提示。 */
+                <Button className='mine__login-primary' onClick={needAgree}>
+                  微信一键登录
                 </Button>
               )}
               {/* 代运营 / 帮店主管理时，微信一键登录只能拿到本人手机号 ⇒ 必须留这条不依赖微信的通道 */}
@@ -640,8 +681,6 @@ export default function Mine() {
               </View>
             </>
           )}
-
-          <Text className='mine__login-tip'>授权即表示同意<Text className='mine__login-link' onClick={() => go('/pages/agreement/index?type=user')}>《用户协议》</Text>和<Text className='mine__login-link' onClick={() => go('/pages/agreement/index?type=privacy')}>《隐私政策》</Text></Text>
         </View>
       </View>}
     </View>

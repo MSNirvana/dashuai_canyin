@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button, Input, Text, View } from '@tarojs/components'
 import Taro, { useDidShow, usePullDownRefresh, useReachBottom } from '@tarojs/taro'
 import * as authApi from '../../services/auth'
+import AgreeCheckbox from '../../components/agree-checkbox'
 import { listOrders, type OrderListItem } from '../../services/order'
 import { STORAGE_KEYS } from '../../config'
 import { useMerchantStore } from '../../store/merchant'
@@ -73,6 +74,17 @@ export default function OrderList() {
   const [code, setCode] = useState('')
   const [cooldown, setCooldown] = useState(0)
   const [submitting, setSubmitting] = useState(false)
+  /**
+   * 是否已**主动勾选**同意《用户协议》和《隐私政策》。
+   * ★ 默认 false，且本页的登录表单每次都是新挂载的 ⇒ 天然「每次都要重新勾」。
+   * ★ 未勾选时「获取验证码」（会把手机号发给服务端）与「登录」都要挡住 ——
+   *   这是第二个登录入口，与「我的」那个弹窗**共用同一个组件**，判据不会漂。
+   */
+  const [agreed, setAgreed] = useState(false)
+  /** 未勾选同意时的统一拦截（与「我的」页同一句话） */
+  const needAgree = () => {
+    Taro.showToast({ title: '请先阅读并勾选同意《用户协议》和《隐私政策》', icon: 'none', duration: 2500 })
+  }
   const sendLock = useRef(false)
   const loginLock = useRef(false)
   const cooldownTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -142,6 +154,8 @@ export default function OrderList() {
   /** 获取短信验证码。冷却时长以后端返回的 cooldownSec 为准，不在前端写死。 */
   const onSendCode = async () => {
     if (cooldown > 0) return
+    // ★ 未勾选同意就不发：这一步会把手机号发给服务端，属于「收集」
+    if (!agreed) return needAgree()
     if (!PHONE_RE.test(phone)) {
       Taro.showToast({ title: '请输入正确的手机号', icon: 'none' })
       return
@@ -170,6 +184,8 @@ export default function OrderList() {
    * 页内登录。登录成功后**停留本页**并立即加载订单（不跳转、不 switchTab）。
    */
   const onLogin = async () => {
+    // ★ 提交给服务端前必须先取得同意
+    if (!agreed) return needAgree()
     if (!PHONE_RE.test(phone)) {
       Taro.showToast({ title: '请输入正确的手机号', icon: 'none' })
       return
@@ -238,6 +254,7 @@ export default function OrderList() {
               {cooldown > 0 ? `${cooldown}s 后重发` : '获取验证码'}
             </Text>
           </View>
+          <AgreeCheckbox checked={agreed} onChange={setAgreed} />
           <Button className='order__primary' onClick={onLogin} disabled={submitting}>
             {submitting ? '登录中…' : '登录'}
           </Button>
