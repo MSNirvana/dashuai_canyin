@@ -21,9 +21,25 @@ import './index.scss'
 
 type Tab = 'subscribe' | 'bean'
 
+/**
+ * ★ 安全解码 redirect。
+ *   旧写法在 render 阶段直接 `decodeURIComponent(router.params.redirect)`：`?redirect=%`
+ *   这类非法编码会**同步抛 URIError**，整页白屏。参数可由分享、二维码或手工构造 URL
+ *   带进来，不能当可信输入。顺带收紧为只接受站内页面路径，避免把用户导去任意地址。
+ */
+function safeRedirect(raw?: string): string {
+  if (!raw) return ''
+  try {
+    const v = decodeURIComponent(raw)
+    return /^\/pages\/[A-Za-z0-9/_-]+(?:\?.*)?$/.test(v) ? v : ''
+  } catch {
+    return ''
+  }
+}
+
 export default function Recharge() {
   const router = useRouter()
-  const redirect = router.params.redirect ? decodeURIComponent(router.params.redirect) : ''
+  const redirect = safeRedirect(router.params.redirect)
   const balance = useMerchantStore((s) => s.available)
   const isMember = useMerchantStore((s) => s.isMember)
   const grantBalance = useMerchantStore((s) => s.grantBalance)
@@ -105,6 +121,16 @@ export default function Recharge() {
       if (gen !== confirmGen.current) return
       if (attempt < MAX_CONFIRM_ATTEMPTS) {
         pollTimer.current = setTimeout(() => pollOrder(orderNo, attempt + 1, gen), 2500)
+      } else {
+        /**
+         * ★ 网络异常也必须收口。
+         *   旧写法只在「成功回包但状态还没 PAID」时收口；查单请求**持续失败**到重试耗尽时
+         *   直接 return，既不 setConfirming(false) 也不提示 ⇒ 页面永久停在
+         *   「确认中，请勿重复购买」，而按钮早已重新可用，状态自相矛盾，只能重开页面。
+         *   这里与成功分支共用同一句收口：退出确认态 + 保留订单号 + 明确告知去哪看结果。
+         */
+        setConfirming(false)
+        Taro.showToast({ title: '暂时无法确认到账，请稍后在「我的」查看积分', icon: 'none' })
       }
     })
   }
