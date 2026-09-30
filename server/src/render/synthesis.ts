@@ -716,12 +716,35 @@ export function shouldExtendForNarration(
   return voiceEnabled && Boolean(line?.trim()) && Boolean(visualMs && speechMs > visualMs + 100)
 }
 
+/**
+ * 成片响度归一化的**唯一出处** —— 只改这一个数。
+ *
+ * ★ 2026-09-30 由 `I=-16` 改为 `I=-14`（用户反馈「合成出来视频的音量有点低」）。
+ *   依据：**-16 LUFS 是播客/广播口径**，而短视频平台（抖音 / 视频号）的实际听感基准
+ *   在 **-14 ~ -12 LUFS** ⇒ 手机上外放偏小是这条设定导致的，不是设备问题。
+ *
+ * ★★ 为什么必须抽成常量：这个滤镜串以前在**两处**各写了一份 ——
+ *   `audioFilter()`（配音轨处理）与 `mixAudioTracks()`（最终混音末尾）。
+ *   只改一处 ⇒ 配音轨与最终混音的响度口径不一致，而**两边看起来都正常**：
+ *   配音轨那趟的 loudnorm 会被最终混音再拉一次，于是「改了但听感没变」
+ *   与「变得比预期更响/更闷」都查不出来，日志里也没有任何痕迹。
+ *
+ * ★ `TP=-1.5`（true peak 上限）与 `LRA=11`（动态范围）**不要动**：
+ *   TP 是留给平台二次转码的余量，收紧容易在平台侧爆音。
+ *
+ * ★ 与缓存无关：本滤镜只跑在合成的**临时工作目录**（`applyAiSynthesis` 的
+ *   `mkdtemp` + `finally rm`）里；归一化产物只统一音频编码口径、**不碰音量**
+ *   ⇒ 改这里**不需要**递增 `INTERMEDIATE_CACHE_VERSION` / `SPEECH_CUT_VERSION`。
+ *   （对照：改 `encode-quality.ts` 的 crf / 码率**必须**递增，两者别混。）
+ */
+const AUDIO_LOUDNORM = 'loudnorm=I=-14:TP=-1.5:LRA=11'
+
 function audioFilter(options: SynthesisOptions): string {
   const filters: string[] = []
   if (options.removeSilence) {
     filters.push('silenceremove=start_periods=1:start_duration=0.15:start_threshold=-45dB:stop_periods=-1:stop_duration=0.35:stop_threshold=-45dB')
   }
-  if (options.normalizeAudio) filters.push('loudnorm=I=-16:TP=-1.5:LRA=11')
+  if (options.normalizeAudio) filters.push(AUDIO_LOUDNORM)
   return filters.join(',')
 }
 
@@ -1142,7 +1165,9 @@ async function mixAudioTracks(
   const gain = requestedGain !== undefined && Number.isFinite(requestedGain ?? NaN) ? requestedGain : 0.12
   filters.push(`[${bgmIndex}:a]volume=${Math.max(0.03, Math.min(0.35, gain))}[bgm]`)
   inputs.push('[bgm]')
-  filters.push(`${inputs.join('')}amix=inputs=${inputs.length}:duration=longest:dropout_transition=2,loudnorm=I=-16:TP=-1.5:LRA=11,alimiter=limit=0.95[aout]`)
+  // ★ 响度目标来自 AUDIO_LOUDNORM（与 audioFilter 同一出处）—— 别在这里再写字面量，
+  //   两处不一致会导致「配音轨与最终混音口径不同」而无法从听感上察觉。
+  filters.push(`${inputs.join('')}amix=inputs=${inputs.length}:duration=longest:dropout_transition=2,${AUDIO_LOUDNORM},alimiter=limit=0.95[aout]`)
   args.push(
     '-filter_complex', filters.join(';'),
     '-map', '[aout]', ...audioEncodeArgsStereo(),
