@@ -454,13 +454,22 @@
   }
   // ★ 2026-09-30 删掉 `&__login-desc`：它在 JSX 里**一次都没被用到**（实测产物里 0 个节点）。
   //   死规则留着不会报错，只会让下一个人以为「这里还有个副标题状态」。要再加就先写 JSX。
+  // ★★ 2026-09-30：垂直居中**改用 flex**，不再依赖「`line-height` 与 `height` 相等」这条隐性约定
+  //   —— 小程序原生 `<button>` 自带一套行高/对齐（基础库 3.5.0 给的是
+  //   `wx-button{... line-height:2.55555556 ...}`），靠 line-height 等高在两端表现并不一致。
+  //   项目自己的按钮范式（`app.scss` 的 `.ds-btn`）本来就是
+  //   `display:inline-flex; align-items:center; justify-content:center`，这里对齐它。
+  //   ★ 宽度：本类里的 `width:100%` 在小程序端**会被基础库压掉**，真正生效的是文件末尾那条
+  //     `.mine__login-modal .mine__login-primary`（权重 0,2,0）—— 原因见那里的长注释。
   &__login-primary {
+    display: flex;
+    align-items: center;
+    justify-content: center;
     width: 100%;
     height: 96rpx;
     margin-top: 32rpx;
     border: none;
     border-radius: var(--td-radius-default);
-    line-height: 96rpx;
     font-size: 32rpx;
     font-weight: 600;
     &::after { border: none; }
@@ -565,4 +574,13 @@
    ★ 范围说明（别误读）：小程序产物 `pages/mine/index.wxss` + `app.wxss` 里**没有**这条 `[disabled]`
      规则（那边用 TDesign 的 `.t-button--disabled` **类**），实测本来就是纯白 ——
      所以这条是给 H5 通道与以后兜底的，**不代表小程序上一直是灰的**。 */
-.mine__login-modal .mine__login-primary { color: #fff; }
+/* ★★★ 第二处同源失守：小程序基础库给原生按钮定了一条
+   **`wx-button:not([size=mini]) { width: 184px }`**（基础库 3.5.0 实测存在）。
+   它的特异性是 **0,1,1**（`wx-button` 类型 0,0,1 ＋ `:not()` 里那枚属性选择器 0,1,0），
+   **压过** `.mine__login-primary` 的 0,1,0 ⇒ 端上主按钮只有 **184px 宽**，
+   而设计宽是 540rpx（390pt 屏 ≈ 280 CSS px）⇒ 实测只剩 **66%**，
+   比它上面的输入框（540rpx，满宽）窄一大截，看着就是"按钮里的字跟别处对不上"。
+   ★ 为什么 H5 通道一直查不出来：那边 Taro 的 `taro-button-core` **自带 `width:100%`**
+     （特异性 0,0,1，低于我们的 0,1,0）⇒ H5 永远是满宽。**这条只在真机 / 开发者工具上暴露。**
+   ⇒ 同样用一层祖先把权重抬到 0,2,0 抢回来。 */
+.mine__login-modal .mine__login-primary { color: #fff; width: 100%; }
