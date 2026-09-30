@@ -475,6 +475,20 @@ export default function Mine() {
       {/* ── 学习中心：分组列表（原「我的资料」的 iOS 列表样式）──
           图标与文案来自 services/tutorial.ts 的本地常量：教学接口挂了这一块也要照常显示；
           节数拿不到时只是少一个小字，不影响进入。 */}
+      {/* 交易分组：我的订单。
+          这一行不只是「给用户看流水」—— 微信 2022-12-31 公告要求有「选购 → 下单 → 支付」
+          闭环的小程序必须设置订单中心页（path = pages/order/list）；同时隐私政策里写着
+          「你可以在『我的』页面查看账号信息、门店资料、积分与订单信息」，
+          在这行之前那句话是空的：全站一个订单入口都没有。 */}
+      <View className='ds-label'>交易</View>
+      <View className='mine__menu'>
+        <View className='mine__item' hoverClass='ds-hover' onClick={() => go('/pages/order/list')}>
+          <View className='mine__item-icon'><t-icon name='order-list' size='32rpx' /></View>
+          <View className='mine__item-copy'><Text className='mine__item-title'>我的订单</Text></View>
+          <Text className='mine__arrow'>›</Text>
+        </View>
+      </View>
+
       <View className='ds-label'>学习中心</View>
       <View className='mine__menu'>
         {TUTORIAL_CATEGORIES.map((c) => (

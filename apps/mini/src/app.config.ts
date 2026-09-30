@@ -20,6 +20,11 @@ export default defineAppConfig({
     'pages/render/result',
     'pages/work/detail',
     'pages/recharge/index',
+    // 订单中心：展示本账号下**全部**资金交易订单（会员订阅 / 积分加油包）。
+    // ★★ 这个 path 是**对外登记的**：微信后台「订单中心 path」填的就是 `pages/order/list`，
+    //    也是隐私政策里承诺「可在『我的』查看积分与订单信息」的落点。
+    //    改动路径 = 平台登记立刻失效（提审会被驳回），所以要搬页就得同步去后台改。
+    'pages/order/list',
     'pages/mine/index',
     // 教学中心：分类课程页（?category=SHOOTING|EDITING|OPERATION|MANUAL）
     'pages/tutorial/index',

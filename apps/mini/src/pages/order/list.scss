@@ -1,0 +1,259 @@
+// 订单中心：概览条 + 订单卡（套餐/状态/金额/时间/单号）+ 未登录时的页内登录
+//
+// 命名与配色沿用充值页：卡片走 --td-bg-color-container + --ds-shadow-card，
+// 金额与积分用 tabular-nums 等宽数字（一列卡片纵向对齐，数字不等宽会显得参差）。
+.order {
+  min-height: 100vh;
+  background: var(--td-bg-color-page);
+  padding: 24rpx 36rpx 60rpx;
+  box-sizing: border-box;
+
+  // ── 概览条 ──
+  &__summary {
+    display: flex;
+    align-items: center;
+    gap: 12rpx;
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx 32rpx;
+    margin-bottom: 22rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__summary-label {
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__summary-num {
+    font-size: 44rpx;
+    font-weight: 700;
+    color: var(--td-text-color-primary);
+    font-variant-numeric: tabular-nums;
+  }
+  &__summary-cta {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6rpx;
+  }
+  &__summary-cta-text {
+    font-size: 26rpx;
+    color: var(--td-brand-color);
+  }
+
+  &__failed {
+    background: var(--td-brand-color-soft);
+    border: 1rpx solid var(--td-brand-color-light);
+    border-radius: var(--td-radius-default);
+    padding: 20rpx 24rpx;
+    margin-bottom: 20rpx;
+    font-size: 26rpx;
+    color: var(--ds-danger);
+  }
+
+  // ── 订单卡 ──
+  &__card {
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-large);
+    padding: 28rpx 32rpx 8rpx;
+    margin-bottom: 22rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__row1 {
+    display: flex;
+    align-items: center;
+    gap: 16rpx;
+  }
+  &__title {
+    flex: 1;
+    min-width: 0;
+    font-size: 32rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  &__status {
+    flex-shrink: 0;
+    font-size: 24rpx;
+    padding: 4rpx 16rpx;
+    border-radius: var(--td-radius-pill);
+    background: var(--td-bg-color-secondary);
+    color: var(--td-text-color-secondary);
+
+    &.is-paid {
+      background: var(--ds-success-soft);
+      color: var(--ds-success);
+    }
+    &.is-pending {
+      background: var(--ds-warning-soft);
+      color: var(--ds-warning);
+    }
+  }
+
+  &__row2 {
+    display: flex;
+    align-items: center;
+    gap: 16rpx;
+    margin-top: 12rpx;
+  }
+  &__type {
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__beans {
+    font-size: 24rpx;
+    color: var(--ds-bean);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__row3 {
+    display: flex;
+    align-items: flex-end;
+    margin-top: 18rpx;
+  }
+  &__metas {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4rpx;
+  }
+  &__meta {
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__amount {
+    flex-shrink: 0;
+    font-size: 38rpx;
+    font-weight: 700;
+    color: var(--td-text-color-secondary);
+    font-variant-numeric: tabular-nums;
+
+    // 只有真正付掉的钱才给强调色：待支付/已超时的金额仍是「没发生」的
+    &.is-paid {
+      color: var(--td-text-color-primary);
+    }
+  }
+
+  &__row4 {
+    display: flex;
+    align-items: center;
+    gap: 16rpx;
+    margin-top: 20rpx;
+    // 负 margin 抵消卡片的左右内边距，让分隔线通到卡片边缘
+    margin-left: -32rpx;
+    margin-right: -32rpx;
+    padding: 20rpx 32rpx;
+    border-top: 1rpx solid var(--td-component-border);
+  }
+  &__no {
+    flex: 1;
+    min-width: 0;
+    font-size: 22rpx;
+    color: var(--td-text-color-placeholder);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  &__copy {
+    flex-shrink: 0;
+    font-size: 24rpx;
+    color: var(--td-brand-color);
+  }
+
+  // ── 空态 / 页脚 ──
+  &__empty {
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-large);
+    padding: 80rpx 40rpx;
+    text-align: center;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__empty-title {
+    display: block;
+    font-size: 30rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__empty-hint {
+    display: block;
+    margin-top: 12rpx;
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+  }
+  &__foot {
+    text-align: center;
+    font-size: 24rpx;
+    color: var(--td-text-color-placeholder);
+    padding: 24rpx 0 8rpx;
+  }
+
+  // ── 未登录：页内登录（微信订单中心页「跳转规范 ③」要求登录后停留本页）──
+  &--login {
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding-top: 120rpx;
+  }
+  &__login {
+    width: 100%;
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-large);
+    padding: 48rpx 40rpx;
+    box-shadow: var(--ds-shadow-card);
+  }
+  &__login-title {
+    display: block;
+    font-size: 36rpx;
+    font-weight: 600;
+    color: var(--td-text-color-primary);
+  }
+  &__login-hint {
+    display: block;
+    margin-top: 12rpx;
+    font-size: 26rpx;
+    color: var(--td-text-color-secondary);
+  }
+  &__field {
+    display: flex;
+    align-items: center;
+    margin-top: 24rpx;
+    background: var(--td-bg-color-secondary);
+    border-radius: var(--td-radius-default);
+    padding: 0 24rpx;
+    height: 92rpx;
+  }
+  &__input {
+    flex: 1;
+    min-width: 0;
+    font-size: 28rpx;
+    color: var(--td-text-color-primary);
+  }
+  &__code {
+    flex-shrink: 0;
+    margin-left: 20rpx;
+    font-size: 26rpx;
+    color: var(--td-brand-color);
+
+    &.is-disabled {
+      color: var(--td-text-color-disabled);
+    }
+  }
+  &__primary {
+    margin-top: 36rpx;
+    background: var(--td-brand-color);
+    color: var(--td-text-color-anti);
+    font-size: 30rpx;
+    border-radius: var(--td-radius-default);
+    // ★ 原生 button 自带 border，不清掉会在圆角外露出一圈灰边
+    border: none;
+
+    &::after {
+      border: none;
+    }
+    &[disabled] {
+      background: var(--td-brand-color-disabled);
+      color: var(--td-text-color-anti);
+    }
+  }
+}

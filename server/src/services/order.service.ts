@@ -112,6 +112,115 @@ export async function getOrderForMerchant(prisma: PrismaClient, merchantId: bigi
   })
 }
 
+/** 订单列表里的一条。字段命名与 `GET /orders/:orderNo` 保持一致，前端可以共用一套渲染。 */
+export interface OrderListItem {
+  orderNo: string
+  orderType: string
+  /** 套餐名。订单表只存 `ref_id`，名字要去对应套餐表里补 —— 补不到才用兜底文案 */
+  title: string
+  status: string
+  amountFen: number
+  beans: string
+  paidAt: string | null
+  createdAt: string
+}
+
+export interface OrderListView {
+  total: number
+  page: number
+  pageSize: number
+  hasMore: boolean
+  list: OrderListItem[]
+}
+
+/** 订单列表一页最多给多少条。取 50 是防「前端传 pageSize=9999 把整张表拉走」。 */
+const ORDER_PAGE_SIZE_MAX = 50
+
+/**
+ * 订单列表（小程序「订单中心」页用）。
+ *
+ * ★★ 为什么必须有这个接口：微信 2022-12-31《关于小程序订单中心页设置的公告》要求
+ *   「有『选择商品/服务 → 下单 → 支付』完整流程」的小程序在小程序内设置订单中心页，
+ *   并把 path 同步给平台，且该页须展示**所有涉及资金交易的订单明细或订单分类入口**。
+ *   本应用有会员订阅与积分加油包两条真实支付流程，此前却只有「按单号查一笔」
+ *   ⇒ 用户在「我的」里**看不到自己的历史订单**（连隐私政策里那句承诺都落了空）。
+ *
+ * ★ 归属一律由 `merchantId` 限定：前端传什么都不会查到别人的订单。
+ * ★ 排序用 `id desc` 而不是 `createdAt desc`：`@@index([merchantId, createdAt])` 虽在，
+ *   但 `id` 是自增主键，同毫秒落库的多条订单排序也稳定（`createdAt` 只到毫秒）。
+ */
+export async function listOrdersForMerchant(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  opts: { page?: number; pageSize?: number } = {},
+): Promise<OrderListView> {
+  const page = Math.max(1, Math.floor(opts.page ?? 1))
+  const pageSize = Math.min(ORDER_PAGE_SIZE_MAX, Math.max(1, Math.floor(opts.pageSize ?? 20)))
+
+  const [rows, total] = await Promise.all([
+    prisma.order.findMany({
+      where: { merchantId },
+      orderBy: { id: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      select: {
+        orderNo: true,
+        orderType: true,
+        refId: true,
+        status: true,
+        amountFen: true,
+        beans: true,
+        paidAt: true,
+        createdAt: true,
+      },
+    }),
+    prisma.order.count({ where: { merchantId } }),
+  ])
+
+  // 补套餐名。★ BEAN 与 MEMBER 的 `ref_id` 指向**两张不同的表**，各自的 id 空间不通用，
+  //   所以必须分开查 —— 合起来用一次 `IN` 会把「积分包 id=1」当成「会员套餐 id=1」。
+  type PkgName = { id: bigint; name: string }
+  const none: PkgName[] = []
+  const beanIds = rows.filter((r) => r.orderType === 'BEAN').map((r) => r.refId)
+  const memberIds = rows.filter((r) => r.orderType === 'MEMBER').map((r) => r.refId)
+  const [beanPkgs, memberPkgs] = await Promise.all([
+    beanIds.length
+      ? prisma.beanPackage.findMany({ where: { id: { in: beanIds } }, select: { id: true, name: true } })
+      : none,
+    memberIds.length
+      ? prisma.memberPackage.findMany({ where: { id: { in: memberIds } }, select: { id: true, name: true } })
+      : none,
+  ])
+  const beanName = new Map(beanPkgs.map((p) => [p.id.toString(), p.name]))
+  const memberName = new Map(memberPkgs.map((p) => [p.id.toString(), p.name]))
+
+  /**
+   * 套餐名兜底。
+   * ★ 套餐可能已被后台**下架/删除**（`bean_package` 有 `enabled`，运营改配置时也可能整行删掉），
+   *   这时订单仍在、名字查不到。给一句通用文案，绝不能让列表因为一个 join 不上就报错 ——
+   *   订单中心页挂了，微信那条 path 校验也就跟着挂。
+   */
+  const fallbackTitle = (orderType: string) =>
+    orderType === 'BEAN' ? '积分加油包' : orderType === 'MEMBER' ? '会员订阅' : '订单'
+
+  const list: OrderListItem[] = rows.map((r) => {
+    const key = r.refId.toString()
+    const title = (r.orderType === 'BEAN' ? beanName.get(key) : memberName.get(key)) ?? fallbackTitle(r.orderType)
+    return {
+      orderNo: r.orderNo,
+      orderType: r.orderType,
+      title,
+      status: r.status,
+      amountFen: r.amountFen,
+      beans: r.beans.toString(),
+      paidAt: r.paidAt ? r.paidAt.toISOString() : null,
+      createdAt: r.createdAt.toISOString(),
+    }
+  })
+
+  return { total, page, pageSize, hasMore: page * pageSize < total, list }
+}
+
 export async function getMe(prisma: PrismaClient, merchantId: bigint): Promise<MeView> {
   const b = await getBalance(prisma, merchantId)
   const m = await activeMembership(prisma, merchantId)

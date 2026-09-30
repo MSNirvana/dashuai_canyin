@@ -104,3 +104,41 @@ export interface QueryOrderResult extends OrderStatus {
 export function queryOrder(orderNo: string) {
   return http.post<QueryOrderResult>(`/orders/${encodeURIComponent(orderNo)}/query`, {})
 }
+
+/** 订单列表里的一条。字段与服务端 `OrderListItem` 一一对应。 */
+export interface OrderListItem {
+  orderNo: string
+  /** `MEMBER` 会员订阅 / `BEAN` 积分加油包 */
+  orderType: string
+  /** 套餐名（服务端补的；套餐下架后是兜底文案） */
+  title: string
+  status: 'PENDING' | 'PAID' | 'CANCELLED' | 'EXPIRED' | 'REFUNDED' | string
+  amountFen: number
+  beans: string
+  /** 支付时间；未支付为 null */
+  paidAt: string | null
+  createdAt: string
+}
+
+export interface OrderListPage {
+  total: number
+  page: number
+  pageSize: number
+  hasMore: boolean
+  list: OrderListItem[]
+}
+
+/**
+ * 订单列表（「订单中心」页用）。
+ *
+ * ★★ 存在的理由不只是「给用户看历史订单」：微信自 2022-12-31 起要求有
+ *   「选择商品/服务 → 下单 → 支付」完整流程的小程序，必须在小程序内设置**订单中心页**
+ *   并把 path 同步给平台，页面须展示**所有涉及资金交易的订单明细**。
+ *   本应用有会员订阅与积分加油包两条真实支付流程，此前只有「按单号查一笔」
+ *   ⇒ 既没有可填给平台的 path，也兑现不了隐私政策里「可在『我的』查看订单」那句承诺。
+ *
+ * ★ 分页参数放进 query（`http.get` 的第二参会作为 query 下发），**不是** body。
+ */
+export function listOrders(page = 1, pageSize = 20) {
+  return http.get<OrderListPage>('/orders', { page, pageSize })
+}

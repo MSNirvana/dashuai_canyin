@@ -42,6 +42,35 @@ router.get('/membership/plans', async (req, res) => {
   }
 })
 
+/**
+ * 订单列表 —— 小程序「订单中心」页（`pages/order/list`）的数据源。
+ *
+ * ★★ 这一条是**为微信的订单中心页规范**加的，不是普通功能迭代：
+ *   微信 2022-12-31《关于小程序订单中心页设置的公告》要求「有『选择商品/服务 → 下单 → 支付』
+ *   完整流程」的小程序在小程序内设置订单中心页，并把 path 同步给平台；该页须展示
+ *   **所有涉及资金交易的订单明细**，且无登录态时要引导登录。
+ *   而在此之前，本应用只有「按单号查一笔」⇒ 用户看不到自己的历史订单。
+ *
+ * ★ 分页参数用 `Number()` 手动解析而不是 `z.coerce`：
+ *   查询串是用户可控的，`Number('abc')` 得到 NaN，下面用 `Number.isFinite` 兜住即可；
+ *   解析失败按「第一页」处理，**不报 400** —— 订单中心页是微信要访问的公开入口，
+ *   为了一个畸形 query 直接 4xx 会让平台侧的 path 校验看到错误页。
+ */
+router.get('/', async (req, res) => {
+  try {
+    const pageRaw = Number(req.query.page)
+    const sizeRaw = Number(req.query.pageSize)
+    const r = await orderSvc.listOrdersForMerchant(prisma, req.merchantId!, {
+      page: Number.isFinite(pageRaw) && pageRaw >= 1 ? pageRaw : 1,
+      pageSize: Number.isFinite(sizeRaw) && sizeRaw >= 1 ? sizeRaw : 20,
+    })
+    ok(res, r)
+  } catch (e) {
+    console.error('[orders] 订单列表异常:', e)
+    return fail(res, 500, '查询失败', 500)
+  }
+})
+
 router.get('/:orderNo([A-Za-z0-9_-]+)', async (req, res) => {
   try {
     const order = await orderSvc.getOrderForMerchant(prisma, req.merchantId!, req.params.orderNo!)
