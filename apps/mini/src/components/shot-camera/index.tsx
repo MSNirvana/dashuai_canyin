@@ -39,6 +39,17 @@
 // ★ 布局硬约束（微信官方文档）：同一页面只能有一个 camera；camera **不能**放进
 //   scroll-view / swiper / picker-view / movable-view。所以这一层是整页 fixed 浮层，
 //   内部不嵌套任何滚动容器（提词器用 CoverView —— 分镜台词本来就只有十几个字）。
+//
+// ★★ 第五条平台脾气（2026-09-30 加）：**相机没出画时不会有任何回调**。
+//   症状就是「提词器、快门、两个圆钮全都渲染正常，只有取景画面是纯黑」（已实测）。
+//   `onError` 官方注明是「用户不允许使用摄像头时触发」，但 iOS 上实测**不触发**
+//   （社区口径：「无报错、`binderror` 不触发、画面全黑」）。所以三条一起上：
+//     ① 失败不打信号 ⇒ 只能盯**成功**信号：`onInitDone` 到点还没来就按「没出画」处理；
+//     ② 页面这一侧改不了原生层 ⇒ 唯一的自救是把原生节点**重建**（挪 key），
+//        这正是切前后摄已经在用的手段（`device-position` 动态改不生效，也是换 key）；
+//     ③ 重建两次还不行 ⇒ 转成面板给出口（去设置 / 回落微信原生的），不能留一块黑屏。
+//   另外一条独立的：`onStop`（切后台、被系统抢占、来电）之后预览**不会自己回来**，
+//   同样只能靠重建 —— 录制中的那一次刻意不重建，交给「拍完确认 → 重拍」那条路。
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { View, Text, Image, Camera, CoverView, CoverImage } from '@tarojs/components'
@@ -75,6 +86,32 @@ const STOP_ACK_TIMEOUT_MS = 8000
  * 这是瞬时竞态，隔一拍重试一次就过 —— 别为它弹面板，否则用户以为相机坏了。
  */
 const START_RETRY_DELAY_MS = 700
+
+/**
+ * 等「相机初始化完成」的上限（毫秒）。
+ *
+ * ★★ 黑屏是**没有任何回调**的故障：相机因为没授权 / 被别的 App 占着 / 机型不兼容而没出画时，
+ *   这一层界面**照常渲染**（提词器、快门、两个圆钮全在），而 `onError` 在 iOS 上实测
+ *   **不触发**（官方社区口径：「无报错、binderror 不触发、画面全黑」）。
+ *   既然失败不打信号，就只能反过来盯**成功**信号：到点还没等到 `onInitDone`，
+ *   就按「没出画」处理（见 recoverCamera）。
+ * 给 3 秒是因为相机启动本身要时间（安卓低端机从进页面到有画面要 1~2 秒）。
+ */
+const CAM_INIT_TIMEOUT_MS = 3000
+
+/**
+ * 一次打开浮层里允许**自动重建**相机的次数。
+ * 黑屏的首选自救就是把原生节点重建一遍（切前后摄能生效就是同一个原理）。
+ * 重建两次还没起来，就不是瞬时问题了 —— 转成面板给出口，别让用户对着黑屏干等。
+ */
+const CAM_MAX_AUTO_RECOVER = 2
+
+/**
+ * 控制台/产物里的**金丝雀**串（纯 ASCII，防压缩器当死代码删掉）。
+ * `scripts/verify-weapp-dist.mjs` 拿它断言「黑屏自愈这条链路确实进了产物」——
+ * 只看源码或只跑 tsc 都验不出「产物里有没有它」。
+ */
+const BLACK_RECOVER_CANARY = 'shotcam-black-recover'
 
 export interface ShotCameraResult {
   videoPath: string
@@ -218,6 +255,21 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
    */
   const [failMsg, setFailMsg] = useState('')
 
+  /**
+   * 相机重建代次。★ 它进 `<Camera>` 的 key：改一下就**强制微信重建原生节点**。
+   * 这是本项目已验证过能拿回画面的唯一手段 —— 切前后摄（`device-position` 在部分机型上
+   * 动态改不生效）就是靠换 key 重建生效的。
+   * 用途：黑屏自愈（见 recoverCamera）、从设置页回来重试。
+   */
+  const [camGen, setCamGen] = useState(0)
+
+  /** 这一代相机是否已经 `onInitDone`。★ 它是判断「画面到底出没出」的**唯一可靠信号**（黑屏不报错） */
+  const camReadyRef = useRef(false)
+  /** 初始化看门狗：到点还没 onInitDone 就按「没出画」处理 */
+  const camInitWatchRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 本次打开浮层已经自动重建过几次（成功起来一次就还清，见 onInitDone） */
+  const camRecoverRef = useRef(0)
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   /** stopRecord 的看门狗：它不回调时靠它把界面放出来（见 doStop） */
   const stopWatchRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -276,9 +328,41 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     finalizedRef.current = false
     recordingRef.current = false
     savingRef.current = false
+    // ★ 相机自愈的预算也还回去：重拍 / 重新打开时，黑屏又有两次重建机会（而不是一进就失败）
+    camRecoverRef.current = 0
+    camReadyRef.current = false
     // ★ 代次 +1：在飞的那两个回调（startRecord / stopRecord）从此对不上号，一律丢弃
     epochRef.current += 1
   }, [clearTimer])
+
+  /**
+   * ★★ 只在「正在取景」时才挂 <Camera>。拍完确认（review）与相机不可用（failMsg）两块
+   * 面板都是**居中**的、用的是普通 View —— 普通 View 盖不住还活着的 camera（native 组件的
+   * 层级最高）。所以进这两态之前先把 camera 卸掉，面板上的按钮才点得到；
+   * 这也是 43454fa 里「面板同样点不动」的同一条根因（见 index.scss 文件头 ★★）。
+   */
+  const showCamera = !failMsg && phase !== 'review'
+
+  /**
+   * 相机没出画时的自救：把原生节点**重建一遍**。
+   *
+   * ★★ 为什么重建是唯一手段：取景画面是客户端原生层画的，黑屏时页面这边**收不到任何错误**
+   *   （`onError` 在 iOS 上实测不触发），我们改不了原生层，只能让微信**重新初始化一次相机**。
+   * ★ 预算（CAM_MAX_AUTO_RECOVER 次）用尽就转成面板：到那一步就是环境问题
+   *   （系统里把微信的相机权限关了 / 摄像头被别的 App 占着 / 机型不兼容），
+   *   必须有出口（去设置、回落微信原生的），不能留用户对着黑屏。
+   */
+  const recoverCamera = useCallback((why: 'init-timeout' | 'stopped') => {
+    if (camRecoverRef.current >= CAM_MAX_AUTO_RECOVER) {
+      setFailMsg('相机没能启动，画面一直是黑的')
+      return
+    }
+    camRecoverRef.current += 1
+    camReadyRef.current = false
+    // ★ 打一行带金丝雀的日志：真机上看不到界面细节时，这是唯一能确认「自愈确实跑过」的痕迹
+    console.warn(`[${BLACK_RECOVER_CANARY}] 相机没出画（${why}），第 ${camRecoverRef.current} 次重建`)
+    setCamGen((g) => g + 1)
+  }, [])
 
   // 关掉浮层（visible=false）时一定要停表：否则 interval 会在已卸载的组件上继续 setState。
   // 看门狗同理 —— 它到点也会 setState。
@@ -311,6 +395,31 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
       .catch(() => { /* 读不到就交给 <Camera> 自己的授权弹窗 */ })
     return () => { alive = false }
   }, [visible])
+
+  /**
+   * ★★ 黑屏探针：盯**成功**信号，而不是等错误。
+   *
+   * 相机没出画时这一层收不到任何回调 —— `onError` 在 iOS 上实测不触发，于是界面一切正常、
+   * 画面全黑，用户只能退出去重进（这正是加这条之前的行为）。
+   * 所以反过来做：一进取景就起计时器，到点还没等到 `onInitDone` 就按「没出画」处理 ——
+   * 先自动重建，重建次数用完才给面板（见 recoverCamera）。
+   * 顺带把另一条也闭掉了：首次进入时若在授权弹窗上点了「拒绝」，同样不会有 onInitDone，
+   * 于是走同一条路 → 最终落到面板上的「去设置里允许」，而不是一块没有任何提示的黑屏。
+   *
+   * ★ 依赖里的 camGen / device / flash 都是**有意**的：三者都代表「原生节点被重建」，
+   *   每重建一代就要重新等一次初始化完成。
+   */
+  useEffect(() => {
+    if (!showCamera) return
+    camReadyRef.current = false
+    camInitWatchRef.current = setTimeout(() => {
+      camInitWatchRef.current = null
+      if (!camReadyRef.current) recoverCamera('init-timeout')
+    }, CAM_INIT_TIMEOUT_MS)
+    return () => {
+      if (camInitWatchRef.current) { clearTimeout(camInitWatchRef.current); camInitWatchRef.current = null }
+    }
+  }, [showCamera, camGen, device, flash, recoverCamera])
 
   /**
    * 录制结束的唯一收敛点：用户点停、到达上限、被系统打断，最后都走这里。
@@ -484,7 +593,12 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     setDevice(next)
   }
 
-  /** 回到取景重新拍：把上一条的痕迹清干净，否则 finalizedRef 会把下一次录制直接吞掉 */
+  /**
+   * 回到取景重新拍：把上一条的痕迹清干净，否则 finalizedRef 会把下一次录制直接吞掉。
+   * ★ 它同时是「相机不可用」面板上那个「再试一次」的落点 —— 所以这里**显式重建一次相机**
+   *   （挪 camGen）。面板状态下 camera 本来就已卸载、清掉 failMsg 也会重新挂载，
+   *   但显式挪一次能保证拿到的是全新节点，重建预算也在 resetRun 里一并还清。
+   */
   const retake = useCallback(() => {
     resetRun()
     setTake(null)
@@ -492,6 +606,7 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     setElapsed(0)
     setSaving(false)
     setPhase('idle')
+    setCamGen((g) => g + 1)
   }, [resetRun])
 
   const close = async () => {
@@ -537,13 +652,6 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
   if (!visible) return null
 
   const recording = phase === 'recording'
-  /**
-   * ★★ 只在「正在取景」时才挂 <Camera>。拍完确认（review）与相机不可用（failMsg）两块
-   * 面板都是**居中**的、用的是普通 View —— 普通 View 盖不住还活着的 camera（native 组件的
-   * 层级最高）。所以进这两态之前先把 camera 卸掉，面板上的按钮才点得到；
-   * 这也是 43454fa 里「面板同样点不动」的同一条根因（见 index.scss 文件头 ★★）。
-   */
-  const showCamera = !failMsg && phase !== 'review'
   const line = (shot?.line ?? '').trim()
   const visual = (shot?.visualReq ?? '').trim()
   // cover-view 的默认样式是 white-space: nowrap，长台词会被**静默裁掉**（不换行、不报错）。
@@ -560,21 +668,38 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
           原生组件，层级最高、z-index 管不了它，只能靠 cover-view 盖上去（见文件头 ★★）。 */}
       {showCamera && (
         <Camera
-          /* ★ key 里带上 device/flash：camera 的 device-position 在部分机型上
+          /* ★ key 里带上 device/flash/camGen：camera 的 device-position 在部分机型上
              动态改不生效（实测点「前置」画面不动），换 key 强制重建最稳。
-             重建只在开录前发生 —— 录制中两个开关都是禁用的。 */
-          key={`${device}-${flash}`}
+             重建只在开录前发生 —— 录制中两个开关都是禁用的。
+             ★ camGen 是**黑屏自愈**用的：画面没出来（等不到 onInitDone）时，
+               页面这边能改的只有这个 key（见 recoverCamera）。 */
+          key={`${device}-${flash}-${camGen}`}
           className='shotcam__preview'
           devicePosition={device}
           flash={flash}
           resolution='high'
+          /* ★★ onInitDone 是「画面到底出没出」的**唯一可靠信号**（黑屏不报错，
+             见 CAM_INIT_TIMEOUT_MS 的 ★★）。收到它就说明这一代相机真的起来了，
+             顺手把重建预算还清 —— 之后要是再遇到「切后台回来黑屏」还有得救。 */
+          onInitDone={() => { camReadyRef.current = true; camRecoverRef.current = 0 }}
           onError={(e) => setFailMsg(`相机不可用：${errText(e.detail) || '请检查权限'}`)}
           onStop={() => {
-            // 摄像头被非正常终止（切后台、被系统抢占）。正在录的话微信会走
-            // timeoutCallback 把文件交回来，这里只负责把界面从「录制中」摘出来，
-            // 别让它一直停在录制态骗用户。
+            // 摄像头被非正常终止（切后台、被系统抢占、来电）。
             // ★ 判据用 recordingRef 而不是渲染里的 recording：这个回调可能早于 setState 落地。
-            if (recordingRef.current) { recordingRef.current = false; clearTimer(); setPhase('idle') }
+            if (recordingRef.current) {
+              // 正在录：微信会走 timeoutCallback 把文件交回来，这里只负责把界面从「录制中」
+              // 摘出来，别让它一直停在录制态骗用户。
+              // ★ 这一段**刻意不重建相机**：重建会打断 stopRecord 的回收链路，
+              //   而它的画面由后面「拍完确认 → 重拍」那条路自然解决（重拍会重新挂 camera）。
+              recordingRef.current = false
+              clearTimer()
+              setPhase('idle')
+              return
+            }
+            // ★★ 没在录的时候被停掉，预览**不会自己回来** —— 屏幕上留下一个纯黑画面，
+            //    而提词器、快门、两个圆钮全都还在，用户只会以为相机坏了。
+            //    切后台再回来是最常见的一条：此时唯一的出路就是把原生节点重建一遍。
+            recoverCamera('stopped')
           }}
         />
       )}

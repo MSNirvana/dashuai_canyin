@@ -207,5 +207,54 @@ if (!ttLeaks.length && !fallbackLeaks.length) {
   console.log('    ✓ 无另一端代码，适配层未退化')
 }
 
+// ── 8. 拍摄层：相机黑屏自愈链路（2026-09-30） ──
+// 为什么必须有这条：相机黑屏**没有任何错误回调**（`onError` 官方注明是「用户不允许使用
+// 摄像头时触发」，但 iOS 上实测不触发）。组件因此改成「盯**成功**信号 onInitDone，
+// 到点没等到就重建原生节点」。这套逻辑被改坏时 `tsc` 与构建**都不会报错** ——
+// 表现就是回到「取景全黑、提词器与快门却一切正常」。
+// 机械核对三件事，缺任何一件这条链路就是形同虚设：
+//   ① 成功信号真的接在相机元素上（产物里出现 onInitDone）
+//   ② 自愈那段代码真的进包了（金丝雀串 —— **字符串字面量**，压缩器不会改名）
+//   ③ 相机的 key 真的带「重建代次」（★ 产物里变量名已被压缩，这一条只能回源码验）
+// ★ 别用**函数名**去验「代码进包了」：terser 会改名，必然假阴性
+//   （同一条教训见 scripts/check-dist-strings.py 文件头 ★★）。
+const SHOTCAM_CANARY = 'shotcam-black-recover' // 必须与 src/components/shot-camera/index.tsx 一致
+const shotsPageJs = join(DIST, 'pages/creation/shots.js')
+const camSrcPath = 'src/components/shot-camera/index.tsx'
+console.log('\n[自检] 拍摄层相机黑屏自愈（2026-09-30）：')
+if (!existsSync(shotsPageJs)) {
+  fail += 1
+  console.log(`    ✗ 找不到产物 ${shotsPageJs.replace(DIST + '/', '')}`)
+} else {
+  const t = readFileSync(shotsPageJs, 'utf8')
+  const hasInitHook = /\bonInitDone\b/.test(t)
+  const hasCanary = t.includes(SHOTCAM_CANARY)
+  console.log(`    ${hasInitHook ? '✓' : '✗'} 相机元素接了 onInitDone（黑屏时唯一能观测的「成功」信号）`)
+  console.log(`    ${hasCanary ? '✓' : '✗'} 黑屏自愈链路在产物里（金丝雀 ${SHOTCAM_CANARY}）`)
+  if (!hasInitHook) {
+    fail += 1
+    console.log('      修法：<Camera> 必须接 onInitDone —— 黑屏没有任何错误回调，它是唯一的观测点')
+  }
+  if (!hasCanary) {
+    fail += 1
+    console.log('      修法：确认 recoverCamera 仍在（没出画 → 重建原生节点 → 预算用完转面板）')
+  }
+}
+// ★ 这一条读**源码**而不是产物：key 里的 `camGen` 压缩后就成了单字母变量，
+//   产物里再也认不出来。断言放宽到「key 是个模板串且里出现 camGen 即可」，容忍格式调整。
+// ★★ 别写成 `key=\{[^}]*camGen` —— `[^}]*` 会停在 `` `${device}` `` 的第一个 `}` 上，
+//    于是**正确的代码也会被判失败**（本断言第一版就是这么假红的：断言窄于它的标题）。
+if (existsSync(camSrcPath)) {
+  const keyHasGen = /key=\{`[^`]*camGen/.test(readFileSync(camSrcPath, 'utf8'))
+  console.log(`    ${keyHasGen ? '✓' : '✗'} 相机 key 带重建代次 camGen（不带它，「重建」就是个空操作）`)
+  if (!keyHasGen) {
+    fail += 1
+    console.log('      修法：key={`${device}-${flash}-${camGen}`}。不带 camGen ⇒ 黑屏永远好不了，')
+    console.log('            而且不会有任何报错 —— 正是这次要修的那个症状')
+  }
+} else {
+  console.log(`    ⚠ 找不到源码 ${camSrcPath}（从仓库根调用时属正常，本条跳过）`)
+}
+
 console.log(`\n${fail === 0 ? '★ 自检通过' : `★ 自检失败（${fail} 项）`}`)
 process.exit(fail === 0 ? 0 : 1)
