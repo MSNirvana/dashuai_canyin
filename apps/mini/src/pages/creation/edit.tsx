@@ -47,6 +47,19 @@ const SHOT_SIZES = ['远景', '全景', '中景', '近景', '特写', '大特写
  */
 const STEP_LABELS = ['创作', '素材', '成片']
 
+/**
+ * 菜品选择器**头部**的固定项（排在具体菜品之前）：只有「无」一项。
+ *
+ * ★ 必须进 `range`、不能只做占位文案：只做占位的话，用户一旦点开选择器选了某道菜，
+ *   就再也回不到「不选」—— 而他点错一次只能退出页面重建一条创作。
+ * ★★ 它曾经是**两项**（「不选菜品」＋「只讲门店」），而且项数**随款式变化**（1 或 2）——
+ *   那正是「偏移量写死就选 A 提交 B」的事故源头。2026-09-30 把「不选菜品」移出去、
+ *   改成标题行右侧的开关（见 `useStoreDish`）之后，这里恒为 1 项。
+ *   偏移量仍然从 `DISH_HEAD_OPTIONS.length` **现取**（不写死）—— 不是为了今天的 1，
+ *   而是为了下一个人往这里加项时不会重演那次事故。
+ */
+const DISH_HEAD_OPTIONS: { key: 'STORE'; label: string }[] = [{ key: 'STORE', label: '无' }]
+
 interface ShotDraft {
   shotType: string
   shotSize: string
@@ -231,33 +244,53 @@ export default function CreationEdit() {
   const [dishesFailed, setDishesFailed] = useState(false)
   const [storeIdx, setStoreIdx] = useState(0)
   /**
-   * 菜品选择器的三种取值（2026-09-28 起）。
+   * 菜品选择器的取值（2026-09-30 起只剩两种）。
    *
-   * · `'NONE'`  —— 「不选菜品」：**门店与菜品资料都不给 AI**（创建走 `mode='STYLE'`）。
-   * · `'STORE'` —— 「只讲门店」：给门店资料、不给菜品（`mode='DISH'`，不发 dishId）。
+   * · `'STORE'` —— 「无」：**给门店资料、不给菜品**（`mode='DISH'`，不发 dishId）。
    * · `number`  —— 选了 `dishes[number]`（`mode='DISH'`，发 dishId）。
    *
-   * ★ 为什么用联合类型而不是「一个下标 + 两个哨兵值（-1/-2）」：选择器下标与 `dishes`
-   *   之间本来就差一个偏移，而本次改动让偏移**随款式变化**（产品型/种草型没有「不选菜品」
-   *   那一项，偏移是 1；人设型/知识型有两项，偏移是 2）。哨兵值要跟着偏移一起改，
-   *   漏一处就是「选 A 提交 B」—— 那正是本页历史上出过一次的事故（旧注释里的 `-1`）。
-   *   联合类型让 `dishes[...]` 的每一处读法都必须先收窄，编译器替我看着。
-   */
-  type DishPick = 'NONE' | 'STORE' | number
-  /**
-   * 菜品选择器的当前值，默认 `'STORE'`（= 改名前的「不选菜品（只讲门店）」）。
+   * ★★ 「门店与菜品资料都不给」那一档（原 `'NONE'`）**已从本选择器移出**，改由标题行右侧的
+   *   `useStoreDish` 开关表达（关掉 ⇒ `mode='STYLE'`）。移出的理由正是它原来与 `'STORE'`（「无」）
+   *   在选择器里**同屏并排**：两项读起来都是「没有菜」，而喂给 AI 的资料完全不同
+   *   （一个连门店资料也不给）—— 用户没法从字面分辨，选错了也不报错。
+   * ★ 附加收益：头部固定项恒为 1 项 ⇒ 「偏移量随款式变化、写死就『选 A 提交 B』」这个
+   *   历史事故点（旧注释里的 `-1`）从这里消失了，`DISH_HEAD_OPTIONS.length` 现在恒等于 1。
    *
-   * ★ 默认值**刻意保持不变**：它以前就是「给门店资料、不给菜品」，改名只是把话说准。
-   *   如果顺手把默认改成 `'NONE'`，所有新创作都会**悄悄**不再喂门店资料 ——
-   *   文案里从此没有店名，而用户什么都没做错，这种静默变更正是本页要避免的。
+   * ★ 仍然用联合类型而不是「一个下标 + 哨兵值（-1）」：`dishes[...]` 的每一处读法
+   *   都必须先收窄，编译器替我看着 —— 越界读到 `undefined` 会**静默落在一道具体的菜上**。
+   */
+  type DishPick = 'STORE' | number
+  /**
+   * 菜品选择器的当前值，默认 `'STORE'`（= 界面上的「无」）。
+   *
+   * ★ 默认值**刻意保持不变**：它一直是「给门店资料、不给菜品」，本次只是把它的文案
+   *   从「只讲门店」改叫「无」，值本身没动。
    * ★ 为什么不默认挑一道菜：用户没有表达「我要推这道菜」之前，替他默认挑一道，
    *   等于把「他什么都没选」静默换成「他选了第一道菜」—— 文案里出现的那道菜不是他选的，
    *   而他直到拍摄页才发现（还已经扣了积分）。
-   * ★ 三档都不影响**能不能生成**：服务端 `dishId` 是选填（routes/creations.ts:66），
-   *   提示词侧也明写了「空 = 这次没有指定菜品，不要编造菜名」，
-   *   以及「门店与菜品都为空」时的那一段（prompts.ts 的 CONTEXT_BLOCK）。
+   * ★ 两种取值都不影响**能不能生成**：服务端 `dishId` 是选填（routes/creations.ts:66），
+   *   提示词侧也明写了「空 = 这次没有指定菜品，不要编造菜名」。
    */
   const [dishPick, setDishPick] = useState<DishPick>('STORE')
+  /**
+   * 「菜品与套餐」这一整块**启不启用** —— 标题行右侧那个开关，默认打开。
+   *
+   * ★★ 它就是原来选择器里的「不选菜品」那一档（创建时走 `mode='STYLE'`）：
+   *   关掉 ⇒ **不传菜品和门店**（门店 id 照发 —— 创作必须挂在门店下，列表归属/软删/
+   *   越权校验都走它；被清空的是**喂给 AI 的那份门店资料**）。
+   *   放进标题行而不是留在选择器里，是因为「要不要用这一整块的资料」是关于**整块**的事：
+   *   在选择器里它只能和「无」并排，两项都读成「没有菜」，用户没法分辨。
+   *
+   * ★ 关掉时**只灰掉整块、不隐藏**（同 `isTraffic` 的处置）：隐藏会让这一栏凭空消失，
+   *   用户分不清是「这次不用」还是页面坏了。
+   * ★★ 能不能关**随款式变化**：产品型/种草型天生要讲清在售内容，关掉只会逼 AI 编，
+   *   而且它们的兜底模板写成 `{{storeName}}的菜，…`，门店资料被清空后会渲染成
+   *   「的菜，具体价格…」这种病句（兜底恰恰是网关失败时用户唯一看得到的那句话）；
+   *   服务端也会用 2016 拒掉。⇒ 那两款下开关**置灰且恒为开**（见 `allowsNoMaterial`）。
+   * ★ 换款式把开关收走后（见 `onPickTrack`）必须**强制开回来**，否则又是一个
+   *   「界面显示 A、实际提交 B」。
+   */
+  const [useStoreDish, setUseStoreDish] = useState(true)
   const [copyLoading, setCopyLoading] = useState(false)
   const [boardLoading, setBoardLoading] = useState(false)
   // P0-7 再入锁：state 更新是异步的，而且 tdesign 组件的 loading 要经 native setData 下发，
@@ -435,7 +468,7 @@ export default function CreationEdit() {
     // 立刻清空并把「当前菜品归属」置空：在响应回来之前，界面上不能还留着上一家店的菜，
     // 否则用户在这几百毫秒里点提交，提交的就是别家店的菜品
     setDishes([])
-    // ★ 同时退回「只讲门店」：归属标记被清空的这段时间里，下标指向的是**上一家店**的菜，
+    // ★ 同时退回「无」：归属标记被清空的这段时间里，下标指向的是**上一家店**的菜，
     //   留着它就会出现「列表已是新店、选中项还停在旧店第 3 道」——而新店可能只有 2 道菜。
     setDishPick('STORE')
     setDishesStoreId('')
@@ -485,7 +518,7 @@ export default function CreationEdit() {
     const idx = stores.findIndex((s) => s.id === currentStoreId)
     if (idx < 0 || idx === storeIdx) return
     setStoreIdx(idx)
-    // 门店变了，选中项跟着退回「只讲门店」（理由同 loadDishesFor 里那处）
+    // 门店变了，选中项跟着退回「无」（理由同 loadDishesFor 里那处）
     setDishPick('STORE')
     if (currentStoreId) loadDishesFor(currentStoreId)
   }, [currentStoreId, stores])
@@ -598,6 +631,22 @@ export default function CreationEdit() {
   const isTraffic = track === TRAFFIC_TRACK
 
   /**
+   * 「不传菜品和门店」—— 就是标题行那个开关的关闭态（创建走 `mode='STYLE'`）。
+   * ★ 在页面里算一次、`onCreate` 与渲染处共用：两处各写一遍 `!useStoreDish` 迟早会分叉。
+   */
+  const noMaterial = !useStoreDish
+
+  /**
+   * 那个开关**能不能关** —— 只有人设型/知识型可以（见 `allowsNoMaterial`）。
+   * ⚠ `allowsNoMaterial(TRAFFIC)` 也返回 true（它回答的是「这一款需不需要菜品资料」），
+   *   但流量型**根本不渲染这个开关**，所以这里不必再排一次流量型。
+   */
+  const switchLocked = !allowsNoMaterial(track)
+
+  /** 整块置灰的判据：流量型（整块不适用）或开关被关掉。标题行与取值行共用同一个信号。 */
+  const blockOff = isTraffic || noMaterial
+
+  /**
    * 「文案款式」的五个选项：流量型独占一行（`lead: true`），其余四款两两一行。
    * ★ 在页面里现拼而不从 services 导出：**这是版式**，属于这一页。
    *   服务层只回答「有哪些款、中文名叫什么」；谁占整行、怎么排不该动服务层。
@@ -622,21 +671,31 @@ export default function CreationEdit() {
       return
     }
     /**
-     * ★ 菜品校验**只在非流量型、且确实选了菜时**做（2026-09-25 菜品改成可选项）。
+     * ★ 菜品校验**只在「非流量型 ∧ 开关开着 ∧ 确实选了一道菜」时才做**
+     *   （2026-09-25 菜品改成可选项；2026-09-30 补上第三个条件）。
      *
      * 流量型是话题稿：不发门店、不发菜品（服务端 `mode='TOPIC'` 收到这两个字段会 2002），
      * 所以这一款根本不该被菜品卡住。★ 必须**整体跳过下面两段**，不能只跳「必选」那一段：
      * 只跳必选的话，用户选了流量型、菜品列表恰好还在加载中，仍然会拿到
      * 「菜品还在加载，请稍候再试」—— 而这一款永远不需要菜品，他会一直等一个不必发生的加载。
      *
-     * ★ 菜品稿同理**多一个前置条件**：确实选了一道菜（`dishPick` 是数字）。
+     * ★★ 开关关掉时 `dishPick` **可能还停在某道菜上**（关掉那一刻我们刻意不擦掉用户的选择，
+     *   见 `onToggleStoreDish`），但那次提交**一道菜都不发** ⇒ 这里同样要整段跳过。
+     *   不跳的两面都很糟：
+     *   · 闸门没跳 ⇒ 他拿到「菜品列表已更新，请重新选择菜品」，而他这次压根不需要菜品 ——
+     *     一句**无解**的拦截（照做也还是错的）；
+     *   · `did` 没跟着清空 ⇒ 请求会同时带 `mode='STYLE'` 与 `dishId`，**服务端 2015 直接拒**
+     *     （「不选菜品」不能再指定菜品）。
+     *   两个是同一个根因，所以 `did` 与闸门条件必须**一起**带上 `!noMaterial`。
+     *
+     * ★ 菜品稿还**多一个前置条件**：确实选了一道菜（`dishPick` 是数字）。
      *   没选菜时 `{{dishName}}` 为空是**预期状态**（提示词里有对应的「空 = 没指定菜品」约定），
      *   不再需要校验，更不能拦 —— 旧实现把「空菜名」当成数据缺失去拦，是这次要改掉的东西。
-     *   ★ 「不选菜品」（`'NONE'`）与「只讲门店」（`'STORE'`）都**不指向任何一道菜**，
-     *     下面这几段归属校验对它们整段跳过（前面那个 `isTraffic` 的跳过理由同理）。
+     *   ★ 「无」（`'STORE'`）也不指向任何一道菜 —— 这一点由 `typeof dishPick === 'number'`
+     *     一处说完了，不再按档名列一遍（列了就会随档位增减而过期）。
      */
-    const did = typeof dishPick === 'number' ? dishes[dishPick]?.id : undefined
-    if (!isTraffic && typeof dishPick === 'number') {
+    const did = !noMaterial && typeof dishPick === 'number' ? dishes[dishPick]?.id : undefined
+    if (!isTraffic && !noMaterial && typeof dishPick === 'number') {
       /**
        * ★ 菜品必须**确认属于当前门店**才允许提交。
        *
@@ -645,7 +704,7 @@ export default function CreationEdit() {
        * `{{dishName}}` 会被填成那道菜，AI 于是写出一条与当前门店无关的文案 ——
        * 用户要到拍摄页才发现白扣了积分。所以这里比对归属标记。
        *
-       * ⚠ 这条闸门只对「选了菜」成立：`loadDishesFor` 在发起请求时会把选中项退回「只讲门店」，
+       * ⚠ 这条闸门只对「选了菜」成立：`loadDishesFor` 在发起请求时会把选中项退回「无」，
        *   所以「列表还在加载」与「有选中项」理论上不会同时出现；留它是为了挡住
        *   那些没走到 `loadDishesFor` 的路径（比如页面已渲染、门店 id 又变了）。
        */
@@ -677,13 +736,12 @@ export default function CreationEdit() {
        * ★ 三条路的**创建请求不同构**，别合并成一次调用再靠字段有无区分：
        * · 流量型 ⇒ `mode:'TOPIC'`，且**不许**带 storeId / dishId（服务端会 2002 拒绝）。
        *   宿主门店由服务端自己挑（只为媒体归属与地域钩子），用户在界面上没有选过它。
-       * · 「不选菜品」（`dishPick === 'NONE'`，只在人设型/知识型下可选）⇒ `mode:'STYLE'`。
+       * · 标题行开关关掉（`noMaterial`，只有人设型/知识型关得动）⇒ `mode:'STYLE'`。
        *   ★ 它**要带 storeId**：服务端对这一档仍是必填（创作必须挂在门店下 ——
        *   列表归属、软删、越权校验都走它），被清空的只是**喂给 AI 的那份门店资料**。
        *   ★ `track` 照传：款式是这一档唯一的驱动，人设型/知识型的模板就是这时候用的。
        * · 其余 ⇒ 菜品稿，必须带 storeId + track，`dishId` **选填**（选了菜才发）。
        */
-      const noMaterial = dishPick === 'NONE'
       const c = isTraffic
         ? await createCreation({
             mode: 'TOPIC',
@@ -795,15 +853,35 @@ export default function CreationEdit() {
     const value = v as CopyTrack
     setTrack(value)
     /**
-     * ★★ 换款式可能把「不选菜品」这一档**收走**（产品型/种草型不提供它，见 `allowsNoMaterial`）。
-     *   不理会的话，`dishPick` 会停在一个界面上已经不存在的取值上：选择器显示「只讲门店」
-     *   （它是新 range 的第 0 项），而提交时仍然按 `'NONE'` 走 `mode='STYLE'` ——
-     *   **用户看到 A、实际提交 B**，而且不报错。所以在这里退回「只讲门店」。
+     * ★★ 换款式可能把那个开关**收走**（产品型/种草型不能关，见 `allowsNoMaterial`）。
+     *   不理会的话，`useStoreDish` 会停在一个界面上已经不允许的取值上：开关画成
+     *   「置灰且恒为开」，而提交时仍按关着走 `mode='STYLE'` ——
+     *   **用户看到 A、实际提交 B**，而且不报错。所以在这里强制开回来。
+     * ★ 只动开关、不动 `dishPick`：两者已经解耦（开关关掉时选择器整个不渲染，
+     *   用户上次选的那道菜留着，开回来就是它 —— 这才是用户预期）。
      * ★ 用户手动改的款式本来就不落库（`updateCreation` 只在已有 localId 时调，而本页
      *   有 localId 时表单已隐藏），所以这里只管本地状态。
      */
-    if (!allowsNoMaterial(value)) setDishPick((cur) => (cur === 'NONE' ? 'STORE' : cur))
+    if (!allowsNoMaterial(value)) setUseStoreDish(true)
     if (localId) updateCreation(localId, { track: value }).catch(() => undefined)
+  }
+
+  /**
+   * 标题行那个开关（2026-09-30 新增）。
+   * 开 = 用门店与菜品资料（默认）；关 = **不传菜品和门店**，创建走 `mode='STYLE'`。
+   *
+   * ★ 关掉时**只翻这一个布尔**，`dishPick` 原样留着 —— 用户再打开时看到的还是他上次选的那道菜，
+   *   而不是被重置回「无」。把用户已经做过的选择擦掉，比它看起来的样子更糟。
+   * ★ 不能关的款式（产品型/种草型）下也要**给一句话**：这一行同时挂着 `&__switch-note` 的
+   *   常驻说明，但用户多半是先点、后看 —— 点了没反应和页面坏了长得一模一样。
+   * ★ 不落库：本页有 `localId` 时表单整块已隐藏（同 `onPickTrack`），这个开关只影响**新建**。
+   */
+  const onToggleStoreDish = () => {
+    if (switchLocked) {
+      Taro.showToast({ title: '这款要讲清在售内容，不能关闭', icon: 'none' })
+      return
+    }
+    setUseStoreDish((v) => !v)
   }
   const onPickComplexity = (v: string) => {
     const value = v as Complexity
@@ -931,32 +1009,11 @@ export default function CreationEdit() {
   const dishLabel = (d: DishItem) => (d.kind === 'COMBO' ? `【套餐】${d.name}` : d.name)
 
   /**
-   * 菜品选择器**头部**的固定项（排在具体菜品之前）。
-   *
-   * ★ 两份文案的分工必须说清，否则很容易被后人「统一」成一个：
-   *   · 「不选菜品」= 门店与菜品资料**都不给** AI（创建走 `mode='STYLE'`）；
-   *   · 「只讲门店」= 给门店资料、不给菜品（`mode='DISH'`，不发 dishId）。
-   *   2026-09-28 之前只有后一档，那时它写成「不选菜品（只讲门店）」——
-   *   加了前一档之后那个括注反而变成误导（读起来像「不选菜品的唯一含义」），所以拆成两项。
-   * ★ 必须进 range、不能只做占位文案：只做占位的话，用户一旦点开选择器选了某道菜，
-   *   就再也回不到「不选」—— 而他点错一次只能退出页面重建一条创作。
-   * ★★ 项数**随款式变化**（产品型/种草型没有「不选菜品」，见 `allowsNoMaterial`），
-   *   所以 `dishes` 的偏移量必须是 `dishHeadOptions.length` —— 写死 1 或 2 会「选 A 提交 B」。
+   * 选择器数据源：头部固定项 + 该门店全部菜品/套餐。
+   * ★ 头部项的定义、为什么必须进 range、以及它为什么不再随款式变化，都在模块顶部的
+   *   `DISH_HEAD_OPTIONS` 那一段里 —— 这里不再重复第二份说法（两份必然跑偏）。
    */
-  const dishHeadOptions: { key: 'NONE' | 'STORE'; label: string }[] = allowsNoMaterial(track)
-    ? [
-        { key: 'NONE', label: '不选菜品' },
-        // ★ 2026-09-30：文案由「只讲门店」改为「无」（**只换 label**，`key` 仍是 `STORE`，
-        //   提交参数与语义一字未动）。理由是这张列表的标题就是「菜品与套餐」，
-        //   用户在这里挑的是**菜**，而这一档并不是某道菜 ⇒ 一个「无」比一句内部叫法更直接。
-        //   ⚠ 下文注释里仍会出现「只讲门店」，那都是这一档的**内部叫法**（= `STORE`）。
-        //   ⚠ 「不选菜品」`NONE` 按需求保持原样：它与本项喂给 AI 的资料不同
-        //   （`NONE` 连门店资料也不给，走 `mode='STYLE'`），两项在人设型/知识型下同屏并排。
-        { key: 'STORE', label: '无' },
-      ]
-    : [{ key: 'STORE', label: '无' }]
-  /** 选择器数据源：头部固定项 + 该门店全部菜品/套餐 */
-  const dishRange = [...dishHeadOptions.map((o) => o.label), ...dishes.map(dishLabel)]
+  const dishRange = [...DISH_HEAD_OPTIONS.map((o) => o.label), ...dishes.map(dishLabel)]
 
   /**
    * 菜品选择器上显示什么。
@@ -977,13 +1034,15 @@ export default function CreationEdit() {
      */
     if (!dishes.length) return '该门店还没有菜品，点此添加'
     /**
-     * ★ 取不到那条记录时退回**头部固定项**，而不是显示空白或上一条：
+     * ★ 取不到那条记录时退回**头部固定项**（=「无」），而不是显示空白或上一条：
      *   `dishes` 是异步来的，列表整片换掉之后旧下标会越界（`dishes[7]` 可能是 undefined）。
-     *   退回「只讲门店」是安全的 —— 它不指向任何一道菜。
+     *   退回「无」是安全的 —— 它不指向任何一道菜。
      */
     const picked = typeof dishPick === 'number' ? dishes[dishPick] : undefined
     if (picked) return dishLabel(picked)
-    return dishPick === 'NONE' ? '不选菜品' : '无'
+    // ★ 只剩这一种「没指定菜」：给了门店资料、没给菜品。原先那一档「门店与菜品都不给」
+    //   已经不在这里了 —— 它由标题行的开关表达，走渲染处的另一个分支。
+    return '无'
   })()
 
   /** 空菜品状态是创作流程的下一步入口，直接带当前门店进入菜品管理。 */
@@ -1096,36 +1155,54 @@ export default function CreationEdit() {
           {/* ★ 2026-09-24：菜品补上与「文案款式 / 镜头复杂度」**同款**的标题行
               （品牌色竖条 + 34rpx 粗体）。原来这张卡只有一个灰字表单标签「菜品」，
               与上面两个带标题的块不是一套；三块并排读下来，层级才一致。
-              ★ 选中流量型时整个标题行一起转灰（`--off`）：它和下面置灰的取值是**同一个信号**。 */}
-          <View className={`cedit__spec-head${isTraffic ? ' cedit__spec-head--off' : ''}`}>
+              ★ 选中流量型时整个标题行一起转灰（`--off`）：它和下面置灰的取值是**同一个信号**。
+              ★★ 2026-09-30：标题行右侧加了开关 —— 原来选择器里的「不选菜品」那一档搬到了这里。
+                  所以这一行**从此有操作项**了；`&__spec-head` 仍然保持 `justify-content: flex-start`
+                  （开关靠 `margin-left: auto` 自己贴右），**不要**改成 `space-between` ——
+                  那会把「竖条 + 标题」这两个本该成组的东西硬撕到两端（scss 里有这段历史）。 */}
+          <View className={`cedit__spec-head${blockOff ? ' cedit__spec-head--off' : ''}`}>
             <View className='cedit__spec-bar' />
             <Text className='cedit__spec-title'>菜品与套餐</Text>
+            {/* ★ 流量型**不渲染**它：那一款走 `mode='TOPIC'`，本来就既不传菜品也不传门店，
+                画一个恒为关的开关只会被读成「这里可以打开、只是被禁用了」。 */}
+            {!isTraffic && (
+              <View
+                className={`cedit__switch${useStoreDish ? ' cedit__switch--on' : ''}${switchLocked ? ' cedit__switch--locked' : ''}`}
+                onClick={onToggleStoreDish}
+              >
+                <View className='cedit__switch-knob' />
+              </View>
+            )}
           </View>
+          {/* 产品型/种草型：开关恒为开、关不掉 —— **必须给一句原因**，
+              否则「点了没反应」和「页面坏了」长得一样（同 `&__field--off` 的处置原则）。 */}
+          {switchLocked && <Text className='cedit__switch-note'>这款要讲清在售内容，不能关闭</Text>}
           {/* 标题已经是「菜品与套餐」，行内不再重复这两个字 ⇒ 这一行整行就是选择器（描边容器） */}
-          <View className={`cedit__field${isTraffic ? ' cedit__field--off' : ''}`}>
-            {/* 流量型没有菜品可选；菜品稿里菜品是**可选**的 —— range 前两项是
-                「不选菜品」「无（= 只给门店资料）」（产品型/种草型只有后一项，见 dishHeadOptions）。
-                ★ 偏移量一律取 `dishHeadOptions.length`，不许写死；默认值由 dishPick 的
-                初始值 'STORE' 决定，不是这里算的。 */}
+          <View className={`cedit__field${blockOff ? ' cedit__field--off' : ''}`}>
+            {/* ★ 分支顺序就是优先级：流量型（整块不适用）→ 开关关掉（不传菜品和门店）→
+                有菜品（给选择器）→ 没菜品（给一条进菜品管理的路）。
+                ★ 前两个分支都只渲染一段灰字、**不放 `Picker`**：开关关掉时那一行本来就该是死的，
+                  留一个还能弹出来的选择器，只会让人以为「关掉了也还能选」。 */}
             {isTraffic ? (
               <Text className='cedit__picker'>流量型不选菜品，跟着热点出稿</Text>
+            ) : noMaterial ? (
+              <Text className='cedit__picker'>不传菜品和门店，AI 按文案款式与素材出稿</Text>
             ) : dishes.length && dishesStoreId === stores[storeIdx]?.id ? (
               <Picker
                 mode='selector'
                 range={dishRange}
                 /** ★★ 下标换算是这里唯一容易出错的地方：`dishes[i]` 对应 `range[i + 头部项数]`。
-                    旧实现写死 `- 1`，而本次改动让头部项数**随款式变化**（1 或 2）⇒
-                    写成 `- 1` 时，人设型/知识型下选「只讲门店」会落到 `dishes[0]`（静默推错菜）。
-                    所以偏移量从数组长度现取，并且**取不到就退回「只讲门店」**，
-                    绝不允许在拿不准的时候落在一道具体的菜上。 */
+                    头部项现在**恒为 1**（`DISH_HEAD_OPTIONS`），但偏移量仍从它的 `length` 现取。
+                    旧实现写死 `- 1`，而那时头部项数随款式变化（1 或 2）⇒ 在人设型/知识型下
+                    会静默落到 `dishes[0]`（推错菜）。所以这一行永远不许改成字面量。 */
                 onChange={(e: { detail: { value: string | number } }) => {
                   const idx = Number(e.detail.value)
-                  const head = dishHeadOptions[idx]
+                  const head = DISH_HEAD_OPTIONS[idx]
                   if (head) {
                     setDishPick(head.key)
                     return
                   }
-                  const dishIdx = idx - dishHeadOptions.length
+                  const dishIdx = idx - DISH_HEAD_OPTIONS.length
                   setDishPick(dishes[dishIdx] ? dishIdx : 'STORE')
                 }}
               >

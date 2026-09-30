@@ -291,10 +291,14 @@
        baseline 只对齐文字基线，竖条会明显偏上。
        （原来行内还有第三个东西 —— 32rpx 的圆形「?」，2026-09-24 已删。） */
     align-items: center;
-    /* ★ 从 space-between 改成 flex-start：这一行右侧**没有**操作项，
+    /* ★ 从 space-between 改成 flex-start：这一行右侧**曾经没有**操作项，
        space-between 会把这一行唯一的两个元素（竖条 + 标题）硬撕到两端 ——
        「镜头复杂度」才 5 个字，标题离竖条将近一整行，看着像三段东西。
-       改成紧跟在一起，「竖条 + 标题」收成一个紧凑单元。 */
+       改成紧跟在一起，「竖条 + 标题」收成一个紧凑单元。
+       ★★ 2026-09-30：「菜品与套餐」那一行的右侧**有了**开关。**仍然保持 flex-start**——
+       新来的开关用 `&__switch` 里的 `margin-left: auto` 自己贴右，这就够了；
+       改回 space-between 会连带把另外两行（款式 / 复杂度，右侧依然空着）一起撕开。
+       ⇒ 判据：这一行的「贴右」是**加入者自己的事**，不是这一行的布局模式。 */
     justify-content: flex-start;
     gap: 12rpx;
     margin-bottom: 18rpx;
@@ -623,6 +627,57 @@
   }
   &__spec-head--off &__spec-bar {
     background: var(--td-text-color-placeholder);
+  }
+
+  /* ── 标题行右侧的开关（2026-09-30）──
+     它就是原来选择器里的「不选菜品」那一档：开 = 用门店与菜品资料；关 = 不传菜品和门店。
+     ★★ 自绘而不是用原生 `switch`：原生开关高度固定（≈64rpx），塞进这一行会把标题行整个顶高 ——
+        而「文案款式 / 镜头复杂度 / 菜品与套餐」三张卡的标题行刚统一成同一套规格
+        （见上面 `&__spec-head` 那段历史），「三行等高」这个前提不能在这里破掉。
+     ★ 尺寸与 30rpx 的竖条同一档：不抢标题，但一眼看得出是个能点的东西。
+     ★ 开/关两态靠**底色**（灰 → 品牌红），不靠滑块位移 —— 轨道只有 68rpx 宽时，
+        28rpx 的位移几乎看不出来，底色变化才是可读信号。 */
+  &__switch {
+    flex: none;
+    margin-left: auto;                             /* 这一行仍是 flex-start，「贴右」由它自己负责 */
+    width: 68rpx;
+    height: 40rpx;
+    padding: 4rpx;                                 /* 轨道内边距 = 滑块四周的留白 */
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: var(--td-text-color-disabled);      /* 关：中性灰 #bfc3c9 */
+    transition: background-color 0.18s ease;
+  }
+  &__switch--on {
+    background: var(--td-brand-color);
+  }
+  /* 产品型/种草型：恒为开、关不掉 ⇒ 用品牌色的**禁用档**，读作「在用，但这一款不能关」 */
+  &__switch--on.cedit__switch--locked {
+    background: var(--td-brand-color-disabled);
+  }
+  &__switch-knob {
+    width: 32rpx;
+    height: 32rpx;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 2rpx 6rpx rgba(17, 17, 20, 0.18);
+    transition: transform 0.18s ease;
+  }
+  &__switch--on &__switch-knob {
+    transform: translateX(28rpx);                  /* 68 - 4×2 - 32 = 28 */
+  }
+  /* 「关不掉」那两款下面那一行说明。
+     ★ 必须有：一个点了不动的开关，不给原因就和「页面坏了」长得一样
+       （同 `&__field--off` 的处理原则 —— 灰着 + 一句原因才是自解释的）。
+     ★★ 间距：它是 `&__spec-head` 的**下一行**，而那一行自带 `margin-bottom: 18rpx`
+       ⇒ 负 6rpx 把它拉回 12rpx（说明紧跟标题），下面再补回 18rpx（取值行照旧）。
+       不这么做的话，标题→说明 会被撑成 30rpx、而说明→取值 是 0，那行字会像粘在输入框上。 */
+  &__switch-note {
+    display: block;
+    margin: -6rpx 0 18rpx;
+    font-size: 22rpx;
+    line-height: 1.5;
+    color: var(--td-text-color-placeholder);
   }
 
   /* 「链接编号有误」那一屏的说明段落。

@@ -139,9 +139,13 @@ export const TRAFFIC_TRACK: CopyTrack = 'TRAFFIC'
 export const NO_MATERIAL_TRACKS: CopyTrack[] = ['PERSONA', 'KNOWLEDGE']
 
 /**
- * 当前款式下，菜品选择器里**是否提供「不选菜品」这一档**。
- * ★ 判据是值不是位置，且流量型也返回 true —— 它在界面上走的是「整行置灰」那条分支，
- *   但这个函数回答的是「这一款需不需要菜品资料」，流量型显然不需要。
+ * 当前款式下，**能不能「不传菜品和门店」** —— 页面标题行那个开关关得动吗。
+ *
+ * ★ 2026-09-28 它回答的是「菜品选择器里给不给『不选菜品』这一档」；2026-09-30 那一档
+ *   从选择器里搬到了标题行的开关上（见创作页的 `useStoreDish`）——**判据与调用点一个没变**，
+ *   变的只是它在界面上长什么样。所以函数名与返回值都保持原样。
+ * ★ 判据是值不是位置，且流量型也返回 true —— 它在界面上走的是「整行置灰」那条分支
+ *   （连开关都不渲染），但这个函数回答的是「这一款需不需要菜品资料」，流量型显然不需要。
  */
 export const allowsNoMaterial = (track: CopyTrack) =>
   track === TRAFFIC_TRACK || NO_MATERIAL_TRACKS.includes(track)
