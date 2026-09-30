@@ -225,6 +225,32 @@ check(
 const copyTpls = TEMPLATES.filter((t) => t.code.startsWith('copy_') && t.code !== 'copy_generate').map((t) => t.tpl)
 check(new Set(copyTpls).size === copyTpls.length, '4 款文案模板互不相同', `共 ${copyTpls.length} 份`)
 
+// ★ 产品型也必须先有钩子，但它的钩子是「点单判断 / 价格内容 / 做法场景」，不是种草型的探店口吻。
+check(COPY_PRODUCT_PROMPT.includes('【开头钩子 · 第一优先级】'), '产品型明确要求首句先给钩子')
+check(
+  COPY_PRODUCT_PROMPT.includes('点单选择') &&
+    COPY_PRODUCT_PROMPT.includes('价格或套餐') &&
+    COPY_PRODUCT_PROMPT.includes('菜品特点') &&
+    COPY_PRODUCT_PROMPT.includes('用餐场景') &&
+    COPY_PRODUCT_PROMPT.includes('避坑判断'),
+  '产品型钩子覆盖点单、价格套餐、菜品特点、场景和避坑判断',
+)
+check(
+  COPY_PRODUCT_PROMPT.includes('第二句话必须马上回答钩子') &&
+    COPY_PRODUCT_PROMPT.includes('不能连续两句只吊胃口'),
+  '产品型第二句必须兑现钩子，不能只制造悬念',
+)
+check(
+  ['今天给大家介绍', '我们家有一道', '美食不只是', '每一道菜都', '还在纠结吃什么吗'].every((s) =>
+    COPY_PRODUCT_PROMPT.includes(s),
+  ),
+  '产品型显式禁止五类通用 AI 开场',
+)
+check(
+  COPY_PRODUCT_PROMPT.includes('不得编造优惠、份量、招牌地位、销量或顾客评价'),
+  '产品型钩子仍受事实边界约束',
+)
+
 // 款式不是变量：模板里若出现 {{track}}，说明有人把「选模板」误实现成了「填变量」
 for (const t of TEMPLATES) {
   const hasTrack = extractPlaceholders(t.tpl).some((v) => v === 'track' || v === 'trackLabel')
