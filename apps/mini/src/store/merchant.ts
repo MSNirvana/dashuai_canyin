@@ -6,6 +6,7 @@
 import { create } from 'zustand'
 import Taro from '@tarojs/taro'
 import { STORAGE_KEYS } from '../config'
+import { currentSessionGeneration } from '../utils/session'
 import * as authApi from '../services/auth'
 import * as orderApi from '../services/order'
 import * as profileApi from '../services/profile'
@@ -133,7 +134,15 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
     // 未登录不请求；30s 内命中缓存
     if (!token) return []
     if (!force && stores.length && Date.now() - storesLoadedAt < 30_000) return stores
+    /**
+     * ★ 会话代次：请求发起时记下，回包落地前复核。
+     *   换账号后，上一个账号**在飞**的门店回包绝不能写进当前账号的 store / storage
+     *   —— 否则 B 账号会短暂看到 A 的门店名和门店 id，之后每个请求还带着 A 的 X-Store-Id。
+     */
+    const gen = currentSessionGeneration()
+    const tokenAtStart = token
     const list = await storeApi.listStores()
+    if (gen !== currentSessionGeneration() || tokenAtStart !== get().token) return []
     set({ stores: list, storesLoadedAt: Date.now() })
 
     /**
@@ -169,29 +178,33 @@ export const useMerchantStore = create<MerchantState>((set, get) => ({
   },
 
   refreshMe: async () => {
-    if (!get().token) return
-    try {
-      const me = await orderApi.getMe()
-      set({
-        available: me.balance.available,
-        rechargeBalance: me.balance.balance,
-        grantBalance: me.balance.grantBalance,
-        frozen: me.balance.frozen,
-        isMember: me.subscription.active,
-        memberEndAt: me.subscription.endAt,
-        memberPlanName: me.subscription.planName,
-        storageUsed: me.storage.usedBytes,
-        storageQuota: me.storage.quotaBytes,
-        storageSubscribed: me.storage.subscribed,
-      })
-    } catch (error) {
-      throw error
-    }
+    const tokenAtStart = get().token
+    if (!tokenAtStart) return
+    const gen = currentSessionGeneration()
+    const me = await orderApi.getMe()
+    // ★ 账号 A 的余额回包可能在用户已切到 B 之后才到 —— 丢弃，不写进 B 的页面
+    if (gen !== currentSessionGeneration() || tokenAtStart !== get().token) return
+    set({
+      available: me.balance.available,
+      rechargeBalance: me.balance.balance,
+      grantBalance: me.balance.grantBalance,
+      frozen: me.balance.frozen,
+      isMember: me.subscription.active,
+      memberEndAt: me.subscription.endAt,
+      memberPlanName: me.subscription.planName,
+      storageUsed: me.storage.usedBytes,
+      storageQuota: me.storage.quotaBytes,
+      storageSubscribed: me.storage.subscribed,
+    })
   },
 
   refreshProfile: async () => {
-    if (!get().token) return
+    const tokenAtStart = get().token
+    if (!tokenAtStart) return
+    const gen = currentSessionGeneration()
     const p = await profileApi.getProfile()
+    // ★ 同上：昵称/头像也属于账号私有数据，跨会话回包必须丢弃
+    if (gen !== currentSessionGeneration() || tokenAtStart !== get().token) return
     get().setProfile({ nickname: p.nickname, avatarUrl: p.avatarUrl })
   },
 

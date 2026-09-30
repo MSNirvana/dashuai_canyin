@@ -3,6 +3,7 @@ import { View, Text, Image } from '@tarojs/components'
 import Taro, { useRouter, useDidShow } from '@tarojs/taro'
 import { listDishes, deleteDish, getDishMediaUrl, type DishItem, type DishKind } from '../../services/dish'
 import { useMerchantStore } from '../../store/merchant'
+import type { StoreItem } from '../../services/store'
 import Segmented from '../../components/segmented'
 import { readRouteId } from '../../utils/route-id'
 import { fenToYuan } from '../../utils/money'
@@ -34,6 +35,12 @@ export default function DishListPage() {
   const [loadError, setLoadError] = useState('')
   /** 请求代次：切店 / 重复显示并发时，乱序回包只认最后一次（否则旧店的菜覆盖新店的列表） */
   const reqRef = useRef(0)
+  /**
+   * ★ 已经加载过的门店 id。
+   *   让下面那个 [currentStoreId] effect 只响应**后续**的上下文变化（换账号、门店被删）；
+   *   首次加载由 useDidShow 串行完成并在此登记，不会重复请求。
+   */
+  const loadedStoreIdRef = useRef('')
 
   // 从门店管理带 storeId 进来时，同步为全局当前门店，保持全站上下文一致。
   // ★ 必须过 readRouteId：`?storeId=undefined` 会让这里把全局门店**真的切到 'undefined'**，
@@ -47,8 +54,8 @@ export default function DishListPage() {
     if (paramStoreId && paramStoreId !== currentStoreId) setStore(paramStoreId)
   }, [paramStoreId])
 
-  const load = async () => {
-    if (!currentStoreId) {
+  const load = async (storeId: string = currentStoreId) => {
+    if (!storeId) {
       setList([])
       setLoading(false)
       return
@@ -56,7 +63,7 @@ export default function DishListPage() {
     const my = ++reqRef.current
     setLoading(true)
     try {
-      const data = await listDishes(currentStoreId)
+      const data = await listDishes(storeId)
       if (my !== reqRef.current) return
       setList(data)
       setLoadError('')
@@ -92,17 +99,40 @@ export default function DishListPage() {
   }
 
   useDidShow(() => {
-    void loadStores().catch(() => undefined)
-    void load()
+    /**
+     * ★ 必须先等 loadStores 把门店上下文钉好，再请求菜品。
+     *
+     * 旧写法把两件事**并发**发出：冷启动时 store 里的 currentStoreId 还是空串，
+     * `load()` 立刻命中 `if (!currentStoreId)` 走「先创建门店」分支并清空列表；
+     * 等 loadStores 回来把门店 id 钉上时，下面那个 [currentStoreId] effect 又用
+     * `firstRun` 把这次变更当成「首次挂载」跳过 ⇒ 用户**明明有门店**，页面却停在
+     * 建店引导，点「去创建门店」还会被服务端以「一个账号只能一家门店」拒掉，
+     * 形成一条无路可走的死胡同。
+     *
+     * 这里改成串行，并把结果 id 直接交给 load()，不依赖下一轮 render。
+     */
+    void (async () => {
+      const stores = await loadStores().catch(() => [] as StoreItem[])
+      const storeId =
+        useMerchantStore.getState().currentStoreId ||
+        stores.find((s) => s.isDefault)?.id ||
+        stores[0]?.id ||
+        ''
+      // 登记「已经加载过的门店」，让下面那个 effect 只响应**后续**的变化
+      loadedStoreIdRef.current = storeId
+      await load(storeId)
+    })()
   })
 
-  // 门店切换后立即重载（首次挂载由 useDidShow 负责，避免重复请求）
-  const firstRun = useRef(true)
   useEffect(() => {
-    if (firstRun.current) {
-      firstRun.current = false
-      return
-    }
+    /**
+     * ★ 只响应**后续**的门店上下文变化（换账号登录、门店被删）。
+     *   旧实现用 `firstRun` 布尔吞掉第一次变更 —— 而冷启动那次变更恰恰就是
+     *   loadStores 把门店 id 钉上来的时刻，于是首屏永远少一次加载
+     *   （配合 useDidShow 的并发问题，直接表现为「明明有店却让你去建店」）。
+     */
+    if (loadedStoreIdRef.current === currentStoreId) return
+    loadedStoreIdRef.current = currentStoreId
     // ★ 门店上下文一变，筛选就回到「全部」：在 A 店选了「只看套餐」，切到 B 店的菜品列表时
     //   筛选若还生效，而 B 店恰好没有套餐 —— 用户看到的是「还没有套餐」，很容易以为 B 店的菜丢了
     //   （他不知道筛选器还停在上一次的选择上）。
