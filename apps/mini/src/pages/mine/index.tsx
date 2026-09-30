@@ -617,12 +617,6 @@ export default function Mine() {
           <Image className='mine__login-logo' src={logoPng} mode='aspectFit' />
           <Text className='mine__login-title'>登录大帅餐饮</Text>
 
-          {/* ★★ 同意勾选放在**登录按钮之上**：原来那句「授权即表示同意…」在按钮下面，
-              用户是"先授权、后看见"，属于默示同意。换成可勾选框并上移之后，
-              顺序变成「先读、先选、再登录」——这才是明示同意该有的样子。
-              两个登录模式（微信 / 手机号）共用这一个勾选状态。 */}
-          <AgreeCheckbox checked={agreed} onChange={setAgreed} />
-
           {mode === 'sms' ? (
             <>
               <View className='mine__login-field'>
@@ -681,6 +675,14 @@ export default function Mine() {
               </View>
             </>
           )}
+
+          {/* ★★ 同意勾选放在弹窗**最底部**（按用户要求）。
+              位置下移只影响阅读顺序；**合规三件套一个没少**：
+              ① 独立可勾选框（不是「点击即视为同意」的说明文字）
+              ② 默认不勾、每次开弹窗重置
+              ③ 未勾选时三个入口全部拦住（微信一键登录换普通按钮、获取验证码、登录）
+              ⇒ 仍是**明示同意**，不是默示同意。两个登录模式共用这一个勾选状态。 */}
+          <AgreeCheckbox checked={agreed} onChange={setAgreed} />
         </View>
       </View>}
     </View>

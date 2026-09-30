@@ -254,10 +254,11 @@ export default function OrderList() {
               {cooldown > 0 ? `${cooldown}s 后重发` : '获取验证码'}
             </Text>
           </View>
-          <AgreeCheckbox checked={agreed} onChange={setAgreed} />
           <Button className='order__primary' onClick={onLogin} disabled={submitting}>
             {submitting ? '登录中…' : '登录'}
           </Button>
+          {/* 与「我的」页登录弹窗保持一致：勾选放最底部（合规三件套的说明见 mine/index.tsx）。 */}
+          <AgreeCheckbox checked={agreed} onChange={setAgreed} />
         </View>
       </View>
     )
