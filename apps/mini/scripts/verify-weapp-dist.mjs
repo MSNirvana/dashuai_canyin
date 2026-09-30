@@ -256,16 +256,30 @@ if (!existsSync(shotsPageJs)) {
   }
 }
 // ★ 这一条读**源码**而不是产物：key 里的 `camGen` 压缩后就成了单字母变量，
-//   产物里再也认不出来。断言放宽到「key 是个模板串且里出现 camGen 即可」，容忍格式调整。
+//   产物里再也认不出来。
 // ★★ 别写成 `key=\{[^}]*camGen` —— `[^}]*` 会停在 `` `${device}` `` 的第一个 `}` 上，
 //    于是**正确的代码也会被判失败**（本断言第一版就是这么假红的：断言窄于它的标题）。
+// ★ 2026-09-30：key 从模板串收紧成裸的 `key={camGen}` —— 因为「换 key 重建」会让新旧
+//   <Camera> 原生节点在同一个 commit 里撞车（insertCamera:fail can insert only one camera，
+//   真机复现）。⇒ 正则放宽成「`key={` 之后（可有模板反引号、可有其它字符）出现 camGen」。
 if (existsSync(camSrcPath)) {
-  const keyHasGen = /key=\{`[^`]*camGen/.test(readFileSync(camSrcPath, 'utf8'))
+  const camSrc = readFileSync(camSrcPath, 'utf8')
+  const keyHasGen = /key=\{\s*`?[^`}]*camGen/.test(camSrc)
   console.log(`    ${keyHasGen ? '✓' : '✗'} 相机 key 带重建代次 camGen（不带它，「重建」就是个空操作）`)
   if (!keyHasGen) {
     fail += 1
-    console.log('      修法：key={`${device}-${flash}-${camGen}`}。不带 camGen ⇒ 黑屏永远好不了，')
-    console.log('            而且不会有任何报错 —— 正是这次要修的那个症状')
+    console.log('      修法：key={camGen}。不带 camGen ⇒ 黑屏永远好不了，而且不会有任何报错')
+  }
+  // ★★ 反向断言：key 里**不能再**出现 device / flash。
+  //    带上它们之后，切镜头 / 切补光会改 key ⇒ React 在同一个 commit 里插入新原生节点、
+  //    移除旧的，而原生层销毁是**异步**的 ⇒ 报
+  //    `insertCamera:fail can insert only one camera`，相机从此彻底不可用（不是黑屏，是报错面板）。
+  //    重建一律走 rebuildCamera 的「先摘 → 等 CAM_REBUILD_GAP_MS → 再挂」。
+  const keyHasParams = /key=\{\s*`[^`]*(device|flash)/.test(camSrc)
+  console.log(`    ${keyHasParams ? '✗' : '✓'} 相机 key 只带 camGen、不带 device/flash（带上前端后置一切换就撞车）`)
+  if (keyHasParams) {
+    fail += 1
+    console.log('      修法：把 device/flash 从 key 里拿掉，切镜头改调 rebuildCamera（摘-挂重建）')
   }
 } else {
   console.log(`    ⚠ 找不到源码 ${camSrcPath}（从仓库根调用时属正常，本条跳过）`)

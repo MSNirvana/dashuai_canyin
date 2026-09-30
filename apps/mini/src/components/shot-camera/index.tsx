@@ -107,6 +107,27 @@ const CAM_INIT_TIMEOUT_MS = 3000
 const CAM_MAX_AUTO_RECOVER = 2
 
 /**
+ * 「摘-挂」重建之间要等的毫秒数。
+ *
+ * ★★ 为什么不能直接换 key：`<Camera>` 是**原生组件**，微信的硬约束是「同一时刻只允许一个」。
+ *   换 key 时 React 会在**同一个 commit** 里插入新节点、移除旧节点，而原生层的销毁是**异步**的 ——
+ *   新节点插进去时旧节点还在 ⇒ 直接报
+ *   `insertCamera:fail can insert only one camera`，相机从此整个不能用（不是黑屏，是彻底不可用）。
+ *   ★ 2026-09-30 真机复现：首次进入走授权流程超过 3 秒 ⇒ 看门狗误判黑屏 ⇒ 重建 ⇒ 撞车。
+ *   ⇒ 必须**先把相机摘下来**，给微信一点时间销毁原生节点，再挂新一代。
+ */
+const CAM_REBUILD_GAP_MS = 350
+
+/**
+ * 「授权还没定」时看门狗给的时限（毫秒）。
+ *
+ * ★ 首次进入会弹微信的相机授权框，用户看完再点「允许」要好几秒 —— 这段时间**不可能**有
+ *   `onInitDone`。用默认的 3 秒去等，等于**必然**误判成黑屏（进而触发重建、撞出上面那个错）。
+ *   所以按授权状态分两档：已明确允许过用 3 秒；还没问过（含首次弹框、getSetting 读失败）给 12 秒。
+ */
+const CAM_AWAIT_AUTH_TIMEOUT_MS = 12000
+
+/**
  * 控制台/产物里的**金丝雀**串（纯 ASCII，防压缩器当死代码删掉）。
  * `scripts/verify-weapp-dist.mjs` 拿它断言「黑屏自愈这条链路确实进了产物」——
  * 只看源码或只跑 tsc 都验不出「产物里有没有它」。
@@ -263,6 +284,22 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
    */
   const [camGen, setCamGen] = useState(0)
 
+  /**
+   * 「暂时把相机摘下来」。
+   * ★★ 重建必须走「先摘 → 等一等 → 再挂」，不能只换 key —— 见 CAM_REBUILD_GAP_MS 的 ★★。
+   *   它和 camGen 是一对：camHold=true 卸掉旧节点，CAM_REBUILD_GAP_MS 之后 camGen+1 且
+   *   camHold=false 挂上新节点。中间那一小段黑屏是有意的，换来的是不撞车。
+   */
+  const [camHold, setCamHold] = useState(false)
+  /** 摘-挂重建的定时器（关浮层 / 卸载时必须清掉，否则会对一个已经关掉的浮层把相机挂回来） */
+  const camRebuildRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * `scope.camera` 的探测结果：true 已授权 / false 明确拒绝 / null 还没问过。
+   * ★ 它只决定看门狗用哪一档超时（见 CAM_AWAIT_AUTH_TIMEOUT_MS）——首次进入时，
+   *   用户还在看授权框，不该按「3 秒没画面就是黑屏」处理。
+   */
+  const [camAuth, setCamAuth] = useState<boolean | null>(null)
+
   /** 这一代相机是否已经 `onInitDone`。★ 它是判断「画面到底出没出」的**唯一可靠信号**（黑屏不报错） */
   const camReadyRef = useRef(false)
   /** 初始化看门狗：到点还没 onInitDone 就按「没出画」处理 */
@@ -331,6 +368,10 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     // ★ 相机自愈的预算也还回去：重拍 / 重新打开时，黑屏又有两次重建机会（而不是一进就失败）
     camRecoverRef.current = 0
     camReadyRef.current = false
+    // ★ 在飞的摘-挂重建也要停掉并解开：否则「关掉浮层 → 350ms 后又把相机挂回来」，
+    //   用户已经退出去了，相机却在后台被点亮。
+    if (camRebuildRef.current) { clearTimeout(camRebuildRef.current); camRebuildRef.current = null }
+    setCamHold(false)
     // ★ 代次 +1：在飞的那两个回调（startRecord / stopRecord）从此对不上号，一律丢弃
     epochRef.current += 1
   }, [clearTimer])
@@ -341,7 +382,7 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
    * 层级最高）。所以进这两态之前先把 camera 卸掉，面板上的按钮才点得到；
    * 这也是 43454fa 里「面板同样点不动」的同一条根因（见 index.scss 文件头 ★★）。
    */
-  const showCamera = !failMsg && phase !== 'review'
+  const showCamera = !failMsg && phase !== 'review' && !camHold
 
   /**
    * 相机没出画时的自救：把原生节点**重建一遍**。
@@ -352,17 +393,28 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
    *   （系统里把微信的相机权限关了 / 摄像头被别的 App 占着 / 机型不兼容），
    *   必须有出口（去设置、回落微信原生的），不能留用户对着黑屏。
    */
-  const recoverCamera = useCallback((why: 'init-timeout' | 'stopped') => {
+  const rebuildCamera = useCallback((reason: string) => {
+    if (camRebuildRef.current) return  // 已经在摘-挂了，别再叠一次
+    camReadyRef.current = false
+    // ★ 打一行带金丝雀的日志：真机上看不到界面细节时，这是唯一能确认「自愈确实跑过」的痕迹
+    console.warn(`[${BLACK_RECOVER_CANARY}] 重建相机（${reason}），自愈计数 ${camRecoverRef.current}/${CAM_MAX_AUTO_RECOVER}`)
+    setCamHold(true)
+    camRebuildRef.current = setTimeout(() => {
+      camRebuildRef.current = null
+      setCamGen((g) => g + 1)
+      setCamHold(false)
+    }, CAM_REBUILD_GAP_MS)
+  }, [])
+
+  const recoverCamera = useCallback((why: 'init-timeout' | 'insert-conflict' | 'stopped') => {
+    if (camRebuildRef.current) return  // 已经在重建中，这一轮不再追加预算
     if (camRecoverRef.current >= CAM_MAX_AUTO_RECOVER) {
       setFailMsg('相机没能启动，画面一直是黑的')
       return
     }
     camRecoverRef.current += 1
-    camReadyRef.current = false
-    // ★ 打一行带金丝雀的日志：真机上看不到界面细节时，这是唯一能确认「自愈确实跑过」的痕迹
-    console.warn(`[${BLACK_RECOVER_CANARY}] 相机没出画（${why}），第 ${camRecoverRef.current} 次重建`)
-    setCamGen((g) => g + 1)
-  }, [])
+    rebuildCamera(why)
+  }, [rebuildCamera])
 
   // 关掉浮层（visible=false）时一定要停表：否则 interval 会在已卸载的组件上继续 setState。
   // 看门狗同理 —— 它到点也会 setState。
@@ -382,17 +434,24 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     setFailMsg('')
   }, [visible, resetRun])
 
-  // 预检相机授权：已明确拒绝过时直接给面板，别让 <Camera> 空转
+  // 预检相机授权：已明确拒绝过时直接给面板，别让 <Camera> 空转。
+  // ★ 顺便把结果落进 camAuth —— 看门狗要靠它决定用「3 秒」还是「12 秒」（见 CAM_AWAIT_AUTH_TIMEOUT_MS）。
   useEffect(() => {
     if (!visible) return
     let alive = true
+    setCamAuth(null)  // 每次打开都重新探测
     Taro.getSetting()
       .then((s) => {
         if (!alive) return
         const auth = (s.authSetting ?? {}) as Record<string, boolean>
-        if (auth['scope.camera'] === false) setFailMsg('需要相机权限才能在这里拍摄')
+        if (auth['scope.camera'] === false) {
+          setCamAuth(false)
+          setFailMsg('需要相机权限才能在这里拍摄')
+          return
+        }
+        setCamAuth(auth['scope.camera'] === true)
       })
-      .catch(() => { /* 读不到就交给 <Camera> 自己的授权弹窗 */ })
+      .catch(() => { /* 读不到就交给 <Camera> 自己的授权弹窗；camAuth 保持 null ⇒ 按「未定」给长超时 */ })
     return () => { alive = false }
   }, [visible])
 
@@ -412,14 +471,19 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
   useEffect(() => {
     if (!showCamera) return
     camReadyRef.current = false
+    // ★★ 超时分两档，这是「刚同意授权反而用不了」的直接原因：
+    //   首次进入时微信会弹相机授权框，用户看完再点是好几秒 —— 这段时间**不可能**有 onInitDone。
+    //   用 3 秒去等 ⇒ 必然误判成黑屏 ⇒ 触发重建 ⇒ 撞出 can insert only one camera。
+    //   已明确允许过才用 3 秒；还没问过（含 getSetting 读失败）给 12 秒。
+    const wait = camAuth === true ? CAM_INIT_TIMEOUT_MS : CAM_AWAIT_AUTH_TIMEOUT_MS
     camInitWatchRef.current = setTimeout(() => {
       camInitWatchRef.current = null
       if (!camReadyRef.current) recoverCamera('init-timeout')
-    }, CAM_INIT_TIMEOUT_MS)
+    }, wait)
     return () => {
       if (camInitWatchRef.current) { clearTimeout(camInitWatchRef.current); camInitWatchRef.current = null }
     }
-  }, [showCamera, camGen, device, flash, recoverCamera])
+  }, [showCamera, camGen, device, flash, camAuth, recoverCamera])
 
   /**
    * 录制结束的唯一收敛点：用户点停、到达上限、被系统打断，最后都走这里。
@@ -584,13 +648,16 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
    * 切前端 / 后置。
    * ★ 顺手把补光关掉：`flash='torch'` 是**后置**闪光灯，前置没有闪光灯，带着 'torch' 切过去
    *   在部分机型上会让相机**直接渲染失败**（那时会弹「相机不可用」，看着像相机坏了）。
-   * ★ 真正让画面翻转靠的是渲染时那个 `key={`${device}-${flash}`}`（重建节点），
-   *   这里的 setState 只是先把参数摆好。
+   * ★ 真正让画面翻转靠的是**重建原生节点**（部分机型 device-position 动态改不生效）。
+   *   但**不能靠换 key** —— 那样新旧节点会撞车（can insert only one camera，见 CAM_REBUILD_GAP_MS），
+   *   改走统一的「先摘 → 等一等 → 再挂」（rebuildCamera）。
    */
   const switchDevice = () => {
     const next = device === 'back' ? 'front' : 'back'
     if (next === 'front' && flash !== 'off') setFlash('off')
     setDevice(next)
+    // ★ 新节点挂载时 device 已经是新值 ⇒ 照样翻转画面
+    rebuildCamera('switch-device')
   }
 
   /**
@@ -668,12 +735,13 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
           原生组件，层级最高、z-index 管不了它，只能靠 cover-view 盖上去（见文件头 ★★）。 */}
       {showCamera && (
         <Camera
-          /* ★ key 里带上 device/flash/camGen：camera 的 device-position 在部分机型上
-             动态改不生效（实测点「前置」画面不动），换 key 强制重建最稳。
-             重建只在开录前发生 —— 录制中两个开关都是禁用的。
-             ★ camGen 是**黑屏自愈**用的：画面没出来（等不到 onInitDone）时，
-               页面这边能改的只有这个 key（见 recoverCamera）。 */
-          key={`${device}-${flash}-${camGen}`}
+          /* ★★ key **只**带 camGen：重建一律走「摘-挂」（rebuildCamera），
+             不再让 device/flash 的变化隐式换 key。原因是换 key 时 React 会在**同一个 commit**
+             里插入新原生节点、移除旧的，而原生层的销毁是**异步**的 ⇒ 撞出
+             `insertCamera:fail can insert only one camera`（2026-09-30 真机复现）。
+             切镜头现在也走 rebuildCamera，新节点挂载时 props 已是新值、画面照样翻转。
+             详见 CAM_REBUILD_GAP_MS。 */
+          key={camGen}
           className='shotcam__preview'
           devicePosition={device}
           flash={flash}
@@ -682,7 +750,14 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
              见 CAM_INIT_TIMEOUT_MS 的 ★★）。收到它就说明这一代相机真的起来了，
              顺手把重建预算还清 —— 之后要是再遇到「切后台回来黑屏」还有得救。 */
           onInitDone={() => { camReadyRef.current = true; camRecoverRef.current = 0 }}
-          onError={(e) => setFailMsg(`相机不可用：${errText(e.detail) || '请检查权限'}`)}
+          onError={(e) => {
+            const msg = errText(e.detail)
+            // ★★ `can insert only one camera` 是**重建撞车**的瞬时错误（旧原生节点还没销毁
+            //    就插了新的），不是环境问题。必须走自愈（摘-挂一轮），
+            //    绝不能直接判死给面板 —— 那等于把一台本来好用的相机自己弄没了。
+            if (/insert only one camera/i.test(msg)) { recoverCamera('insert-conflict'); return }
+            setFailMsg(`相机不可用：${msg || '请检查权限'}`)
+          }}
           onStop={() => {
             // 摄像头被非正常终止（切后台、被系统抢占、来电）。
             // ★ 判据用 recordingRef 而不是渲染里的 recording：这个回调可能早于 setState 落地。
