@@ -946,9 +946,15 @@ export default function CreationEdit() {
   const dishHeadOptions: { key: 'NONE' | 'STORE'; label: string }[] = allowsNoMaterial(track)
     ? [
         { key: 'NONE', label: '不选菜品' },
-        { key: 'STORE', label: '只讲门店' },
+        // ★ 2026-09-30：文案由「只讲门店」改为「无」（**只换 label**，`key` 仍是 `STORE`，
+        //   提交参数与语义一字未动）。理由是这张列表的标题就是「菜品与套餐」，
+        //   用户在这里挑的是**菜**，而这一档并不是某道菜 ⇒ 一个「无」比一句内部叫法更直接。
+        //   ⚠ 下文注释里仍会出现「只讲门店」，那都是这一档的**内部叫法**（= `STORE`）。
+        //   ⚠ 「不选菜品」`NONE` 按需求保持原样：它与本项喂给 AI 的资料不同
+        //   （`NONE` 连门店资料也不给，走 `mode='STYLE'`），两项在人设型/知识型下同屏并排。
+        { key: 'STORE', label: '无' },
       ]
-    : [{ key: 'STORE', label: '只讲门店' }]
+    : [{ key: 'STORE', label: '无' }]
   /** 选择器数据源：头部固定项 + 该门店全部菜品/套餐 */
   const dishRange = [...dishHeadOptions.map((o) => o.label), ...dishes.map(dishLabel)]
 
@@ -977,7 +983,7 @@ export default function CreationEdit() {
      */
     const picked = typeof dishPick === 'number' ? dishes[dishPick] : undefined
     if (picked) return dishLabel(picked)
-    return dishPick === 'NONE' ? '不选菜品' : '只讲门店'
+    return dishPick === 'NONE' ? '不选菜品' : '无'
   })()
 
   /** 空菜品状态是创作流程的下一步入口，直接带当前门店进入菜品管理。 */
@@ -1098,7 +1104,7 @@ export default function CreationEdit() {
           {/* 标题已经是「菜品与套餐」，行内不再重复这两个字 ⇒ 这一行整行就是选择器（描边容器） */}
           <View className={`cedit__field${isTraffic ? ' cedit__field--off' : ''}`}>
             {/* 流量型没有菜品可选；菜品稿里菜品是**可选**的 —— range 前两项是
-                「不选菜品」「只讲门店」（产品型/种草型只有后一项，见 dishHeadOptions）。
+                「不选菜品」「无（= 只给门店资料）」（产品型/种草型只有后一项，见 dishHeadOptions）。
                 ★ 偏移量一律取 `dishHeadOptions.length`，不许写死；默认值由 dishPick 的
                 初始值 'STORE' 决定，不是这里算的。 */}
             {isTraffic ? (
