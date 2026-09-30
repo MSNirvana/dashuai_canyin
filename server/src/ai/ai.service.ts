@@ -12,7 +12,7 @@
 //      也不属于渲染 sweeper 的管辖范围 ⇒ 积分静默永久冻结。
 //      租约让「无主的 PENDING」可被 ai-recovery 扫到并释放。
 
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import { AiGateway } from './gateway.js'
 import * as bean from '../bean/bean.service.js'
@@ -85,6 +85,14 @@ export function beansFromCostMicroFen(costMicroFen: bigint, beansPerYuan: Dec, m
 
 /** 本进程的租约标识。同一个进程内所有 AI 请求共用，但每个请求各有独立的 leaseVersion。 */
 const LEASE_OWNER = `${process.pid}-${randomUUID().slice(0, 8)}`
+
+/**
+ * 参考图摘要：只保留 SHA-256 前缀，绝不把 data URI / URL 原文写进幂等载荷
+ * （一张 data URI 动辄几百 KB，塞进 business_request.payload 会把行撑爆）。
+ */
+function imageDigest(img: string): string {
+  return createHash('sha256').update(img).digest('hex').slice(0, 16)
+}
 
 /**
  * 租约时长。必须 ≥「单场景最坏一次调用耗时」，否则一次正常的慢调用会被恢复扫描误判成无主请求
@@ -256,7 +264,19 @@ export async function runBilledScene(
       merchantId: params.merchantId,
       operation,
       requestId: params.requestId,
-      payload: { sceneCode: params.sceneCode, variables: params.variables, bizId },
+      payload: {
+        sceneCode: params.sceneCode,
+        variables: params.variables,
+        bizId,
+        /**
+         * ★ 参考图**必须进幂等载荷**。
+         *   原来只用 (sceneCode, variables, bizId) 算 hash，于是「同一个 requestId 换一张
+         *   参考图」在服务端看来是**同一个请求**：不报冲突，直接把上一张图的结果返回给用户。
+         *   用户换了参考图却拿到旧图，且审计记录无法证明本次输出对应哪张图。
+         *   这里只放短摘要，比对语义不变、体积可控。
+         */
+        imageDigests: (params.images ?? []).map(imageDigest),
+      },
       resourceType: 'CREATION',
       resourceId: params.bizId ? BigInt(params.bizId) : undefined,
     })
