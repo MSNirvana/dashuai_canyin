@@ -1,6 +1,6 @@
 // 本地开发文件存储：键格式与 COS 保持一致，方便明天无缝切换。
 import { copyFile, mkdir, readdir, stat, unlink, writeFile } from 'node:fs/promises'
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { assertSafeObjectKey } from './object-key.js'
 
@@ -196,8 +196,24 @@ export async function deleteLocalObject(key: string): Promise<void> {
   await removeLocalFile(localPathForKey(key))
 }
 
+/**
+ * 密钥全部缺失时的**进程级随机**回退。
+ * ★ 原实现回退的是仓库里的固定字符串 `local-media-secret`：只要 APP_MASTER_KEY 与
+ *   JWT_SECRET 都没配（staging、测试、误配置的部署），任何知道对象键的人都能自己
+ *   HMAC 出一个合法令牌，把私有视频/图片读走 —— 而固定值一旦进了仓库就不再是秘密。
+ * ★ 随机值的代价是「重启后旧令牌全部失效」。这是**刻意选择**：宁可让非生产环境的
+ *   链接在重启后失效，也不能留一个公开可推导的签名密钥。生产由启动检查强制要求
+ *   真实密钥，走不到这一级。
+ */
+const FALLBACK_TOKEN_SECRET = randomBytes(32).toString('hex')
+
 function tokenSecret(): string {
-  return process.env.APP_MASTER_KEY || process.env.JWT_SECRET || 'local-media-secret'
+  return (
+    process.env.LOCAL_MEDIA_TOKEN_SECRET ||
+    process.env.APP_MASTER_KEY ||
+    process.env.JWT_SECRET ||
+    FALLBACK_TOKEN_SECRET
+  )
 }
 
 /** 生成给 video/downloadFile 使用的短期本地播放令牌。 */

@@ -23,9 +23,17 @@ router.post('/notify', async (req, res) => {
     }
     const r = await orderSvc.handleNotify(prisma, rawBody)
     if (r.code === 'SUCCESS') return ok(res, { code: 'SUCCESS' })
-    return fail(res, 500, r.message ?? '处理失败', 500)
+    /**
+     * ★ 不要把内部 message 原样回给调用方。
+     *   这个接口**免鉴权、公网可访问**，而 r.message 可能夹带 Prisma/MySQL 错误、
+     *   环境变量名、内部订单状态或第三方接口细节。内部细节只落日志，
+     *   对微信固定回一句「处理失败」，让它按自己的重试策略重发即可。
+     */
+    console.error('[pay/notify] 处理失败:', r.message)
+    return fail(res, 500, '处理失败', 500)
   } catch (e) {
-    return fail(res, 500, (e as Error).message, 500)
+    console.error('[pay/notify] 异常:', e)
+    return fail(res, 500, '处理失败', 500)
   }
 })
 

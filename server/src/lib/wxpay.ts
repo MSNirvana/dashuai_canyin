@@ -130,6 +130,15 @@ function signRequestHeader(method: string, urlPathWithQuery: string, body = ''):
   return `WECHATPAY2-SHA256-RSA2048 mchid="${mchId}",nonce_str="${nonce}",signature="${signature}",timestamp="${timestamp}",serial_no="${serialNo}"`
 }
 
+/**
+ * 微信支付出站请求超时（毫秒）。
+ * ★ 原来三个请求（下单 / 关单 / 查单）都是裸 `fetch`、没有 signal：DNS 半开、TLS 卡住
+ *   或对端迟迟不回包时，请求会一直挂着 —— 下单页转圈不停，支付对账与风险巡检按顺序
+ *   处理订单时被单笔请求堵死，本地待支付订单的敞口也关不掉。
+ * ★ 超时语义**按调用方区分**，不能一律当失败（见各函数注释）。
+ */
+const WX_PAY_TIMEOUT_MS = Number(process.env.WX_PAY_TIMEOUT_MS ?? 10_000)
+
 export interface JsapiOrderInput {
   description: string
   outTradeNo: string
@@ -171,6 +180,7 @@ export async function createJsapiOrder(input: JsapiOrderInput): Promise<{ prepay
       'Accept-Language': 'zh-CN',
     },
     body,
+    signal: AbortSignal.timeout(WX_PAY_TIMEOUT_MS),
   })
   const data = (await resp.json()) as { code?: string; message?: string; prepay_id?: string }
   if (!resp.ok || !data.prepay_id) {
@@ -202,6 +212,7 @@ export async function closeOrder(outTradeNo: string): Promise<{ ok: boolean; not
         'Accept-Language': 'zh-CN',
       },
       body,
+      signal: AbortSignal.timeout(WX_PAY_TIMEOUT_MS),
     })
     if (resp.ok || resp.status === 204) return { ok: true, note: 'CLOSED' }
     const data = (await resp.json().catch(() => ({}))) as { code?: string; message?: string }
@@ -258,6 +269,7 @@ export async function queryOrderByOutTradeNo(outTradeNo: string): Promise<WxQuer
       'Accept-Language': 'zh-CN',
       Authorization: signRequestHeader('GET', pathWithQuery),
     },
+    signal: AbortSignal.timeout(WX_PAY_TIMEOUT_MS),
   })
   const body = await resp.text()
 
