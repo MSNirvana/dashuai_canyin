@@ -43,7 +43,10 @@ const SHOW_COLOR_MODULE = false
 function newRequestId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
-const GRADE_RATIO: Record<RenderGrade, number> = { BASIC: 1, AI: 1.5, PREMIUM: 3 }
+// ⚠ 这里原有 `GRADE_RATIO = { BASIC: 1, AI: 1.5, PREMIUM: 3 }` —— 2026-09-30 合成改成
+//   **按次固定价**后删除。它其实是服务端 `GRADE_RATIO_DEFAULT` 的一份**硬编码副本**，
+//   两处都得改才不漂移（正是「同一个判据两处实现」的典型）。
+//   现在价格由 `/render/capabilities` 的 `beans` 下发（服务端唯一源，后台可配）。
 /**
  * 顶部播放器的 video id：成片记录里点「播放」后要用 `VideoContext.play()` 兜一手
  * （`autoplay` 属性在动态换源时不一定肯自己播），必须与下面 `<Video id>` 一致。
@@ -96,7 +99,8 @@ const clipPrepSuffix = (task: { chatcut?: Partial<ChatCutOptions> } | null | und
  *   它原本是整片调色唯一生效的档位 —— 与调色一起退场，两者不再互相矛盾。
  *   `RenderGrade` 仍保留 `'BASIC'`：历史成片记录里还有这个档位，
  *   `result.tsx` 要照旧显示中文名，删了类型反而会漏掉老记录。
- * ★ `GRADE_RATIO` 仍按三档写全（类型是 `Record<RenderGrade, number>`）：少一个键就编译不过。
+ * ★ 2026-09-30 起「每档一次多少积分」也走同一条接口（`GradeCapability.beans`），
+ *   所以这一行只留标题与描述，价格不要写在这里 —— 写死就等于后台调价后页面说谎。
  * ★ 口径说明：本文件（以及 scss / 服务端）里还有若干历史注释写「三档互不干扰」——
  *   那描述的是**按档位隔离**这个机制，机制没变、只是档位少了一个；
  *   本次只改了**点名「基础生成」**的那几处（照原样会把人引向不存在的选项），
@@ -213,15 +217,13 @@ function cssApproxFilter(c: ColorGrade): string {
   return parts.join(' ')
 }
 
-// 仅作默认配置参考，不替代服务端实际结算。
-function estimatePoints(shots: CreationDetail['shots'], grade: RenderGrade, recolor = false) {
-  const seconds = shots.reduce((sum, shot) => {
-    if (!shot.assetId) return sum
-    const end = shot.trimEndMs ?? shot.assetDurationMs
-    return sum + (end && end > shot.trimStartMs ? (end - shot.trimStartMs) / 1000 : shot.durationSuggest || 0)
-  }, 0)
-  return Math.max(1, Math.ceil(seconds * GRADE_RATIO[grade] * (recolor ? 0.5 : 1)))
-}
+// ⚠ 这里原有 `estimatePoints(shots, grade, recolor)` —— 按「有素材的分镜时长之和 ×
+//   档位系数」本地估一个价。2026-09-30 后**整套删除**：
+//   · 计费改成按次固定价，「随分镜数变」这个前提本身就不成立了；
+//   · 用视频时长当真金白银的判据也**没有依据**（老素材没有 `trimEndMs` 时会退回
+//     `durationSuggest`，估出来的数和实际扣费可以差很多）；
+//   · 它是服务端口径的第二份实现，后台一调价这里必然不同步 —— 而这正是要根治的问题。
+//   现在的价直接取 `/render/capabilities` 的 `beans`（见 `gradeBeans`）。
 
 export default function RenderCompose() {
   // ★ 编号当场校验，绝不把「拿到的原值」直接用去发请求。
@@ -338,6 +340,15 @@ export default function RenderCompose() {
   const [colorOpen, setColorOpen] = useState(false)
   // P0-5：不可用档位 → 原因文案。空对象表示「都可用」（含能力接口拉取失败时的保守放行）
   const [gradeIssues, setGradeIssues] = useState<Partial<Record<RenderGrade, string>>>({})
+  /**
+   * 各档位**提交一次的固定积分**，来自 `/render/capabilities` 的 `beans`（后台可配）。
+   *
+   * ★ 空对象 = 还不知道价（接口还没回来 / 拉取失败 / 老服务端不返回该字段）。
+   *   **刻意不给本地兜底值**：兜底就等于把「硬编码副本」换个地方放回来，
+   *   后台一调价它立刻说谎，而且这次连「和实际不符」都看不出来。
+   *   拿不到价时底部条那一块**整块不渲染**（见 `renderCost`），宁可少显示一个数字。
+   */
+  const [gradeBeans, setGradeBeans] = useState<Partial<Record<RenderGrade, number>>>({})
   /**
    * 服务端是否开启了配乐生成（`CHATCUT_BGM_ENABLED`）。
    * ★ 默认 false 而不是 true：配乐是生成类调用、服务端默认关着；拉取失败时按「不可选」处理，
@@ -522,14 +533,22 @@ export default function RenderCompose() {
     try {
       const r = await getGradeCapabilities()
       const issues: Partial<Record<RenderGrade, string>> = {}
-      for (const g of r.grades) if (!g.available) issues[g.key] = g.reason || '该档位暂不可用'
+      // `beans` 也是**纯增量**字段：老服务端不返回 ⇒ 如实记成「不知道」，
+      // 绝不在客户端编一个数出来（那样就又把硬编码副本请回来了，见 gradeBeans 的说明）。
+      const beans: Partial<Record<RenderGrade, number>> = {}
+      for (const g of r.grades) {
+        if (!g.available) issues[g.key] = g.reason || '该档位暂不可用'
+        if (typeof g.beans === 'number') beans[g.key] = g.beans
+      }
       setGradeIssues(issues)
+      setGradeBeans(beans)
       // 配乐开关是**纯增量**字段：老服务端不返回它 ⇒ 保持 false（不选即可，不会误导）
       setBgmEnabled(!!r.chatcut?.bgmEnabled)
-      // 当前选中的档位如果已不可用，回退到 BASIC，避免用户点了提交才发现
+      // 当前选中的档位如果已不可用，回退到 AI，避免用户点了提交才发现
       setGrade((cur) => (issues[cur] ? 'AI' : cur))
     } catch {
       setGradeIssues({})
+      setGradeBeans({})
       setBgmEnabled(false)
     }
   }, [])
@@ -1114,8 +1133,11 @@ export default function RenderCompose() {
       </View>
     )
   }
-  // 底部条那个「约 X 积分」——**视频合成**的价，随档位与分镜数变，与发布素材无关
-  const cost = estimatePoints(detail.shots, grade)
+  // 底部条那个「X 积分」——**视频合成**的价。
+  // ★ 2026-09-30 起是**固定价**：只跟当前档位有关，与分镜数、成片时长都无关，
+  //   所以不再需要「约」字。值由服务端下发（后台 `render.grade_beans_*` 可配）。
+  //   `undefined` = 还拿不到价（能力接口未回来 / 失败 / 老服务端）⇒ 那一行不渲染。
+  const renderCost = gradeBeans[grade]
   // ★ 2026-09-28：原来这里还有一条 `pubCost`（发布素材的价格上限，给卡片上那行常驻小字用），
   //   随那行小字一起删掉了，见 `rcompose__card--publish` 里的说明。
   //   ⚠ 服务端 `getPublishMaterial` 的返回值里仍有 `estimate` 字段（路由没动），
@@ -1691,11 +1713,16 @@ export default function RenderCompose() {
       <View className='ds-footer'>
         <View className='rcompose__bar'>
           <View className='rcompose__cost'>
-            <View className='rcompose__costnum'>
-              <Text className='rcompose__cost-label'>约</Text>
-              <Text className='rcompose__cost-value ds-num'>{cost}</Text>
-              <Text className='rcompose__cost-unit'>积分</Text>
-            </View>
+            {/* ★ 「约」字 2026-09-30 按用户要求去掉：价已改成**按次固定价**且由服务端下发，
+                是准确值而非估算；继续写「约」会让人以为它还会随片长变。
+                ⚠ 拿不到价时（老服务端 / 能力接口失败）只隐藏数字那一行，余额行照常显示 ——
+                整块藏掉会让底部条突然空掉一半，看起来像页面坏了。 */}
+            {typeof renderCost === 'number' && (
+              <View className='rcompose__costnum'>
+                <Text className='rcompose__cost-value ds-num'>{renderCost}</Text>
+                <Text className='rcompose__cost-unit'>积分</Text>
+              </View>
+            )}
             <Text className='rcompose__balance'>
               可用 {available} · {isMember ? '已订阅' : '未订阅，生成前需开通'}
             </Text>

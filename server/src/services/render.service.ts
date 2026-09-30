@@ -1,6 +1,7 @@
 // 合成服务：把分镜素材按自动规划结果生成 9:16 成片
 // 三档产品档位（grade）：BASIC=纯粗剪 / AI=本地自动剪辑（配音+字幕+质量筛选）/ PREMIUM=人工精剪（不进 FFmpeg 队列）
-// 计费（v5）：时长(秒) × point_per_sec × 档位系数 ×（RECOLOR 再乘 recolor_ratio）
+// 计费（v6 · 2026-09-30）：**按次固定价** —— 只与档位有关（`render.grade_beans_*`），与成片时长无关；
+//   RECOLOR 再乘 `render.recolor_ratio`。口径与纯函数都在 render/grade-pricing.ts，此处只负责读取与冻结。
 // 扣积分两阶段：freeze（提交时预留）→ consume（合成成功结算）；失败/unfreeze 退款由 worker / sweeper 负责
 // 演示环境（FFMPEG_WORKER≠true，无 ffmpeg）下，BASIC/AI 任务会在同一事务内模拟「成功」完成，打通最小闭环；
 // PREMIUM 任务无论何种环境都进入人工队列（MANUAL_PENDING），由管理后台剪辑工作台交付
@@ -11,8 +12,13 @@ import type { PrismaClient, Prisma } from '@prisma/client'
 import { freeze, consume, unfreeze, availableOf, type Db } from '../bean/bean.service.js'
 import { getCreation, CreationNotFoundError } from './creation.service.js'
 import { requireSubscription } from './subscription.service.js'
-import { getNumber, getDecimal } from '../lib/settings.js'
-import { decFromNumber, decFromString, decMulCeil } from '../lib/decimal.js'
+import { getNumber } from '../lib/settings.js'
+import {
+  readGradeBeans,
+  readRecolorRatio,
+  renderAmountBeans,
+  type RenderGrade,
+} from '../render/grade-pricing.js'
 import { claimBusinessRequest, completeBusinessRequest, failBusinessRequest } from '../domain/request.js'
 import { ChatCutOptionsSchema, DEFAULT_CHATCUT_OPTIONS, chatCutConfigured, type ChatCutOptions } from '../render/chatcut.js'
 import type { AutoEditProfile } from '../render/auto-edit.js'
@@ -20,7 +26,10 @@ import { userFacingRenderError } from '../render/user-errors.js'
 import { parseShotSpeechPlan, shotSpeechOptions } from '../render/shot-speech.js'
 import type { KeepRange } from '../render/speech-range.js'
 
-// 计费点数（后台可配置化见 docs/05，此处为默认值）
+// ⚠ **仅作历史兜底**，不是当前报价 —— 真正的价在 `render.grade_beans_*`（见 render/grade-pricing.ts）。
+//   这两个常量只在「任务行的 beanCharged 为 0」时被结算/失败路径兜底用（settleRender / worker），
+//   而 2026-09 之后创建的任务都会在提交时把金额写进 beanCharged，所以正常路径压根走不到它们。
+//   ★ 别拿它们当价目表去改价（改了不影响用户实扣）。
 export const RENDER_BEAN_FULL = 30n
 export const RENDER_BEAN_RECOLOR = 10n
 
@@ -32,8 +41,12 @@ export type RenderMode = 'FULL' | 'RECOLOR'
  */
 export const RENDER_OUTPUT = { width: 1080, height: 1920, fps: 30 } as const
 
-/** 产品档位：BASIC 粗剪 / AI 全自动 / PREMIUM 人工精剪 */
-export type RenderGrade = 'BASIC' | 'AI' | 'PREMIUM'
+/**
+ * 产品档位：BASIC 粗剪 / AI 全自动 / PREMIUM 人工精剪。
+ * ★ 定义已搬到 `render/grade-pricing.ts`（档位固定价就按它配置，类型跟着口径走）。
+ *   这里**再导出**一次，免得 `renderSvc.RenderGrade` 这个既有引用点凭空消失。
+ */
+export type { RenderGrade }
 
 /**
  * worker 执行权凭证（fencing token）。
@@ -55,12 +68,10 @@ export function parseGrade(v: unknown): RenderGrade {
   return v === 'BASIC' || v === 'PREMIUM' ? v : 'AI'
 }
 
-/** 档位计费系数的兜底默认值（实际以后台 render.grade_ratio_* 配置为准） */
-export const GRADE_RATIO_DEFAULT: Record<RenderGrade, number> = {
-  BASIC: 1,
-  AI: 1.5,
-  PREMIUM: 3,
-}
+// ⚠ 原 `GRADE_RATIO_DEFAULT = { BASIC: 1, AI: 1.5, PREMIUM: 3 }` 于 **2026-09-30 随「按时长」
+//   口径一起删除**（改为按次固定价，见 render/grade-pricing.ts 的 `GRADE_BEANS_DEFAULT`）。
+//   ★ 它对应的后台配置 `render.grade_ratio_*` 与 `render.point_per_sec` 已**不再被任何代码读取**，
+//     属于「死配置」—— 别再照着它调价（调了不会有任何效果，这是最难查的一类问题）。
 
 /**
  * 档位的用户可见名称。**服务端唯一源** —— 报错文案里必须说清是「哪一档」被占住了，
@@ -99,7 +110,10 @@ export class RenderAlreadyRunningError extends Error {
 }
 export class RenderDurationUnknownError extends Error {
   constructor() {
-    super('素材缺少时长信息，无法计价，请重新上传素材')
+    // ★ 文案 2026-09-30 改口径：原来写「无法计价」，但计费已改成按次固定价、不再依赖时长。
+    //   现在拒绝提交的真实理由是**素材元数据不完整**（成片时长无法确定，合成链也跑不通）。
+    //   ★ 用户可见文案必须与服务端真实原因一致 —— 留着一句早就不成立的解释，会把排查引到计价上。
+    super('素材缺少时长信息，请重新上传素材')
     this.name = 'RenderDurationUnknownError'
   }
 }
@@ -430,7 +444,8 @@ export async function submitRender(
     customVoiceDurationMs = input.customVoiceDurationMs ?? customVoice.durationMs ?? undefined
   }
 
-  // 计费时长 = 各分镜有效时长之和；任一分镜时长未知则拒绝（无法正确计价会少扣积分）
+  // 分镜时长合计。★ 2026-09-30 起**不再参与计费**（改成按次固定价了），但仍然必须算：
+  //   下面演示分支要写 `durationMs`，且任一分镜时长未知说明素材元数据不完整，整条合成链也会失败。
   let totalMs = 0
   for (const cl of clips) {
     const dur = clipDurationMs(cl)
@@ -444,19 +459,14 @@ export async function submitRender(
   }
   // 创建任务 + 并发拦截 + 业务请求占用 + freeze 放在同一事务并对创作行加锁：
   // 防止两个并发请求同时通过「无进行中任务」检查、创建出两个任务双重扣积分
-  // 计价系数一律用精确十进制读取（getDecimal 解析库里原始字符串，不经 Number()）
-  const pointPerSec = await getDecimal(prisma, 'render', 'point_per_sec', 1)
-  // 档位系数（后台 render.grade_ratio_basic/ai/premium 可配）—— 默认值 1 / 1.5 / 3 本身就是小数
-  const gradeRatio = await getDecimal(prisma, 'render', `grade_ratio_${grade.toLowerCase()}`, GRADE_RATIO_DEFAULT[grade])
+  //
+  // ★ 计价（v6 · 2026-09-30）：**按次固定价**，只读档位对应的积分，与 `totalMs` 无关。
+  //   后台「系统设置 → render」组的 grade_beans_ai / grade_beans_premium 可改。
+  //   全程精确十进制（getDecimal 解析库里原始字符串，不经 Number()），且乘法在纯函数里。
+  const gradeBeans = await readGradeBeans(prisma, grade)
   // RECOLOR 复用归一化缓存（省掉源解码+缩放），按折扣系数计价，默认 5 折（后台 render.recolor_ratio 可配）
-  const recolorRatio = mode === 'RECOLOR'
-    ? await getDecimal(prisma, 'render', 'recolor_ratio', 0.5)
-    : decFromString('1')!
-  // 原实现 `Math.max(1, Math.ceil(totalSec * pointPerSec * gradeRatio * recolorRatio))` 有浮点误差：
-  // totalSec = totalMs/1000 本身多数情况下不是精确二进制小数，再连乘 1.5 / 0.5 会放大误差。
-  // 改成：amount = ceil(totalMs × pointPerSec × gradeRatio × recolorRatio / 1000)，全程整数，最低收 1 积分。
-  const amountRaw = decMulCeil([decFromNumber(totalMs)!, pointPerSec, gradeRatio, recolorRatio], 1000n)
-  const amount = amountRaw < 1n ? 1n : amountRaw
+  const recolorRatio = mode === 'RECOLOR' ? await readRecolorRatio(prisma) : undefined
+  const amount = renderAmountBeans(gradeBeans, recolorRatio)
 
   // PREMIUM：SLA 截止时间（超时由 sweeper 自动退款）
   const premiumSlaHours = grade === 'PREMIUM' ? await getNumber(prisma, 'render', 'premium_sla_hours', 48) : 0

@@ -1,9 +1,14 @@
 // 计价回归：精确十进制 vs 旧浮点实现
 //
-// 用途：任何改动 beansFromCost / render amount / computeCostFen 之后跑一次，
+// 用途：任何改动 beansFromCost / 合成计费 / computeCostFen 之后跑一次，
 // 防止浮点误差重新引入「凭空多扣 1 积分」。
 //
 // 跑法：npm run pricing:verify
+//
+// ★ 2026-09-30：合成计费口径从「时长 × 每秒价 × 档位系数」改成「按档位固定价」，
+//   第 4 节随之重写。这里**直接调生产代码里的 renderAmountBeans**，
+//   不再像以前那样在脚本里复制一份公式 —— 复制出来的那份改口径时不会跟着变，
+//   守护照样全绿，那是最坏的一种「假安全」。
 import {
   decFromString,
   decFromNumber,
@@ -13,6 +18,11 @@ import {
   type Dec,
 } from '../src/lib/decimal.js'
 import { computeCostFen, computeCostMicroFen } from '../src/ai/gateway.js'
+import {
+  GRADE_BEANS_DEFAULT,
+  gradeBeansKey,
+  renderAmountBeans,
+} from '../src/render/grade-pricing.js'
 
 let failed = 0
 function check(name: string, actual: unknown, expected: unknown) {
@@ -76,21 +86,39 @@ console.log(`    旧实现算错：${oldWrong} 个（累计多扣 ${overcharge} 
 check('新实现零误差', newWrong, '0')
 check('旧实现确实有误差（复现基线）', oldWrong > 0, 'true')
 
-console.log('\n=== 4) 小数字段：合成分成（档位系数 1.5 / recolor 0.5）===')
-function newAmount(totalMs: number, pps: string, gr: string, rr: string): bigint {
-  const v = decMulCeil(
-    [decFromNumber(totalMs)!, decFromString(pps)!, decFromString(gr)!, decFromString(rr)!],
-    1000n,
-  )
-  return v < 1n ? 1n : v
+console.log('\n=== 4) 合成计费：按档位固定价（2026-09-30 起，**与时长无关**）===')
+const d = (s: string): Dec => {
+  const v = decFromString(s)
+  if (!v) throw new Error(`用例里的字面量写错了：${s}`)
+  return v
 }
-check('3000ms × AI(1.5)', newAmount(3000, '1', '1.5', '1'), '5')   // 4.5 → 5
-check('2000ms × BASIC(1)', newAmount(2000, '1', '1', '1'), '2')
-check('2000ms × BASIC(1) RECOLOR(0.5)', newAmount(2000, '1', '1', '0.5'), '1')
-check('6000ms × AI(1.5)', newAmount(6000, '1', '1.5', '1'), '9')   // 9 恰为整数
-check('3333ms × AI(1.5)', newAmount(3333, '1', '1.5', '1'), '5')   // 4.9995 → 5
-check('最低收 1 积分（1ms）', newAmount(1, '1', '1', '1'), '1')
-check('小数 point_per_sec=0.1, 10000ms', newAmount(10000, '0.1', '1', '1'), '1')
+// ── 后台可配的键名与兜底值（改口径时最容易被悄悄改坏的两处）──
+check('配置键：AI', gradeBeansKey('AI'), 'grade_beans_ai')
+check('配置键：精品', gradeBeansKey('PREMIUM'), 'grade_beans_premium')
+check('配置键：基础', gradeBeansKey('BASIC'), 'grade_beans_basic')
+check(
+  '三个键互不相同（撞键会让两档共用一个价）',
+  new Set([gradeBeansKey('BASIC'), gradeBeansKey('AI'), gradeBeansKey('PREMIUM')]).size,
+  '3',
+)
+// ★ 这里钉的是**兜底默认值**（库里没有该行时才用到的数），也就是 2026-09-30 与用户约定的 500 / 5000。
+//   线上真实价存在 `system_setting` 的 render 组里，改价改的是库、不是这里。
+check('兜底默认：AI = 500', GRADE_BEANS_DEFAULT.AI, '500')
+check('兜底默认：精品 = 5000', GRADE_BEANS_DEFAULT.PREMIUM, '5000')
+
+// ── 纯函数本身：固定价、向上取整、最低 1、RECOLOR 打折 ──
+check('AI 档 500（FULL，不打折）', renderAmountBeans(d('500')), '500')
+check('精品档 5000（FULL）', renderAmountBeans(d('5000')), '5000')
+check('AI 档 500 × RECOLOR 0.5', renderAmountBeans(d('500'), d('0.5')), '250')
+check('精品档 5000 × RECOLOR 0.5', renderAmountBeans(d('5000'), d('0.5')), '2500')
+check('价配成小数 500.5 向上取整', renderAmountBeans(d('500.5')), '501')
+check('价配成 0 ⇒ 最低收 1（防免费出片）', renderAmountBeans(d('0')), '1')
+check('RECOLOR 折到不足 1 也收 1', renderAmountBeans(d('1'), d('0.1')), '1')
+
+// ⚠ 这里**刻意不写**「旧键不再被读取」那类断言。它只能靠 grep 源码实现，
+//   而注释里必然要提到这些键名（否则后人查不到来龙去脉）⇒ 一改注释就假红。
+//   那条不变量的落点是**代码结构**：`renderAmountBeans` 的签名里没有时长参数，
+//   想按时长收费就必须先改签名，typecheck 会先炸。
 
 console.log('\n=== 5) computeCostFen ===')
 check('1000 in + 500 out（1/2 分每百万）', computeCostFen(1000, 500, 1, 2), '2')

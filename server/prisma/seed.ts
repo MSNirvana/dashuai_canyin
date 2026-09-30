@@ -755,13 +755,21 @@ async function seedSettings() {
     { groupKey: 'bean', settingKey: 'register_grant_points', settingVal: '30', displayName: '注册赠送积分' },
     // v5 强制「成本 × 系数」，不再按固定标价
     { groupKey: 'bean', settingKey: 'charge_mode', settingVal: 'COST_BASED', displayName: '计费模式' },
-    // 合成按时长计费
-    { groupKey: 'render', settingKey: 'point_per_sec', settingVal: '1', displayName: '合成每秒积分' },
+    // 合成按**档位固定价**计费（2026-09-30 起）—— 与成片时长无关，单位：积分/次
+    // ★ 后台「系统设置 → render」组里改这三行即可调价，小程序报价是从接口读的、不用发版
+    { groupKey: 'render', settingKey: 'grade_beans_basic', settingVal: '500', displayName: '基础生成固定价(积分/次)' },
+    { groupKey: 'render', settingKey: 'grade_beans_ai', settingVal: '500', displayName: 'AI生成固定价(积分/次)' },
+    { groupKey: 'render', settingKey: 'grade_beans_premium', settingVal: '5000', displayName: '精品生成固定价(积分/次)' },
     { groupKey: 'render', settingKey: 'recolor_ratio', settingVal: '0.5', displayName: '重调色折扣系数' },
-    // 三档生成系数（按时长 × point_per_sec × 档位系数）
-    { groupKey: 'render', settingKey: 'grade_ratio_basic', settingVal: '1', displayName: '基础生成系数' },
-    { groupKey: 'render', settingKey: 'grade_ratio_ai', settingVal: '1.5', displayName: 'AI生成系数' },
-    { groupKey: 'render', settingKey: 'grade_ratio_premium', settingVal: '3', displayName: '精品生成系数' },
+    // ⚠⚠ 以下四项自 2026-09-30 改为固定价后**已不再被任何代码读取**（死配置）。
+    //   刻意**保留而不是删除**：老环境里这些行已经存在，删掉 seed 不会让它们消失，
+    //   反而让运营在后台看到一堆没有来源的键。留在这里 + displayName 打上「已废弃」，
+    //   至少能拦住「照着它调价、却怎么都不生效」这个最难查的坑。
+    //   ★ 判据在 `npm run pricing:verify`：它断言计费只认 grade_beans_*。
+    { groupKey: 'render', settingKey: 'point_per_sec', settingVal: '1', displayName: '【已废弃·勿用】合成每秒积分' },
+    { groupKey: 'render', settingKey: 'grade_ratio_basic', settingVal: '1', displayName: '【已废弃·勿用】基础生成系数' },
+    { groupKey: 'render', settingKey: 'grade_ratio_ai', settingVal: '1.5', displayName: '【已废弃·勿用】AI生成系数' },
+    { groupKey: 'render', settingKey: 'grade_ratio_premium', settingVal: '3', displayName: '【已废弃·勿用】精品生成系数' },
     { groupKey: 'render', settingKey: 'premium_sla_hours', settingVal: '48', displayName: '精品SLA时长(小时)' },
     // 上传空间配额
     { groupKey: 'storage', settingKey: 'quota_free_bytes', settingVal: String(1 * GB), displayName: '未订阅空间(字节)' },

@@ -799,10 +799,11 @@
     align-items: baseline;
     gap: 4rpx;
   }
-  &__cost-label {
-    font-size: 22rpx;
-    color: var(--td-text-color-placeholder);
-  }
+  /* ⚠ 原 `&__cost-label`（那一行「约」字）于 **2026-09-30 按用户要求删除** ——
+     合成价改成按次固定价、且由服务端下发，是**准确值**，不再需要「约」。
+     ★ 删掉之后 `&__costnum` 里只剩「数字 + 积分」两个元素，但 `align-items: baseline`
+     仍然必要：48rpx 的大数字与 22rpx 的小字必须对齐基线，否则「积分」会浮在中间。
+     ★ 别顺手把 `&__costnum` 或 `align-items` 一起删掉。 */
   &__cost-value {
     font-size: 48rpx;
     font-weight: 700;
