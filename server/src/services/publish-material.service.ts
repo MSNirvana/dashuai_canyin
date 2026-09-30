@@ -754,10 +754,16 @@ function dateSegment(): string {
 
 // ────────────────────────────── 解析与兜底 ──────────────────────────────
 
-/** 文本场景的兜底画面描述（与 prisma/prompts.ts 的 PUBLISH_COVER_FALLBACK 同一份语义） */
-const FALLBACK_COVER_PROMPT =
-  '中餐招牌菜特写，刚出锅冒着热气，暖色调侧逆光，背景虚化的暖堂食环境。' +
-  '竖版 3:4 构图，主体居中偏上、四周留白，画面中不要出现任何文字、水印与 logo'
+/**
+ * 文本场景没给出 `coverPrompt` 时的兜底补充要求。
+ *
+ * ★★ 这里**只许写光感与标题该压在哪一侧**，绝不许写画面内容（2026-09-30 改）：
+ *   底图已经由拍摄素材定死，图像模型只负责在它上面写字。写「中餐招牌菜特写」
+ *   这类描述等于**请它凭空画一道菜** —— 与 PUBLISH_COVER_PROMPT 的画面铁律②冲突，
+ *   实测就是这么在封面上画出了一整盆视频里根本没有的鱼。
+ * ★ 语义与 prisma/prompts.ts 的 `PUBLISH_MATERIAL_FALLBACK.coverPrompt` 保持一致。
+ */
+const FALLBACK_COVER_PROMPT = '暖色调、更亮一些，主体居中偏上，底部留出压标题的空间'
 
 /**
  * 从模型返回里抠出 JSON。
