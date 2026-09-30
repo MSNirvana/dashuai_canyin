@@ -829,31 +829,30 @@ if (dbReady) {
       `title=${JSON.stringify(styleCre.title)}`,
     )
     const vStyle = await buildVariables(prisma, styleCre.id, { track: 'KNOWLEDGE' })
-    const STYLE_BLANKED = [
-      'storeName', 'storeIntro', 'category', 'city',
-      'dishName', 'dishIntro', 'sellingPoints', 'comboInfo', 'persona',
-    ] as const
+    const STYLE_DISH_BLANKED = ['dishName', 'dishIntro', 'sellingPoints', 'comboInfo'] as const
+    const STYLE_STORE_PRESERVED = ['storeName', 'storeIntro', 'category', 'city', 'persona'] as const
     check(
-      STYLE_BLANKED.every((k) => vStyle[k] === ''),
-      '★★ 门店与菜品九项变量全为空串 —— 这是「不给 AI 门店与菜品信息」在服务端唯一的形态',
-      STYLE_BLANKED.filter((k) => vStyle[k] !== '').join('、'),
+      STYLE_DISH_BLANKED.every((k) => vStyle[k] === '') &&
+        STYLE_STORE_PRESERVED.every((k) => vStyle[k] !== ''),
+      '★★ STYLE 只清空菜品变量、保留门店资料（兼容当前产品逻辑）',
+      `菜品非空=${STYLE_DISH_BLANKED.filter((k) => vStyle[k] !== '').join('、')}；门店空=${STYLE_STORE_PRESERVED.filter((k) => vStyle[k] === '').join('、')}`,
     )
     check(vStyle.topicInfo === '', '★ 款式稿不补话题素材（topicInfo 为空串 —— 与话题稿刻意不同）')
     check(vStyle.dateInfo.length > 0, 'dateInfo 仍非空（模板那一行不会渲染成空白）')
-    // ③ 两条允许的款式逐份真渲染，断言「这家店的任何可识别信息都查不到」
+    // ③ 两条允许的款式逐份真渲染，断言门店资料保留、菜品资料不进入提示词
     for (const code of ['copy_persona', 'copy_knowledge']) {
       const t = TEMPLATES.find((x) => x.code === code)!
       const out = renderTemplate(t.tpl, vStyle as unknown as Record<string, string>)
       check(!out.includes('{{'), `${t.label} 款式稿渲染后无残留占位符`)
       check(
-        !out.includes('契约测试门店-不选菜品') &&
-          !out.includes('川菜') &&
-          !out.includes('济南') &&
-          !out.includes('不该被款式稿提到的菜') &&
-          !out.includes('80后老板'),
-        `★★ ${t.label} 款式稿：店名/品类/城市/菜名/人设一个都不出现在提示词里`,
+        out.includes('契约测试门店-不选菜品') &&
+          out.includes('川菜') &&
+          out.includes('济南') &&
+          out.includes('80后老板') &&
+          !out.includes('不该被款式稿提到的菜'),
+        `★★ ${t.label} 款式稿：门店资料进入提示词、具体菜品资料不进入`,
       )
-      check(out.includes('都为空'), `${t.label} 款式稿：提示词里带着「门店与菜品都为空」的空值说明`)
+      check(out.includes('这次没选具体菜品'), `${t.label} 款式稿：提示词明确说明未选具体菜品`)
     }
     // ★★ 反向：**只讲门店**（同一家店、同样没选菜，但 `mode='DISH'`）必须照旧拿到门店资料。
     //   没有这条，「只要没选菜就清空门店」也能让上面全绿 —— 而那会把「只讲门店」

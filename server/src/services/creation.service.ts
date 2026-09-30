@@ -163,8 +163,8 @@ export const DEFAULT_COPY_TRACK: CopyTrack = 'PRODUCT'
  *
  * · `DISH`  —— 选门店（+可选菜品），走四款**菜品文案**（人设型 / 知识型 / 产品型 / 种草型）。
  * · `TOPIC` —— 「流量型」：不选门店、不选菜品，只靠节气/节日/时令与生活共识出稿。
- * · `STYLE` —— 「不选菜品」（2026-09-28 新增）：**只按所选款式写**，门店与菜品资料一律不喂。
- *   见 `STYLE_TRACKS` 与 `buildVariables` 里 `noMaterial` 的说明。
+ * · `STYLE` —— 「不选菜品」（2026-09-28 新增）：不绑定具体菜品，但仍喂门店资料；
+ *   见 `STYLE_TRACKS` 与 `buildVariables` 里 `hideDish` 的说明。
  *
  * ★ 为什么不靠「track='TRAFFIC' 且 dishId 为空」推断：那个组合在**存量数据里已经存在**
  *   （老用户建过没选菜品的流量款创作），推断会把它们误判成话题稿；
@@ -996,35 +996,20 @@ export async function buildVariables(
   const mode: ContentMode = isContentMode(c.mode) ? c.mode : DEFAULT_CONTENT_MODE
 
   /**
-   * ★ 两种「不喂门店与菜品资料」的形态，门店与菜品相关变量**一律给空串**：
-   *   · `TOPIC`（话题稿）—— 界面上是「流量型」，刻意不选门店与菜品；
-   *   · `STYLE`（款式稿）—— 界面上是「不选菜品」，2026-09-28 新增，只按所选款式写。
-   *
-   * 为什么不是「反正模板不引用、给了也无所谓」：那样一旦有人把 {{storeName}} 加回流量款模板，
-   * 就会当场渲染出真店名 —— 而这条稿子的产品定义就是「不涉及门店」。
-   * 何况 `c.store` 只是**宿主门店**（服务端为了媒体归属挑的，或用户那唯一一家店），
-   * 把它喂进提示词等于拿一个用户根本没选过的门店去做内容，用户会莫名其妙。
-   *
-   * ⚠ 城市的来源变了（2026-09-21）：走 c.topicCity，它现在是**创建时从宿主门店档案取的快照**
-   *   （见 storeLocationOf），而不是用户手填的自由文本。
-   *   仍然**不实时读宿主门店的 city** —— 门店改了位置不该让同一条稿重新生成跑出另一个地方，
-   *   而且那样「今天生成」和「下周重新生成」结果不一致，用户只会觉得是玄学。
-   *   快照为 null = 门店一个位置字段都没填 ⇒ topicInfo 里整行不出现（纯话题稿，不提地方）。
-   *
-   * ★★ `STYLE` 与话题稿有一处**故意的不对称**，别顺手抹平：`topicInfo` 只给话题稿。
-   *   用户对「不选菜品」的验收口径是「直接按款式生成，**什么都不补**」——
-   *   节气/时令/起手方向是话题款那份模板自己的素材，`STYLE` 既没有它、
-   *   拿到也用不上（人设型/知识型的模板里没有它的位置）。
+   * ★ 话题稿不绑定门店；STYLE 稿只是不绑定具体菜品，**仍然需要门店资料**。
+   *   旧实现把二者合并成 `noMaterial = topic || mode === 'STYLE'`，导致人设型/知识型
+   *   连店名、品类、城市、门店介绍和人设都拿不到，只能写任何餐饮店都能套用的空话。
+   *   现在拆成两个判据：topic 清空全部门店/菜品；STYLE 只清空菜品相关字段。
    */
   const topic = mode === 'TOPIC'
-  /** 门店与菜品资料一律清空（话题稿 + 款式稿两种形态） */
-  const noMaterial = topic || mode === 'STYLE'
-  const dishName = noMaterial ? '' : (c.dish?.name ?? '')
+  const hideDish = topic || mode === 'STYLE'
+  const hideStore = topic
+  const dishName = hideDish ? '' : (c.dish?.name ?? '')
   return {
-    storeName: noMaterial ? '' : c.store.name,
-    storeIntro: noMaterial ? '' : (c.store.intro ?? ''),
-    category: noMaterial ? '' : (c.store.category ?? ''),
-    city: noMaterial ? '' : (c.store.city ?? ''),
+    storeName: hideStore ? '' : c.store.name,
+    storeIntro: hideStore ? '' : (c.store.intro ?? ''),
+    category: hideStore ? '' : (c.store.category ?? ''),
+    city: hideStore ? '' : (c.store.city ?? ''),
     dishName,
     /**
      * ★★ «【菜品】那一行的空值注解»：**只在没选菜时**有内容，选了菜就是空串。
@@ -1035,10 +1020,10 @@ export async function buildVariables(
      *   （同一条真实创作、每臂 12 次；完整数据见 lib/dish-mention.ts 文件头）。
      */
     dishEmptyNote: dishEmptyNoteFor(dishName),
-    dishIntro: noMaterial ? '' : (c.dish?.intro ?? ''),
-    sellingPoints: noMaterial ? '' : (c.dish?.sellingPoints ?? ''),
-    comboInfo: noMaterial ? '' : formatComboInfo(c.dish),
-    persona: noMaterial ? '' : formatPersona(c.store.persona),
+    dishIntro: hideDish ? '' : (c.dish?.intro ?? ''),
+    sellingPoints: hideDish ? '' : (c.dish?.sellingPoints ?? ''),
+    comboInfo: hideDish ? '' : formatComboInfo(c.dish),
+    persona: hideStore ? '' : formatPersona(c.store.persona),
     // ★ 每次生成都现算：创作可能存了一周才生成，缓存住「今天」会让节日提示过期。
     //   代价只是一次 Intl 格式化 + 几十条候选过滤，可忽略。
     //   ⚠ 话题稿也要算它：分镜模板引用 {{dateInfo}}（话题稿同样要分镜）；
