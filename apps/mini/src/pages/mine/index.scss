@@ -406,27 +406,45 @@
     width: 100%;
     max-width: 620rpx;
     box-sizing: border-box;
-    padding: 56rpx 40rpx 40rpx;
+    // ★ 2026-09-30：底边距 40 → 44rpx。协议那行字号刚从 22 提到 24（见 `&__login-tip`），
+    //   底部视觉重量跟着变大，多给 4rpx 呼吸，免得最后一行贴着卡片圆角。
+    padding: 56rpx 40rpx 44rpx;
     background: var(--td-bg-color-container);
     border-radius: var(--td-radius-extra);
     box-shadow: 0 24rpx 80rpx rgba(17, 17, 20, 0.18);
     text-align: center;
   }
+  // ★★ 2026-09-30 热区修复：原来这个「×」的盒子**就是字形本身** —— 实测 **28.8 × 48rpx**
+  //   （14.4 × 24px），连建议最小值 88rpx 的一半都不到，手指得点两下才中一次。
+  //   改成 88×88rpx 的居中盒子，而**字形位置几乎不变**：
+  //     原来字形中心（从右上角量）= (28 + 28.8/2, 20 + 48/2) = (42.4, 44)
+  //     新盒子中心（top/right 都取 0）= (88/2, 88/2) = (44, 44)   ⇒ 差 1.6rpx，肉眼不可辨。
   &__login-close {
     position: absolute;
-    top: 20rpx;
-    right: 28rpx;
+    top: 0;
+    right: 0;
+    width: 88rpx;
+    height: 88rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: var(--td-text-color-placeholder);
     font-size: 48rpx;
     line-height: 1;
     font-weight: 300;
   }
+  // ★★ 2026-09-30：底色从 `--td-bg-color-page`（浅灰）改成 `--td-bg-color-container`（＝卡片色）。
+  //   logo.png **自带白底**，压在灰方块上就成了「灰框 + 白块 + 红图形」三层，
+  //   缩到 96rpx 时看着像一张没对齐的小卡片。改成卡片同色后，图片的白底与卡片融为一体，
+  //   视觉上只剩那枚红色 logo，不再有第二个方块。
+  //   ★ 为什么用**同色变量**而不是 `transparent`：将来若换的 logo 白底不是纯白，
+  //     同色容器也不会露色差（transparent 就会 —— 白底图压在非纯白卡片上会显出一个方块）。
   &__login-logo {
     width: 96rpx;
     height: 96rpx;
     margin: 0 auto 24rpx;
     border-radius: 24rpx;
-    background: var(--td-bg-color-page);
+    background: var(--td-bg-color-container);
   }
   &__login-title {
     display: block;
@@ -434,14 +452,9 @@
     font-weight: 700;
     color: var(--td-text-color-primary);
   }
-  &__login-desc {
-    display: block;
-    margin-top: 12rpx;
-    color: var(--td-text-color-secondary);
-    font-size: 26rpx;
-  }
-  &__login-primary,
-  &__login-dev {
+  // ★ 2026-09-30 删掉 `&__login-desc`：它在 JSX 里**一次都没被用到**（实测产物里 0 个节点）。
+  //   死规则留着不会报错，只会让下一个人以为「这里还有个副标题状态」。要再加就先写 JSX。
+  &__login-primary {
     width: 100%;
     height: 96rpx;
     margin-top: 32rpx;
@@ -451,19 +464,12 @@
     font-size: 32rpx;
     font-weight: 600;
     &::after { border: none; }
-  }
-  &__login-primary {
     background: var(--td-brand-color);
     color: #fff;
     box-shadow: var(--ds-glow-red);
   }
-  &__login-dev {
-    margin-top: 20rpx;
-    background: var(--td-bg-color-secondary);
-    color: var(--td-text-color-secondary);
-    font-size: 26rpx;
-    box-shadow: none;
-  }
+  // ★ 2026-09-30 删掉 `&__login-dev`：本地开发登录那一路复用的就是 `&__login-primary`
+  //   （见 index.tsx 的 devMode 分支），这个类在产物里同为 0 个节点 ⇒ 同样是死规则。
   &__login-link {
     display: inline;
     color: var(--td-brand-color);
@@ -471,8 +477,12 @@
   &__login-tip {
     display: block;
     margin-top: 28rpx;
-    color: var(--td-text-color-disabled);
-    font-size: 22rpx;
+    // ★★ 2026-09-30：`--td-text-color-disabled` → `--td-text-color-secondary`，22rpx → 24rpx。
+    //   这是一句**法律告知**（授权即表示同意《用户协议》和《隐私政策》），不是"不可用的东西"。
+    //   disabled 灰（实测 rgb(191,195,201)）在纯白卡片上对比度太低，小屏上基本读不清 ——
+    //   而「看不清的授权条款」恰恰是最不该出现的一种含糊。
+    color: var(--td-text-color-secondary);
+    font-size: 24rpx;
     line-height: 1.6;
   }
   // ─── 短信登录（备选通道）───
@@ -498,6 +508,15 @@
   }
   &__login-code {
     flex: none;
+    // ★★ 2026-09-30 热区修复：原来这个「获取验证码」的盒子只有 **41.6rpx 高**（就一行字），
+    //   手指点在字的上下就漏掉。父容器 `.mine__login-field` 本身有 96rpx 高，
+    //   所以这里 `align-self: stretch` 撑满 + flex 居中 ⇒ 热区 41.6 → **96rpx**，
+    //   而文字位置一点没变（本来就是垂直居中）。
+    //   ★ 顺带一个副产品：左侧那条分隔线也跟着拉满到 96rpx —— 原来它只有文字那么高，
+    //     孤零零飘在输入框中间像个断点；拉满之后才是正常的分隔符。
+    align-self: stretch;
+    display: flex;
+    align-items: center;
     margin-left: 16rpx;
     padding-left: 20rpx;
     border-left: 2rpx solid var(--td-component-stroke);
@@ -511,7 +530,15 @@
     }
   }
   &__login-switch {
-    margin-top: 28rpx;
+    // ★★ 2026-09-30 热区修复：原来只有一行文字那么高（实测 41.6rpx）。改成 88rpx 的居中盒子，
+    //   并把 margin-top 从 28rpx 收到 5rpx 来**抵掉**盒子多出来的那半截：
+    //     视觉位置 = margin-top + (88 − 41.6)/2 = 5 + 23.2 = 28.2rpx ≈ 原来的 28rpx ✓
+    //   即：热区增大一倍多，而文字在屏幕上的位置几乎不动。
+    margin-top: 5rpx;
+    min-height: 88rpx;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     color: var(--td-brand-color);
     font-size: 26rpx;
   }
@@ -529,3 +556,13 @@
 .mine__item { padding: 22rpx 20rpx; }
 .mine__item-title { font-size: 26rpx; }
 .mine__login-modal { border-radius: var(--td-radius-extra); }
+/* ★★ H5 端实测的一处样式失守（2026-09-30，本轮查实）：
+   Taro 把 JSX 里的 `disabled={submitting}` 连 **false** 也落成了属性 `disabled="false"`，
+   而 Taro 注入的 `<style>` 里有一条 `taro-button-core[disabled] { color: rgba(255,255,255,.6) }`
+   —— 属性选择器**只看属性在不在、不看它的值**，于是主按钮上的白字被压成 60% 不透明，
+   看着像"不能点"。它的特异性 0,1,1 > `.mine__login-primary` 的 0,1,0，所以纯白才会失守。
+   这里用一层祖先把权重抬到 0,2,0 把它抢回来。
+   ★ 范围说明（别误读）：小程序产物 `pages/mine/index.wxss` + `app.wxss` 里**没有**这条 `[disabled]`
+     规则（那边用 TDesign 的 `.t-button--disabled` **类**），实测本来就是纯白 ——
+     所以这条是给 H5 通道与以后兜底的，**不代表小程序上一直是灰的**。 */
+.mine__login-modal .mine__login-primary { color: #fff; }
