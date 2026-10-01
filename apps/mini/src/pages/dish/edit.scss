@@ -148,6 +148,20 @@
   border-radius: var(--td-radius-default);
   overflow: hidden;
   background: var(--td-bg-color-container);
+  /* ★★ 2026-10-01：**限高**是这一块的关键。
+     原来这里是「本店有多少道单菜就摊多少行」——30 道 ≈ 30 行 ≈ 2880rpx（1400px 上下），
+     把下面的「卖点 / 简介」顶出屏幕好几屏。用户在卖点输入框里打字时，
+     输入框本身已经在视口外，看不见自己输的是什么。
+     限高之后这里的高度与菜的数量脱钩，下面字段的位置就稳定了。
+     ★ 单行高 = 上下 padding 44rpx + 行内容（未选中行只有 40rpx 的勾选圈 ⇒ 85rpx；
+       选中行带 52rpx 的步进按钮 ⇒ 97rpx）+ 1rpx 分隔线。
+       600rpx ⇒ 未选中行约 7 行、全选中约 6 行，第 7 行会露出小半行 ——
+       正好当「还能往下滚」的提示，不必另加文案。
+     ★ 用 `max-height` 而**不是**固定 `height`：固定高度会让只有 3 道菜的店
+       也顶着一大块空白（还以为是加载中）。用了 max-height，菜少时高度照旧由内容撑开。 */
+  max-height: 600rpx;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .combo-row {

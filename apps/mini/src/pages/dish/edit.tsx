@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { View, Text, Input, Textarea, Image, Video } from '@tarojs/components'
+import { View, Text, Input, Textarea, Image, Video, ScrollView } from '@tarojs/components'
 import Taro, { useRouter } from '@tarojs/taro'
 import { createDish, updateDish, getDish, listDishes, getDishMediaUrl, type DishInput, type DishItem, type DishKind, type DishMedia } from '../../services/dish'
 import { uploadMediaFile } from '../../services/upload'
@@ -304,7 +304,13 @@ export default function DishEditPage() {
             <View className='combo-hint'>这家门店还没有单菜。套餐由单菜组成，请先添加几道菜再回来配套餐。</View>
           )}
           {!candidatesFailed && candidates.length > 0 && (
-            <View className='combo-picker'>
+            /* ★★ 2026-10-01：候选菜**全量摊开**会把下面的「卖点 / 简介」顶出视口 ——
+               本店菜一多（30 道 ≈ 30 行 ≈ 1400px），用户点进卖点输入框时它在屏幕外好几屏，
+               打字时根本看不见自己输的是什么。
+               ⇒ 换成 `ScrollView` 限高（高度封顶见 edit.scss 的 .combo-picker），列表内部滚动，
+                 下面字段的位置就**不再随菜的数量漂移**：无论本店 3 道菜还是 50 道菜，
+                 套餐内容这一块占的高度都一样。 */
+            <ScrollView scrollY className='combo-picker' showScrollbar={false}>
               {candidates.map((d) => {
                 const pick = form.combo.find((p) => p.dishId === d.id)
                 return (
@@ -321,14 +327,17 @@ export default function DishEditPage() {
                   </View>
                 )
               })}
-            </View>
+            </ScrollView>
           )}
           {form.combo.length > 0 && <Text className='field__hint'>已选 {form.combo.length} 样，合计 {form.combo.reduce((s, p) => s + p.quantity, 0)} 份</Text>}
         </View>
       </>
     )}
 
-    <View className='field'><Text className='field__label'>卖点</Text><Textarea className='field__textarea' placeholder='如：外焦里嫩 / 老板秘制蘸料（可换行）' value={form.sellingPoints} onInput={(e) => set('sellingPoints', e.detail.value)} maxlength={1000} autoHeight /></View>
-    <View className='field'><Text className='field__label'>简介</Text><Textarea className='field__textarea' placeholder={isCombo ? '一句话说明这个套餐适合几个人吃（可换行）' : '一句话介绍这道菜（可换行）'} value={form.intro} onInput={(e) => set('intro', e.detail.value)} maxlength={500} autoHeight /></View>
+    {/* ★ 2026-10-01：`cursorSpacing` = 键盘弹起时给光标下方留 20px。
+        textarea 是 `autoHeight`，字写得越多它越高、光标越靠下；不留这 20px，
+        iOS 上末尾几行会被键盘边缘贴住（看起来像「输入框不见了」）。 */}
+    <View className='field'><Text className='field__label'>卖点</Text><Textarea className='field__textarea' placeholder='如：外焦里嫩 / 老板秘制蘸料（可换行）' value={form.sellingPoints} onInput={(e) => set('sellingPoints', e.detail.value)} maxlength={1000} autoHeight cursorSpacing={20} /></View>
+    <View className='field'><Text className='field__label'>简介</Text><Textarea className='field__textarea' placeholder={isCombo ? '一句话说明这个套餐适合几个人吃（可换行）' : '一句话介绍这道菜（可换行）'} value={form.intro} onInput={(e) => set('intro', e.detail.value)} maxlength={500} autoHeight cursorSpacing={20} /></View>
   </View><View className='dish-edit__footer'><View className={'dish-edit__save ' + ((saving || uploading) ? 'dish-edit__save--disabled' : '')} onClick={onSubmit}><Text>{id ? '保存修改' : (isCombo ? '添加套餐' : '添加菜品')}</Text></View></View></View>
 }

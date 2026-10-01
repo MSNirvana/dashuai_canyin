@@ -285,5 +285,35 @@ if (existsSync(camSrcPath)) {
   console.log(`    ⚠ 找不到源码 ${camSrcPath}（从仓库根调用时属正常，本条跳过）`)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ★★ 套餐「候选菜单」限高（2026-10-01）
+//   症状：本店单菜一多，候选列表**全量摊开**，把下面的「卖点 / 简介」顶出视口 ——
+//        用户在卖点输入框里打字时，看不见自己输的是什么。
+//   判据两条，缺任何一条这个 bug 就会回来：
+//     ① 候选列表由 `ScrollView` 渲染（有高度约束才滚得起来；换回 `<View>` 就又是全量摊开）
+//     ② `.combo-picker` 上有 `max-height`（ScrollView 没高度约束 = 不滚，等于没改）
+//   ★ 同样回**源码**验：产物里类名还在，但组件被压缩成了 `m.BM` 这种单字母，认不出来。
+const comboPickerSrcPath = 'src/pages/dish/edit.tsx'
+const comboPickerScssPath = 'src/pages/dish/edit.scss'
+console.log('\n[自检] 套餐候选列表限高（2026-10-01）：')
+if (!existsSync(comboPickerSrcPath) || !existsSync(comboPickerScssPath)) {
+  console.log(`    ⚠ 找不到源码 ${comboPickerSrcPath} / ${comboPickerScssPath}（从仓库根调用时属正常，本条跳过）`)
+} else {
+  const pickerSrc = readFileSync(comboPickerSrcPath, 'utf8')
+  const pickerScss = readFileSync(comboPickerScssPath, 'utf8')
+  const isScrollView = /<ScrollView[^>]*className='combo-picker'/.test(pickerSrc)
+  console.log(`    ${isScrollView ? '✓' : '✗'} 候选列表由 ScrollView 渲染（换回 <View> ⇒ 又是全量摊开顶飞卖点）`)
+  if (!isScrollView) {
+    fail += 1
+    console.log("      修法：<ScrollView scrollY className='combo-picker' showScrollbar={false}>")
+  }
+  const hasMaxHeight = /\.combo-picker\s*\{[^}]*max-height:\s*\d+rpx/.test(pickerScss)
+  console.log(`    ${hasMaxHeight ? '✓' : '✗'} .combo-picker 有限高（没高度约束的 ScrollView 根本滚不起来）`)
+  if (!hasMaxHeight) {
+    fail += 1
+    console.log('      修法：给 .combo-picker 加 max-height（用 max-height 不用 height：菜少时不留一块空白）')
+  }
+}
+
 console.log(`\n${fail === 0 ? '★ 自检通过' : `★ 自检失败（${fail} 项）`}`)
 process.exit(fail === 0 ? 0 : 1)
