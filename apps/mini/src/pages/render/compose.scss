@@ -260,6 +260,19 @@
     line-height: 1.5;
     color: var(--td-text-color-placeholder);
   }
+  /* ★ 2026-10-01：AI 标识（只挂在「AI 生成」那一格，见 tsx）。
+     ★ 不升格成第三种字号：它必须比 `&__gradedesc`（21rpx）更轻，否则读起来像第三条卖点。
+     ★ 卡内可写宽度 ≈274rpx（半宽卡片 306rpx − 左右 padding 32rpx），
+       「内容由AI生成，仅供参考」在 20rpx 下约 222rpx ⇒ 一行放得下；
+       仍补 `white-space: normal` 兜底 —— 文案万一改长，宁可换行也不要被裁掉。
+     ★ 刻意**不**跟 `&__grade--off` 一起转灰：它是合规标识，档位不可用时也要读得清。 */
+  &__gradeai {
+    margin-top: 6rpx;
+    font-size: 20rpx;
+    line-height: 1.4;
+    white-space: normal;
+    color: var(--td-text-color-placeholder);
+  }
   &__premiumtip {
     margin-top: 24rpx;
   }
@@ -680,6 +693,17 @@
   /* ★ 2026-09-28：`&__pubcost`（那行「生成一次最多 X 积分」的常驻小字）按用户要求删除，规则一并去掉。 */
   &__pubbtn {
     margin-top: 20rpx;
+  }
+  /* ★ 2026-10-01：AI 标识（标题 / 文案 / 封面都是 AI 生成的，见 tsx）。
+     ★ 用卡片内小字而不是 `.ds-footer__note`：后者是**固定底栏**那一行的样式
+       （居中 + 14rpx 上边距），搬进卡片里会歪。
+     ★ 左对齐：它上面是标题 / 文案那种左对齐的内容块；在卡片里居中会显得像「整块的结论」。 */
+  &__pubai {
+    display: block;
+    margin-top: 16rpx;
+    font-size: 20rpx;
+    line-height: 1.5;
+    color: var(--td-text-color-placeholder);
   }
   /* 封面按 3:4 **完整展示**（`mode='aspectFit'`）：
      判据是「盒子比例 == 源图比例」—— 盒子比例对了，fit 与 fill 看起来一样；

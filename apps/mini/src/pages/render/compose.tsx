@@ -1350,6 +1350,12 @@ export default function RenderCompose() {
                       倍率没了之后，两条选项只剩名字，「自动识别 + 智能剪辑 / 剪辑师人工精剪」
                       才是用户真正用来区分这两档的信息。 */}
                 <Text className='rcompose__gradedesc'>{off ? '即将开放' : option.desc}</Text>
+                {/* ★ 2026-10-01：AI 标识。**只挂「AI 生成」这一格** —— 另一格是剪辑师人工精剪，
+                    产出不是 AI 生成内容，用户也明确要求只加在这一格上，别顺手加到整块。
+                    ★ 文案固定，不随 `grade` / `off` 变：标识不能「选中才有」或者「不可用时消失」。 */}
+                {option.key === 'AI' && (
+                  <Text className='rcompose__gradeai'>内容由AI生成，仅供参考</Text>
+                )}
               </View>
             )
           })}
@@ -1662,6 +1668,12 @@ export default function RenderCompose() {
         )}
 
         {/* 兜底与失败提示：不显示的话，用户会以为"模型就这水平"或者"封面就是这样" */}
+        {/* ★ 2026-10-01：AI 标识。标题 / 文案 / 封面都是 AI 生成的，按平台要求在该卡片标注。
+            ★★ 挂点选在这里（而不是塞进上面那个「还没素材」的分支里）是有意的：
+              没有素材时卡片里**只有**「生成发布素材」按钮 ⇒ 这行正好落在它下面；
+              已有素材时它落在标题 / 文案之后 —— 塞进按钮那个分支，标识会**恰好在展示 AI 内容时消失**。
+            ★ 文案固定，不随 state 变：标识不能「有素材就没」或者「生成中就没」。 */}
+        {!publishLoading && <Text className='rcompose__pubai'>内容由AI生成，仅供参考</Text>}
         {!!publishMat?.degraded && (
           <Text className='rcompose__puberr'>
             这次的标题与文案是简单拼出来的（AI 没给出可用结果），可以点「重新生成」再试一次。
