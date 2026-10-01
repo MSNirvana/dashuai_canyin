@@ -246,8 +246,9 @@ export default function HomePage() {
   // 回来还会看到一张「播完停在最后一帧」的卡片。
   useDidHide(() => { setPlaying(null) })
 
-  // 未登录时它是「登录后开始创作」那张引导卡上的按钮（原来首页未登录是整页早退，现在只换这一块）
-  const goMine = () => Taro.switchTab({ url: '/pages/mine/index' })
+  // ★ 2026-10-01：原 `goMine`（跳「我的」去登录）只服务于首页那张「登录后开始创作 /
+  //   去登录」卡。该卡已按微信审核要求删除（未浏览即要求授权，见 goCreate 与页面底部
+  //   未登录分支的说明），故一并删掉。
 
   /**
    * 账号还没有门店时的唯一出路：去**创建门店**。
@@ -267,7 +268,21 @@ export default function HomePage() {
     ? Taro.navigateTo({ url: `/pages/dish/list?storeId=${currentStoreId}` })
     : goNewStore()
   const goCreations = () => Taro.switchTab({ url: '/pages/creation/list' })
-  const goCreate = () => (currentStoreId ? Taro.navigateTo({ url: '/pages/creation/edit' }) : goNewStore())
+  /**
+   * ★★ 2026-10-01（微信审核驳回整改）：未登录时**只给一句解释，等用户自己点确认**才去登录。
+   *
+   * 驳回原文：「一进入【首页】页面，未浏览体验功能服务，即要求授权手机号码、头像、昵称
+   * 进行授权登录，请在用户体验浏览功能服务后，再自行选择授权登录。」
+   *
+   * 原来这里直接走 `goNewStore()`（未登录时 currentStoreId 必为空）⇒ 用户被丢去门店创建页
+   * 吃一个 401 ⇒ 请求层 redirectToLogin() 把他弹到「我的」再弹登录框 ——
+   * 这正是「还没看任何功能就被要求授权」的那条连锁。
+   */
+  const goCreate = () => {
+    if (!isLoggedIn) { guideLogin({ reason: '开始创作需要先登录' }); return }
+    if (!currentStoreId) { goNewStore(); return }
+    Taro.navigateTo({ url: '/pages/creation/edit' })
+  }
   const openCreation = (id: string) => Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
   // 点卡片进详情（看视频 + 配方说明）；点「生成同款」直接带着配方进创作流
   const openWork = (work: WorkItem) => Taro.navigateTo({ url: `/pages/work/detail?id=${work.id}` })
@@ -425,20 +440,20 @@ export default function HomePage() {
               还得跟标题抢地盘；底色与通栏交给 .ds-btn--primary / --block，但**几何已被页面
               作用域的 .home__create 覆写**（见 index.scss：09-29 起高度 139rpx、字号 68rpx、
               字重 700 —— 已**不等于** .ds-btn--lg 的 104rpx / 34rpx，改这颗按钮请改那边）。
-            ⚠ 只给**已登录**用户：未登录时下面那张「登录后开始创作 / 去登录」卡才是本页唯一的
-              主按钮 —— 两颗通栏红按钮叠在一起既重复、也违反「一屏只有一个红色实心主按钮」的约定，
-              而未登录点它只会被 401 弹到「我的」（正是 utils/login-guide.ts 想避免的连锁）。
-              若要未登录也展示，去掉 isLoggedIn、把 onClick 换成 guideLogin 引导即可。 */}
-        {isLoggedIn && (
-          <View
-            className='ds-btn ds-btn--primary ds-btn--lg ds-btn--block home__create'
-            hoverClass='ds-hover'
-            onClick={goCreate}
-          >
-            <Text>开始创作</Text>
-            <Text className='home__create-arrow'>→</Text>
-          </View>
-        )}
+            ★ 2026-10-01（微信审核驳回整改）：**未登录也展示这一颗**。理由两条 ——
+              ① 审核要求「先让用户体验浏览，再自行选择是否授权登录」。首页不能一进来就摆一张
+                 「去登录」卡，更不该点什么都弹登录框。现在未登录用户看到的是完整首页
+                 （轮播 + 优秀作品），点这颗按钮时才由 goCreate → guideLogin 征求他同意；
+              ② 原 onClick 落到 goNewStore / 编辑页，未登录会被 401 弹到「我的」
+                 （正是 utils/login-guide.ts 要避免的那条连锁）。 */}
+        <View
+          className='ds-btn ds-btn--primary ds-btn--lg ds-btn--block home__create'
+          hoverClass='ds-hover'
+          onClick={goCreate}
+        >
+          <Text>开始创作</Text>
+          <Text className='home__create-arrow'>→</Text>
+        </View>
         </>
       )}
 
@@ -449,13 +464,13 @@ export default function HomePage() {
       )}
 
       {!isLoggedIn ? (
-        /* 未登录：原来这里是一整页的早退分支（文字 hero + 登录卡），现在只替换
-           「近期作品」这一块。首页其余部分 —— 口号海报、轮播、优秀作品 ——
-           对未登录用户同样是有效内容，尤其作品区：那才是给未登录用户的引流素材。 */
-        <View className='ds-card home__guest home__guest--inline'>
-          <Text className='home__guest-title'>登录后开始创作</Text>
-          <View className='ds-btn ds-btn--primary ds-btn--block' hoverClass='ds-hover' onClick={goMine}>去登录</View>
-        </View>
+        /* ★★ 2026-10-01（微信审核驳回整改）：未登录时这一块**什么都不放**。
+           原来这里是一张「登录后开始创作 / 去登录」卡，它就是审核的判定点 ——
+           「一进入【首页】页面，未浏览体验功能服务，即要求授权手机号码、头像、昵称进行授权登录」。
+           用户打开小程序、什么都还没看，第一屏就在要他登录。
+           现在未登录用户看到的是轮播 + 优秀作品（公开内容），想用的时候点上面的「开始创作」，
+           那一刻才由 guideLogin 征求他同意。 */
+        null
       ) : setupStage === 'READY' ? (
         <>
           {/* ── 近期作品（★ 2026-09-25 由「接着上次拍」改名；同日「两条→三条 + 竖版缩略图」）──

@@ -101,7 +101,11 @@ export default function Mine() {
   useDidShow(() => {
     const currentToken = Taro.getStorageSync<string>(STORAGE_KEYS.token) || ''
     if (!currentToken && useMerchantStore.getState().token) logout()
-    setShowLogin(!currentToken)
+    // ★★ 2026-10-01（微信审核驳回整改）：**不再自动弹登录框**。
+    //   原来未登录进入本页就直接弹 —— 而审核要求「用户体验浏览功能服务后，
+    //   再自行选择授权登录」，自动弹等于替用户做了决定。
+    //   改成页头显示「点击登录」（见下方 JSX），用户点了才弹。
+    //   ★ 下面 `auth:required`（操作撞 401）那条自动弹**保留**：那是用户主动触发的。
     // ★ 「联系我们」是**公开配置**（免登录可读），与登录态无关 ⇒ 刻意放在下面那个
     //   `if (currentToken)` **外面**：登录不了恰恰是最需要客服的时候，关掉登录弹窗后
     //   这一块必须是好的。同样是「单独发、单独吞错」，不并进页面的 Promise.all。
@@ -435,9 +439,18 @@ export default function Mine() {
           </View>
         </View>
         <View className='mine__info'>
-          <Text className='mine__name' onClick={() => go('/pages/profile/index')}>
-            {merchant?.nickname || merchant?.phone || '未登录'}
-          </Text>
+          {/* ★★ 2026-10-01：未登录时这里就是**登录入口**（不再一进页面就自动弹框，见 useDidShow）。
+              原来那行固定显示「未登录」，点了还会跳个人主页（未登录必吃 401）；现在未登录时
+              它变成可点的「点击登录」，由用户自己决定什么时候授权。 */}
+          {token ? (
+            <Text className='mine__name' onClick={() => go('/pages/profile/index')}>
+              {merchant?.nickname || merchant?.phone || '未登录'}
+            </Text>
+          ) : (
+            <Text className='mine__name mine__name--login' onClick={() => setShowLogin(true)}>
+              点击登录
+            </Text>
+          )}
           {isMember ? (
             <View className='mine__vipwrap'>
               <Text className='ds-pill ds-pill--gold mine__vip--on'>

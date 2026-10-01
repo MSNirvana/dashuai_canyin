@@ -62,6 +62,12 @@
     font-weight: 700;
     letter-spacing: -0.025em;
     color: var(--td-text-color-primary);
+    // ★ 2026-10-01：未登录时这里显示「点击登录」，必须让它**看起来能点**
+    //   （品牌红 + 一点点内边距把热区撑到 88rpx 量级），否则用户不知道这行是入口。
+    &--login {
+      color: var(--td-brand-color);
+      padding: 8rpx 0;
+    }
   }
   &__vipwrap {
     display: flex;
