@@ -203,7 +203,7 @@ export default function Mine() {
    *
    * ★ 为什么用 toast 而不是把按钮置灰：灰按钮说不出「为什么不能点」，用户只会以为坏了；
    *   这句话正好告诉他该去勾哪里。
-   * ★★ 「微信一键登录」那一颗没法只做样式禁用 —— 它是 `open-type='getPhoneNumber'`，
+   * ★★ 「手机号快捷登录」那一颗没法只做样式禁用 —— 它是 `open-type='getPhoneNumber'`，
    *   一旦被触发就会弹微信的手机号授权框，那已经是"收集"了。所以未勾选时**整颗换成
    *   普通 `<Button>`**（见下面的 JSX），点它只会弹这句提示，原生授权框根本不会出现。
    */
@@ -583,8 +583,8 @@ export default function Mine() {
                       showMenuByLongpress
                     />
                     <View className='mine__contact-copy'>
-                      <Text className='mine__contact-title'>微信客服</Text>
-                      <Text className='mine__contact-hint'>识别二维码，添加客服微信</Text>
+                      <Text className='mine__contact-title'>在线客服</Text>
+                      <Text className='mine__contact-hint'>识别二维码，添加客服</Text>
                     </View>
                   </View>
                 )}
@@ -649,7 +649,7 @@ export default function Mine() {
                 {smsSubmitting ? '登录中…' : '登录'}
               </Button>
               <View className='mine__login-switch' onClick={() => setMode('wechat')}>
-                {devMode ? '返回本地开发登录' : '返回微信一键登录'}
+                {devMode ? '返回本地开发登录' : '返回手机号快捷登录'}
               </View>
             </>
           ) : (
@@ -660,16 +660,16 @@ export default function Mine() {
                 </Button>
               ) : agreed ? (
                 <Button className='mine__login-primary' openType='getPhoneNumber' onGetPhoneNumber={onGetPhoneNumber} disabled={submitting}>
-                  {submitting ? '登录中…' : '微信一键登录'}
+                  {submitting ? '登录中…' : '手机号快捷登录'}
                 </Button>
               ) : (
                 /* ★★ 未勾选同意时**换成普通按钮**：open-type 一旦触发就会弹微信的手机号授权框，
                    而那已经是"收集"了。换掉之后原生授权框根本不会出现，点它只弹提示。 */
                 <Button className='mine__login-primary' onClick={needAgree}>
-                  微信一键登录
+                  手机号快捷登录
                 </Button>
               )}
-              {/* 代运营 / 帮店主管理时，微信一键登录只能拿到本人手机号 ⇒ 必须留这条不依赖微信的通道 */}
+              {/* 代运营 / 帮店主管理时，手机号快捷登录只能拿到本人手机号 ⇒ 必须留这条短信通道 */}
               <View className='mine__login-switch' onClick={() => setMode('sms')}>
                 使用其他手机号登录
               </View>
@@ -680,7 +680,7 @@ export default function Mine() {
               位置下移只影响阅读顺序；**合规三件套一个没少**：
               ① 独立可勾选框（不是「点击即视为同意」的说明文字）
               ② 默认不勾、每次开弹窗重置
-              ③ 未勾选时三个入口全部拦住（微信一键登录换普通按钮、获取验证码、登录）
+              ③ 未勾选时三个入口全部拦住（快捷登录换普通按钮、获取验证码、登录）
               ⇒ 仍是**明示同意**，不是默示同意。两个登录模式共用这一个勾选状态。 */}
           <AgreeCheckbox checked={agreed} onChange={setAgreed} />
         </View>

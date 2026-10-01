@@ -56,7 +56,7 @@ export class PackageNotFoundError extends Error {
 }
 export class NoOpenidError extends Error {
   constructor() {
-    super('该账号未绑定微信 openid，无法发起真实支付')
+    super('该账号未完成快捷登录，无法发起真实支付')
     this.name = 'NoOpenidError'
   }
 }

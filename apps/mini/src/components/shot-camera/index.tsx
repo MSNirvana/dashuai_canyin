@@ -877,18 +877,18 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
         </View>
       )}
 
-      {/* ── 相机用不了：两个出口（去设置 / 回落微信原生），不能把用户困在这一层 ── */}
+      {/* ── 相机用不了：两个出口（去设置 / 回落系统相机），不能把用户困在这一层 ── */}
       {!!failMsg && (
         <View className='shotcam__panel'>
           <Text className='shotcam__paneltitle'>{failMsg}</Text>
-          <Text className='shotcam__panelsub'>也可以先用微信原生的拍/选继续这一条</Text>
+          <Text className='shotcam__panelsub'>也可以先用系统相机/相册继续这一条</Text>
           <View className='shotcam__panelacts'>
             <Text className='shotcam__btn' onClick={() => void goSetting()}>去设置里允许</Text>
             <Text
               className='shotcam__btn shotcam__btn--main'
               onClick={handoff}
             >
-              用微信原生的
+              用系统相机
             </Text>
           </View>
           <Text className='shotcam__retry' onClick={retake}>再试一次</Text>

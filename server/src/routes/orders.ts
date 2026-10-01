@@ -153,7 +153,7 @@ router.post('/recharge/order', async (req, res) => {
     ok(res, r)
   } catch (e) {
     if (e instanceof PackageNotFoundError) return fail(res, 3006, '充值档位不存在或未启用', 404)
-    if (e instanceof NoOpenidError) return fail(res, 3007, '账号未绑定微信，无法支付', 400)
+    if (e instanceof NoOpenidError) return fail(res, 3007, '请先用手机号快捷登录，再完成支付', 400)
     if (e instanceof PaymentUnavailableError) return fail(res, 3008, e.message, 503)
     // 本路由的 catch 是全捕获分支，会在全局 errorHandler 之前拦下异常，
     // 所以全局映射器里的 SubscriptionRequiredError → 2005 到不了这里，必须显式补上，
@@ -174,7 +174,7 @@ router.post('/membership/order', async (req, res) => {
     ok(res, r)
   } catch (e) {
     if (e instanceof PackageNotFoundError) return fail(res, 3006, '会员套餐不存在或未启用', 404)
-    if (e instanceof NoOpenidError) return fail(res, 3007, '账号未绑定微信，无法支付', 400)
+    if (e instanceof NoOpenidError) return fail(res, 3007, '请先用手机号快捷登录，再完成支付', 400)
     if (e instanceof PaymentUnavailableError) return fail(res, 3008, e.message, 503)
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)

@@ -25,7 +25,7 @@ interface LoginGuideOptions {
   cancelText?: string
 }
 
-/** 弹一次登录引导；用户点了确认才跳「我的」（那里会弹微信一键登录） */
+/** 弹一次登录引导；用户点了确认才跳「我的」（那里会弹手机号快捷登录） */
 export function guideLogin(options: LoginGuideOptions): void {
   void Taro.showModal({
     title: '登录后可用',
