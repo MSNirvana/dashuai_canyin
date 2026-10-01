@@ -281,6 +281,22 @@ if (existsSync(camSrcPath)) {
     fail += 1
     console.log('      修法：把 device/flash 从 key 里拿掉，切镜头改调 rebuildCamera（摘-挂重建）')
   }
+
+  // ★★★ 反向断言：授权状态 / 补光状态变化不能把已经收到的 onInitDone 清掉。
+  // iOS 真机上 Camera 可能先 initdone，Taro.getSetting 后返回；若黑屏探针因 camAuth 重跑时
+  // 无条件 `camReadyRef.current = false`，一台已经启动的相机会在 3 秒后被误判为黑屏并被主动摘掉。
+  const probeMatch = camSrc.match(/\/\*\*\s*\n\s*\* ★★ 黑屏探针[\s\S]*?\n\s*\}, \[([^\]]*)\]\)/)
+  const probeBlock = probeMatch?.[0] ?? ''
+  const probeDeps = probeMatch?.[1] ?? ''
+  const probeClearsReady = /camReadyRef\.current\s*=\s*false/.test(probeBlock)
+  const probeDependsOnParams = /\b(device|flash)\b/.test(probeDeps)
+  const probeKeepsReady = /if\s*\(camReadyRef\.current\)\s*return/.test(probeBlock)
+  const probeSafe = !probeClearsReady && !probeDependsOnParams && probeKeepsReady
+  console.log(`    ${probeSafe ? '✓' : '✗'} 黑屏探针不抹掉已完成的 initdone（授权异步返回不会反杀已启动相机）`)
+  if (!probeSafe) {
+    fail += 1
+    console.log('      修法：探针只以 showCamera/camGen 表示新节点；已 ready 直接 return，禁止因 camAuth/device/flash 清零')
+  }
 } else {
   console.log(`    ⚠ 找不到源码 ${camSrcPath}（从仓库根调用时属正常，本条跳过）`)
 }

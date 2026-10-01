@@ -465,16 +465,17 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
    * 顺带把另一条也闭掉了：首次进入时若在授权弹窗上点了「拒绝」，同样不会有 onInitDone，
    * 于是走同一条路 → 最终落到面板上的「去设置里允许」，而不是一块没有任何提示的黑屏。
    *
-   * ★ 依赖里的 camGen / device / flash 都是**有意**的：三者都代表「原生节点被重建」，
-   *   每重建一代就要重新等一次初始化完成。
+   * ★★ 只用 showCamera / camGen 表示「新一代原生节点挂上来了」。device / flash 的普通状态变化
+   *   不能重置成功信号；尤其 camAuth 是异步返回的，它可能晚于 onInitDone —— 若此时把 ready 清回 false，
+   *   这台已经正常启动的相机会在 3 秒后被误判成黑屏并被我们主动摘掉。
    */
   useEffect(() => {
     if (!showCamera) return
-    camReadyRef.current = false
-    // ★★ 超时分两档，这是「刚同意授权反而用不了」的直接原因：
-    //   首次进入时微信会弹相机授权框，用户看完再点是好几秒 —— 这段时间**不可能**有 onInitDone。
-    //   用 3 秒去等 ⇒ 必然误判成黑屏 ⇒ 触发重建 ⇒ 撞出 can insert only one camera。
-    //   已明确允许过才用 3 秒；还没问过（含 getSetting 读失败）给 12 秒。
+    // ★ 已经收到这一代的 onInitDone 就别再布看门狗。典型顺序是：相机先起来，随后 getSetting
+    //   才返回 camAuth=true；后者会让本 effect 重跑，但绝不能抹掉前者已经确认的成功事实。
+    if (camReadyRef.current) return
+    // ★★ 超时分两档：首次进入时微信可能弹相机授权框，用户看完再点需要好几秒，
+    //   这段时间不可能有 onInitDone。已明确允许过才用 3 秒；授权未定给 12 秒。
     const wait = camAuth === true ? CAM_INIT_TIMEOUT_MS : CAM_AWAIT_AUTH_TIMEOUT_MS
     camInitWatchRef.current = setTimeout(() => {
       camInitWatchRef.current = null
@@ -483,7 +484,7 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     return () => {
       if (camInitWatchRef.current) { clearTimeout(camInitWatchRef.current); camInitWatchRef.current = null }
     }
-  }, [showCamera, camGen, device, flash, camAuth, recoverCamera])
+  }, [showCamera, camGen, camAuth, recoverCamera])
 
   /**
    * 录制结束的唯一收敛点：用户点停、到达上限、被系统打断，最后都走这里。
