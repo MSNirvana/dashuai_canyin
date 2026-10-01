@@ -112,6 +112,8 @@ async function main(): Promise<void> {
       normalizeAudio: true,
       removeSilence: false,
       backgroundMusicPath: bgm,
+      // ★ 这里**故意**传一个自定义值（而不是 `BGM_MIX_GAIN`）：本用例要覆盖「调用方显式传值」
+      //   那条路径。它不代表线上电平 —— 线上的配乐电平只有 `synthesis.ts` 的 `BGM_MIX_GAIN` 一处。
       backgroundMusicGain: 0.1,
     })
     assert.equal(synthesis.subtitled, true)

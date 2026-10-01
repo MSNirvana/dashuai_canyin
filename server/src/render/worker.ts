@@ -42,7 +42,7 @@ import {
   ffmpegSupportsSubtitles,
 } from './ffmpeg.js'
 import { ENCODE_DELIVERY, ENCODE_INTERMEDIATE } from './encode-quality.js'
-import { applyAiSynthesis, fitShotDurationsToTimeline, shouldExtendForNarration, type SynthesisShot } from './synthesis.js'
+import { applyAiSynthesis, BGM_MIX_GAIN, fitShotDurationsToTimeline, shouldExtendForNarration, type SynthesisShot } from './synthesis.js'
 import { resolveBgmTrack } from './bgm-library.js'
 import { selectBgmFromPool } from './bgm-select.service.js'
 import { breakSubtitleLines as breakSubtitleLinesByAi } from './subtitle-split.service.js'
@@ -859,7 +859,10 @@ async function processTask(
             normalizeAudio: effectiveChatcut.normalizeAudio,
             removeSilence: effectiveChatcut.removeSilence,
             backgroundMusicPath,
-            backgroundMusicGain: 0.10,
+            // ★ 配乐电平**只认** synthesis 里那个常量，这里不许写字面量 ——
+            //   原来这里写 0.10、而模块默认是 0.12：改模块那处，这条照旧生效，
+            //   于是「改了但听感没变」且日志里没有任何痕迹（见 BGM_MIX_GAIN 的注释）。
+            backgroundMusicGain: BGM_MIX_GAIN,
             /**
              * AI 分行（2026-09-29）：字幕文本仍然**来自原声 ASR**（`subtitleMode='SOURCE_AUDIO'`），
              * 但「在哪里换行」交给模型判断 —— 用户原话「需要 AI 做好分行再添加到字幕里」。

@@ -181,7 +181,10 @@ export interface SynthesisOptions {
   removeSilence?: boolean
   /** 已生成或已授权的背景音乐文件；默认模式会与原声/旁白轻量混音。 */
   backgroundMusicPath?: string
-  /** 背景音乐相对音量，默认 -22dB 左右的存在感。 */
+  /**
+   * 背景音乐相对音量。★ 不传时用 `BGM_MIX_GAIN`（该常量的注释里有量级与上限的完整说明）；
+   *   调用方请 import 那个常量、**不要再写字面量**（写字面量会让「改常量」静默失效）。
+   */
   backgroundMusicGain?: number
   /**
    * 可选：把**已合并的待分行文本**交给外部（大模型）分行，返回 `原文 → 行数组`。
@@ -739,6 +742,34 @@ export function shouldExtendForNarration(
  */
 const AUDIO_LOUDNORM = 'loudnorm=I=-14:TP=-1.5:LRA=11'
 
+/**
+ * 背景音乐在最终混音里的**唯一出处** —— 只改这一个数。
+ *
+ * ★ 2026-10-01 由 `0.10` 提到 `0.18`（用户反馈「AI 生成的时候配乐声音有点小」）。
+ *   量级：0.10 ≈ 人声之下 **-20 dB**，0.18 ≈ **-15 dB** —— 约 +5 dB，听得出、又不至于压住人声。
+ *
+ * ★★ 为什么只需要看「比值」：混音链是 `[voice]volume=1.0` ＋ `[bgm]volume=<本值>`
+ *   → `amix`（按输入条数取平均）→ `AUDIO_LOUDNORM`（把**总和**拉回 -14 LUFS）→ `alimiter`。
+ *   amix 对每条输入是**等比例**缩放 ⇒ 比值不变；最终响度一律由 loudnorm 兜住
+ *   ⇒ 调它**只改「配乐相对人声的存在感」**，不会让整片忽大忽小。
+ *
+ * ⚠ 本链**没有闪避（sidechaincompress）**：配乐是从头到尾一条恒定电平。
+ *   平台里的常见做法是「BGM 压到 -18~-20 dB ＋ 说话时闪避」；我们没闪避，
+ *   所以这个值本身就是上限约束 —— 再加下去会开始糊人声。
+ *   ⇒ 哪天用户还嫌小，正确的下一步是**先加闪避**（人声一起就把 BGM 拉下去，空档再抬回来），
+ *     而不是继续加这个数。
+ * ⚠ `mixAudioTracks` 末尾还有一道 `clamp(0.03, 0.35)` —— 越过上限会被**静默夹回去**。
+ *
+ * ★★ 不要再在调用方写字面量：worker 曾经自己传 `0.10`、而模块默认是 `0.12` ——
+ *   改默认值那一处，worker 那处照旧生效 ⇒「改了但听感没变」，且日志里没有任何痕迹
+ *   （与上面 `AUDIO_LOUDNORM` 那条一模一样的教训）。调用方一律 import 这个常量。
+ *
+ * ★ 与缓存无关：混音只跑在合成的**临时工作目录**（`mkdtemp` + `finally rm`）里，
+ *   中间产物缓存（`INTERMEDIATE_CACHE_VERSION` / `SPEECH_CUT_VERSION`）不含音频混音
+ *   ⇒ 改这里**不需要**递增任何版本号。
+ */
+export const BGM_MIX_GAIN = 0.18
+
 function audioFilter(options: SynthesisOptions): string {
   const filters: string[] = []
   if (options.removeSilence) {
@@ -1162,7 +1193,9 @@ async function mixAudioTracks(
     inputs.push('[voice]')
   }
   const requestedGain = options.backgroundMusicGain
-  const gain = requestedGain !== undefined && Number.isFinite(requestedGain ?? NaN) ? requestedGain : 0.12
+  // ★ 兜底值也必须来自 BGM_MIX_GAIN：否则「调用方没传」与「调用方传了」会走出两个不同的电平，
+  //   而两者的差别在听感上根本无从判断（见 BGM_MIX_GAIN 的 ★★）。
+  const gain = requestedGain !== undefined && Number.isFinite(requestedGain ?? NaN) ? requestedGain : BGM_MIX_GAIN
   filters.push(`[${bgmIndex}:a]volume=${Math.max(0.03, Math.min(0.35, gain))}[bgm]`)
   inputs.push('[bgm]')
   // ★ 响度目标来自 AUDIO_LOUDNORM（与 audioFilter 同一出处）—— 别在这里再写字面量，
