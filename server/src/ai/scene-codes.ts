@@ -120,7 +120,9 @@ export const LIVE_SCENE_CODES: readonly SceneCode[] = [
 export const IMAGE_SCENE_CODES: readonly SceneCode[] = [SCENE.publish_cover]
 
 /**
- * ★★ 低推理预算场景（`reasoning_effort: 'low'`）—— 五个菜品文案款。
+ * ★★ 低推理预算场景（`reasoning_effort: 'low'`）—— 起初是「五个菜品文案款」，
+ *    后经同口径实打各加一次：**分镜**（2026-09-23）、**字幕分行**（2026-10-01）。
+ *    三组场景的共同点是「输出短、但模型会自作主张烧掉几百到上万个思考 token」。
  *
  * 这一条是 **2026-09-22 实测出来的**，起因是「四款文案改型后全部生成失败」。
  * 排查结论：**不是提示词坏了，也不是上游挂了，而是思考预算没人管**。
@@ -203,6 +205,32 @@ export const LOW_REASONING_SCENES: ReadonlySet<string> = new Set<string>([
    * 实测那 9,000 个 token 是与正文无关的**跑飞**，不是推理深度。
    */
   SCENE.storyboard_generate,
+  /**
+   * 字幕分行（2026-10-01）—— 它是纯排版题，**最不需要**思考的一个。
+   *
+   * 起因：用户第二次反馈「字幕断句还是一半一半的」。查下去发现断句口径确实有问题
+   * （提示词见 `prisma/prompts.ts` 的 SUBTITLE_SPLIT_PROMPT），但同时暴露出
+   * **AI 分行这条主路径一半的时候根本没跑成** —— 它 60s 超时后走兜底模板，
+   * 用户看到的是内建标点算法的结果，于是同一个句子的断句在两种风格间摇摆。
+   *
+   * A/B 实测（`scripts/probe-subtitle-split-timing.ts`，同一真实提示词、
+   * 直连适配器、gpt-5.6-sol、每组 3 次样本，2026-10-01）：
+   *
+   *   变体          耗时样本（s）        中位    完成 token   acceptLines
+   *   不压思考      53.6 / 38.0 / 53.3   ~53    595/595/803   2/2
+   *   压 low        8.4 / 6.0 / 6.8      ~6.8   77/77/77      2/2
+   *
+   *   ① **7.8 倍**提速，完成 token 从 ~595 掉到 77 ⇒ 被压掉的 ~520 个 token
+   *      是**与那几十字 JSON 输出毫无关系**的隐藏思考；
+   *   ② **质量未降**：`acceptLines`（生产同款硬底线判定）两组全部 2/2；
+   *   ③ 关键在**方差**：不压时样本 38.0~53.6s，而场景 `timeout_ms=60_000`
+   *      —— 好的一次险胜、抖一下就越线。这就是「一半一半」的来源。
+   *
+   * ★ 别忘了配套：`subtitle_split.timeout_ms=60_000` 是**不压思考时**定的。
+   *   压完中位 6.8s、最坏样本 8.4s，60s 已留 ~7 倍余量 ⇒ **不需要**跟着改
+   *   （改超时是运营配置，要动得走后台，不是这次的事）。
+   */
+  SCENE.subtitle_split,
 ])
 
 /**

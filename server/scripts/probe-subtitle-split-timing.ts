@@ -1,8 +1,8 @@
 /**
  * 字幕分行场景「思考预算」A/B 探针 —— **只读、零计费、不写任何日志**。
  *
- * 为什么需要它：线上字幕分行（`subtitle_split`）的**主候选是 GPT 推理模型**，
- * 而它**不在** `LOW_REASONING_SCENES` 里。生产实测（`ai_call_log`）：
+ * 为什么需要它：线上字幕分行（`subtitle_split`）的**主候选是 GPT 推理模型**。
+ * 生产实测（`ai_call_log`）：
  *
  *   requestId              提示词字符   completion_tokens   耗时
  *   subtitle-split-52        841           2,056          28.8s   ← 险胜（超时 30s）
@@ -13,6 +13,21 @@
  * 输入只有 841 字符、可见输出只有一百多字的 JSON，却烧掉 2,000+ 个 completion token
  * ⇒ **差额全是隐藏思考**。这与分镜场景 2026-09-23 的病完全同源
  * （见 `scene-codes.ts` 的 `LOW_REASONING_SCENES` 注释），所以按同一口径真打一轮。
+ *
+ * ────────────────── ★ 2026-10-01：结论已落地（本探针就是那条证据） ──────────────────
+ *
+ * 那次「按同口径真打一轮」的结果（gpt-5.6-sol、每组 3 次样本）：
+ *
+ *   变体          耗时样本（s）        中位    完成 token   acceptLines
+ *   不压思考      53.6 / 38.0 / 53.3   ~53    595/595/803   2/2
+ *   压 low        8.4 / 6.0 / 6.8      ~6.8   77/77/77      2/2
+ *
+ * ⇒ `SCENE.subtitle_split` 已加入 `LOW_REASONING_SCENES`（中位 7.8 倍提速、质量持平）。
+ * 本脚本**保留**：它是「换模型 / 换通道 / 改提示词之后要不要继续压」的复核工具，
+ * 也是 `scene-codes.ts` 那句「要扩到别的场景时必须先按上表口径真打一轮」的执行者。
+ * ⚠ 它的默认 `PROBE_SOURCE=subtitle-split-52` 取的是**旧提示词**的快照；
+ *   只想量耗时波动时够用，要连**新提示词的断句质量**一起看就传一个新近的 requestId：
+ *   `PROBE_SOURCE=<新近 requestId> PROBE_ONLY=gpt PROBE_REPEAT=3 npx tsx scripts/probe-subtitle-split-timing.ts`
  *
  * ★ 为什么**直连适配器**而不是走 `gateway.runScene`：
  *   ① 走网关只能拿到库里配的那个 `reasoningEffort`，无法 A/B；
@@ -30,7 +45,7 @@ import 'dotenv/config'
 import { PrismaClient } from '@prisma/client'
 import { getAdapter } from '../src/ai/adapters.js'
 import { decryptSecret } from '../src/lib/secret.js'
-import { acceptLines } from '../src/render/subtitle-split.service.js'
+import { acceptLines, boundaryHitRate } from '../src/render/subtitle-split.service.js'
 import { SUBTITLE_MAX_WIDTH } from '../src/render/synthesis.js'
 
 const prisma = new PrismaClient()
@@ -70,30 +85,44 @@ function parseOriginals(prompt: string): string[] {
   return [...found.entries()].sort((a, b) => a[0] - b[0]).map(([, text]) => text)
 }
 
-/** 模型输出 → 质量读数：JSON 行数 + 「生产同款 acceptLines」逐条判定。 */
+/** 模型输出 → 质量读数：JSON 行数 + 「生产同款 acceptLines」逐条判定 + 断点命中率。 */
 function inspect(text: string, originals: string[]) {
   const s = text.indexOf('{')
   const e = text.lastIndexOf('}')
-  if (s < 0 || e <= s) return { lines: 0, accepted: 0, detail: '没有 JSON 对象' }
+  if (s < 0 || e <= s) return { lines: 0, accepted: 0, hitRate: '-', detail: '没有 JSON 对象' }
   let parsed: { lines?: unknown }
   try {
     parsed = JSON.parse(text.slice(s, e + 1)) as { lines?: unknown }
   } catch (err) {
-    return { lines: 0, accepted: 0, detail: `JSON 解析失败 ${(err as Error).message.slice(0, 30)}` }
+    return { lines: 0, accepted: 0, hitRate: '-', detail: `JSON 解析失败 ${(err as Error).message.slice(0, 30)}` }
   }
   const rows = parsed?.lines
   if (!Array.isArray(rows) || rows.length !== originals.length) {
     return {
       lines: Array.isArray(rows) ? rows.length : 0,
       accepted: 0,
+      hitRate: '-',
       detail: `条数不符（给 ${Array.isArray(rows) ? rows.length : 0}，要 ${originals.length}）`,
     }
   }
   let accepted = 0
+  /**
+   * ★ 断点配额（2026-10-01 增补）：`acceptLines` 只守**硬底线**（不超宽/不丢字/不劈词），
+   *   它对「把小意思各切一半拼起来」这种**恰恰是用户抱怨的**切法是**放行**的
+   *   —— 那种结果每条都合法。所以「压思考之后质量是否变差」不能只看 acceptLines，
+   *   还要看断点落在原文停顿处的比例。两者一起看才不是自欺。
+   */
+  let hitHits = 0
+  let hitTotal = 0
   for (let i = 0; i < originals.length; i += 1) {
-    if (acceptLines(rows[i], originals[i] ?? '', SUBTITLE_MAX_WIDTH)) accepted += 1
+    const row = rows[i]
+    if (acceptLines(row, originals[i] ?? '', SUBTITLE_MAX_WIDTH)) accepted += 1
+    const lineArr: string[] = Array.isArray(row) ? (row as unknown[]).map((x) => String(x)) : []
+    const rate = boundaryHitRate(lineArr, originals[i] ?? '')
+    hitHits += rate.hits
+    hitTotal += rate.total
   }
-  return { lines: rows.length, accepted, detail: '' }
+  return { lines: rows.length, accepted, hitRate: hitTotal ? `${hitHits}/${hitTotal}` : '-', detail: '' }
 }
 
 async function main() {
@@ -133,7 +162,7 @@ async function main() {
         const verdict = res.usage.completionTokens <= 600 ? '★压思考成功' : '（仍偏大）'
         line =
           `${v.label.padEnd(14)}#${round}｜${(ms / 1000).toFixed(1)}s｜完成 token ${String(res.usage.completionTokens).padStart(5)}` +
-          `｜acceptLines ${info.accepted}/${originals.length}` +
+          `｜acceptLines ${info.accepted}/${originals.length}｜断点命中 ${info.hitRate}` +
           (info.detail ? `｜${info.detail}` : '') +
           `｜${verdict}`
       } catch (err) {
@@ -147,7 +176,8 @@ async function main() {
 
   console.log('\n════════ 汇总 ════════')
   for (const r of rows) console.log(r)
-  console.log('\n判据：acceptLines 通过率相当 ⇒ 质量不变；耗时与完成 token 显著下降 ⇒ 压思考成立。')
+  console.log('\n判据：耗时与完成 token 显著下降 ⇒ 压思考成立；')
+  console.log('      acceptLines 通过率**与**断点命中率都相当 ⇒ 质量没被压差（只看前者会放过「半句拼半句」）。')
 
   await prisma.$disconnect()
   process.exit(0)

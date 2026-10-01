@@ -392,6 +392,29 @@ let deepseekModelId = 0n
     LOW_REASONING_SCENES.has('storyboard_generate'),
     '★ storyboard_generate 在 LOW_REASONING_SCENES 里（压掉思考预算；实测中位 102s → 39s）',
   )
+  /**
+   * ★★ 2026-10-01 新增：字幕分行同样必须压思考。
+   *
+   * 它不是「顺手加的」—— 用户反馈的「字幕断句一半一半」有一半的原因就在这：
+   * 不压思考时 gpt-5.6-sol 实测 38.0~53.6s（`probe-subtitle-split-timing.ts`），
+   * 而场景 `timeout_ms=60_000` ⇒ 抖一下就超时走兜底，AI 分行时灵时不灵，
+   * 用户看到的就是同一句话在「AI 贪心版」和「内建标点版」之间摇摆。
+   * 压思考后中位 53.3s → **6.8s**，完成 token 595 → 77，`acceptLines` 仍 2/2。
+   */
+  check(
+    LOW_REASONING_SCENES.has('subtitle_split'),
+    '★ subtitle_split 在 LOW_REASONING_SCENES 里（压掉思考预算；实测中位 53.3s → 6.8s，否则 60s 超时会时灵时不灵）',
+  )
+  /**
+   * ★ 反向：证明上面两条不是「所有场景都在集合里」这种恒真断言。
+   *   `publish_cover` 是 IMAGE 场景，它压根没有 reasoning_effort 这条路
+   *   （出图协议不接受该字段），一旦被误加进集合，网关会给图像通道发一个
+   *   不认识的参数 —— 那是最难查的一类静默 400。
+   */
+  check(
+    !LOW_REASONING_SCENES.has('publish_cover'),
+    '★ 反向：图像场景 publish_cover **不**在 LOW_REASONING_SCENES 里（出图协议不接受 reasoning_effort）',
+  )
 
   /**
    * `edit_plan`（AI 剪辑决策）的例外必须成立。
