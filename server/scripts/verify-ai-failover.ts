@@ -53,7 +53,7 @@ import { AiGateway, isChannelLevelFailure } from '../src/ai/gateway.js'
 import { AiCallError } from '../src/ai/adapters.js'
 import { encryptSecret } from '../src/lib/secret.js'
 import { normalizeModelCapability } from '../src/ai/model-capabilities.js'
-import { LOW_REASONING_SCENES } from '../src/ai/scene-codes.js'
+import { LOW_REASONING_SCENES, NO_TRIP_SCENES, shouldTripCircuit } from '../src/ai/scene-codes.js'
 
 const SCENE = 'verify_failover_tmp'
 const PROV_PRIMARY = 'verify-fo-primary'
@@ -148,6 +148,22 @@ console.log('\n=== ① isChannelLevelFailure 判定矩阵 ===')
   t('HTTP 400（请求本身有问题，不该熔断）', new AiCallError('HTTP 400', 400, 'HTTP_ERROR'), false)
   t('HTTP 404（路径错，不该熔断）', new AiCallError('HTTP 404', 404, 'HTTP_ERROR'), false)
   t('无 code 无 status（不该熔断）', new AiCallError('unknown'), false)
+
+  /**
+   * ★★ 「**谁有资格**熔断通道」的判据（2026-10-01）—— 与上面的判定矩阵是两个问题：
+   *   上面问「这个错误算不算通道级故障」；这里问「**这个场景**有没有资格据此熔断通道」。
+   *   熔断键是按通道的（`ai:cb:open:<providerId>`）⇒ 后者答错，会让一个慢场景的一次超时
+   *   殃及同一条通道上的**所有**场景（下面 ④b 有真实调用路径的验证）。
+   */
+  check(shouldTripCircuit(SCENE) === true, '普通（未豁免）场景：通道级失败照常熔断通道')
+  check(
+    shouldTripCircuit('subtitle_split') === false,
+    '★★ 字幕分行：通道级失败**不许**熔断通道（60s 超时的慢场景，超时≠通道坏）',
+  )
+  check(
+    shouldTripCircuit('storyboard_generate') === true,
+    '★ 反向：分镜**仍然**要熔断（证明上一条不是「所有场景都不熔断」）',
+  )
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -474,11 +490,22 @@ else {
   })
   backupId = bk.id
 
+  /**
+   * ★★ 必须给**有效费率**，否则这个用例会静默变成空断言（2026-10-01 发现并修复）。
+   *   网关在调用前有一道「零成本守卫」：`inputPricePerMtok<=0 && outputPricePerMtok<=0`
+   *   的候选会被 `continue` **跳过**（防止零成本记账）。
+   *   这两个模型的费率默认是 0 ⇒ 主通道**根本没被调用** ⇒ `attempts` 从 2 掉到 1，
+   *   「坏通道已被立即熔断」也不再成立 —— 而那时它看起来只是「测试跑挂了」，
+   *   真正危险的是：本脚本 ④b 那条「豁免场景不熔断通道」的断言会**恒真**通过
+   *   （没调用 ⇒ 当然没熔断），把一个根本没生效的豁免判成绿的。
+   *   实测代价：本次改动的第一版就是这么假绿的。
+   */
+  const VERIFY_RATE = { inputPricePerMtok: 1, outputPricePerMtok: 1 }
   const mp = await prisma.aiModel.create({
-    data: { providerId: primaryId, modelCode: MODEL_PRIMARY, displayName: '坏模型', enabled: true },
+    data: { providerId: primaryId, modelCode: MODEL_PRIMARY, displayName: '坏模型', enabled: true, ...VERIFY_RATE },
   })
   const mb = await prisma.aiModel.create({
-    data: { providerId: backupId, modelCode: MODEL_BACKUP, displayName: '备用模型', enabled: true },
+    data: { providerId: backupId, modelCode: MODEL_BACKUP, displayName: '备用模型', enabled: true, ...VERIFY_RATE },
   })
 
   await prisma.aiScene.create({
@@ -543,6 +570,53 @@ else {
   if (r2.ok) {
     check(r2.attempts === 1, '总尝试次数 = 1（主通道被跳过，没白等）', `attempts=${r2.attempts}`)
     check(r2.usedFallback === true, '仍记为使用了备用')
+  }
+}
+
+// ────────────────────────────────────────────────────────────────
+console.log('\n=== ④b 豁免场景：通道级失败**不许**熔断通道（NO_TRIP_SCENES）===')
+/**
+ * ★★ 为什么必须有这一条（2026-10-01 生产实证）：
+ *   熔断键是「按通道」的，一次超时会让这条通道上的**所有场景**关门 300s。
+ *   而字幕分行是出片链路里最慢的**增强**步骤（`timeout_ms=60_000`，典型 16s、
+ *   偶发 >60s），它超时最常见的成因是模型这一刻抽风，不是通道不可用 ——
+ *   让分镜 / 文案 / 封面给它陪葬是明显的错配。
+ *   生产证据：`subtitle-split-61` 60s 超时后，3 分钟后的 `-62` 直接收到
+ *   「候选通道 tokenbox-gpt 处于熔断中」。
+ *
+ * ★ 验证方法：临时把这个脚本的临时场景码**运行期加进** `NO_TRIP_SCENES`，
+ *   然后走**真实调用路径** —— 不 grep 源码。理由：「函数存在」与「网关真的调了它」
+ *   是两件事，而这类接线断掉时**不会有任何报错**（本仓库反复踩过的那类静默失效）。
+ *   ★★ 用例 ③ 就是本用例的**反向对照**：同一个场景、同一条坏通道，
+ *     不豁免时熔断 key 必须亮（③ 断言 `opened === true`）；豁免时必须不亮。
+ *     两条一起看，才证明这个豁免真的在起作用、而不是恒真。
+ */
+if (!SYNTHETIC_ENV_OK) skipSynthetic('④b 豁免场景不许熔断通道', 3)
+else {
+  await circuit.reset(primaryId)
+  await circuit.reset(backupId)
+  /**
+   * ⚠ 刻意用**运行期**手段往集合里加，而不是去改生产场景清单：
+   *   `NO_TRIP_SCENES` 声明成 `ReadonlySet` 是为了让**生产代码**不写它，
+   *   守护脚本在这里临时改一下、`finally` 里删掉，不影响任何其它用例。
+   */
+  const exemptSet = NO_TRIP_SCENES as Set<string>
+  exemptSet.add(SCENE)
+  try {
+    const r4 = await gateway.runScene({
+      sceneCode: SCENE,
+      variables: { store: '验证小馆', dish: '红烧肉' },
+      requestId: `${REQ_PREFIX}r4-${Date.now()}`,
+    })
+    check(
+      (await circuit.isOpen(primaryId)) === false,
+      '★★ 豁免场景遇到通道级失败后，主通道**没有**被熔断',
+      '熔断 key 亮了 ⇒ 网关没走 shouldTripCircuit，或豁免清单没生效',
+    )
+    check(r4.ok === true, '○ 豁免只影响熔断判定，故障转移照常（仍落到备用）', r4.ok ? '' : `reason=${r4.reason}`)
+    if (r4.ok) check(r4.usedFallback === true, '○ 确实用了备用通道（没有把失败吞掉）')
+  } finally {
+    exemptSet.delete(SCENE)
   }
 }
 
@@ -619,7 +693,8 @@ else {
     },
   })
   const emptyModel = await prisma.aiModel.create({
-    data: { providerId: emptyProv.id, modelCode: 'verify-fo-empty-model', displayName: '空正文模型', enabled: true },
+    // ★ 同 ③：费率给 0 会被「零成本守卫」跳过 ⇒ 这个用例整段变成空断言
+    data: { providerId: emptyProv.id, modelCode: 'verify-fo-empty-model', displayName: '空正文模型', enabled: true, inputPricePerMtok: 1, outputPricePerMtok: 1 },
   })
   const bk = await prisma.aiProvider.findUniqueOrThrow({ where: { code: PROV_BACKUP } })
   const bkModel = await prisma.aiModel.findFirstOrThrow({ where: { providerId: bk.id } })

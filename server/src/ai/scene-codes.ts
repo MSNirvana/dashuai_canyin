@@ -204,3 +204,49 @@ export const LOW_REASONING_SCENES: ReadonlySet<string> = new Set<string>([
    */
   SCENE.storyboard_generate,
 ])
+
+/**
+ * ★★ 「本场景的一次失败，**不许**把整条通道熔断」的场景清单（2026-10-01）。
+ *
+ * 背景：熔断键是 `ai:cb:open:<providerId>` —— **按通道**，不是按场景，
+ * 且 `DEFAULT_CIRCUIT.openSeconds = 300`。而 `isChannelLevelFailure()` 把 `TIMEOUT`
+ * 一律算作「通道级硬故障」⇒ 任何**慢场景**的一次超时，会让这个通道上的**所有场景**
+ * 在接下来 5 分钟里被直接跳过。
+ *
+ * 生产实证（`business_request` / `render-worker` 日志，2026-10-01）：
+ * ```
+ *  09:00:17 subtitle-split-61  FAILED  [tokenbox-gpt] request timeout after 60000ms
+ *  09:04:07 subtitle-split-62  FAILED  没有可用的候选通道：候选通道 tokenbox-gpt 处于熔断中
+ *  09:37:11 subtitle-split-63  FAILED  同上（timeout）
+ *  09:42:03 subtitle-split-64  FAILED  同上（熔断中）
+ * ```
+ * ⇒ **字幕分行**（`timeout_ms=60_000`，是出片链路里最慢的一个**增强**步骤）一次超时，
+ *   就让整个 `tokenbox-gpt` 通道在 5 分钟里对**分镜 / 五个文案款 / 封面选帧**也关门。
+ *   典型的「低价值可选步骤拖垮高价值主链路」。
+ *
+ * ★★ 判据（加新场景前先问这一句）：
+ *   **这个场景超时，说明「通道坏了」还是「这个场景本来就慢」？**
+ *   后者一律加进来 —— 它的失败不该被当成通道的健康信号。
+ *
+ * ★ 后果边界（故意的，不是遗漏）：
+ *   · 该场景的调用**不** open 熔断、**不** `record(false)` 失败率、**不** `noteChannelFailure`；
+ *   · 也就是说它对「通道健康」这件事**完全静默** —— 代价是万一这条通道真的整体挂了，
+ *     没有别的场景在跑的话，只有它一个场景时后台不会自己亮红灯；
+ *   · 它自己的失败仍然照常返回（调用方拿到空 Map ⇒ 退回内建算法，绝不阻塞出片）。
+ */
+export const NO_TRIP_SCENES: ReadonlySet<string> = new Set<string>([
+  /**
+   * 字幕分行：60s 超时、典型 16s，是**纯排版题**（temperature 0.2、输出只有几十个字）。
+   * 它超时最常见的成因是模型这一刻抽风/排队，而不是通道不可用 ——
+   * 实测同一天 60 次成功耗时 16.3s，紧邻的几次却 >60s。
+   */
+  SCENE.subtitle_split,
+])
+
+/**
+ * ★ 「这一次调用失败，要不要把整条通道熔断」—— 抽成纯函数是为了让守护能直接断言，
+ *   而不是靠 grep `gateway.ts` 的调用点（那种断言在重构后必然假绿）。
+ */
+export function shouldTripCircuit(sceneCode: string): boolean {
+  return !NO_TRIP_SCENES.has(sceneCode)
+}

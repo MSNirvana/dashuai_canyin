@@ -98,6 +98,34 @@ function punctuationBoundaries(original: string): Set<number> {
   return boundaries
 }
 
+/**
+ * 断点质量度量（**只度量，不拒绝**）：AI 切出来的行边界，有多少落在原文的语义停顿处。
+ *
+ * ★★ 为什么只能度量、不能当闸门（2026-10-01）：
+ *   用户拍板的字幕口径是「按**语义**停顿断，不按语气停顿、也不强制标点边界」。
+ *   语义没有可校验的形式判据 —— 拿它硬拒绝，会把好结果也一起拒掉、退回更差的内建算法
+ *   （用户明确接受了「不可验证」这个代价）。
+ *   但「断点落在标点位置的比例」仍是一个**有意义的代理指标**：
+ *   原文标点（逗号/顿号/句末）就是 ASR 给出的语义层次线索，
+ *   比例高 ⇒ 切点贴近原话的语气层次；比例低 ⇒ 多半又在按宽度贪心填满。
+ *   ⇒ 用来回答「这一版提示词到底有没有起效」，而不是用它决定放行/拒绝。
+ *
+ * ★★ 必须与 `punctuationBoundaries` 用**同一套索引口径**（可比字序：标点与空白不占位），
+ *   否则行边界与标点位置整体错位，算出来的比例毫无意义、且看起来「正常」。
+ */
+export function boundaryHitRate(lines: readonly string[], original: string): { hits: number; total: number } {
+  const preferred = punctuationBoundaries(original)
+  let hits = 0
+  let total = 0
+  let offset = 0
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    offset += comparable(lines[i] ?? '').length
+    total += 1
+    if (preferred.has(offset)) hits += 1
+  }
+  return { hits, total }
+}
+
 function bestSplit(text: string, maxWidth: number, preferred: Set<number>): [string, string] | null {
   const candidates: Array<{ left: string; right: string; score: number }> = []
   for (let index = 1; index < text.length; index += 1) {
@@ -261,11 +289,24 @@ export async function breakSubtitleLines(input: SubtitleSplitRequest): Promise<S
     if (!lines.size) return empty(`AI 分行结果全部不合法（${rejected.join('、')}）⇒ 用内建算法`)
 
     const changed = [...lines.values()].filter((value) => value.length > 1).length
+    /**
+     * ★ 断点质量：**只写进日志，不参与放行**。
+     *   口径是「按语义停顿断」，而语义没有可校验的形式判据（见 `boundaryHitRate`）；
+     *   这个比例用来回答「这一版提示词到底有没有起效」，不是用来拒绝结果的。
+     */
+    let hitHits = 0
+    let hitTotal = 0
+    for (const [text, lineList] of lines) {
+      const rate = boundaryHitRate(lineList, text)
+      hitHits += rate.hits
+      hitTotal += rate.total
+    }
     return {
       lines,
       notice:
         `AI 分行：${lines.size}/${unique.length} 条可用（其中 ${changed} 条被切成多行）` +
-        (rejected.length ? `，${rejected.length} 条不合法已退回内建算法（${rejected.join('、')}）` : ''),
+        (rejected.length ? `，${rejected.length} 条不合法已退回内建算法（${rejected.join('、')}）` : '') +
+        (hitTotal ? `，断点落在停顿处 ${hitHits}/${hitTotal}` : ''),
     }
   } catch (e) {
     // ★ 这里 catch 的是 runBilledScene 的一切失败：场景没建/被停用、候选链全灭、超时、熔断、积分不足……

@@ -14,7 +14,7 @@ import {
   SUBTITLE_MAX_WIDTH,
   type SubtitleLineSplitter,
 } from '../src/render/synthesis.js'
-import { acceptLines, buildLineInput, rebalanceWeakLines } from '../src/render/subtitle-split.service.js'
+import { acceptLines, boundaryHitRate, buildLineInput, rebalanceWeakLines } from '../src/render/subtitle-split.service.js'
 import { LIVE_SCENE_CODES, SCENE } from '../src/ai/scene-codes.js'
 import { SCENE_VARIABLES, validateTemplate } from '../src/ai/prompt-vars.js'
 import { SUBTITLE_SPLIT_PROMPT, SUBTITLE_SPLIT_SCENE } from '../prisma/prompts.js'
@@ -141,6 +141,36 @@ const tightDurations = allocateSubtitleDurations(1_200, [2, 8])
 assert.equal(tightDurations.reduce((sum, value) => sum + value, 0), 1_200, '★★ 分配后总时长不得漂移')
 assert.ok(tightDurations.every((value) => value > 0), '★ 总时长不足时按权重退化，但不能出现零时长')
 
+// ── ⑤b 断点质量度量（**只度量，不拒绝**）───────────────────────────────────────
+/**
+ * ★★ 2026-10-01：用户拍板字幕口径是「按**语义**停顿断」（不按语气停顿、也不强制标点边界）。
+ *   语义**没有**可校验的形式判据 ⇒ `acceptLines` 不能拿它当拒绝条件 ——
+ *   硬拒绝会把好结果一起拒掉、退回更差的内建算法（用户明确接受了「不可验证」这个代价）。
+ *   所以这一节能断言的只有**度量本身算得对**，以及它**对真实坏例有区分度**。
+ * ★ 用例取自 task 60 的线上快照（`ai_call_log.prompt_snapshot / response_snapshot`）——
+ *   用户那句「一半一半」的量化形式，就是 hits = 0。
+ */
+const T60_ORIGINAL = '咱固安这地界儿啊，秋天一凉，你心里啊，最惦记老家哪一口吃的'
+
+// 模型当时实际给出的三行：两个断点**一个都没落在**语义停顿处
+assert.deepEqual(
+  boundaryHitRate(['咱固安这地界儿啊秋天', '一凉你心里啊最惦记', '老家哪一口吃的'], T60_ORIGINAL),
+  { hits: 0, total: 2 },
+  '★★ task 60：模型的两个断点全都不在停顿处（这就是「一半一半」的量化形式）',
+)
+// ★ 反向对照：同一条原话按子句切，三个断点**全部**落在停顿处 ⇒ 证明这个度量有区分度
+assert.deepEqual(
+  boundaryHitRate(['咱固安这地界儿啊', '秋天一凉', '你心里啊', '最惦记老家哪一口吃的'], T60_ORIGINAL),
+  { hits: 3, total: 3 },
+  '★ 反向：按子句切时断点全部命中（否则这个度量对任何输入都给 0，等于一条死断言）',
+)
+// 单行没有断点 ⇒ total = 0；调用方据此**不打印**比例，避免出现 0/0 这种噪声
+assert.deepEqual(
+  boundaryHitRate(['咱固安这地界儿啊秋天一凉你心里啊'], T60_ORIGINAL),
+  { hits: 0, total: 0 },
+  '★ 单行没有断点：total = 0（调用方据此跳过打印）',
+)
+
 // ── ⑥ 提示词 / 场景契约 ────────────────────────────────────────────────────────
 assert.ok(LIVE_SCENE_CODES.includes(SCENE.subtitle_split), '★ `subtitle_split` 必须在「已接入」清单里')
 assert.equal(SUBTITLE_SPLIT_SCENE.code, 'subtitle_split')
@@ -161,6 +191,32 @@ assert.equal(
   '★★ 不许放开门店/菜品变量：渲染期根本拿不到，放开只会让模型自己编一个店名',
 )
 assert.equal(buildLineInput(['甲', '乙']), '0｜甲\n1｜乙', '★ 编号清单格式（模型要按编号一一对应回填）')
+
+/**
+ * ★★ 提示词契约（2026-10-01）—— 守的是**这次故障的真因**。
+ *
+ * 旧提示词第 7 条写着「**行数越少越好**：能在上限内一次放下就只给一行」。
+ * 在那一条的驱使下，模型的目标函数里根本没有「按意思断」，它只会「尽量少切几刀」，
+ * 于是把「上半句的尾巴 ＋ 下半句的开头」拼成一条 —— 它**完全满足了旧提示词的每一条**，
+ * 却正好是用户不要的（线上取证：`咱固安这地界儿啊秋天` / `一凉你心里啊最惦记`）。
+ * ⇒ 这四条断言守的就是：**总目标不许再被删掉，贪心倾向不许再被写回来。**
+ */
+assert.ok(
+  SUBTITLE_SPLIT_PROMPT.includes('一个把意思说得完整的小单元'),
+  '★★ 提示词必须给出「一条 = 一个完整意思单元」这个总目标（缺了它，模型只剩一堆局部约束可依）',
+)
+assert.ok(
+  !SUBTITLE_SPLIT_PROMPT.includes('行数越少越好'),
+  '★★★ 不许把「行数越少越好」写回去 —— 它不是中性建议，而是把模型拉向贪心填满的那只手',
+)
+assert.ok(
+  SUBTITLE_SPLIT_PROMPT.includes('先按意思切，再看长度'),
+  '★ 顺序不能反：先意思、后长度。反了就退化成「按宽度装箱」，这个场景也就没有存在理由了',
+)
+assert.ok(
+  !SUBTITLE_SPLIT_PROMPT.includes('廊坊想吃火锅的'),
+  '★★ 举例不许用生产里真实出现过的整句：模型会**照抄**它（2026-09-29 实测），等于给标准答案',
+)
 
 // ── ⑥ 记录「AI 到底比内建多了什么」——把它钉成断言，防止有人以为两者等价 ──────────
 assert.deepEqual(

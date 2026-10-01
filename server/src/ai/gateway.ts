@@ -9,7 +9,7 @@ import { decryptSecret } from '../lib/secret.js'
 import { ceilDiv } from '../lib/decimal.js'
 import { HEALTH_PROBE_PROMPT, HEALTH_PROBE_IMAGE_PROMPT, HEALTH_PROBE_MAX_OUTPUT_TOKENS } from './health-probe.js'
 import { normalizeModelCapability } from './model-capabilities.js'
-import { LOW_REASONING_SCENES } from './scene-codes.js'
+import { LOW_REASONING_SCENES, shouldTripCircuit } from './scene-codes.js'
 
 export type SceneRunResult =
   | {
@@ -312,12 +312,28 @@ export class AiGateway {
           // 通道级硬故障：立即熔断该通道，并**放弃它剩余的重试**，直接换下一个候选。
           // 不能只依赖 record() 的失败率熔断（需 ≥20 样本，低频场景攒不满），
           // 更不能在这里重试 —— 否则主通道挂掉时，每个请求要连等 maxRetries+1 次超时。
-          if (isChannelLevelFailure(err)) {
+          //
+          // ★★ 例外（2026-10-01）：`NO_TRIP_SCENES` 里的场景**不许**熔断通道。
+          //   熔断键是「按通道」的，一次超时会把这通道上**所有场景**关门 5 分钟；
+          //   对那些「本来就慢、失败只是退回兜底」的增强步骤（字幕分行 60s）来说，
+          //   那是拿高价值主链路（分镜 / 文案 / 封面）给一个可选步骤陪葬。
+          //   判据见 `scene-codes.ts::NO_TRIP_SCENES`（问一句：超时说明通道坏了，还是这场景本来就慢？）。
+          //   ★ 这一类**连 `record(false)` 也不写**：失败率统计同样是「通道健康」的输入，
+          //     写了就等于换个路径把它算进去，反而不一致。
+          if (isChannelLevelFailure(err) && shouldTripCircuit(scene.code)) {
             await this.circuit.open(provider.id)
             await this.circuit.record(provider.id, false)
             // ★ Redis 的熔断只有 5 分钟记忆，必须同时落一份**持久**证据，
             //   否则「这个通道在连续干不了活」这件事出了这个进程就没人知道。
             await this.noteChannelFailure(provider.id, err)
+            break
+          }
+          if (isChannelLevelFailure(err)) {
+            // 豁免场景：只留一行日志（这是唯一能看见它的地方 —— 它不进 ai_call_log，
+            // 因为那条记录只在**成功**时写），然后放弃本候选的重试、交给调用方兜底。
+            console.warn(
+              `[ai-gateway] ${scene.code} 通道级失败但该场景不熔断通道（${provider.code}）：${err.message.slice(0, 120)}`,
+            )
             break
           }
 
