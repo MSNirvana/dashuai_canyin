@@ -1,6 +1,7 @@
 // 创作服务：把「门店/菜品上下文」喂给 AI 网关生成文案与分镜，并持久化分镜
 // 计费通过 runBilledScene 内部完成（文案 5 积分 / 分镜 10 积分），这里只负责上下文与落库
 import type { PrismaClient, Shot } from '@prisma/client'
+import { createHash } from 'node:crypto'
 import type { AiGateway } from '../ai/gateway.js'
 import { runBilledScene, ScenePendingError } from '../ai/ai.service.js'
 import { BeanNotEnoughError } from '../bean/bean.service.js'
@@ -896,6 +897,56 @@ export async function ensureCreationCovers(
  * 「开业 8 折」当成老板的性格去写。带上标签后模型能分别归位。
  * 全空时返回空串而不是留着空标签，避免提示词里出现「老板人设标签：」这种噪声行。
  */
+export function normalizeCopyForCompare(text: string): string {
+  return text
+    .replace(/```(?:json)?/gi, '')
+    .replace(/\s+/g, '')
+    .replace(/[，。！？、；：“”‘’《》,.!?;:'"「」『』]/g, '')
+    .trim()
+}
+
+export function copyFingerprint(text: string): string {
+  return createHash('sha256').update(normalizeCopyForCompare(text)).digest('hex')
+}
+
+function copyNgrams(text: string, size = 4): Set<string> {
+  const normalized = normalizeCopyForCompare(text)
+  const grams = new Set<string>()
+  for (let i = 0; i + size <= normalized.length; i++) grams.add(normalized.slice(i, i + size))
+  return grams
+}
+
+export function copySimilarity(a: string, b: string): number {
+  const left = copyNgrams(a)
+  const right = copyNgrams(b)
+  if (!left.size || !right.size) return 0
+  let intersection = 0
+  for (const gram of left) if (right.has(gram)) intersection++
+  return intersection / (left.size + right.size - intersection)
+}
+
+/** 只比较近期同类型文案，避免全库扫描，也避免把旧版本风格误判成当前重复。 */
+async function recentCopyAvoidText(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  creationId: bigint,
+  track: CopyTrack,
+): Promise<{ prompt: string; copies: string[] }> {
+  const rows = await prisma.creation.findMany({
+    where: { merchantId, track, id: { not: creationId }, copyText: { not: null } },
+    orderBy: { updatedAt: 'desc' },
+    take: 8,
+    select: { copyText: true },
+  })
+  const copies = rows.map((row) => row.copyText?.trim() ?? '').filter(Boolean)
+  return {
+    copies,
+    prompt: copies.length
+      ? `【近期已用文案，仅用于避让】\n${copies.map((text, i) => `${i + 1}. ${text}`).join('\n')}\n要求：不要复用这些文案的开头、核心落点或收尾，不要只换同义词。`
+      : '',
+  }
+}
+
 export function formatPersona(p: { bossTags?: string | null; activity?: string | null } | null): string {
   if (!p) return ''
   const parts: string[] = []
@@ -967,7 +1018,7 @@ export function formatComboInfo(dish: ComboInfoDish | null | undefined): string 
 export async function buildVariables(
   prisma: PrismaClient,
   creationId: bigint,
-  opts: { track?: CopyTrack; complexity?: Complexity } = {},
+  opts: { track?: CopyTrack; complexity?: Complexity; merchantId?: bigint } = {},
 ) {
   const c = await prisma.creation.findUnique({
     where: { id: creationId },
@@ -1002,6 +1053,9 @@ export async function buildVariables(
    *   现在拆成两个判据：topic 清空全部门店/菜品；STYLE 只清空菜品相关字段。
    */
   const topic = mode === 'TOPIC'
+  const avoid = opts.merchantId
+    ? await recentCopyAvoidText(prisma, opts.merchantId, creationId, track)
+    : { prompt: '', copies: [] as string[] }
   const hideDish = topic || mode === 'STYLE'
   const hideStore = topic
   const dishName = hideDish ? '' : (c.dish?.name ?? '')
@@ -1033,6 +1087,9 @@ export async function buildVariables(
     // 菜品稿与款式稿拿到的是空串 —— 它们由门店/菜品或款式驱动，
     // 不需要话题方向，也（在白名单层面）引用不到。
     topicInfo: topic ? formatTopicInfo(new Date(), c.topicCity ?? '') : '',
+    // 第一版先使用项目级风格规则；原始 DOCX 不自动上传、不进线上 prompt，避免把个人素材当事实库。
+    styleGuide: `风格参考：真实口语、具体场景、先给冲突或选择，再落到一个可回答的问题；允许反差、自嘲、现场细节和人物关系，禁止套用原句。`,
+    recentCopyAvoid: avoid.prompt,
     copyText: c.copyText ?? '',
     track,
     trackLabel: COPY_TRACKS[track].label,
@@ -1146,7 +1203,7 @@ export async function generateCopy(
     await prisma.creation.update({ where: { id: creationId }, data: { track: finalTrack, mode } })
   }
 
-  const vars = await buildVariables(prisma, creationId, { track: finalTrack })
+  const vars = await buildVariables(prisma, creationId, { track: finalTrack, merchantId })
   /** ★ 兜底重试的时间闸门算的是「这次 AI 花了多久」，所以计时从发请求前开始 */
   const aiStartedAt = Date.now()
   const r = await runBilledScene(prisma, gateway, {
@@ -1165,6 +1222,15 @@ export async function generateCopy(
   const picked = mode === 'TOPIC' && r.text ? parseTopicCopy(r.text) : null
   // ★ 收窄成 string：`r.text` 在类型上是 `string | undefined`，而落库字段不接受 undefined
   let copyText: string = picked ? picked.copy : (r.text ?? '')
+
+  const retryRecent = await recentCopyAvoidText(prisma, merchantId, creationId, finalTrack)
+  const retryVars = {
+    ...vars,
+    recentCopyAvoid: `${retryRecent.prompt}\n这次重试必须换一个主题族和叙述落点，禁止回到「家乡那道菜」或「天凉了想吃热乎的」。`,
+  }
+  const initialFingerprint = copyFingerprint(copyText)
+  const duplicateCopy = retryRecent.copies.some((old) => copyFingerprint(old) === initialFingerprint)
+  const similarCopy = retryRecent.copies.some((old) => copySimilarity(old, copyText) >= 0.72)
 
   /**
    * ★★ 生成后兜底：选了菜、正文里却一个字都没提它 ⇒ **再要一次**。
@@ -1191,6 +1257,28 @@ export async function generateCopy(
     elapsedMs,
     isFallbackTemplate: Boolean(r.isFallbackTemplate),
   })
+  if ((duplicateCopy || similarCopy) && elapsedMs <= DISH_GUARD_RETRY_BUDGET_MS) {
+    const diversityRetry = await gateway.runScene({
+      sceneCode,
+      merchantId,
+      requestId: `${requestId}#diversity`,
+      variables: retryVars,
+    })
+    if (diversityRetry.ok && diversityRetry.text) {
+      const againPicked = mode === 'TOPIC' ? parseTopicCopy(diversityRetry.text) : null
+      const againText = againPicked ? againPicked.copy : diversityRetry.text.trim()
+      const stillDuplicate = retryRecent.copies.some((old) =>
+        copyFingerprint(old) === copyFingerprint(againText) || copySimilarity(old, againText) >= 0.72,
+      )
+      if (!stillDuplicate) {
+        copyText = againText
+        if (againPicked && picked) picked.copy = againPicked.copy
+      } else {
+        console.warn(`[copy] 重复/高相似重试仍命中，保留首稿：creation=${creationId} scene=${sceneCode}`)
+      }
+    }
+  }
+
   if (decision === 'OVER_BUDGET') {
     console.warn(
       `[copy] 未报出菜名「${vars.dishName}」但已耗时 ${elapsedMs}ms（> ${DISH_GUARD_RETRY_BUDGET_MS}ms 闸门），放弃重试：creation=${creationId} scene=${sceneCode}`,

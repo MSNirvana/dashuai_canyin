@@ -43,6 +43,13 @@ const COPY_VARS = [
    *   用本地时区取日期会在北京时间 00:00~08:00 那八小时里整体差一天。
    */
   'dateInfo',
+  /**
+   * 经用户确认的风格素材摘要：只喂少量已筛选片段，不把整份文档塞进提示词。
+   * 未配置素材时为空串，模板必须把它当可选参考，不能据此编造事实。
+   */
+  'styleGuide',
+  /** 近期已用的开头/落点摘要，供生成器主动避让重复。 */
+  'recentCopyAvoid',
 ] as const
 
 /**
@@ -58,7 +65,7 @@ const COPY_VARS = [
  *   （今天几号 / 季节 / 临近节点），后面才接「可用的起头方向」。所以流量款只引用 topicInfo
  *   一项就够 —— 两个都引用会让同一天的信息在提示词里出现两遍。
  */
-const TOPIC_VARS = ['topicInfo'] as const
+const TOPIC_VARS = ['topicInfo', 'styleGuide', 'recentCopyAvoid'] as const
 
 // ★ 这里**故意没有** `trackLabel`（款式中文名）。
 //   2026-09-20 做「文案口语化」那一版时想过加它 —— 让通用兜底场景或分镜知道这次是哪一款，
