@@ -221,6 +221,23 @@ check(
   '兜底文案不引用门店介绍（避免超出口播长度）',
 )
 
+// 复杂度必须同时进入文案和分镜：否则简单版只约束镜头数量，口播仍按长稿生成。
+check(
+  dishTemplates.every((t) => t.tpl.includes('{{copyLengthRule}}')) &&
+    topicTemplates.every((t) => t.tpl.includes('{{copyLengthRule}}')),
+  '所有文案模板都引用 {{copyLengthRule}}',
+)
+check(
+  STORY_PROMPT.includes('{{shotCountRule}}') && STORY_PROMPT.includes('{{copyLengthRule}}'),
+  '分镜模板同时收到镜头数量和口播长度规则',
+)
+check(
+  findUnknownPlaceholders('copy_product', '{{copyLengthRule}}').length === 0 &&
+    findUnknownPlaceholders('copy_traffic', '{{copyLengthRule}}').length === 0 &&
+    findUnknownPlaceholders('storyboard_generate', '{{copyLengthRule}}').length === 0,
+  'copyLengthRule 已进入文案、话题和分镜白名单',
+)
+
 // 4 款文案必须彼此不同 —— 款式是靠「选哪个模板」生效的，模板一旦撞车就等于款式失效
 const copyTpls = TEMPLATES.filter((t) => t.code.startsWith('copy_') && t.code !== 'copy_generate').map((t) => t.tpl)
 check(new Set(copyTpls).size === copyTpls.length, '4 款文案模板互不相同', `共 ${copyTpls.length} 份`)
@@ -1136,12 +1153,15 @@ check(trafficTpl.includes('未经输入证实的方言、暗号或区号'), '流
 
 const generic = TEMPLATES.find((t) => t.code === 'copy_generate')!
 check(
-  generic.tpl.includes('没有真实对白就不写对白') && generic.tpl.includes('短稿优先'),
+  generic.tpl.includes('没有真实对白就不写对白') &&
+    (generic.tpl.includes('短稿优先') || generic.tpl.includes('资料支撑不了这么长') || generic.tpl.includes('资料不足就删掉')),
   '★ 通用款只用真实素材，资料不足时允许短稿',
 )
 check(
-  generic.tpl.includes('长度只是目标') && generic.tpl.includes('短稿优先'),
-  '通用款把时长设为目标，资料不足时允许短稿',
+  generic.tpl.includes('口播长度') &&
+    generic.tpl.includes('超过上限必须删减') &&
+    generic.tpl.includes('不足时不要为了填字数'),
+  '通用款按复杂度控制口播长度，资料不足时允许短稿',
 )
 
 // 5.11 分镜这一版的核心改动：台词逐字照抄 + 一个人能拍完 + 对空值稳健

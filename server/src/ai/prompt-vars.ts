@@ -50,6 +50,8 @@ const COPY_VARS = [
   'styleGuide',
   /** 近期已用的开头/落点摘要，供生成器主动避让重复。 */
   'recentCopyAvoid',
+  /** 当前分镜复杂度对应的口播长度规则。 */
+  'copyLengthRule',
 ] as const
 
 /**
@@ -65,7 +67,7 @@ const COPY_VARS = [
  *   （今天几号 / 季节 / 临近节点），后面才接「可用的起头方向」。所以流量款只引用 topicInfo
  *   一项就够 —— 两个都引用会让同一天的信息在提示词里出现两遍。
  */
-const TOPIC_VARS = ['topicInfo', 'styleGuide', 'recentCopyAvoid'] as const
+const TOPIC_VARS = ['topicInfo', 'styleGuide', 'recentCopyAvoid', 'copyLengthRule'] as const
 
 // ★ 这里**故意没有** `trackLabel`（款式中文名）。
 //   2026-09-20 做「文案口语化」那一版时想过加它 —— 让通用兜底场景或分镜知道这次是哪一款，

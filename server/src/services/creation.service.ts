@@ -218,14 +218,37 @@ export function isStyleTrack(v: unknown): v is (typeof STYLE_TRACKS)[number] {
  */
 export const DEFAULT_STYLE_TRACK: CopyTrack = 'PERSONA'
 
-/** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜 */
+/** 分镜复杂度：简单版 2~3 镜 / 复杂版 5~6 镜 / 精细版 6~9 镜。 */
 export const COMPLEXITIES = {
-  SIMPLE: { label: '简单版', rule: '2~3 个分镜' },
-  COMPLEX: { label: '复杂版', rule: '5~6 个分镜' },
-  FINE: { label: '精细版', rule: '6~9 个分镜' },
+  SIMPLE: {
+    label: '简单版',
+    rule: '2~3 个分镜',
+    copyRule: '口播建议 20~45 字，约 5~10 秒；只讲一个核心点，超过上限必须删减，不要补编内容。',
+    maxCopyChars: 45,
+  },
+  COMPLEX: {
+    label: '复杂版',
+    rule: '5~6 个分镜',
+    copyRule: '口播建议 50~90 字，约 11~20 秒；讲清一个完整观点，超过上限删掉重复和空话。',
+    maxCopyChars: 90,
+  },
+  FINE: {
+    label: '精细版',
+    rule: '6~9 个分镜',
+    copyRule: '口播建议 80~130 字，约 18~29 秒；允许补充必要细节，但不得为了长度编造事实。',
+    maxCopyChars: 130,
+  },
 } as const
 export type Complexity = keyof typeof COMPLEXITIES
 export const DEFAULT_COMPLEXITY: Complexity = 'COMPLEX'
+
+export function copyCharCount(text: string): number {
+  return text.replace(/\\s/g, '').length
+}
+
+export function copyExceedsComplexityLimit(text: string, complexity: Complexity): boolean {
+  return copyCharCount(text) > COMPLEXITIES[complexity].maxCopyChars
+}
 
 export function isCopyTrack(v: unknown): v is CopyTrack {
   return typeof v === 'string' && Object.prototype.hasOwnProperty.call(COPY_TRACKS, v)
@@ -1097,6 +1120,7 @@ export async function buildVariables(
     complexity,
     complexityLabel: COMPLEXITIES[complexity].label,
     shotCountRule: COMPLEXITIES[complexity].rule,
+    copyLengthRule: COMPLEXITIES[complexity].copyRule,
     shotLibrary: await buildShotLibraryHint(prisma),
     /**
      * ★ 分镜里那个出镜的人该怎么称呼 —— 只给分镜场景用（`STORYBOARD_VARS` 里有它，
@@ -1160,7 +1184,7 @@ export async function generateCopy(
   const current = await prisma.creation.findUnique({
     where: { id: creationId },
     // ★ title 也要读：话题稿回写标题前要判「现在有没有名字」（用户手改过的不能被覆盖）
-    select: { track: true, mode: true, title: true },
+    select: { track: true, mode: true, title: true, complexity: true },
   })
   /**
    * ★ 话题稿的款式**不可协商**：它只有一份不喂门店/菜品的模板（copy_traffic）。
@@ -1203,7 +1227,12 @@ export async function generateCopy(
     await prisma.creation.update({ where: { id: creationId }, data: { track: finalTrack, mode } })
   }
 
-  const vars = await buildVariables(prisma, creationId, { track: finalTrack, merchantId })
+  const complexity = isComplexity(current?.complexity) ? current.complexity : DEFAULT_COMPLEXITY
+  const vars = await buildVariables(prisma, creationId, {
+    track: finalTrack,
+    complexity,
+    merchantId,
+  })
   /** ★ 兜底重试的时间闸门算的是「这次 AI 花了多久」，所以计时从发请求前开始 */
   const aiStartedAt = Date.now()
   const r = await runBilledScene(prisma, gateway, {
@@ -1228,6 +1257,7 @@ export async function generateCopy(
     ...vars,
     recentCopyAvoid: `${retryRecent.prompt}\n这次重试必须换一个主题族和叙述落点，禁止回到「家乡那道菜」或「天凉了想吃热乎的」。`,
   }
+  const copyTooLong = copyExceedsComplexityLimit(copyText, complexity)
   const initialFingerprint = copyFingerprint(copyText)
   const duplicateCopy = retryRecent.copies.some((old) => copyFingerprint(old) === initialFingerprint)
   const similarCopy = retryRecent.copies.some((old) => copySimilarity(old, copyText) >= 0.72)
@@ -1257,7 +1287,7 @@ export async function generateCopy(
     elapsedMs,
     isFallbackTemplate: Boolean(r.isFallbackTemplate),
   })
-  if ((duplicateCopy || similarCopy) && elapsedMs <= DISH_GUARD_RETRY_BUDGET_MS) {
+  if ((duplicateCopy || similarCopy || copyTooLong) && elapsedMs <= DISH_GUARD_RETRY_BUDGET_MS) {
     const diversityRetry = await gateway.runScene({
       sceneCode,
       merchantId,
@@ -1270,13 +1300,24 @@ export async function generateCopy(
       const stillDuplicate = retryRecent.copies.some((old) =>
         copyFingerprint(old) === copyFingerprint(againText) || copySimilarity(old, againText) >= 0.72,
       )
-      if (!stillDuplicate) {
+      const retryTooLong = copyExceedsComplexityLimit(againText, complexity)
+      if (!stillDuplicate && !retryTooLong) {
         copyText = againText
         if (againPicked && picked) picked.copy = againPicked.copy
       } else {
-        console.warn(`[copy] 重复/高相似重试仍命中，保留首稿：creation=${creationId} scene=${sceneCode}`)
+        console.warn(
+          `[copy] 多样性/长度重试仍未达标，保留首稿：creation=${creationId} scene=${sceneCode} ` +
+            `chars=${copyCharCount(againText)} limit=${COMPLEXITIES[complexity].maxCopyChars}`,
+        )
       }
     }
+  }
+  if (copyTooLong) {
+    console.warn(
+      `[copy] 文案超过${COMPLEXITIES[complexity].label}口播上限，已触发一次免费重试：` +
+        `creation=${creationId} scene=${sceneCode} chars=${copyCharCount(copyText)} ` +
+        `limit=${COMPLEXITIES[complexity].maxCopyChars}`,
+    )
   }
 
   if (decision === 'OVER_BUDGET') {

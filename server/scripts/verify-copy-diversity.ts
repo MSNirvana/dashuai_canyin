@@ -3,6 +3,9 @@
  * 不调用上游模型，不连库；只钉住生成后守卫使用的纯函数和流量方向库。
  */
 import {
+  COMPLEXITIES,
+  copyCharCount,
+  copyExceedsComplexityLimit,
   copyFingerprint,
   copySimilarity,
   normalizeCopyForCompare,
@@ -29,6 +32,14 @@ check(normalizeCopyForCompare(same) === normalizeCopyForCompare(punctOnly), '空
 check(copyFingerprint(same) === copyFingerprint(punctOnly), '规范化后精确重复指纹一致')
 check(copySimilarity(same, punctOnly) === 1, '精确重复的 n-gram 相似度为 1')
 check(copySimilarity(same, changed) < 0.72, '明显不同主题不会误判为高相似')
+
+const simpleWithin = '这道菜先讲一个重点，口感和做法都说清楚。'
+const simpleTooLong = `${simpleWithin}超过简单版口播上限后必须重新生成，不能把长稿硬塞进两个镜头里。`
+check(copyCharCount(simpleWithin) <= COMPLEXITIES.SIMPLE.maxCopyChars, '简单版正常口播处于长度上限内')
+check(!copyExceedsComplexityLimit(simpleWithin, 'SIMPLE'), '简单版正常口播不会触发超长守卫')
+check(copyExceedsComplexityLimit(simpleTooLong, 'SIMPLE'), '简单版长口播会触发超长守卫')
+check(COMPLEXITIES.SIMPLE.copyRule.includes('20~45 字'), '简单版规则明确为 20~45 字')
+check(COMPLEXITIES.COMPLEX.maxCopyChars > COMPLEXITIES.SIMPLE.maxCopyChars, '复杂版允许的口播长度高于简单版')
 
 const dates = Array.from({ length: 7 }, (_, i) => new Date(Date.UTC(2026, 9, 1 + i, 4)))
 const firstCuts = dates.map((date) => topicDirections(date)[0] ?? '')
