@@ -1,7 +1,16 @@
 .store-edit {
   min-height: 100vh;
   background: var(--td-bg-color-page);
-  padding-bottom: 200rpx;
+  /* ★ 2026-10-09 底部留白改为**按底栏真实高度推导**，不再写死 200rpx。
+     底栏（已对齐 `.ds-footer`）高 = padding 24 + 按钮 104（`.ds-btn--lg`）+ padding 24 + 安全区
+     = 152rpx + safe。
+     「滚到底时末项底边离底栏顶边多少」= 卡片自身下外边距 24rpx（`.store-edit__form` 的 margin）
+       + 这里的 padding-bottom − 底栏高 152rpx。
+     取 padding-bottom = 176rpx ⇒ 净空 = 24 + 176 − 152 = **48rpx**（24 逻辑 px），实测 ≈50rpx ✓。
+     改前写死 200rpx 与按钮高 88rpx 毫无关系：净空是"恰好 72rpx"的巧合，按钮一旦变高就不够；
+     而静态布局下实测末项底边落在按钮顶边**下方 35.81px**（负值＝被底栏压住）。
+     现在这条式子跟着底栏高走，以后改按钮高度不会再把末项顶到底栏下面。 */
+  padding-bottom: calc(176rpx + env(safe-area-inset-bottom));
 
   &--loading {
     display: flex;
@@ -17,34 +26,57 @@
     border-radius: var(--td-radius-large);
     margin: 24rpx;
     overflow: hidden;
+    /* ★ 2026-10-09 补上卡片投影。`.ds-card` / `.ds-list` 都带 `--ds-shadow-card`，
+       只有这张卡片没有 ⇒ 白卡浮在 #f5f6f8 上时，只靠一圈 #edeef0 描边分界
+       （与页面底 #f5f6f8 色差极小），层次立不起来，整页看上去"平"。
+       规范 §4 也把这张投影列为卡片标准。 */
+    box-shadow: var(--ds-shadow-card);
   }
 
+  /* ★ 2026-10-09 与全 App 的 `.ds-footer` 对齐（原为手写副本，值是 20/32/20 + rgba .94）。
+     改前是「本页自己一套」：左右 32rpx 而非规范的 36rpx 安全边距、上下 20rpx 而非 24rpx、
+     且缺 z-index（底栏被同层内容盖住时无兜底）。规范 §4「页面左右安全边距 36rpx」。 */
   &__footer {
     position: fixed;
     left: 0;
     right: 0;
     bottom: 0;
-    padding: 20rpx 32rpx calc(20rpx + env(safe-area-inset-bottom));
-    background: rgba(255, 255, 255, 0.94);
+    z-index: 10;
+    padding: 24rpx 36rpx calc(24rpx + env(safe-area-inset-bottom));
+    background: rgba(255, 255, 255, 0.96);
     backdrop-filter: blur(20rpx);
     border-top: 1rpx solid var(--td-component-border);
   }
 
+  /* ★ 2026-10-09 与 `.ds-btn ds-btn--primary ds-btn--lg ds-btn--block`（全 App 底部主按钮的
+     标准写法，见 home/index.tsx）对齐。改前是四不像：
+       · height 88rpx        → 104rpx（`.ds-btn--lg`；规范 §5「底部操作条内 104rpx」）
+       · radius 999rpx 胶囊  → var(--td-radius-default)（＝16rpx，`.ds-btn` 用的同一个 token）
+                               ★ 规范 §8 明确记过「按钮圆角由胶囊改为 20rpx」，而代码里
+                                 `.ds-btn` 走的是 token（16rpx）⇒ **以 token 为准**，
+                                 否则底栏按钮会比全 App 每一颗按钮都圆。
+       · letter-spacing 2rpx → -0.01em（正字距与 §3「全局字距 -0.01em ~ -0.04em」相反）
+       · font-size 30rpx     → 34rpx（`.ds-btn` 32rpx / `--lg` 34rpx）
+       · 禁用态 opacity .4   → 灰底＋禁用字色（`.ds-btn--disabled`）；红底压到 40% 仍是红的，
+                              违反「红色只给下一步」，灰底才明确表达「此刻不可点」。 */
   &__save {
-    height: 88rpx;
-    border-radius: 999rpx;
+    height: 104rpx;
+    border-radius: var(--td-radius-default);
     background: var(--td-brand-color);
     box-shadow: var(--ds-glow-red);
-    color: #fff;
-    font-size: 30rpx;
+    color: var(--td-text-color-anti);
+    font-size: 34rpx;
     font-weight: 600;
-    letter-spacing: 2rpx;
+    letter-spacing: -0.01em;
     display: flex;
     align-items: center;
     justify-content: center;
 
     &--disabled {
-      opacity: 0.4;
+      background: var(--td-bg-color-secondary);
+      color: var(--td-text-color-disabled);
+      box-shadow: none;
+      opacity: 1;
     }
   }
 }
@@ -59,20 +91,51 @@
     border-bottom: none;
   }
 
-  &--row {
+  /* ★ 2026-10-09 **新增 `&--region`：这是本页「看着乱」的头号原因。**
+     `edit.tsx` 用的是 `className='field field--region'`，但这条规则在 scss 里**从来不存在**
+     （`git show HEAD:<file> | grep -c -- '--region'` = 0）⇒ `.field` 的
+     `flex-direction: column` 原样生效，省/地区 · 城市 · 区县 三个 `field__col`
+     被垂直堆成一摞、彼此零间距。
+     实测（复现 / 真机两个通道）：region 内相邻控件间距 **50.5rpx / 46.8rpx**，
+     而其它字段之间是 **108.4rpx / 102rpx** ⇒ 相差 2.2 倍，看上去就是「挤在一起」。
+     这三个联动选择器本就是一组，横排既贴合「一屏一件事」，也把这一段的节奏拉回正常。 */
+  &--region {
     flex-direction: row;
-    gap: 24rpx;
+    gap: var(--ds-space-2);
+
+    /* ★★ 三列里必须**把字号收小**，否则占位文案会被折成两行（第一版改完真的折了）。
+       算一遍：列宽 = (卡片内宽 650.3rpx - 2×16rpx 间隙) / 3 = 206.1rpx，
+       减掉左右内边距与边框后只剩约 180rpx；而「请先选择省/地区」是 **7 个全角字**
+       （斜杠在 PingFang 里也是全角），30rpx 下要 210rpx、26rpx 下要 182rpx ⇒ 都放不下。
+       两个实测证据：① 30rpx 时 picker 高 **133.8rpx**（= 2 行×45rpx 行高 + 内边距 + 边框），
+       三列被同时撑高，且断成「选择省/地 / 区」这种半个词，比改之前更难看；
+       ② 26rpx + 16rpx 内边距时 `scrollWidth > clientWidth`，文案被省略号截成「请先选择省/地…」。
+       24rpx（≈ §3 Caption 23rpx 与 Subhead 26rpx 之间，`.ds-row__desc` 用的也是 24rpx）
+       下只要 168rpx < 180rpx ⇒ 单行放下，留 12rpx 余量。
+       外层 `.field__picker` 的 nowrap / ellipsis 是**兜底**：即使以后文案再长，
+       也只会出省略号，不会把这一行撑高、破坏三列等高。
+       注：占位文案本身偏长（`edit.tsx` 写死「请先选择省/地区」），本轮不动 tsx（那边有在途改动），
+           所以只能用字号收口；日后若把文案简化成「请选择」（3 字），这组字号可以调回 30rpx。 */
+    .field__picker {
+      font-size: 24rpx;
+      padding: 0 12rpx;
+    }
   }
 
-  /* ★ 2026-09-24 单店模型：`&--switch`（「设为默认门店」那一行的横排布局）随该开关一起删除。
-     注：上面的 `&--row` 在本文件内已无引用，但它不是本轮改动造成的（HEAD 里也没人用），
-     属于既有遗留，未一并处理。 */
+  /* ★ 2026-10-09 删除**死规则** `&--row`（`flex-direction: row; gap: 24rpx`）：
+     本文件内已无任何引用，上一轮的注释也已写明它是既有遗留。
+     依据同上轮删 `__login-desc` / `__login-dev` 的纪律——无引用的规则一律不留。
+     注：原来的 `&--switch`（「设为默认门店」那一行）已随 2026-09-24 单店模型一起删除。 */
 
+  /* ★ 2026-10-09 字重 500 → 600、下间距 14rpx → 16rpx。
+     · 600 对齐项目自己的列表行标题 `.ds-row__title`（30rpx / 600）：标签就是字段的「标题」，
+       500 在白卡上偏虚，是「整页层次立不起来」的第二个原因。
+     · 14rpx 不是 §4「间距基数 8rpx」的整数倍；16rpx 正好是 `--ds-space-2`。 */
   &__label {
     font-size: 26rpx;
     color: var(--td-text-color-primary);
-    font-weight: 500;
-    margin-bottom: 14rpx;
+    font-weight: 600;
+    margin-bottom: 16rpx;
   }
 
   &__req {
@@ -80,14 +143,29 @@
     margin-left: 4rpx;
   }
 
+  /* ★ 2026-10-09 输入框 / 选择器统一成**同一个盒子规格**（两者都恰好 88rpx 高）：
+     · 高度由内容撑开改为**显式 `height: 88rpx`** —— 这是本条的**关键**：
+       微信原生 `<Input>` 对 `min-height` 不一定买账（真机实测 input 77.9rpx vs picker 88.5rpx，
+       同样的声明却高矮不齐），而显式 `height` 是能钉住的；§7 要求「可点击元素 ≥ 88rpx×88rpx」。
+       ★ 这一条也**反向约束了 padding**：上下内边距 20rpx×2 + 行高 30×1.5 = 85rpx < 88rpx，
+         所以减 padding 不会把输入框变矮（若还用 min-height 就会）。
+     · 显式 `box-sizing: border-box` —— 否则 `height` 指的是**内容高**，加上 padding 会高出 40rpx
+       （`.field__textarea` 早就显式写了，这里补齐，行为不再依赖宿主的默认值）。
+     · 左右内边距 24rpx 对齐 `.ds-row` 的行内边距。
+     · 两者的竖直居中用**不同手段**，因为一个是原生控件、一个是 `<View>`：
+         `input` 靠自身高度居中（原生控件与浏览器都会把单行文本在固定高度里居中）；
+         `picker` 靠**行高铺满内容盒**（`0 24rpx` 内边距 + `line-height = 88rpx - 2rpx 边框`）。
+       ★ 这里刻意**不用 `display:flex; align-items:center`**：`.field--region` 里要给 picker
+         加 `text-overflow: ellipsis` 防折行，而 `text-overflow` 只对块级/行内块生效，flex 容器上无效。 */
   &__input {
     font-size: 30rpx;
     color: var(--td-text-color-primary);
     background: var(--td-bg-color-secondary);
     border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-default);
-    padding: 24rpx 28rpx;
-    min-height: 80rpx;
+    padding: 20rpx 24rpx;
+    height: 88rpx;
+    box-sizing: border-box;
     line-height: 1.5;
   }
   &__input::placeholder,
@@ -101,9 +179,13 @@
     background: var(--td-bg-color-secondary);
     border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-default);
-    padding: 24rpx 28rpx;
-    min-height: 80rpx;
-    line-height: 1.5;
+    padding: 0 24rpx;
+    height: 88rpx;
+    box-sizing: border-box;
+    line-height: calc(88rpx - 2rpx);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 
     &--disabled {
       color: var(--td-text-color-placeholder);
@@ -115,7 +197,7 @@
     background: var(--td-bg-color-secondary);
     border: 1rpx solid var(--td-component-stroke);
     border-radius: var(--td-radius-default);
-    padding: 24rpx 28rpx;
+    padding: 24rpx;
     width: 100%;
     box-sizing: border-box;
     line-height: 1.6;
@@ -123,8 +205,11 @@
     word-break: break-all;
   }
 
+  /* ★ 2026-10-09 加 `min-width: 0`：flex 项默认 `min-width: auto`，长文案
+     （如「请先选择省/地区」）会把其中一列顶宽、另两列被压扁 ⇒ 三列必须是等分宽度。 */
   &__col {
     flex: 1;
+    min-width: 0;
     display: flex;
     flex-direction: column;
   }
