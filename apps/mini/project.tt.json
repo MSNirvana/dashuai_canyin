@@ -1,0 +1,16 @@
+{
+  "miniprogramRoot": "dist/tt/",
+  "projectname": "dashuai-mini",
+  "description": "大帅餐饮 · 商家短视频创作工具（抖音端，appid 待填）",
+  "appid": "ttXXXXXXXXXXXXXXXX",
+  "projectType": "native",
+  "compileType": "miniprogram",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true,
+    "autoCompile": true
+  }
+}
