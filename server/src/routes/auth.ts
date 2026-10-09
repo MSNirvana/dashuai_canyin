@@ -2,7 +2,14 @@
 import { createRouter } from '../lib/async-router.js'
 import { z } from 'zod'
 import { prisma, redis } from '../db.js'
-import { loginByPhone, loginByWechat, refresh, devLogin, WxLoginFailedError } from '../auth/auth.service.js'
+import {
+  loginByPhone,
+  loginByWechat,
+  refresh,
+  devLogin,
+  WxLoginFailedError,
+  OpenidBoundToAnotherAccountError,
+} from '../auth/auth.service.js'
 import { DemoExpiredError, DemoLoginThrottledError } from '../lib/demo-account.js'
 import { sendCode, SmsSendTooFrequentError, SmsDailyLimitError, SmsProviderNotConfiguredError } from '../auth/sms.js'
 import { SmsSendFailedError } from '../auth/sms-provider.js'
@@ -78,6 +85,19 @@ router.post('/wechat-login', async (req, res) => {
     //   报「微信登录失败」会把排查方向整个带偏。
     if (e instanceof DemoExpiredError) {
       fail(res, 1006, e.message, 403)
+      return
+    }
+    // ★ 该微信已经绑到**别的手机号**的账号上（唯一索引 merchant_wechat_openid_key 挡住换绑）。
+    //   以前这里没有分支 ⇒ 落进下面的 else，用户拿到的是一个 500「微信登录失败」，
+    //   完全不知道该做什么（2026-10-09 15:58 实际发生，err.log 里只有裸的
+    //   `Unique constraint failed on the constraint: merchant_wechat_openid_key`）。
+    //   单独回一个码，客户端就能弹出**可执行**的提示。
+    //
+    //   ⚠ 只回通用文案，**不回占用者的手机号**（那属于另一个账号的隐私）。
+    //     完整号码留在服务端日志里，排障时看这一行就够。
+    if (e instanceof OpenidBoundToAnotherAccountError) {
+      console.error(`[auth] 微信一键登录被拒（该微信已绑定其他账号）：${e.message}`)
+      fail(res, 5002, '该微信已绑定其他账号，请换用手机号登录，或联系管理员解绑微信', 409)
       return
     }
     if (e instanceof WxLoginFailedError) {

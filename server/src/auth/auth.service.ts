@@ -153,8 +153,10 @@ export async function loginByPhone(
  * 硬写会抛 Prisma 的 P2002 —— 日志里只有一串索引名，排不出「这个微信已经绑过别的号」。
  * 单独抛一个能自证的错误，调用方与日志都能直接说清原因。
  *
- * ⚠ 本错误**只出现在服务端**：orders 路由会吞掉绑定失败（见那里的说明），
- *   所以 message 里的手机号不会回给客户端。真要回给用户时必须先脱敏。
+ * ★ 三处调用方对它的处置**故意不同**，改任何一处前先把这里看完：
+ *   · orders 路由 / resolvePayerOpenid：**吞掉**（绑不上也必须能付款，见那里的说明）
+ *   · 微信一键登录路由：**回给客户端**，但只回通用文案、
+ *     **绝不带手机号** —— 占用者的号码属于另一个账号的隐私，只留在服务端日志里。
  */
 export class OpenidBoundToAnotherAccountError extends Error {
   readonly otherPhone: string
@@ -165,14 +167,6 @@ export class OpenidBoundToAnotherAccountError extends Error {
   }
 }
 
-/**
- * 把「已解析出的微信身份」绑定到指定商户。**纯 DB、不联网** ⇒ 可以离线做契约测试
- * （`code2Session` 要真微信，所以把网络那半边单独拆出去，见下面那个函数）。
- *
- * ★ 为什么按 merchantId 而不是按手机号绑：调用方已经用 JWT 证明了「我是这个商户」，
- *   按 id 写库不会因为手机号匹配错而把 openid 挂到别的账号上。
- * ★ 幂等：openid 没变就**不写库** —— 每次支付前都会调一次，不该产生无意义的 UPDATE。
- */
 /**
  * 写 `merchant.wechat_openid` 之前先查冲突，**别把裸 P2002 冒到 500**。
  *
@@ -194,6 +188,14 @@ async function assertOpenidAvailable(prisma: PrismaClient, openid: string, selfI
   if (other && other.id !== selfId) throw new OpenidBoundToAnotherAccountError(other.phone)
 }
 
+/**
+ * 把「已解析出的微信身份」绑定到指定商户。**纯 DB、不联网** ⇒ 可以离线做契约测试
+ * （`code2Session` 要真微信，所以把网络那半边单独拆出去，见下面那个函数）。
+ *
+ * ★ 为什么按 merchantId 而不是按手机号绑：调用方已经用 JWT 证明了「我是这个商户」，
+ *   按 id 写库不会因为手机号匹配错而把 openid 挂到别的账号上。
+ * ★ 幂等：openid 没变就**不写库** —— 每次支付前都会调一次，不该产生无意义的 UPDATE。
+ */
 export async function bindWechatIdentity(
   prisma: PrismaClient,
   merchantId: bigint,

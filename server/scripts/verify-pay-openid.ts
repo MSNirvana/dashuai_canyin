@@ -10,13 +10,15 @@
  * 而微信 JSAPI 支付**必须**带付款人的 openid。
  *
  * 修法：下单前用小程序端 `wx.login()` 的 code 换 openid 并按需绑定（见 auth.service.ts）。
- * 本脚本把这条修复的**六种性质**钉死 —— 它们在真实环境里都不会自然被发现：
+ * 本脚本把这条修复的**八种性质**钉死 —— 它们在真实环境里都不会自然被发现：
  *   ① 短信登录风格的账号确实没有 openid（缺陷的必要条件，先把它复现出来）
  *   ② 补绑生效
  *   ③ ★ 幂等：openid 没变时**不写库**（每次支付前都会调一次，不该刷出无意义的 UPDATE）
  *   ④ 换绑：同一手机号换了微信（换设备/重装）时更新绑定，unionid 一并写
  *   ⑤ ★ 唯一索引冲突要被识别成「该微信已绑过别的账号」，而不是裸 P2002
  *   ⑥ 源码层接线：两个下单口都真的取了 wxLoginCode 并调用绑定，且**失败不阻断**
+ *   ⑦ ★★ 取 openid 与绑定解耦：绑不上也必须能付款（2026-10-09 16:36 事故的修法核心）
+ *   ⑧ ★ 换绑冲突回给登录用户时是「专属码 5002 + 可执行文案」，且不泄露占用者手机号
  *
  * 为什么 ⑥ 只能做源码断言：本修复的价值全在「前端传 code → 路由补绑」这条接线上，
  * 而这条线没有 HTTP 层可测（起服务要真微信）。源码断言是唯一能守住
@@ -200,6 +202,42 @@ async function main(): Promise<void> {
       (upsertBody.match(/assertOpenidAvailable\(/g) ?? []).length === 2,
       '★★ upsertMerchantByPhone 的改绑与新建两条路径都预检了冲突（缺任一条 ⇒ 一键登录撞裸 P2002 500）',
       `出现 ${(upsertBody.match(/assertOpenidAvailable\(/g) ?? []).length} 次，期望 2`,
+    )
+
+    // ─────────── ⑧ ★ 换绑冲突回给客户端时必须「可执行」且不带隐私 ───────────
+    //
+    // 同一条错误在两个出口的处置**故意相反**：下单口吞掉（付款优先），登录口回给用户。
+    // 这里钉的是登录口 —— 它最容易在后续重构里被顺手删掉，而删掉之后
+    // 用户拿到的又只是一个 500「微信登录失败」：既不告诉他能做什么，也不说清原因。
+    console.log('\n════ ⑧ ★ 换绑冲突不再冒成一句没有信息量的 500 ════')
+    const authRouteSrc = await src('routes/auth.ts')
+    const wxIdx = authRouteSrc.indexOf("router.post('/wechat-login'")
+    const wxEnd = authRouteSrc.indexOf('\n})\n', wxIdx)
+    const wxBody = wxIdx > -1 && wxEnd > wxIdx ? authRouteSrc.slice(wxIdx, wxEnd) : ''
+    check(
+      wxBody.includes('loginByWechat'),
+      '能定位到 /wechat-login 的处理体（下面几条断言的前提）',
+      `len=${wxBody.length}`,
+    )
+    check(
+      /instanceof OpenidBoundToAnotherAccountError/.test(wxBody),
+      '★★ /wechat-login 单列了「该微信已绑别的号」分支（删掉它 ⇒ 用户又只剩一句 500「微信登录失败」）',
+    )
+    check(
+      /fail\(res, 5002,/.test(wxBody),
+      '★ 该分支回的是专属码 5002（与 5001「AI/微信登录失败」混用 ⇒ 客户端文案会说错话）',
+    )
+    check(
+      !/otherPhone/.test(wxBody),
+      '★★ 回给客户端的文案不带占用者手机号（那是另一个账号的隐私，只留在服务端日志）',
+    )
+    const boundIdx = wxBody.indexOf('instanceof OpenidBoundToAnotherAccountError')
+    const boundSeg =
+      boundIdx > -1 ? wxBody.slice(boundIdx, wxBody.indexOf('return', boundIdx) + 'return'.length) : ''
+    check(
+      boundSeg.includes('console.error'),
+      '★ 该分支仍把完整原因落服务端日志（客户端看不到号码 ⇒ 排障只有这一条线索）',
+      `len=${boundSeg.length}`,
     )
   } finally {
     // 硬删测试数据（两个临时号；不给任何真实商户留痕）
