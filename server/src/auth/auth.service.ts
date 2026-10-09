@@ -173,6 +173,27 @@ export class OpenidBoundToAnotherAccountError extends Error {
  *   按 id 写库不会因为手机号匹配错而把 openid 挂到别的账号上。
  * ★ 幂等：openid 没变就**不写库** —— 每次支付前都会调一次，不该产生无意义的 UPDATE。
  */
+/**
+ * 写 `merchant.wechat_openid` 之前先查冲突，**别把裸 P2002 冒到 500**。
+ *
+ * 数据库层有唯一索引兜底（`merchant_wechat_openid_key`），但 P2002 的 message 里
+ * 只有索引名，排不出「被谁占了」—— 用户看到的是一个没有信息量的 500，我们也定位不了。
+ * 这里提前查一次，抛带**占用者手机号**的专用错误，日志能自证、用户也能照着操作。
+ *
+ * ★ 所有写 openid 的路径都要过这里（本文件 3 处 + 下单补绑 1 处）。
+ *   实际事故：2026-10-09 15:58，同一微信尝试登录另一个手机号的账号，
+ *   `upsertMerchantByPhone` 的 create/update 分支没有预检 ⇒ 连续两次裸 P2002 500。
+ *
+ * `selfId` 用于「更新自己」的场景 —— 自己占着自己的 openid 不算冲突。
+ */
+async function assertOpenidAvailable(prisma: PrismaClient, openid: string, selfId?: bigint): Promise<void> {
+  const other = await prisma.merchant.findUnique({
+    where: { wechatOpenid: openid },
+    select: { id: true, phone: true },
+  })
+  if (other && other.id !== selfId) throw new OpenidBoundToAnotherAccountError(other.phone)
+}
+
 export async function bindWechatIdentity(
   prisma: PrismaClient,
   merchantId: bigint,
@@ -186,12 +207,8 @@ export async function bindWechatIdentity(
   if (!cur) throw new Error(`merchant not found: ${merchantId}`)
   if (cur.wechatOpenid === openid) return
 
-  // ★ 先查冲突再写：见 OpenidBoundToAnotherAccountError 的说明。
-  const other = await prisma.merchant.findUnique({
-    where: { wechatOpenid: openid },
-    select: { id: true, phone: true },
-  })
-  if (other && other.id !== merchantId) throw new OpenidBoundToAnotherAccountError(other.phone)
+  // ★ 先查冲突再写：见 assertOpenidAvailable 的说明。
+  await assertOpenidAvailable(prisma, openid, merchantId)
 
   await prisma.merchant.update({
     where: { id: merchantId },
@@ -217,15 +234,44 @@ export async function bindWechatIdentity(
  *
  * ⚠ 调用方必须**吞掉失败**（见 routes/orders.ts）：账号本来就有 openid 时（一键登录用户），
  *   即使这次 code 换不出来也照样能支付 —— 不能让补绑失败把正常支付路径挡住。
+ *
+ * ★★★ 2026-10-09 语义升级（本函数原名 `bindWechatOpenidByLoginCode`）：
+ *   上面那条「调用方必须吞掉失败」的补丁，实际只是把问题**掩盖成静默回退** ——
+ *   一旦该 openid 已属于**另一个账号**（唯一索引 `merchant_wechat_openid_key` 拒绝绑定），
+ *   下单就退回用 `merchant.wechat_openid` 里的**旧 openid**，而那个未必是当前付款人，
+ *   微信于是在调起支付时弹「下单账号与支付账号不一致」，用户完全无从下手。
+ *   实际发生：2026-10-09 16:36，账号 10（15210343436）连续两笔 ¥980 全部卡死。
+ *
+ *   ⇒ 现在**取 openid 与绑定彻底拆开**：
+ *       · 用 code 换 openid  = **必须**（它决定 payer.openid，微信的硬要求）
+ *       · 把它写进账号       = **顺带**（失败只记日志，付款照走）
+ *     于是「微信登录的账号」与「大帅餐饮登录的账号」是不是同一个，**不再影响能否付款**。
  */
-export async function bindWechatOpenidByLoginCode(
+export async function resolvePayerOpenid(
   prisma: PrismaClient,
   merchantId: bigint,
-  wxLoginCode: string,
-): Promise<string> {
-  const s = await code2Session(wxLoginCode)
-  await bindWechatIdentity(prisma, merchantId, s.openid, s.unionid)
-  return s.openid
+  wxLoginCode?: string,
+): Promise<string | undefined> {
+  if (!wxLoginCode) return undefined
+
+  let session: { openid: string; unionid?: string }
+  try {
+    session = await code2Session(wxLoginCode)
+  } catch (e) {
+    // 换不出来（网络异常 / code 已失效或已被用过）⇒ 回退账号已存 openid，行为同改动前。
+    console.warn('[pay] wx.login 的 code 换 openid 失败（回退账号已存 openid）:', (e as Error).message)
+    return undefined
+  }
+
+  // ★★ 绑定只是「顺手做的事」，**失败绝不影响付款** —— 这一行是本次事故的修法。
+  try {
+    await bindWechatIdentity(prisma, merchantId, session.openid, session.unionid)
+  } catch (e) {
+    console.warn('[pay] 顺带绑定 openid 未成功（不影响本次支付）:', (e as Error).message)
+  }
+
+  // ★ 无论绑定成败，都返回**本次付款人**的 openid。
+  return session.openid
 }
 
 /**
@@ -270,13 +316,10 @@ async function upsertMerchantByPhone(
   const existing = await prisma.merchant.findUnique({ where: { phone } })
   if (existing) {
     if (existing.status !== 'ACTIVE') throw new Error('merchant not available')
-    if (openid && !existing.wechatOpenid) {
-      await prisma.merchant.update({
-        where: { id: existing.id },
-        data: { wechatOpenid: openid, wechatUnionid: unionid ?? existing.wechatUnionid },
-      })
-    } else if (openid && existing.wechatOpenid !== openid) {
-      // 同一手机号下换了微信账号（如换设备/重装），更新绑定
+    // 两个旧分支（原先没 openid / 换了微信）本就是同一段 update，合并；
+    // 只在真要改绑时才预检冲突（openid 没变时维持幂等、不写库）。
+    if (openid && existing.wechatOpenid !== openid) {
+      await assertOpenidAvailable(prisma, openid, existing.id)
       await prisma.merchant.update({
         where: { id: existing.id },
         data: { wechatOpenid: openid, wechatUnionid: unionid ?? existing.wechatUnionid },
@@ -285,6 +328,9 @@ async function upsertMerchantByPhone(
     return existing
   }
 
+  // ★ 新建同样要预检：该 openid 已属于另一个手机号的账号时，直接 create 会撞唯一索引
+  //   抛裸 P2002（冒成 500，日志里只有索引名）。实际事故见 assertOpenidAvailable 的注释。
+  if (openid) await assertOpenidAvailable(prisma, openid)
   return prisma.merchant.create({
     data: {
       phone,

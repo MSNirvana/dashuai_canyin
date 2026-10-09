@@ -134,25 +134,72 @@ async function main(): Promise<void> {
     // ─────────── ⑥ 源码层接线 ───────────
     console.log('\n════ ⑥ 下单口的接线（源码断言：这段没有 HTTP 层可测）════')
     const routeSrc = await src('routes/orders.ts')
+    const orderSrc = await src('services/order.service.ts')
     const codeDecl = /^\s*wxLoginCode\s*:.*$/m.exec(routeSrc)?.[0] ?? ''
     check(
       codeDecl.includes('optionalText(') && !codeDecl.includes('z.string()'),
-      '★ wxLoginCode 走 optionalText（空串只是「没给」⇒ 不补绑；写成 z.string().min(1) 会把支付判成 400）',
+      '★ wxLoginCode 走 optionalText（空串只是「没给」⇒ 不换 openid；写成 z.string().min(1) 会把支付判成 400）',
       codeDecl.trim(),
     )
     // 定义 1 次 + 两个下单口各 1 次
     check(
-      (routeSrc.match(/bindOpenidBeforeOrder\(/g) ?? []).length === 3,
-      '两个下单口（充值 / 会员）都调用了下单前补绑',
-      `出现 ${(routeSrc.match(/bindOpenidBeforeOrder\(/g) ?? []).length} 次，期望 3（1 定义 + 2 调用）`,
+      (routeSrc.match(/resolvePayOpenid\(/g) ?? []).length === 3,
+      '两个下单口（充值 / 会员）都取「本次付款人的 openid」',
+      `出现 ${(routeSrc.match(/resolvePayOpenid\(/g) ?? []).length} 次，期望 3（1 定义 + 2 调用）`,
     )
     check(
-      /catch\s*\(e\)\s*\{\s*\n\s*console\.warn\('\[orders\] 下单前补绑 openid 失败/.test(routeSrc),
-      '★ 补绑失败被吞掉 ⇒ 不会把「本来有 openid、能付款」的请求打成 500',
+      /createBeanOrder\([\s\S]{0,140}?payOpenid\)/.test(routeSrc) &&
+        /createMemberOrder\([\s\S]{0,140}?payOpenid\)/.test(routeSrc),
+      '★ 两个下单口都把 payOpenid 传了下去（只取不传 = 白改）',
+    )
+
+    // ─────────── ⑦ ★ 取 openid 与绑定解耦（本次事故的修法核心）───────────
+    console.log('\n════ ⑦ ★ 绑不上也必须能付款（「账号和微信不一样也能付」的修法）════')
+    const payerDecl = authSrc.slice(authSrc.indexOf('export async function resolvePayerOpenid'))
+    const payerEnd = payerDecl.indexOf('\n}\n')
+    const payerBody = payerEnd > 0 ? payerDecl.slice(0, payerEnd + 2) : ''
+    check(
+      payerBody.includes('code2Session'),
+      '能定位到 resolvePayerOpenid 的函数体（下面几条断言的前提）',
+      `len=${payerBody.length}`,
     )
     check(
-      /if \(!wxLoginCode\) return/.test(routeSrc),
-      '不传 wxLoginCode 时直接返回 ⇒ 老客户端行为与改动前完全一致',
+      !/\bthrow\b/.test(payerBody),
+      '★★ resolvePayerOpenid 全程不抛错 ⇒ 绑定被唯一索引拒绝时照样把 openid 交给下单',
+    )
+    check(
+      payerBody.indexOf('bindWechatIdentity') < payerBody.lastIndexOf('return session.openid'),
+      '★★ 绑定写在 return 之前、而 return 在 try 之外 ⇒「绑不上也返回本次付款人的 openid」',
+    )
+    check(
+      /if \(!wxLoginCode\) return undefined/.test(payerBody),
+      '不传 wxLoginCode 时返回 undefined ⇒ 调用方回退账号已存 openid，老客户端行为不变',
+    )
+
+    // ── 下单侧：本次付款人优先，账号已存只作兜底 ──
+    check(
+      (orderSrc.match(/payOpenid \?\? m\?\.wechatOpenid/g) ?? []).length === 2,
+      '★★ 两个下单函数都是「payOpenid 优先、账号已存兜底」（顺序反了 = 事故照旧）',
+      `出现 ${(orderSrc.match(/payOpenid \?\? m\?\.wechatOpenid/g) ?? []).length} 次，期望 2`,
+    )
+    check(
+      !/openid: m\.wechatOpenid/.test(orderSrc),
+      '★ 没有任何一处还用账号里的旧 openid 直接下单',
+    )
+
+    // ── 登录侧：别再让裸 P2002 冒成 500（2026-10-09 15:58 那次一键登录崩的就是它）──
+    const upsertIdx = authSrc.indexOf('async function upsertMerchantByPhone')
+    const upsertEnd = authSrc.indexOf('\n}\n', upsertIdx)
+    const upsertBody = upsertIdx > -1 && upsertEnd > upsertIdx ? authSrc.slice(upsertIdx, upsertEnd) : ''
+    check(
+      upsertBody.includes('prisma.merchant.create'),
+      '能定位到 upsertMerchantByPhone 的函数体（下面这条断言的前提）',
+      `len=${upsertBody.length}`,
+    )
+    check(
+      (upsertBody.match(/assertOpenidAvailable\(/g) ?? []).length === 2,
+      '★★ upsertMerchantByPhone 的改绑与新建两条路径都预检了冲突（缺任一条 ⇒ 一键登录撞裸 P2002 500）',
+      `出现 ${(upsertBody.match(/assertOpenidAvailable\(/g) ?? []).length} 次，期望 2`,
     )
   } finally {
     // 硬删测试数据（两个临时号；不给任何真实商户留痕）

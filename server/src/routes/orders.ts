@@ -9,7 +9,7 @@ import * as orderSvc from '../services/order.service.js'
 import { optionalText } from '../lib/validators.js'
 import * as reconcile from '../services/pay-reconcile.service.js'
 import { PackageNotFoundError, NoOpenidError, PaymentUnavailableError } from '../services/order.service.js'
-import { bindWechatOpenidByLoginCode } from '../auth/auth.service.js'
+import { resolvePayerOpenid } from '../auth/auth.service.js'
 import { SubscriptionRequiredError } from '../services/subscription.service.js'
 
 const router = createRouter()
@@ -136,20 +136,17 @@ const orderInput = z.object({
  *   就是把一条本来能成的支付路径弄坏了。补绑失败就退回原行为：
  *   下面的 `createXxxOrder()` 仍会读 `merchant.wechatOpenid`，拿不到才抛 3007。
  */
-async function bindOpenidBeforeOrder(merchantId: bigint, wxLoginCode?: string): Promise<void> {
-  if (!wxLoginCode) return
-  try {
-    await bindWechatOpenidByLoginCode(prisma, merchantId, wxLoginCode)
-  } catch (e) {
-    console.warn('[orders] 下单前补绑 openid 失败（不阻断，回退原行为）:', (e as Error).message)
-  }
+async function resolvePayOpenid(merchantId: bigint, wxLoginCode?: string): Promise<string | undefined> {
+  return resolvePayerOpenid(prisma, merchantId, wxLoginCode)
 }
 
 router.post('/recharge/order', async (req, res) => {
   try {
     const { packageId, wxLoginCode } = orderInput.parse(req.body)
-    await bindOpenidBeforeOrder(req.merchantId!, wxLoginCode)
-    const r = await orderSvc.createBeanOrder(prisma, req.merchantId!, idParam(packageId, 'packageId'))
+    // 用「本次付款人」的 openid 下单：微信要求 payer.openid == 当前调起支付的用户，
+    // 与账号里存的那枚未必是同一个（换过手机号 / 换过微信）。绑定失败不再阻断付款。
+    const payOpenid = await resolvePayOpenid(req.merchantId!, wxLoginCode)
+    const r = await orderSvc.createBeanOrder(prisma, req.merchantId!, idParam(packageId, 'packageId'), payOpenid)
     ok(res, r)
   } catch (e) {
     if (e instanceof PackageNotFoundError) return fail(res, 3006, '充值档位不存在或未启用', 404)
@@ -169,8 +166,9 @@ router.post('/recharge/order', async (req, res) => {
 router.post('/membership/order', async (req, res) => {
   try {
     const { packageId, wxLoginCode } = orderInput.parse(req.body)
-    await bindOpenidBeforeOrder(req.merchantId!, wxLoginCode)
-    const r = await orderSvc.createMemberOrder(prisma, req.merchantId!, idParam(packageId, 'packageId'))
+    // 同 /recharge/order：用本次付款人的 openid 下单，账号绑定状态不参与准入。
+    const payOpenid = await resolvePayOpenid(req.merchantId!, wxLoginCode)
+    const r = await orderSvc.createMemberOrder(prisma, req.merchantId!, idParam(packageId, 'packageId'), payOpenid)
     ok(res, r)
   } catch (e) {
     if (e instanceof PackageNotFoundError) return fail(res, 3006, '会员套餐不存在或未启用', 404)

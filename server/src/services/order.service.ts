@@ -268,6 +268,8 @@ export async function createBeanOrder(
   prisma: PrismaClient,
   merchantId: bigint,
   packageId: bigint,
+  /** 本次付款人的 openid（下单口用 `wx.login` 的 code 换出）；缺省时回退账号已存的那枚 */
+  payOpenid?: string,
 ): Promise<CreateOrderResult> {
   const pkg = await prisma.beanPackage.findFirst({ where: { id: packageId, enabled: true } })
   if (!pkg) throw new PackageNotFoundError()
@@ -307,12 +309,18 @@ export async function createBeanOrder(
   }
 
   const m = await prisma.merchant.findUnique({ where: { id: merchantId } })
-  if (!m?.wechatOpenid) throw new NoOpenidError()
+  // ★ 优先用「本次付款人」的 openid（由下单口拿 wx.login 的 code 换出，见 resolvePayerOpenid）；
+  //   账号里存的那枚只作兜底（老客户端不传 code / code 换不出来时）。
+  //   为什么必须这样：微信 JSAPI 只认「payer.openid == 当前调起支付的用户」，
+  //   而 merchant.wechat_openid 是**账号属性**（上次用哪个微信登录的），两者未必同一个 ——
+  //   用后者下单会让「换过手机号/换过微信」的用户永远付不了款（微信弹「下单账号与支付账号不一致」）。
+  const openid = payOpenid ?? m?.wechatOpenid
+  if (!openid) throw new NoOpenidError()
   const { prepayId } = await createJsapiOrder({
     description: `大帅餐饮·加油包${beans}积分`,
     outTradeNo: orderNo,
     amountFen,
-    openid: m.wechatOpenid,
+    openid,
     // 与本地 expireAt 严格一致（见 ORDER_TTL_MS 的说明）
     timeExpire: toRfc3339(order.expireAt),
   })
@@ -332,6 +340,8 @@ export async function createMemberOrder(
   prisma: PrismaClient,
   merchantId: bigint,
   packageId: bigint,
+  /** 本次付款人的 openid（下单口用 `wx.login` 的 code 换出）；缺省时回退账号已存的那枚 */
+  payOpenid?: string,
 ): Promise<CreateOrderResult> {
   const pkg = await prisma.memberPackage.findFirst({ where: { id: packageId, enabled: true } })
   if (!pkg) throw new PackageNotFoundError()
@@ -362,12 +372,18 @@ export async function createMemberOrder(
   }
 
   const m = await prisma.merchant.findUnique({ where: { id: merchantId } })
-  if (!m?.wechatOpenid) throw new NoOpenidError()
+  // ★ 优先用「本次付款人」的 openid（由下单口拿 wx.login 的 code 换出，见 resolvePayerOpenid）；
+  //   账号里存的那枚只作兜底（老客户端不传 code / code 换不出来时）。
+  //   为什么必须这样：微信 JSAPI 只认「payer.openid == 当前调起支付的用户」，
+  //   而 merchant.wechat_openid 是**账号属性**（上次用哪个微信登录的），两者未必同一个 ——
+  //   用后者下单会让「换过手机号/换过微信」的用户永远付不了款（微信弹「下单账号与支付账号不一致」）。
+  const openid = payOpenid ?? m?.wechatOpenid
+  if (!openid) throw new NoOpenidError()
   const { prepayId } = await createJsapiOrder({
     description: `大帅餐饮·${pkg.name}`,
     outTradeNo: orderNo,
     amountFen: pkg.priceFen,
-    openid: m.wechatOpenid,
+    openid,
     // 与本地 expireAt 严格一致（见 ORDER_TTL_MS 的说明）
     timeExpire: toRfc3339(order.expireAt),
   })
