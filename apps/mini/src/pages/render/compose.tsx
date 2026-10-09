@@ -15,6 +15,7 @@ import { readRouteId, isNumericId } from '../../utils/route-id'
 // 时间一律走这里：接口给的是 UTC 的 ISO 串（…T…Z），直接渲染/截串都会露 T、Z 且差 8 小时
 import { formatMinute } from '../../utils/time'
 import ProgressLine from '../../components/progress-line'
+import { useAppShare } from '../../utils/app-share'
 import './compose.scss'
 
 const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
@@ -226,6 +227,8 @@ function cssApproxFilter(c: ColorGrade): string {
 //   现在的价直接取 `/render/capabilities` 的 `beans`（见 `gradeBeans`）。
 
 export default function RenderCompose() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   // ★ 编号当场校验，绝不把「拿到的原值」直接用去发请求。
   //   最典型的坑是字符串 'undefined'：`?id=${undefined}` 会让 URL 看着完全正常，
   //   但服务端 idParam 对非纯数字串一律回 `{"code":4000,"message":"参数不合法"}` ——

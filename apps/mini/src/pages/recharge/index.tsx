@@ -17,6 +17,7 @@ import Segmented from '../../components/segmented'
 import { formatDay } from '../../utils/time'
 // 同理：金额的「分 → 元」也收进 utils/money.ts（套餐价上线后会出现第二个用价的地方）
 import { fenToYuan } from '../../utils/money'
+import { useAppShare } from '../../utils/app-share'
 import './index.scss'
 
 type Tab = 'subscribe' | 'bean'
@@ -38,6 +39,8 @@ function safeRedirect(raw?: string): string {
 }
 
 export default function Recharge() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const router = useRouter()
   const redirect = safeRedirect(router.params.redirect)
   const balance = useMerchantStore((s) => s.available)

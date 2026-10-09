@@ -6,6 +6,7 @@ import { COMPLEXITY_OPTIONS, COPY_TRACK_OPTIONS, normalizeTrack } from '../../se
 import { useMerchantStore } from '../../store/merchant'
 import { guideLogin } from '../../utils/login-guide'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
+import { useAppShare } from '../../utils/app-share'
 import './detail.scss'
 
 /** 优秀作品详情：看成片 → 看配方 → 一键套用 */
@@ -20,6 +21,17 @@ export default function WorkDetailPage() {
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const [work, setWork] = useState<WorkDetail | null>(null)
   const [loading, setLoading] = useState(true)
+
+  /**
+   * 分享：本页是**免登录可读**的引流页（见文件头注释），所以卡片可以直接指向自己 ——
+   * 接收方不登录也能看到这条作品，是全站唯一「转发出去对方真能看到内容」的页面。
+   * 标题/配图跟着数据走；`work` 拉回来之前先用默认标题兜底。
+   */
+  useAppShare({
+    title: work?.title,
+    path: id ? `/pages/work/detail?id=${id}` : undefined,
+    imageUrl: work?.coverUrl ?? undefined,
+  })
 
   useEffect(() => {
     if (!id) {

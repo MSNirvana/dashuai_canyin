@@ -5,12 +5,15 @@ import { getPersona, savePersona, type PersonaItem } from '../../services/person
 import { useMerchantStore } from '../../store/merchant'
 // 时间统一走 utils/time：原来用 toLocaleString('zh-CN')，出来是「2026/9/18 10:59:39」（斜杠 + 秒）
 import { formatMinute } from '../../utils/time'
+import { useAppShare } from '../../utils/app-share'
 import './index.scss'
 
 const VOICE_PRESETS = ['热情实在', '专业懂行', '幽默接地气', '温柔耐心', '爽快直接', '匠人型老板']
 
 /** 门店级人设（★ 单店模型 2026-09-24：恒等于账号唯一门店，顶上门店切换器已删除） */
 export default function PersonaPage() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const loadStores = useMerchantStore((s) => s.loadStores)
   const [form, setForm] = useState<{ bossTags: string; activity: string }>({ bossTags: '', activity: '' })

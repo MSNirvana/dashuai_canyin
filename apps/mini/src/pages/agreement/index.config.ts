@@ -2,4 +2,6 @@
 export default definePageConfig({
   navigationBarTitleText: '用户协议',
   navigationBarBackgroundColor: '#FFFFFF',
+  enableShareAppMessage: true,
+  enableShareTimeline: true,
 })

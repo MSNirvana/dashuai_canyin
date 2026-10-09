@@ -8,6 +8,7 @@ import { cityOptions, districtOptions, provinceOptions, resolveAreaNames } from 
 import { useMerchantStore } from '../../store/merchant'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import { ratioToPaddingTop, readRatioFromMeta } from '../../utils/video-ratio'
+import { useAppShare } from '../../utils/app-share'
 import './edit.scss'
 
 interface FormState {
@@ -35,6 +36,8 @@ const EMPTY: FormState = {
 }
 
 export default function StoreEditPage() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const router = useRouter()
   /**
    * 要编辑的门店编号；`undefined` = 新建。

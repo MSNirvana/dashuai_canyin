@@ -7,6 +7,7 @@ import type { StoreItem } from '../../services/store'
 import Segmented from '../../components/segmented'
 import { readRouteId } from '../../utils/route-id'
 import { fenToYuan } from '../../utils/money'
+import { useAppShare } from '../../utils/app-share'
 import './list.scss'
 
 /** 列表筛选：全部 / 只看单菜 / 只看套餐 */
@@ -14,6 +15,8 @@ type Filter = 'ALL' | DishKind
 
 /** 菜品库：菜品全部挂在账号唯一的那家门店下（★ 单店模型 2026-09-24，顶部门店切换器已删除） */
 export default function DishListPage() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const router = useRouter()
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const setStore = useMerchantStore((s) => s.setStore)

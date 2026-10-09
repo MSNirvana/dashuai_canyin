@@ -7,6 +7,7 @@ import { useMerchantStore } from '../../store/merchant'
 import Segmented from '../../components/segmented'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import { fenToYuan, yuanToFen } from '../../utils/money'
+import { useAppShare } from '../../utils/app-share'
 import './edit.scss'
 
 interface LocalMedia { type: 'IMAGE' | 'VIDEO'; cosKey: string; coverKey?: string; sort: number; url: string; coverUrl?: string }
@@ -39,6 +40,8 @@ async function toLocalMedia(m: DishMedia): Promise<LocalMedia> {
 }
 
 export default function DishEditPage() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const router = useRouter(); const { currentStoreId } = useMerchantStore(); const storeId = readRouteId(router.params, 'storeId') ?? currentStoreId; const id = readRouteId(router.params) ?? undefined
   /**
    * 路由里带了编号但不合法（最典型的是字符串 'undefined'）。

@@ -4,6 +4,7 @@ import Taro, { useDidShow, useRouter } from '@tarojs/taro'
 import { getStore, getStoreMediaUrl, type StoreItem } from '../../services/store'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import { ratioToPaddingTop, readRatioFromMeta } from '../../utils/video-ratio'
+import { useAppShare } from '../../utils/app-share'
 import './detail.scss'
 
 interface InfoRow {
@@ -13,6 +14,8 @@ interface InfoRow {
 
 /** 门店详情页：门店资料（门头图片 / 视频 / 介绍 / 地址）的统一展示入口 */
 export default function StoreDetailPage() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const router = useRouter()
   // ★ 编号必须当场校验，不能拿「路由里的原值」直接去请求：
   //   `?id=undefined` 会让 URL 看着完全正常，但服务端 idParam 对非纯数字串一律回 4000

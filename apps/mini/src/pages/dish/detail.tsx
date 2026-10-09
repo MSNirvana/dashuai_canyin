@@ -5,10 +5,13 @@ import { getDish, getDishMediaUrl, type DishItem, type DishMedia } from '../../s
 import { useMerchantStore } from '../../store/merchant'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import { fenToYuan } from '../../utils/money'
+import { useAppShare } from '../../utils/app-share'
 import './detail.scss'
 
 interface MediaView extends DishMedia { url: string; coverUrl?: string }
 export default function DishDetailPage() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   // ★ 两个编号都要过 readRouteId：`?id=undefined` / `?storeId=undefined` 拼出来的 URL
   //   看着正常，但服务端 idParam 对非纯数字串一律回 4000「参数不合法」——
   //   页面上只会显示一句「菜品加载失败」，看不出是链接坏了（详见 utils/route-id.ts）。

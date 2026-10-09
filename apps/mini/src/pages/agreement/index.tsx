@@ -10,6 +10,7 @@ import {
   legalDocOf,
   type LegalDocKey,
 } from '../../constants/legal'
+import { useAppShare } from '../../utils/app-share'
 import './index.scss'
 
 // 用户协议 / 隐私政策
@@ -20,6 +21,8 @@ import './index.scss'
 //
 // ⚠ 只认 type 的不合法值一律回落到用户协议（见 legalDocOf）—— 协议入口点进去白屏是合规事故。
 export default function AgreementPage() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare({ title: '大帅餐饮助手 · 用户协议与隐私政策' })
   const router = useRouter()
   const [key, setKey] = useState<LegalDocKey>(legalDocOf(router.params?.type).key)
   const doc = legalDocOf(key)

@@ -8,6 +8,7 @@ import { STORAGE_KEYS } from '../../config'
 import { useMerchantStore } from '../../store/merchant'
 import { fenToYuan } from '../../utils/money'
 import { formatMinute } from '../../utils/time'
+import { useAppShare } from '../../utils/app-share'
 import './list.scss'
 
 /**
@@ -53,6 +54,8 @@ function statusMod(status: string): string {
 const TYPE_TEXT: Record<string, string> = { MEMBER: '会员订阅', BEAN: '积分加油包' }
 
 export default function OrderList() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const setLogin = useMerchantStore((s) => s.setLogin)
   const refreshMe = useMerchantStore((s) => s.refreshMe)
 

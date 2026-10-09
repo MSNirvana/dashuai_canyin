@@ -4,6 +4,7 @@ import Taro, { useDidHide, useDidShow, useReachBottom } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
 import { STORAGE_KEYS } from '../../config'
 import { guideLogin } from '../../utils/login-guide'
+import { useAppShare } from '../../utils/app-share'
 import { listCreations, type CreationItem } from '../../services/creation'
 import { getWork, listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
 import {
@@ -49,6 +50,10 @@ const WORK_CATEGORY_ALL = ''
 
 /** 首页 · 创作工作台：第一屏是轮播（运营在后台配）+ 轮播下方那颗「开始创作」主按钮；全页只有一个红色实心主按钮 */
 export default function HomePage() {
+  // ★ 分享能力：必须放在组件最顶部**无条件**调用（Hooks 规则），
+  //   且不能放在任何 early return 之后，否则部分路径下声明不上去、转发仍会置灰。
+  useAppShare()
+
   const token = useMerchantStore((s) => s.token)
   const hydrate = useMerchantStore((s) => s.hydrate)
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)

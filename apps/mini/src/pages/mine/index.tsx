@@ -14,6 +14,7 @@ import { useMerchantStore } from '../../store/merchant'
 import logoPng from '../../assets/logo.png'
 // 会员到期日只到日（formatDay），与「订阅」页、个人资料页同一入口
 import { formatDay } from '../../utils/time'
+import { useAppShare } from '../../utils/app-share'
 import './index.scss'
 
 function humanBytes(b: string): string {
@@ -32,6 +33,8 @@ const CODE_RE = /^\d{6}$/
 const DEV_PHONE = '13800000000'
 
 export default function Mine() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const merchant = useMerchantStore((s) => s.merchant)
   const isMember = useMerchantStore((s) => s.isMember)
   const memberPlanName = useMerchantStore((s) => s.memberPlanName)

@@ -19,6 +19,7 @@ import { getPublishMaterial, type PublishMaterial } from '../../services/publish
 import { isNumericId } from '../../utils/route-id'
 // 时间一律走这里：接口给的是 UTC 的 ISO 串（…T…Z），直接渲染会露出 T、Z 且差 8 小时
 import { formatMinute } from '../../utils/time'
+import { useAppShare } from '../../utils/app-share'
 import './result.scss'
 
 const GRADE_LABEL: Record<string, string> = {
@@ -46,6 +47,17 @@ export default function RenderResult() {
   const [loadError, setLoadError] = useState('')
   const [mediaError, setMediaError] = useState('')
   const [saving, setSaving] = useState(false)
+
+  /**
+   * 分享：卡片借用成片的封面与标题，但**落地页回首页** ——
+   * ★ 本页数据是「我的成片」，接口要登录且只认本人的创作编号；
+   *   卡片若指向本页，接收方一进来就吃 401、被 switchTab 到「我的」弹登录框，
+   *   看着就像分享坏了。所以只借封面/标题做卡片，落地统一走首页（见 utils/app-share.ts）。
+   */
+  useAppShare({
+    title: material?.title ?? undefined,
+    imageUrl: material?.coverUrl ?? undefined,
+  })
   /** 代次：页面重进 / 重新加载时，先回来的旧响应不许覆盖后发起的结果 */
   const versionRef = useRef(0)
 

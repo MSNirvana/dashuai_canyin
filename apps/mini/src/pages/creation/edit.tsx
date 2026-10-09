@@ -29,6 +29,7 @@ import Segmented from '../../components/segmented'
 import Steps from '../../components/steps'
 import { splitCopyParagraphs, copyTextParagraphs } from '../../utils/copy-text'
 import { isNumericId, readRouteId, isBrokenRouteId } from '../../utils/route-id'
+import { useAppShare } from '../../utils/app-share'
 import './edit.scss'
 
 function newRequestId() {
@@ -185,6 +186,8 @@ function TrackPicker({
 }
 
 export default function CreationEdit() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const params = Taro.getCurrentInstance().router?.params as Record<string, unknown> | undefined
   /**
    * 从「优秀作品」带过来的同款配方：workId 预填款式/复杂度，用户仍可改。

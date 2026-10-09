@@ -14,6 +14,7 @@ import { uploadVideoFile, UploadAbortedError, describeUploadError } from '../../
 import { readRouteId } from '../../utils/route-id'
 import ProgressLine from '../../components/progress-line'
 import ShotCamera, { SHOOT_MAX_SECONDS, type ShotCameraResult } from '../../components/shot-camera'
+import { useAppShare } from '../../utils/app-share'
 import './shots.scss'
 
 /** 时长格式化：83.4s → 1:23 */
@@ -25,6 +26,8 @@ function fmtDuration(ms: number): string {
 }
 
 export default function CreationShots() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   // 编号当场校验：非法编号（最典型的是字符串 'undefined'）不能直接拿去发请求，
   // 否则本页只会永远停在「加载中…」，而点「下一步」跳到合成页后收到的是服务端那句
   // 指向不了任何操作的「参数不合法」（详见 utils/route-id.ts）。

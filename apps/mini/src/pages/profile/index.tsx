@@ -12,6 +12,7 @@ import * as profileApi from '../../services/profile'
 import { useMerchantStore } from '../../store/merchant'
 // 会员 / 赠积分到期日只到日（formatDay），不带时分；与「我的」页、订阅页同一入口
 import { formatDay } from '../../utils/time'
+import { useAppShare } from '../../utils/app-share'
 import './index.scss'
 
 /** 与服务端 `nullableText(20)` 对齐；Input 的 maxlength 也用它，三处不能各写一个数 */
@@ -22,6 +23,8 @@ function errText(e: unknown, fallback: string): string {
 }
 
 export default function Profile() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const merchant = useMerchantStore((s) => s.merchant)
   const avatarUrl = useMerchantStore((s) => s.avatarUrl)
   const setProfile = useMerchantStore((s) => s.setProfile)

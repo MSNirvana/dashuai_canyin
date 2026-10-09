@@ -14,6 +14,7 @@ import ProgressLine from '../../components/progress-line'
 import SwipeActions, { type SwipeAction } from '../../components/swipe-actions'
 // 超过 7 天的绝对时间走统一入口（原来这里手拼 MM-DD，缺年份）
 import { formatMinute } from '../../utils/time'
+import { useAppShare } from '../../utils/app-share'
 import './list.scss'
 
 type Filter = 'ALL' | 'DOING' | 'READY' | 'ARCHIVED'
@@ -147,6 +148,8 @@ function fmtRelTime(iso: string): string {
 
 /** 创作列表：内容全部挂在账号唯一的那家门店下（★ 单店模型 2026-09-24，顶上门店切换器已删除） */
 export default function CreationList() {
+  // 分享能力（微信要求页面自己定义 onShareAppMessage，否则转发置灰；详见 utils/app-share.ts）
+  useAppShare()
   const currentStoreId = useMerchantStore((s) => s.currentStoreId)
   const stores = useMerchantStore((s) => s.stores)
   const loadStores = useMerchantStore((s) => s.loadStores)

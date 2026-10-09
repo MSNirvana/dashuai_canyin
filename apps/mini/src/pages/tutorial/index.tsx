@@ -7,6 +7,7 @@ import {
   tutorialCategoryOf,
   type TutorialItem,
 } from '../../services/tutorial'
+import { useAppShare } from '../../utils/app-share'
 import './index.scss'
 
 /** 播放器节点 id —— createVideoContext 靠它定位，改名要同步改播放/全屏两处 */
@@ -31,6 +32,12 @@ export default function TutorialPage() {
   // 大小写不敏感：这个参数是各入口手拼出来的，不指望调用方一定大写
   const code = String(router.params.category ?? 'SHOOTING').toUpperCase()
   const meta = tutorialCategoryOf(code) ?? TUTORIAL_CATEGORIES[0]
+
+  // 分享：教学页和作品详情一样是**免登录可读**的，卡片可以直接指向对应分类
+  useAppShare({
+    title: meta.pageTitle,
+    path: `/pages/tutorial/index?category=${meta.code}`,
+  })
 
   const [items, setItems] = useState<TutorialItem[]>([])
   const [current, setCurrent] = useState<TutorialItem | null>(null)
