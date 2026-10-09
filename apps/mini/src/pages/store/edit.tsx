@@ -395,13 +395,19 @@ export default function StoreEditPage() {
 
         <View className='field'>
           <Text className='field__label'>详细地址</Text>
-          <Textarea
-            className='field__textarea'
-            placeholder='街道 / 门牌 / 楼栋 / 单元（可换行）'
+          {/* ★ 2026-10-09 改单行 `<Input>`（用户要求「只保留一行足以」）。
+              原来是 `<Textarea autoHeight>`：真机实测高 **168rpx**（≈1.9 行），
+              而**同一个类名**的「门店介绍」实测正好 **120rpx**（＝ scss 的 min-height）。
+              两份完全相同的声明却不一样高 ⇒ 多出来的高度是 `autoHeight` 按内容算出来的，
+              想用 CSS 把它压回一行并不可靠。
+              换成 `<Input>` 走 `.field__input`：真机已验证恰好 88rpx，与门店名称 / 品类完全一致。
+              占位文案同步去掉「（可换行）」—— 单行输入框不会换行，留着是误导。 */}
+          <Input
+            className='field__input'
+            placeholder='街道 / 门牌 / 楼栋 / 单元'
             value={form.address}
             onInput={(e) => set('address', e.detail.value)}
             maxlength={255}
-            autoHeight
           />
         </View>
 

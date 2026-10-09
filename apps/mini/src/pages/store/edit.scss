@@ -201,7 +201,21 @@
     width: 100%;
     box-sizing: border-box;
     line-height: 1.6;
-    min-height: 120rpx;
+    /* ★ 2026-10-09 120rpx → 200rpx：用户反馈「门店介绍的默认文字要都展示出来，
+       目前输入框有点短」。
+       真机实测这个框高 **120.1rpx**，正好等于原来的 `min-height: 120rpx`
+       ⇒ 高度被 min-height 卡住（内容反而比 min-height 小），而占位文案是
+       **60 个全角字符**，在本页 600.3rpx 可用宽下要 **3 行**
+       ⇒ 文字溢出到盒子外、占位被切掉一截。
+       算式：上下内边距 24×2 = 48rpx ＋ 上下边框 1×2 = 2rpx
+             ＋ 3 行 × (字号 30rpx × 行高 1.6 = 48rpx) = 144rpx
+             ⇒ 194rpx，取 **200rpx**（留 6rpx 余量吃子像素）。
+       复现通道实测：120rpx ⇒ 3 行文字要 196.2rpx 才放得下、`fits=false`（缺 76.9rpx）；
+                     200rpx ⇒ `fits=true`、无裁切。
+       ★ 此时 `.field__textarea` 全库只剩「门店介绍」一处引用
+       （「详细地址」已改 `<Input className='field__input'>`）⇒ 不必新增类名。
+       ★ 换行行为仍交给 `autoHeight`：用户真写了超长介绍时盒子会自己长高。 */
+    min-height: 200rpx;
     word-break: break-all;
   }
 
