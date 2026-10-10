@@ -249,20 +249,20 @@ export async function bindWechatIdentity(
  *       · 把它写进账号       = **顺带**（失败只记日志，付款照走）
  *     于是「微信登录的账号」与「大帅餐饮登录的账号」是不是同一个，**不再影响能否付款**。
  */
-export async function resolvePayerOpenid(
+export async function resolvePayerSession(
   prisma: PrismaClient,
   merchantId: bigint,
   wxLoginCode?: string,
-): Promise<string | undefined> {
-  if (!wxLoginCode) return undefined
+): Promise<PayerSession> {
+  if (!wxLoginCode) return {}
 
-  let session: { openid: string; unionid?: string }
+  let session: { openid: string; unionid?: string; sessionKey: string }
   try {
     session = await code2Session(wxLoginCode)
   } catch (e) {
     // 换不出来（网络异常 / code 已失效或已被用过）⇒ 回退账号已存 openid，行为同改动前。
     console.warn('[pay] wx.login 的 code 换 openid 失败（回退账号已存 openid）:', (e as Error).message)
-    return undefined
+    return {}
   }
 
   // ★★ 绑定只是「顺手做的事」，**失败绝不影响付款** —— 这一行是本次事故的修法。
@@ -272,8 +272,35 @@ export async function resolvePayerOpenid(
     console.warn('[pay] 顺带绑定 openid 未成功（不影响本次支付）:', (e as Error).message)
   }
 
-  // ★ 无论绑定成败，都返回**本次付款人**的 openid。
-  return session.openid
+  // ★ 无论绑定成败，都返回**本次付款人**的身份（openid + session_key）。
+  //   session_key 是虚拟支付「用户态签名」的唯一输入，必须与 openid **同一次** code2Session
+  //   取得 —— `wx.login` 的 code 是一次性的，再换一次既拿不到、也会把上一个 session_key 顶掉。
+  const payer: PayerSession = { openid: session.openid, sessionKey: session.sessionKey }
+  return payer
+}
+
+/**
+ * 只取 openid 的薄封装。**实现只有一份**（resolvePayerSession），
+ * 这里只做投影 —— 两处各写一遍必然在下次改判据时分叉。
+ */
+export async function resolvePayerOpenid(
+  prisma: PrismaClient,
+  merchantId: bigint,
+  wxLoginCode?: string,
+): Promise<string | undefined> {
+  return (await resolvePayerSession(prisma, merchantId, wxLoginCode)).openid
+}
+
+/**
+ * 「本次付款人」的身份。
+ *
+ * `sessionKey` 是**敏感凭据**（可用于解密微信下发的用户数据、也是虚拟支付用户态签名的密钥）：
+ * · **绝不下发给客户端**，只在服务端内存里活一次（算完 signature 即弃）；
+ * · **绝不落库**（落库等于凭空多一份长期密钥，而它是会随 `wx.login` 失效的短期凭据）。
+ */
+export interface PayerSession {
+  openid?: string
+  sessionKey?: string
 }
 
 /**

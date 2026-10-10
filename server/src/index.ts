@@ -15,6 +15,7 @@ import mediaRouter from './routes/media.js'
 import uploadRouter from './routes/upload.js'
 import orderRouter from './routes/orders.js'
 import payRouter from './routes/pay.js'
+import xpayRouter from './routes/xpay.js'
 import adminRouter from './routes/admin.js'
 import personaRouter from './routes/persona.js'
 import shotLibraryRouter from './routes/shot-library.js'
@@ -92,6 +93,13 @@ app.set('json replacer', (_key: string, value: unknown) =>
 
 app.use(cors({ origin: process.env.CORS_ORIGIN?.split(',') ?? true, credentials: true }))
 app.use('/api/v1/pay', express.raw({ type: 'application/json', limit: '1mb' }), payRouter)
+// 小程序虚拟支付的**发货推送**。★ 必须挂在 `express.json()` 之前、且用 `express.raw`：
+//   报文可能是 XML（微信「消息推送」的数据格式可配），先过 json 解析器会把原文变成
+//   `{}` —— 而我们要靠原文区分 XML/JSON 两种格式并按同格式应答。
+// ★ 这里用 `*/*` 而不是某个具体 MIME：微信的 Content-Type 在 XML/JSON 两种格式下
+//   并不统一（实战里出现过 text/xml 与 text/plain），按 MIME 过滤会让整条发货链路
+//   静默变成「收到但读不到内容」。该前缀下只有本路由，不存在误伤。
+app.use('/api/v1/xpay', express.raw({ type: '*/*', limit: '1mb' }), xpayRouter)
 app.use(express.json({ limit: '2mb' }))
 
 // 健康检查（不鉴权）

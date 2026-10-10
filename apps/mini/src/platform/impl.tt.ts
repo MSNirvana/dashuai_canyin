@@ -40,9 +40,21 @@ const CAPABILITIES: Record<PlatformFeature, boolean> = {
   subscribeMessage: true,
 }
 
+/**
+ * ★ 抖音端**不认识**微信侧的虚拟支付四件套 ⇒ `virtualPay: false`。
+ *
+ * 上报这个值的效果：服务端下单口据此**不会**给抖音端下发 `{signData,…}`，
+ * 而是落到「普通微信支付」那一支（本项目仅微信两端实现了它）。
+ * ⇒ 抖音端在完成担保交易接入前，下单仍是**不可用**的 —— 这是既定事实，
+ *   但至少不再是「收到一组看不懂的微信参数」这种误导性的失败。
+ * 接入时（`orderId`/`orderToken`）应在这里如实改成 `true` 所对应的新能力位。
+ */
+const PAY_CAPABILITIES = { virtualPay: false } as const
+
 export const impl: PlatformAdapter = {
   kind: 'tt',
   capabilities: CAPABILITIES,
+  payCapabilities: PAY_CAPABILITIES,
 
   async login(): Promise<LoginCredential> {
     const res = await Taro.login()
@@ -50,6 +62,19 @@ export const impl: PlatformAdapter = {
   },
 
   requestPayment(params: RequestPaymentParams): void {
+    // ★ 虚拟支付是**微信侧能力**（`wx.requestVirtualPayment`），抖音端不适用。
+    //   本端已上报 `payCapabilities.virtualPay=false`，所以正常情况下服务端**不会**
+    //   下发四件套 ⇒ 走到这里说明**服务端与本端的能力声明脱节了**（例如服务端用了
+    //   按环境切的旧判据 / 漏传了 `vpCapable`）。单独判一次就是为了让这种情况
+    //   立刻显形，而不是让人一头雾水地去找担保交易进件进度。
+    //   （抖音端整体尚未接入，见 docs/11。）
+    if (params.signData) {
+      throw new Error(
+        `${TT_IMPL_CANARY} 收到的是微信「小程序虚拟支付」参数（signData），抖音端不适用。` +
+          `本端已声明 payCapabilities.virtualPay=false ⇒ 说明服务端下单口没按客户端能力选通道` +
+          `（或漏取了 vpCapable），见 docs/12-多端架构约定.md §3.2。`,
+      )
+    }
     if (!params.orderId || !params.orderToken) {
       throw new Error(
         `${TT_IMPL_CANARY} 抖音支付需要服务端下发 orderId / orderToken（担保交易），当前未拿到。` +

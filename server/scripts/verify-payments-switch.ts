@@ -1,16 +1,22 @@
 // PAYMENTS_ENABLED 支付开关契约测试（P1-7）。
 //
-// 验证三件事：
+// 验证五件事：
 //   A. paymentsEnabled() 的取值解析（含无法识别时必须抛错）
 //   B. validateProductionConfig() —— 关闭支付只跳过「支付凭据」校验，
 //      **其余全部安全守卫必须照旧生效**（这是本次改动的核心诉求）
 //   C. resolvePayMode() 真值表 —— 特别是「production 下永远不会走演示支付」这条铁律
+//   D. resolvePayChannel() 真值表 —— 通道必须按**本次请求的客户端能力**选，
+//      不许退回「看本环境配没配 WX_VP_*」的进程级判定（那会让旧版本客户端付不了款）
+//   E. 当前 server/.env 的实际判定
 //
-// 全部为纯函数测试，注入 env 对象，不碰数据库、不起服务、无副作用。
+// 全部为纯函数测试（+ D 段的源码级断言），不碰数据库、不起服务、无副作用。
 // 跑法：npm run payments:verify
-import '../src/env.js' // 加载 .env（并为 D 段提供真实进程环境）
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+import '../src/env.js' // 加载 .env（并为 E 段提供真实进程环境）
 import { paymentsEnabled, validateProductionConfig } from '../src/lib/config.js'
-import { resolvePayMode } from '../src/services/order.service.js'
+import { resolvePayMode, resolvePayChannel } from '../src/services/order.service.js'
+import { vpLegacyJsapiAllowed } from '../src/lib/xpay.js'
 
 let pass = 0
 let fail = 0
@@ -154,7 +160,114 @@ console.log('\n=== C. resolvePayMode() 真值表 ===')
   void WX
 }
 
-console.log('\n=== D. 当前 server/.env 的实际判定 ===')
+console.log('\n=== D. resolvePayChannel()：通道必须按「本次客户端的能力」选 ===')
+{
+  /** 环境侧已配齐虚拟支付（offerId / appKey / WX_APPID 三项齐备） */
+  const VP_OK: NodeJS.ProcessEnv = {
+    WX_VP_ENV: '0',
+    WX_VP_OFFER_ID: 'off-1',
+    WX_VP_APP_KEY: 'k'.repeat(32),
+    WX_APPID: 'wxappid',
+  }
+  const cases: Array<[string, { env: NodeJS.ProcessEnv; clientVpCapable: boolean }, unknown]> = [
+    // ① 环境没配 ⇒ 只有 JSAPI 一条路，客户端认不认识都一样
+    ['环境未配 WX_VP_* + 客户端认识 → jsapi', { env: {}, clientVpCapable: true }, 'jsapi'],
+    ['环境未配 WX_VP_* + 客户端不认识 → jsapi', { env: {}, clientVpCapable: false }, 'jsapi'],
+    [
+      '只配一半（缺 appKey）→ jsapi（vpEnabled=false，绝不半信半疑）',
+      { env: { WX_VP_OFFER_ID: 'o', WX_APPID: 'a' }, clientVpCapable: true },
+      'jsapi',
+    ],
+    // ② 配齐了：认识的客户端一律走虚拟支付
+    ['配齐 + 客户端认识 → vp', { env: VP_OK, clientVpCapable: true }, 'vp'],
+    [
+      '配齐 + 客户端认识 + 开关=false → vp（切齐开关不影响新版客户端）',
+      { env: { ...VP_OK, WX_VP_LEGACY_JSAPI: 'false' }, clientVpCapable: true },
+      'vp',
+    ],
+    // ③ ★ 整个改动的核心：不认识四件套的客户端必须留在 JSAPI
+    [
+      '配齐 + 客户端不认识 + 开关默认 → jsapi ★否则线上旧版本客户端全体付不了款',
+      { env: VP_OK, clientVpCapable: false },
+      'jsapi',
+    ],
+    [
+      '配齐 + 不认识 + 开关=true → jsapi',
+      { env: { ...VP_OK, WX_VP_LEGACY_JSAPI: 'true' }, clientVpCapable: false },
+      'jsapi',
+    ],
+    [
+      '配齐 + 不认识 + 开关=FALSE（大小写不敏感）→ vp',
+      { env: { ...VP_OK, WX_VP_LEGACY_JSAPI: 'FALSE' }, clientVpCapable: false },
+      'vp',
+    ],
+    [
+      '配齐 + 不认识 + 开关=false → vp（全量发布新版之后的切齐动作）',
+      { env: { ...VP_OK, WX_VP_LEGACY_JSAPI: 'false' }, clientVpCapable: false },
+      'vp',
+    ],
+    [
+      '配齐 + 不认识 + 开关=0 → vp',
+      { env: { ...VP_OK, WX_VP_LEGACY_JSAPI: '0' }, clientVpCapable: false },
+      'vp',
+    ],
+    // ④ 写错值必须退回「放行」：错误方向指向安全侧
+    [
+      '配齐 + 不认识 + 开关写错(flase) → jsapi ★拼错必须退回安全侧，不能把线上打通',
+      { env: { ...VP_OK, WX_VP_LEGACY_JSAPI: 'flase' }, clientVpCapable: false },
+      'jsapi',
+    ],
+  ]
+  for (const [label, input, expected] of cases) {
+    check(label, resolvePayChannel(input), expected)
+  }
+
+  // ⑤ 过渡期开关自身的取值语义
+  check('开关未设置 → 允许（默认放行）', vpLegacyJsapiAllowed({}), true)
+  check('开关为空串 → 允许', vpLegacyJsapiAllowed({ WX_VP_LEGACY_JSAPI: '' }), true)
+  check("开关=' false '（带空格）→ 关闭", vpLegacyJsapiAllowed({ WX_VP_LEGACY_JSAPI: ' false ' }), false)
+  check("开关='0' → 关闭", vpLegacyJsapiAllowed({ WX_VP_LEGACY_JSAPI: '0' }), false)
+  check(
+    "开关='no' → 允许（只认 false/0，不猜其他否定词）",
+    vpLegacyJsapiAllowed({ WX_VP_LEGACY_JSAPI: 'no' }),
+    true,
+  )
+}
+
+// ⑥ 源码级：两个下单函数都必须把「客户端能力」一路传下去。
+//    ★ 为什么这里要机械校验：漏传参数 TS 会报错（该参数无默认值），但真正危险的是
+//      有人图省事把 `resolvePayChannel` 改回「只读 env」的旧写法 —— 那种回退
+//      **类型完全合法**，却会让线上所有旧版本客户端瞬间付不了款。类型系统拦不住它。
+{
+  const orderSvc = readFileSync(
+    fileURLToPath(new URL('../src/services/order.service.ts', import.meta.url)),
+    'utf8',
+  )
+  check(
+    'order.service.ts：两个下单口都传了 clientVpCapable',
+    (orderSvc.match(/resolvePayChannel\(\{\s*clientVpCapable/g) ?? []).length,
+    2,
+  )
+  check(
+    'order.service.ts：不存在无参调用 resolvePayChannel()（进程级旧写法）',
+    (orderSvc.match(/resolvePayChannel\(\s*\)/g) ?? []).length,
+    0,
+  )
+
+  const routes = readFileSync(fileURLToPath(new URL('../src/routes/orders.ts', import.meta.url)), 'utf8')
+  check(
+    'routes/orders.ts：入参 schema 用 optionalFlag 接收 vpCapable（永不 400）',
+    /vpCapable:\s*optionalFlag\(\)/.test(routes),
+    true,
+  )
+  check(
+    'routes/orders.ts：两个下单口都把 vpCapable 传给了 service',
+    (routes.match(/^\s+vpCapable,$/gm) ?? []).length,
+    2,
+  )
+}
+
+console.log('\n=== E. 当前 server/.env 的实际判定 ===')
 {
   // 由 src/env.ts 已加载的真实环境
   const mode = resolvePayMode(process.env)

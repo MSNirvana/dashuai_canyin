@@ -17,6 +17,8 @@
 //     ⚠ 注意它**不影响非生产环境的演示支付**（PAYMENT_MODE=test 时的自动置 PAID），
 //       那是开发联调必需的能力，且被 `NODE_ENV !== production` 单独锁死，生产永远拿不到。
 //   取值无法识别 → 直接抛错，不猜测意图。安全相关的开关静默误读比响亮报错危险得多。
+import { vpConfigProblems, vpEnabled } from './xpay.js'
+
 const TRUTHY = new Set(['true', '1', 'yes', 'on'])
 const FALSY = new Set(['false', '0', 'no', 'off'])
 
@@ -45,18 +47,60 @@ export function validateProductionConfig(env: NodeJS.ProcessEnv = process.env): 
   if (env.DEV_LOGIN === 'true' || env.MOCK_AI === 'true') throw new Error('Demo features forbidden in production')
   if (paymentsEnabled(env)) {
     if (env.PAYMENT_MODE !== 'real') throw new Error('Demo features forbidden in production')
-    for (const key of ['WX_PAY_MCH_ID', 'WX_PAY_API_KEY_V3', 'WX_PAY_SERIAL_NO', 'WX_PAY_PRIVATE_KEY', 'WX_APPID', 'WX_PAY_NOTIFY_URL', 'WX_PAY_PLATFORM_CERT']) {
-      if (!(env[key] ?? '')) throw new Error(`Missing production payment config: ${key}`)
+
+    /**
+     * ★★ 虚拟支付（小程序虚拟支付）配置校验。
+     *
+     * 只要**动过**任何一个 `WX_VP_*`，就必须配齐 —— 否则 `vpEnabled()` 静默变 false、
+     * 下单口退回普通微信支付，而平台对「虚拟类目」已经关停了普通支付能力：
+     * 现场表现为「配置填了一半、用户全部付不了款、日志里一个字都没有」。
+     */
+    const vpProblems = vpConfigProblems(env)
+    if (vpProblems.length > 0) {
+      throw new Error(`虚拟支付配置不完整：${vpProblems.join('；')}`)
     }
-    if ((env.WX_PAY_API_KEY_V3 ?? '').length !== 32) throw new Error('WX_PAY_API_KEY_V3 requires 32 characters')
-    // 微信侧验签凭据必须是「平台证书」或「微信支付公钥」之一，两者微信对同一商户只启用其一。
-    // 只查非空是不够的：内容填错（例如误粘成商户 API 证书）会让 wxpay.ts 的 wxpayEnabled
-    // 静默变成 false —— 表现为「服务器正常启动、下单全被拒」，线上排查成本极高。这里直接失败。
-    const verifyMaterial = (env.WX_PAY_PLATFORM_CERT ?? '').replace(/\\n/g, '\n')
-    if (!verifyMaterial.includes('BEGIN CERTIFICATE') && !verifyMaterial.includes('BEGIN PUBLIC KEY')) {
-      throw new Error(
-        'WX_PAY_PLATFORM_CERT requires 微信支付平台证书 or 微信支付公钥 PEM ' +
-          '(BEGIN CERTIFICATE / BEGIN PUBLIC KEY)',
+
+    /**
+     * 普通微信支付（JSAPI）七项凭据。
+     *
+     * ★ 已接入虚拟支付时**不再强制**：虚拟商品必须走虚拟支付，普通支付对它们已被平台关停，
+     *   强留这套凭据没有意义（也挡住了「迁移完成后下线旧商户号」这条路）。
+     * ★ 但**只要动过其中任何一项**就要求配齐 —— 半配置会让「走哪条通道」在两个分支间跳，
+     *   比彻底不用更难排查。
+     */
+    const jsapiTouched = [
+      'WX_PAY_MCH_ID',
+      'WX_PAY_API_KEY_V3',
+      'WX_PAY_SERIAL_NO',
+      'WX_PAY_PRIVATE_KEY',
+      'WX_PAY_NOTIFY_URL',
+      'WX_PAY_PLATFORM_CERT',
+    ].some((key) => (env[key] ?? '') !== '')
+
+    if (!vpEnabled(env) || jsapiTouched) {
+      for (const key of ['WX_PAY_MCH_ID', 'WX_PAY_API_KEY_V3', 'WX_PAY_SERIAL_NO', 'WX_PAY_PRIVATE_KEY', 'WX_APPID', 'WX_PAY_NOTIFY_URL', 'WX_PAY_PLATFORM_CERT']) {
+        if (!(env[key] ?? '')) throw new Error(`Missing production payment config: ${key}`)
+      }
+      if ((env.WX_PAY_API_KEY_V3 ?? '').length !== 32) throw new Error('WX_PAY_API_KEY_V3 requires 32 characters')
+      // 微信侧验签凭据必须是「平台证书」或「微信支付公钥」之一，两者微信对同一商户只启用其一。
+      // 只查非空是不够的：内容填错（例如误粘成商户 API 证书）会让 wxpay.ts 的 wxpayEnabled
+      // 静默变成 false —— 表现为「服务器正常启动、下单全被拒」，线上排查成本极高。这里直接失败。
+      const verifyMaterial = (env.WX_PAY_PLATFORM_CERT ?? '').replace(/\\n/g, '\n')
+      if (!verifyMaterial.includes('BEGIN CERTIFICATE') && !verifyMaterial.includes('BEGIN PUBLIC KEY')) {
+        throw new Error(
+          'WX_PAY_PLATFORM_CERT requires 微信支付平台证书 or 微信支付公钥 PEM ' +
+            '(BEGIN CERTIFICATE / BEGIN PUBLIC KEY)',
+        )
+      }
+    } else {
+      console.warn('[config] 已接入虚拟支付、且未配置普通微信支付凭据 ⇒ 收款仅走小程序虚拟支付通道。')
+    }
+
+    if (!vpEnabled(env)) {
+      console.warn(
+        '[config] ⚠ 未配置 WX_VP_*：若小程序在售虚拟商品（会员订阅 / 积分加油包），' +
+          '平台要求其购买与支付**必须**接入小程序虚拟支付；仅含虚拟类目的小程序，' +
+          '其安卓及非 iOS 的普通微信支付能力会被平台关停 ⇒ 用户将无法付款。',
       )
     }
   } else {

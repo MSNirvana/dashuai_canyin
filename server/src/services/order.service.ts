@@ -9,6 +9,14 @@ import type { PrismaClient, Prisma } from '@prisma/client'
 import { randomUUID } from 'crypto'
 import { recharge, grant, getBalance, lockMerchantAccount, type Db } from '../bean/bean.service.js'
 import { wxpayEnabled, createJsapiOrder, buildPayParams, decryptResource, type PayParams } from '../lib/wxpay.js'
+import {
+  vpEnabled,
+  vpLegacyJsapiAllowed,
+  buildVirtualPayParams,
+  memberProductId,
+  beanProductId,
+  type VirtualPayParams,
+} from '../lib/xpay.js'
 import { getNumber } from '../lib/settings.js'
 import { paymentsEnabled } from '../lib/config.js'
 import { activeSubscription, getStorage, SubscriptionRequiredError } from './subscription.service.js'
@@ -83,6 +91,100 @@ export function resolvePayMode(env: NodeJS.ProcessEnv = process.env): 'real' | '
   if (paymentsEnabled(env) && wxpayEnabled) return 'real'
   if (env.NODE_ENV !== 'production' && env.PAYMENT_MODE === 'test') return 'demo'
   return 'disabled'
+}
+
+/**
+ * `payMode === 'disabled'` 时也算「有真实收款能力」的另一条通道：小程序虚拟支付。
+ *
+ * ★★ 为什么必须单独有这个判据：`resolvePayMode()` 是**普通微信支付（JSAPI）中心**的 ——
+ *   它只看 `wxpayEnabled`。而虚拟商品**只能**走虚拟支付，所以「迁移完成后下线旧商户号」
+ *   是一个正常且推荐的终局。若各处门禁仍写 `resolvePayMode() !== 'real'`，
+ *   那个终局会**静默关掉对账与风控**（`pay-reconcile` / `pay-risk` 的调度直接 return），
+ *   而它们恰恰是「钱收了没发权益」的唯一兜底。
+ * ⇒ 凡是要表达「这个环境能不能真实收款」，用本函数，不要再用 `resolvePayMode()`。
+ */
+export function realCollectionEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return resolvePayMode(env) === 'real' || (paymentsEnabled(env) && vpEnabled(env))
+}
+
+/**
+ * 本次**订单**走哪条收款通道。
+ *
+ * ★★ 两个输入缺一不可：
+ *   ① 「环境能不能」—— `WX_VP_*` 是否配齐（`vpEnabled`）；
+ *   ② 「**本次请求的客户端**认不认识」—— `clientVpCapable`，由端上随下单上报
+ *      （`platform.payCapabilities.virtualPay`）。
+ *
+ * ★★ 为什么必须带 ②、而不能只看 ①：只看 ① 时它是**进程级**的 —— 填上凭据并重启会让
+ *   **所有**新单立刻下发 `{signData,paySig,signature,mode}`。而线上随时有大量**已安装、
+ *   尚未升级**的客户端，它们会把这四件套当成 JSAPI 参数交给 `Taro.requestPayment`，
+ *   现场表现是「点了付款没反应 / 支付失败」⇒ **全体用户付不了款**。
+ *   微信侧的版本发布不由我们控制（用户下次冷启动才拉到新版），
+ *   所以「切通道」只能**按请求**走，且默认落在安全侧。
+ *
+ * ★ `clientVpCapable` **故意不给默认值**：逼每个调用点显式回答「这个客户端认识四件套吗」，
+ *   免得将来有人漏传，就把旧客户端打进一条它无法调起的路径。
+ *
+ * ★ 过渡期行为：老客户端（`clientVpCapable=false`）**默认仍放行普通微信支付**
+ *   （`WX_VP_LEGACY_JSAPI`，默认 true）。置 false 后老客户端也会拿到四件套
+ *   ⇒ 只在小程序后台**全量发布新版之后**才可动，见 `vpLegacyJsapiAllowed` 的注释。
+ */
+export function resolvePayChannel(input: {
+  env?: NodeJS.ProcessEnv
+  /** 本次请求的客户端是否声明认识虚拟支付四件套。缺省/未知一律按 `false` 处理。 */
+  clientVpCapable: boolean
+}): PayChannel {
+  const env = input.env ?? process.env
+  // 环境没配 VirtualPay ⇒ 只有 JSAPI 一条路可走（老行为，完全不变）
+  if (!vpEnabled(env)) return 'jsapi'
+  // 客户端认识四件套 ⇒ 直接走虚拟支付
+  if (input.clientVpCapable) return 'vp'
+  // 老客户端：过渡期放行 JSAPI；切齐开关置 false 后才强制 vp
+  return vpLegacyJsapiAllowed(env) ? 'jsapi' : 'vp'
+}
+
+export type PayChannel = 'vp' | 'jsapi'
+
+/** 下单返回的调起参数：普通微信支付（JSAPI）或虚拟支付，二选一。 */
+export type OrderPayParams = PayParams | VirtualPayParams
+
+/** 虚拟支付不可用（缺 `session_key`）：code 换不出身份时无法签用户态签名。 */
+export class VpCredentialMissingError extends Error {
+  constructor() {
+    super('支付凭证已过期，请返回重新进入后再试')
+    this.name = 'VpCredentialMissingError'
+  }
+}
+
+/**
+ * 构建虚拟支付的调起参数。
+ *
+ * ★ 只做一件事：把「订单」翻译成微信要的四件套。产品映射与价格的一致性约束见
+ *   `lib/xpay.ts` 的 `VP_PRODUCT_CONTRACT`。
+ */
+function buildVpParams(input: {
+  orderType: 'BEAN' | 'MEMBER'
+  orderNo: string
+  merchantId: bigint
+  productId: string
+  amountFen: number
+  vpSessionKey?: string
+}): VirtualPayParams {
+  if (!input.vpSessionKey) throw new VpCredentialMissingError()
+  const params = buildVirtualPayParams({
+    productId: input.productId,
+    // ★ 价格取自**本地订单金额**，而它又来自套餐当前配置。微信会拿它与 MP 后台的道具价比对，
+    //   对不上直接 -15013 ⇒ 改价流程必须连带同步 MP 后台（VP_PRODUCT_CONTRACT 有清单）。
+    goodsPriceFen: input.amountFen,
+    outTradeNo: input.orderNo,
+    attach: `${input.orderType}:${input.merchantId}`,
+    sessionKey: input.vpSessionKey,
+  })
+  // 留一行可检索的现场：事后核对「这笔钱换的是哪个道具」时不必再去翻签名原文。
+  console.log(
+    `[pay/vp] 下单 ${input.orderNo} 道具=${input.productId} 金额=${input.amountFen}分 类型=${input.orderType}`,
+  )
+  return params
 }
 
 export interface MeView {
@@ -260,7 +362,13 @@ export interface CreateOrderResult {
   amountFen: number
   beans: string
   memberDiscountApplied: boolean
-  payParams: PayParams | null
+  /**
+   * 本次走哪条收款通道。
+   * ★ 客户端也可以只判 `payParams` 里有没有 `signData` —— 给出这个字段是为了让
+   *   服务端日志与前端分支都**显式**，而不是靠字段存在性推断。
+   */
+  payChannel: PayChannel
+  payParams: OrderPayParams | null
 }
 
 /** 加油包下单：仅订阅用户可买；v5 已废除 8 折 */
@@ -270,6 +378,17 @@ export async function createBeanOrder(
   packageId: bigint,
   /** 本次付款人的 openid（下单口用 `wx.login` 的 code 换出）；缺省时回退账号已存的那枚 */
   payOpenid?: string,
+  /**
+   * 本次付款人的 `session_key`，与 `payOpenid` 是**同一次** code2Session 的产物
+   * （`wx.login` 的 code 一次性 ⇒ 不能分两次换）。虚拟支付的用户态签名要用它；
+   * 普通微信支付不需要。★ 不落库、不下发，算完即弃。
+   */
+  vpSessionKey?: string,
+  /**
+   * 本次下单的客户端是否声明认识虚拟支付四件套。
+   * ★ 缺省 = `false`（老客户端）⇒ 继续走普通微信支付，见 `resolvePayChannel`。
+   */
+  vpCapable = false,
 ): Promise<CreateOrderResult> {
   const pkg = await prisma.beanPackage.findFirst({ where: { id: packageId, enabled: true } })
   if (!pkg) throw new PackageNotFoundError()
@@ -285,7 +404,10 @@ export async function createBeanOrder(
   // 错误优先级不变：档位(3006) → 订阅(2005) → 支付(3008)。
   // 仅允许非生产、显式 PAYMENT_MODE=test 的隔离演示支付；缺真实配置不得隐式发放权益。
   const payMode = resolvePayMode()
-  if (payMode === 'disabled') throw new PaymentUnavailableError()
+  // ★ 虚拟支付是**独立通道**（`resolvePayMode` 只看普通微信支付）：它可用就不算「支付关闭」。
+  //   通道优先级：虚拟支付 > 普通微信支付 > 演示 > 拒绝。虚拟商品**只能**走第一条。
+  const vpActive = paymentsEnabled() && resolvePayChannel({ clientVpCapable: vpCapable }) === 'vp'
+  if (payMode === 'disabled' && !vpActive) throw new PaymentUnavailableError()
 
   const orderNo = `B${Date.now().toString().slice(-10)}${randomUUID().slice(0, 6)}`
   const order = await prisma.order.create({
@@ -303,9 +425,38 @@ export async function createBeanOrder(
     },
   })
 
+  // ── 通道分流：虚拟商品**必须**走虚拟支付（普通支付对虚拟类目会被平台关停）──
+  if (vpActive) {
+    return {
+      dev: false,
+      orderNo,
+      amountFen,
+      beans: beans.toString(),
+      memberDiscountApplied: false,
+      payChannel: 'vp',
+      payParams: buildVpParams({
+        orderType: 'BEAN',
+        orderNo,
+        merchantId,
+        // 道具ID 由「基础积分数」推导（**不含赠送**）—— 见 xpay.beanProductId 的说明
+        productId: beanProductId(pkg.beans),
+        amountFen,
+        vpSessionKey,
+      }),
+    }
+  }
+
   if (payMode === 'demo') {
     await markOrderPaid(prisma, orderNo, `TEST${orderNo}`, true, undefined, 'DEMO')
-    return { dev: true, orderNo, amountFen, beans: beans.toString(), memberDiscountApplied: false, payParams: null }
+    return {
+      dev: true,
+      orderNo,
+      amountFen,
+      beans: beans.toString(),
+      memberDiscountApplied: false,
+      payChannel: 'jsapi',
+      payParams: null,
+    }
   }
 
   const m = await prisma.merchant.findUnique({ where: { id: merchantId } })
@@ -331,6 +482,7 @@ export async function createBeanOrder(
     amountFen,
     beans: beans.toString(),
     memberDiscountApplied: false,
+    payChannel: 'jsapi',
     payParams: buildPayParams(prepayId),
   }
 }
@@ -342,13 +494,19 @@ export async function createMemberOrder(
   packageId: bigint,
   /** 本次付款人的 openid（下单口用 `wx.login` 的 code 换出）；缺省时回退账号已存的那枚 */
   payOpenid?: string,
+  /** 同 createBeanOrder：本次付款人的 session_key（虚拟支付用户态签名要用） */
+  vpSessionKey?: string,
+  /** 同 createBeanOrder：本次下单的客户端是否声明认识虚拟支付四件套。缺省 = 不认识 */
+  vpCapable = false,
 ): Promise<CreateOrderResult> {
   const pkg = await prisma.memberPackage.findFirst({ where: { id: packageId, enabled: true } })
   if (!pkg) throw new PackageNotFoundError()
 
   // 同 createBeanOrder：支付不可用时在建单之前就拒绝，避免悬空 PENDING 订单
   const payMode = resolvePayMode()
-  if (payMode === 'disabled') throw new PaymentUnavailableError()
+  // 同 createBeanOrder：虚拟支付可用即不算「支付关闭」
+  const vpActive = paymentsEnabled() && resolvePayChannel({ clientVpCapable: vpCapable }) === 'vp'
+  if (payMode === 'disabled' && !vpActive) throw new PaymentUnavailableError()
 
   const orderNo = `M${Date.now().toString().slice(-10)}${randomUUID().slice(0, 6)}`
   const order = await prisma.order.create({
@@ -366,9 +524,38 @@ export async function createMemberOrder(
     },
   })
 
+  // ── 通道分流：订阅属于「订阅内容」，是运营指南点名的虚拟商品 ⇒ 必须走虚拟支付 ──
+  if (vpActive) {
+    return {
+      dev: false,
+      orderNo,
+      amountFen: pkg.priceFen,
+      beans: '0',
+      memberDiscountApplied: false,
+      payChannel: 'vp',
+      payParams: buildVpParams({
+        orderType: 'MEMBER',
+        orderNo,
+        merchantId,
+        // 用套餐的 `code`（唯一索引）而不是自增 id —— 见 xpay.memberProductId 的说明
+        productId: memberProductId(pkg.code),
+        amountFen: pkg.priceFen,
+        vpSessionKey,
+      }),
+    }
+  }
+
   if (payMode === 'demo') {
     await markOrderPaid(prisma, orderNo, `TEST${orderNo}`, true, undefined, 'DEMO')
-    return { dev: true, orderNo, amountFen: pkg.priceFen, beans: '0', memberDiscountApplied: false, payParams: null }
+    return {
+      dev: true,
+      orderNo,
+      amountFen: pkg.priceFen,
+      beans: '0',
+      memberDiscountApplied: false,
+      payChannel: 'jsapi',
+      payParams: null,
+    }
   }
 
   const m = await prisma.merchant.findUnique({ where: { id: merchantId } })
@@ -388,7 +575,15 @@ export async function createMemberOrder(
     timeExpire: toRfc3339(order.expireAt),
   })
   await prisma.order.update({ where: { id: order.id }, data: { wxPrepayId: prepayId } })
-  return { dev: false, orderNo, amountFen: pkg.priceFen, beans: '0', memberDiscountApplied: false, payParams: buildPayParams(prepayId) }
+  return {
+    dev: false,
+    orderNo,
+    amountFen: pkg.priceFen,
+    beans: '0',
+    memberDiscountApplied: false,
+    payChannel: 'jsapi',
+    payParams: buildPayParams(prepayId),
+  }
 }
 
 /** 标记订单已支付并结算（终态 CAS：仅 PENDING→PAID 可发放权益，并发重复回调天然幂等）

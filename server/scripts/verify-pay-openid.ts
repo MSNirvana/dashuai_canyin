@@ -144,20 +144,25 @@ async function main(): Promise<void> {
       codeDecl.trim(),
     )
     // 定义 1 次 + 两个下单口各 1 次
+    // ★ 2026-10-10：本地助手由 `resolvePayOpenid` 改名为 `resolvePayer` ——
+    //   它现在返回「付款人身份」（openid + session_key，**同一次** code2Session 的产物）。
+    //   正则写 `resolvePayer\(` 而不是 `resolvePayer`：`resolvePayerSession(` 后面是 S，
+    //   不会被算进来（否则「1 定义 + 2 调用」这个计数就失真了）。
+    const payerCallCount = (routeSrc.match(/resolvePayer\(/g) ?? []).length
     check(
-      (routeSrc.match(/resolvePayOpenid\(/g) ?? []).length === 3,
-      '两个下单口（充值 / 会员）都取「本次付款人的 openid」',
-      `出现 ${(routeSrc.match(/resolvePayOpenid\(/g) ?? []).length} 次，期望 3（1 定义 + 2 调用）`,
+      payerCallCount === 3,
+      '两个下单口（充值 / 会员）都取「本次付款人的身份」',
+      `出现 ${payerCallCount} 次，期望 3（1 定义 + 2 调用）`,
     )
     check(
-      /createBeanOrder\([\s\S]{0,140}?payOpenid\)/.test(routeSrc) &&
-        /createMemberOrder\([\s\S]{0,140}?payOpenid\)/.test(routeSrc),
-      '★ 两个下单口都把 payOpenid 传了下去（只取不传 = 白改）',
+      /createBeanOrder\([\s\S]{0,200}?payer\.openid,\s*payer\.sessionKey\b/.test(routeSrc) &&
+        /createMemberOrder\([\s\S]{0,200}?payer\.openid,\s*payer\.sessionKey\b/.test(routeSrc),
+      '★ 两个下单口都把 openid **与** session_key 一起传下去（漏 session_key ⇒ 虚拟支付签不出用户态签名）',
     )
 
     // ─────────── ⑦ ★ 取 openid 与绑定解耦（本次事故的修法核心）───────────
     console.log('\n════ ⑦ ★ 绑不上也必须能付款（「账号和微信不一样也能付」的修法）════')
-    const payerDecl = authSrc.slice(authSrc.indexOf('export async function resolvePayerOpenid'))
+    const payerDecl = authSrc.slice(authSrc.indexOf('export async function resolvePayerSession'))
     const payerEnd = payerDecl.indexOf('\n}\n')
     const payerBody = payerEnd > 0 ? payerDecl.slice(0, payerEnd + 2) : ''
     check(
@@ -170,12 +175,24 @@ async function main(): Promise<void> {
       '★★ resolvePayerOpenid 全程不抛错 ⇒ 绑定被唯一索引拒绝时照样把 openid 交给下单',
     )
     check(
-      payerBody.indexOf('bindWechatIdentity') < payerBody.lastIndexOf('return session.openid'),
-      '★★ 绑定写在 return 之前、而 return 在 try 之外 ⇒「绑不上也返回本次付款人的 openid」',
+      payerBody.indexOf('bindWechatIdentity') < payerBody.lastIndexOf('return payer'),
+      '★★ 绑定写在 return 之前、而 return 在 try 之外 ⇒「绑不上也返回本次付款人的身份」',
     )
     check(
-      /if \(!wxLoginCode\) return undefined/.test(payerBody),
-      '不传 wxLoginCode 时返回 undefined ⇒ 调用方回退账号已存 openid，老客户端行为不变',
+      /if \(!wxLoginCode\) return \{\}/.test(payerBody),
+      '不传 wxLoginCode 时返回空身份 ⇒ 调用方回退账号已存 openid，老客户端行为不变',
+    )
+    // ★ 2026-10-10 新增：`resolvePayerOpenid` 退化成**纯投影**。
+    //   虚拟支付要用 session_key，而 code 是一次性的 ⇒ 拆成两份实现必然分叉（第二份换不到 code）。
+    //   所以断言「它自己不含 code2Session，只调 resolvePayerSession」。
+    const wrapperIdx = authSrc.indexOf('export async function resolvePayerOpenid')
+    const wrapperDecl = wrapperIdx >= 0 ? authSrc.slice(wrapperIdx) : ''
+    const wrapperEnd = wrapperDecl.indexOf('\n}\n')
+    const wrapperBody = wrapperEnd > 0 ? wrapperDecl.slice(0, wrapperEnd + 2) : ''
+    check(
+      wrapperBody.includes('resolvePayerSession') && !wrapperBody.includes('code2Session'),
+      '★ resolvePayerOpenid 只做投影（自身不含 code2Session）⇒ 付款人身份的判据只有一处',
+      `len=${wrapperBody.length}`,
     )
 
     // ── 下单侧：本次付款人优先，账号已存只作兜底 ──

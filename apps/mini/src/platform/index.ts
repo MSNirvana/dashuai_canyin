@@ -24,6 +24,7 @@ export const platform: PlatformAdapter = impl
 export type {
   ChooseChatFileOptions,
   LoginCredential,
+  PayCapabilities,
   PickedFile,
   PlatformAdapter,
   PlatformFeature,

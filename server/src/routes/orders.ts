@@ -6,10 +6,10 @@ import { prisma } from '../db.js'
 import { auth } from '../middleware/auth.js'
 import { ok, fail } from '../lib/result.js'
 import * as orderSvc from '../services/order.service.js'
-import { optionalText } from '../lib/validators.js'
+import { optionalFlag, optionalText } from '../lib/validators.js'
 import * as reconcile from '../services/pay-reconcile.service.js'
-import { PackageNotFoundError, NoOpenidError, PaymentUnavailableError } from '../services/order.service.js'
-import { resolvePayerOpenid } from '../auth/auth.service.js'
+import { PackageNotFoundError, NoOpenidError, PaymentUnavailableError, VpCredentialMissingError } from '../services/order.service.js'
+import { resolvePayerSession, type PayerSession } from '../auth/auth.service.js'
 import { SubscriptionRequiredError } from '../services/subscription.service.js'
 
 const router = createRouter()
@@ -125,32 +125,57 @@ const orderInput = z.object({
   //     下面 `if (!wxLoginCode) return` 当作「没给」处理，支付照走原路径。
   //   即：拿不到/给空了都只是「不补绑」，**绝不影响付款本身**。
   wxLoginCode: optionalText(128),
+  /**
+   * 本次下单的客户端是否**认识小程序虚拟支付四件套**（`signData/paySig/signature/mode`）。
+   *
+   * ★ 为什么下单口必须知道这件事：服务端要据此决定下发哪一组支付参数。
+   *   若只看「本环境配没配 `WX_VP_*`」，切通道就是**进程级**的 —— 填上凭据并重启会让
+   *   **所有**新单立刻下发四件套，而线上随时有大量未升级的客户端（把四件套当 JSAPI 参数
+   *   交给 `Taro.requestPayment` ⇒ 表现为「付不了款」）。详见 `resolvePayChannel`。
+   * ★ 与 `wxLoginCode` 同样「永不拒绝」：老客户端不发它 ⇒ 解析成 `false` ⇒ 走原通道，
+   *   行为与改动前**完全一致**。写错格式也只会落到 `false`（安全侧），不会 400。
+   */
+  vpCapable: optionalFlag(),
 })
 
 /**
- * 下单前按需把 openid 补绑到当前商户。
+ * 下单前取「本次付款人的身份」：`openid` + `session_key`，两者是**同一次** code2Session 的产物。
  *
  * ★★ 必须**吞掉失败**，这条是本修复的正确性关键：
  *   账号本来就有 openid 时（微信一键登录的用户），openid 与绑定的那个是同一个，
  *   这时**根本不需要**这次绑定 —— 如果让「code 换不出 openid」把请求打成 500，
  *   就是把一条本来能成的支付路径弄坏了。补绑失败就退回原行为：
  *   下面的 `createXxxOrder()` 仍会读 `merchant.wechatOpenid`，拿不到才抛 3007。
+ *
+ * ★ 为什么必须连 `session_key` 一起取：`wx.login` 的 code 是**一次性**的 ——
+ *   分两次换（一次拿 openid、一次拿 session_key）第二次必然失败，而且会把第一次的
+ *   session_key 顶掉。虚拟支付的用户态签名要用它，所以只能同源取。
  */
-async function resolvePayOpenid(merchantId: bigint, wxLoginCode?: string): Promise<string | undefined> {
-  return resolvePayerOpenid(prisma, merchantId, wxLoginCode)
+async function resolvePayer(merchantId: bigint, wxLoginCode?: string): Promise<PayerSession> {
+  return resolvePayerSession(prisma, merchantId, wxLoginCode)
 }
 
 router.post('/recharge/order', async (req, res) => {
   try {
-    const { packageId, wxLoginCode } = orderInput.parse(req.body)
-    // 用「本次付款人」的 openid 下单：微信要求 payer.openid == 当前调起支付的用户，
+    const { packageId, wxLoginCode, vpCapable } = orderInput.parse(req.body)
+    // 用「本次付款人」的身份下单：微信要求付款人就是当前调起支付的用户，
     // 与账号里存的那枚未必是同一个（换过手机号 / 换过微信）。绑定失败不再阻断付款。
-    const payOpenid = await resolvePayOpenid(req.merchantId!, wxLoginCode)
-    const r = await orderSvc.createBeanOrder(prisma, req.merchantId!, idParam(packageId, 'packageId'), payOpenid)
+    // ★ session_key 与 openid 必须**同源取**（code 一次性）—— 见 resolvePayer。
+    const payer = await resolvePayer(req.merchantId!, wxLoginCode)
+    const r = await orderSvc.createBeanOrder(
+      prisma,
+      req.merchantId!,
+      idParam(packageId, 'packageId'),
+      payer.openid,
+      payer.sessionKey,
+      // 本客户端认不认识虚拟支付四件套 —— 由它决定下发哪组支付参数（见 resolvePayChannel）
+      vpCapable,
+    )
     ok(res, r)
   } catch (e) {
     if (e instanceof PackageNotFoundError) return fail(res, 3006, '充值档位不存在或未启用', 404)
     if (e instanceof NoOpenidError) return fail(res, 3007, '请先用手机号快捷登录，再完成支付', 400)
+    if (e instanceof VpCredentialMissingError) return fail(res, 3009, e.message, 400)
     if (e instanceof PaymentUnavailableError) return fail(res, 3008, e.message, 503)
     // 本路由的 catch 是全捕获分支，会在全局 errorHandler 之前拦下异常，
     // 所以全局映射器里的 SubscriptionRequiredError → 2005 到不了这里，必须显式补上，
@@ -165,14 +190,23 @@ router.post('/recharge/order', async (req, res) => {
 
 router.post('/membership/order', async (req, res) => {
   try {
-    const { packageId, wxLoginCode } = orderInput.parse(req.body)
-    // 同 /recharge/order：用本次付款人的 openid 下单，账号绑定状态不参与准入。
-    const payOpenid = await resolvePayOpenid(req.merchantId!, wxLoginCode)
-    const r = await orderSvc.createMemberOrder(prisma, req.merchantId!, idParam(packageId, 'packageId'), payOpenid)
+    const { packageId, wxLoginCode, vpCapable } = orderInput.parse(req.body)
+    // 同 /recharge/order：用本次付款人的身份下单，账号绑定状态不参与准入。
+    const payer = await resolvePayer(req.merchantId!, wxLoginCode)
+    const r = await orderSvc.createMemberOrder(
+      prisma,
+      req.merchantId!,
+      idParam(packageId, 'packageId'),
+      payer.openid,
+      payer.sessionKey,
+      // 同 /recharge/order
+      vpCapable,
+    )
     ok(res, r)
   } catch (e) {
     if (e instanceof PackageNotFoundError) return fail(res, 3006, '会员套餐不存在或未启用', 404)
     if (e instanceof NoOpenidError) return fail(res, 3007, '请先用手机号快捷登录，再完成支付', 400)
+    if (e instanceof VpCredentialMissingError) return fail(res, 3009, e.message, 400)
     if (e instanceof PaymentUnavailableError) return fail(res, 3008, e.message, 503)
     if (e instanceof InvalidIdParamError) return fail(res, 4000, '参数不合法', 400)
     if (e instanceof z.ZodError) return fail(res, 400, '参数错误', 400)

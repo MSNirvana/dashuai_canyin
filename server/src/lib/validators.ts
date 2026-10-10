@@ -25,3 +25,19 @@ export const optionalText = (max: number) => z.string().trim().max(max).optional
 
 /** 可选且可显式置空：`null` 表示「清空该字段」，落库存的是 trim 后的值 */
 export const nullableText = (max: number) => z.string().trim().max(max).nullable().optional()
+
+/**
+ * 可选布尔开关。**永不拒绝**，解析结果一定是 `true` / `false`。
+ *
+ * ★ 为什么不是 `z.boolean().optional()`：后者遇到客户端发字符串 `"true"` 或数字 `1`
+ *   会判 400「参数错误」，把**整笔下单**挡掉 —— 与 `optionalText` 的理由完全一样：
+ *   端上多加一个引号，不应该让用户付不了款。
+ * ★ 为什么不是 `z.coerce.boolean()`：`coerce` 会把 `"false"` 变成 `true`（非空字符串即真），
+ *   这是最危险的一种「宽容」—— 声明「我不认识虚拟支付」却得到 true，正好切到错的一侧。
+ * ★ 所以只白名单四个真值，**其余一切**（拼错的、未知格式、null、对象）一律 `false`。
+ *   错误方向指向安全侧：`false` = 老客户端 = 继续走两端都认识的通道。
+ */
+export const optionalFlag = () =>
+  z
+    .unknown()
+    .transform((v) => v === true || v === 'true' || v === 1 || v === '1')

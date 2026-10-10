@@ -87,7 +87,9 @@
     "asr:probe": "tsx scripts/probe-tencent-asr.ts",
     "bgm:generate": "tsx scripts/bgm-generate.ts",
     "bgm:replenish": "tsx scripts/bgm-replenish.ts",
-    "bgm:verify": "tsx scripts/verify-bgm-library.ts"
+    "bgm:verify": "tsx scripts/verify-bgm-library.ts",
+    "xpay:verify": "tsx scripts/verify-xpay-signature.ts",
+    "xpay-deliver:verify": "tsx scripts/verify-xpay-deliver.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

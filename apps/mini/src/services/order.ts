@@ -1,5 +1,6 @@
 // 充值 / 会员 / 我的 API：对接 /api/v1/orders
 import { http } from './request'
+import { platform } from '../platform'
 
 export interface BeanPackage {
   id: string
@@ -31,6 +32,7 @@ export interface MeInfo {
   storage: { usedBytes: string; quotaBytes: string; subscribed: boolean }
 }
 
+/** 普通微信支付（v3 JSAPI）。 */
 export interface PayParams {
   timeStamp: string
   nonceStr: string
@@ -39,13 +41,35 @@ export interface PayParams {
   paySign: string
 }
 
+/**
+ * 小程序虚拟支付（`wx.requestVirtualPayment`）—— 服务端签好的四件套。
+ *
+ * ★ 为什么必须走它：微信《虚拟支付业务运营指南》要求小程序内的**虚拟商品**
+ *   （订阅内容、虚拟代币、付费功能……）购买与支付**均须接入小程序虚拟支付**，
+ *   并会**关闭**这类小程序在安卓及其余非 iOS 系统的普通微信支付能力。
+ *   本项目的「会员订阅」与「积分加油包」两件商品都命中 ⇒ 原来的 JSAPI 已不通。
+ * ★ `signData` 是**已序列化好的字符串**：从这个类型到 `wx.requestVirtualPayment`
+ *   全程**原样透传**，任何一处重新 `JSON.stringify` 都会让签名失效。
+ */
+export interface VirtualPayParams {
+  signData: string
+  paySig: string
+  signature: string
+  mode: string
+}
+
+/** 服务端按 `resolvePayChannel()` 下发其中一组。 */
+export type OrderPayParams = PayParams | VirtualPayParams
+
 export interface CreateOrderResult {
   dev: boolean
   orderNo: string
   amountFen: number
   beans: string
   memberDiscountApplied: boolean
-  payParams: PayParams | null
+  /** 服务端本次走的是哪条收款通道（便于排查与埋点，不参与前端的支付动作） */
+  payChannel?: 'vp' | 'jsapi'
+  payParams: OrderPayParams | null
 }
 
 export function getMe() {
@@ -64,9 +88,19 @@ export function listMemberPlans() {
  * ★ 为什么必须有它：微信 JSAPI 支付要付款人的 `openid`，而**手机号验证码登录**的账号
  *   在服务端没有 openid（短信登录路径不取）⇒ 不带它就是 3007「账号未绑定微信，无法支付」。
  *   传上它，服务端会换出 openid 并按需绑定到当前账号；一键登录的账号传了也是幂等无变化。
+ *
+ * ★★ `vpCapable` 由 `platform.payCapabilities.virtualPay` 如实上报，**必须带**：
+ *   服务端据此决定下发 JSAPI 五件套还是虚拟支付四件套。若服务端按「本环境配没配
+ *   `WX_VP_*`」判定，切通道就成了**进程级**的 —— 一旦服务端填上虚拟支付凭据，
+ *   **已安装的旧版本**客户端会收到它无法调起的四件套（表现：点了付款没反应）。
+ *   由端上报后，旧版本继续走 JSAPI、新版本走虚拟支付，两侧各自都能付款。
  */
 export function createBeanOrder(packageId: string, wxLoginCode?: string) {
-  return http.post<CreateOrderResult>('/orders/recharge/order', { packageId, wxLoginCode })
+  return http.post<CreateOrderResult>('/orders/recharge/order', {
+    packageId,
+    wxLoginCode,
+    vpCapable: platform.payCapabilities.virtualPay,
+  })
 }
 export interface OrderStatus {
   orderNo: string
@@ -79,7 +113,12 @@ export interface OrderStatus {
 }
 
 export function createMemberOrder(packageId: string, wxLoginCode?: string) {
-  return http.post<CreateOrderResult>('/orders/membership/order', { packageId, wxLoginCode })
+  return http.post<CreateOrderResult>('/orders/membership/order', {
+    packageId,
+    wxLoginCode,
+    // 同 createBeanOrder：如实上报本端能不能接虚拟支付四件套
+    vpCapable: platform.payCapabilities.virtualPay,
+  })
 }
 
 export function getOrderStatus(orderNo: string) {
