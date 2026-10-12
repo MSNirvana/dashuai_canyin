@@ -640,6 +640,75 @@ curl -sI http://dspcz.top/ | grep -i location                   # → https://ds
 >    实测：reload 后立即 `curl` 得到 `200`（旧 `default_server` 的答案），**3 秒后**同一请求才是 `301`。
 >    ⇒ 验证前先 `sleep 2~3`，否则会把「还没来得及生效」误判成「配置没生效」。
 
+### 官网（Web 端：手机号登录 / 订阅 / 加油包 / 网页支付）
+
+`dspcz.top` 已从「纯静态介绍页」升级为 **React SPA 官网**：和小程序**共用同一后端、同一账号、同一份权益**，
+不做两套账户，也不做「买完再同步一份」——两边读写的都是同一条 `Merchant` 记录。
+
+| 项 | 值 |
+|---|---|
+| 前端代码 | `apps/web`（React 18 + TypeScript + Vite，独立于 `apps/admin`） |
+| 构建产物 | `apps/web/dist` → 部署到 `/var/www/dashuai-web` |
+| 站点配置 | `deploy/nginx/dashuai-web.conf`（**SPA 回落** + `/api/` **同源反代**） |
+| 账号主键 | `Merchant.phone`（唯一）⇒ 官网与小程序同号即同一 `merchantId` |
+| 权益 | 同一份 `Membership` / `BeanAccount` / `Order`，结算统一走 `markOrderPaid()` |
+
+```bash
+npm run web:install     # 首次
+npm run web:dev         # 本地开发（/api/v1 代理到 https://api.dspcz.top）
+npm run web:typecheck
+npm run web:build       # tsc --noEmit && vite build
+```
+
+**后端开关（默认全关，不开＝前端显示「通道暂未开放」并拒绝建单）**
+
+| 变量 | 作用 |
+|---|---|
+| `PAYMENTS_ENABLED` | 两通道总闸（沿用既有含义） |
+| `PAYMENT_MODE=real` | 网页支付**只走真实通道**，没有演示分支 |
+| `WEB_PAY_NATIVE_ENABLED=true` | 开启 PC 扫码（微信 Native） |
+| `WEB_PAY_H5_ENABLED=true` | 开启手机浏览器 H5 支付 |
+
+> ★ 改完 `.env` 必须 `touch src/index.ts`，否则进程还拿着启动时的旧环境。
+
+**微信侧前置条件（未确认前不要开开关）**
+
+1. 商户号 `1750405417` 已开通 **Native 与 H5** 支付；
+2. H5 支付域名已配置且已备案（本项目即 `dspcz.top`）；
+3. `WX_APPID` 已与该商户号绑定 —— 下单用的 appid 必须与**回调校验的 appid** 同一个（`handleNotify` 会比对）；
+4. H5 要向微信上报**付款人真实 IP** ⇒ 服务端 `trust proxy ['loopback']` 与 nginx 的 `X-Forwarded-For` **两者缺一不可**（只配一边就会把 `127.0.0.1` 报给微信）。
+
+**部署（含回滚位）**
+
+```bash
+# ① 留一份旧静态页，改坏了能立刻换回去
+sudo cp -a /var/www/dashuai-web /var/www/dashuai-web.bak-$(date +%F-%H%M)
+
+# ② 构建并同步（--delete 会清掉旧的 index.html，这是预期）
+cd apps/web && npm run build && cd ../..
+sudo rsync -a --delete apps/web/dist/ /var/www/dashuai-web/
+
+# ③ 站点配置（REPLACE_DOMAIN 占位符与 api/admin 同一套约定）
+sed 's/REPLACE_DOMAIN/dspcz.top/g' deploy/nginx/dashuai-web.conf | sudo tee /etc/nginx/conf.d/dashuai-web.conf >/dev/null
+sudo nginx -t && sudo systemctl reload nginx
+sleep 3   # ★ reload 是异步的，立刻验证会拿到旧配置的答案
+
+# ④ 判据（三条都要看）
+curl -s https://dspcz.top/ | grep -o '冀ICP备[0-9]*号-[0-9]*'   # → 冀ICP备2023045927号-2（备案号必须还在）
+curl -s https://dspcz.top/api/v1/web/catalog                   # → code:0 + plans/packages/capabilities
+curl -sI https://dspcz.top/pricing | head -1                   # → 200（SPA 回落生效，不是 404）
+```
+
+> ⚠ `dspcz.top` 这条 `location /api/` 是**同源反代**，因此官网**不需要**加进 `CORS_ORIGIN`。
+> 反过来若把它改成前端直连 `https://api.dspcz.top`，就必须同步加白名单，否则浏览器侧全被拦。
+
+**守护**：`cd server && npm run web-pay:verify` —— 离线（不连库、不联网），钉住「关闸不建单 / 非会员不建单 /
+场景不可变更 / 归属校验 / 展示口径＝结算口径」共 54 项。
+
+> ⚠ **待补**：`WEB_PAY_NATIVE_ENABLED` / `WEB_PAY_H5_ENABLED` 尚未写进 `server/.env.example` 与
+> `deploy/env.server.template`。这两个文件当前都还压着**别的功能线**的未提交改动（混元通道），
+> 为避免把两条线搅进同一个 diff，等那条线合并时一并补上。
+
 ### 运营后台
 
 ```bash

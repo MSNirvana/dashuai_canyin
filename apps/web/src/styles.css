@@ -1,0 +1,732 @@
+/* ═══════════════════════════════════════════════════════════════
+   大帅餐饮助手 · 官网样式
+   设计依据：docs/ui-design/UI设计规范.md + apps/mini/src/styles/theme.scss
+   风格关键词：Logo 红单点强调 · 白底冷灰层次 · iOS 式留白与克制 · 零渐变零重阴影
+
+   ★ 四条铁律（改样式前先读）：
+     1. **禁止渐变 / 光晕 / 重投影**——层次只能用「留白 + 灰阶 + 细描边」建立。
+        规范原文：「层次靠『留白 + 灰阶』建立，禁止渐变、光晕、重投影」。
+        （唯一例外是 `.site-shell` 那条整页连续底色，它是用来消除模块接缝的，见下。）
+     2. **红色只给三处**：当前选中态、主行动按钮、进度与状态。一屏最多一个红色实心按钮
+        （`.button` 是红色实心，同屏的次要操作一律降级为 `.button.secondary` / 文字链）。
+     3. **色值必须来自下面的 token**，不要在组件里另写十六进制——否则又会分叉出第二套配色
+        （改版前官网用的暖橙 #ef6a2c 就是这么来的，与小程序完全不像）。
+     4. **手机优先，面向 30-50 岁门店经营者**：基准样式就是手机，`min-width` 媒体查询
+        只负责「放大到平板 / 桌面」。所以：
+          · 字号按「中年人看得清」定 —— 正文 ≥16px、行高 ≥1.7，**不要把正文压到 12.5px**；
+          · 可点区域按手指定 —— 主按钮高 52px、次级按钮 44px、链接行高 ≥40px；
+          · 布局一列到底，≥768px 才两列、≥1024px 才三列。
+        「精致」不等于「小」，这里的优先序是：看得清 > 点得准 > 好看。
+
+   ★ 内容原则：**一屏一件事，能删就删**。宁可少一段，不要堆三段。
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* 品牌主色（取自 logo.png 实测 #D02018，为白底观感提亮至 #E1251B） */
+  --brand: #e1251b;
+  --brand-hover: #f03a30;
+  --brand-active: #c21b12;
+  --brand-light: #fdecea;
+  --brand-soft: #fef6f5;
+  --brand-disabled: #f3c0bc;
+
+  /* 文字：冷灰阶（对齐 iOS System Gray）——「高级感」的主要来源 */
+  --ink: #111114;
+  --ink-2: #5c6066;
+  --ink-3: #8e939a;
+  --ink-4: #bfc3c9;
+  --anti: #ffffff;
+
+  /* 背景层级 */
+  --page: #f5f6f8;
+  --card: #ffffff;
+  --field: #f2f3f5;
+
+  /* 描边 */
+  --stroke: #edeef0;
+  --line: #f4f5f6;
+
+  /* 业务语义色 */
+  --bean: #c4892c;
+  --bean-soft: #fbf4e7;
+  --member: #a8741f;
+  --success: #2ba471;
+  --success-soft: #eaf7f1;
+  --danger: #c21b12;
+
+  /* 圆角 */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-pill: 999px;
+
+  /* 阴影：极轻，只做层次不做装饰 */
+  --sh-1: 0 1px 3px rgba(17, 17, 20, 0.04), 0 8px 24px rgba(17, 17, 20, 0.05);
+  --sh-2: 0 2px 6px rgba(17, 17, 20, 0.04), 0 16px 48px rgba(17, 17, 20, 0.06);
+  --glow-red: 0 6px 18px rgba(225, 37, 27, 0.22);
+
+  /* 节奏 */
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-5: 48px;
+
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro SC', 'PingFang SC', 'Helvetica Neue', sans-serif;
+  /* ★ 16px 是下限，不是可调项：门店老板多在 40 岁上下，12-13px 的正文看不清楚 */
+  font-size: 16px;
+  line-height: 1.7;
+  letter-spacing: -0.01em;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+a { color: inherit; text-decoration: none; }
+button, input { font: inherit; }
+button { cursor: pointer; }
+/* ★ `height: auto` 这一句是必需的，不是可省的：
+   <img width=1536 height=1024> 的**尺寸属性会变成 presentational hint**（等价于
+   `height:1024px`，只是优先级最低）。而下面各处的 `.hero-media img / .case-card img`
+   只写了 `aspect-ratio`、没写 `height`，于是 hint 生效 ⇒ 图片被钉死在源图的原始高度上
+   （实测首屏图 1024px 高、案例图 1536px 高，整页被拉长到 4200px）。
+   用作者样式把 height 收回 `auto`，`aspect-ratio` 才能真正决定比例。 */
+img { display: block; max-width: 100%; height: auto; }
+
+.container { width: min(100% - 40px, 1160px); margin: 0 auto; }
+.narrow { width: min(100% - 40px, 760px); margin: 0 auto; }
+
+/* 数字统一等宽对齐（金额 / 积分 / 时长） */
+.price strong, .stat-card strong, .bean-total b, .order-amount strong, .pay-amount strong {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+}
+
+/* ─────────────────── 骨架：页面底色一处连续过渡 ───────────────────
+   ★「模块底色衔接要自然」的解法不是给每段再刷一层色，而是**只留一条连续底色**：
+     整页一条极淡的冷灰纵向过渡，各 section 一律透明（不设 background）。
+     这样模块之间**根本不存在接缝**——分段刷色必然在上下边缘留下两条硬边，
+     再怎么调都看得出是「贴上去的色块」。
+   ★ 唯一需要区分的区块用**大圆角卡片**（.case-band / .cta-card）承载，
+     它的边界是「一张卡片」而不是「整幅换色」，观感上是有意为之。 */
+.site-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, #ffffff 0%, #fcfcfd 22%, #f7f8fa 52%, #fcfcfd 78%, #ffffff 100%);
+}
+main { flex: 1; }
+.page-section, .section, .cta-section, .pay-page, .result-page, .auth-page { background: transparent; }
+
+/* ───────────────────────── 顶栏 ─────────────────────────
+   ★ 手机端**不放汉堡菜单**：本站只有「首页 / 套餐」两页，汉堡图标对中年用户
+     既不直观也不必要。手机端顶栏只留「logo 回首页 + 登录/账户」一个动作，
+     导航列表（.nav-links）在 <768px 直接不显示。 */
+.site-header {
+  height: 60px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid var(--stroke);
+}
+.nav-wrap { height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+/* min-height 是触控目标：logo 图形只有 30px，但可点区域必须撑到 44px，
+   否则「点 logo 回首页」在手机上点不准（实测未加时整站最小可点高度就是这里）。 */
+.brand { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 44px; color: var(--ink); }
+.brand-mark { width: 30px; height: 30px; display: grid; place-items: center; color: var(--brand); flex: 0 0 auto; }
+.brand-word { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
+.brand-word b { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; white-space: nowrap; }
+/* 顶栏只放品牌名，不放副标题：「餐饮门店 · 轻松拍」由首页首屏的红色字标承担
+   （见 Home.tsx 的 .brand-mark-script）——同一句话不在两个位置各出现一次。 */
+
+/* 导航：仅桌面显示 */
+.nav-links { display: none; }
+
+.nav-actions { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+.user-chip {
+  display: flex; align-items: center; gap: 7px;
+  min-height: 44px; padding: 0 12px;
+  background: var(--field); border-radius: var(--r-pill);
+  color: var(--ink); font-size: 15px;
+}
+.user-chip svg { flex: 0 0 auto; }
+/* 手机端账户状态只留图标：手机号 11 位会把顶栏挤爆 */
+.chip-label { display: none; }
+.icon-text-button {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 44px; padding: 0 8px;
+  border: 0; background: none; color: var(--ink-2); font-size: 15px;
+}
+.icon-text-button:hover { color: var(--ink); }
+
+/* ───────────────────────── 按钮 ─────────────────────────
+   ★ 高度是**触控目标**，不是留白：主按钮 52px、次级 44px。
+     低于 44px 在手机上就是「点不准」，不要为了紧凑压下去。 */
+.button {
+  border: 0;
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 52px;
+  padding: 0 24px;
+  border-radius: var(--r-md);
+  color: var(--anti);
+  background: var(--brand);
+  font-weight: 650; font-size: 17px;
+  box-shadow: var(--glow-red);
+  transition: background 200ms ease-out, box-shadow 200ms ease-out, transform 200ms ease-out;
+}
+.button:hover { background: var(--brand-hover); }
+.button:active { background: var(--brand-active); transform: none; }
+.button:disabled { background: var(--field); color: var(--ink-4); box-shadow: none; cursor: not-allowed; transform: none; }
+.button.small { min-height: 44px; padding: 0 14px; font-size: 15px; border-radius: var(--r-sm); }
+.button.full { width: 100%; }
+/* 次要操作：浅红底红字（规范里的 Secondary）——不是第二个红实心 */
+.button.secondary {
+  background: var(--brand-light); color: var(--brand); box-shadow: none;
+}
+.button.secondary:hover { background: #fbdcd9; }
+.button.secondary:disabled { background: var(--field); color: var(--ink-4); }
+/* 三级：白底细描边（Ghost） */
+.button.ghost { background: var(--card); color: var(--ink); border: 1px solid var(--stroke); box-shadow: none; }
+.button.ghost:hover { background: var(--field); }
+/* 浅色按钮只用在深色底上 */
+.button.light-button { background: var(--card); color: var(--brand); box-shadow: none; }
+.button.light-button:hover { background: #fff5f4; }
+
+.text-button {
+  color: var(--brand); font-weight: 650;
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 44px;
+  border: 0; background: none; padding: 0; font-size: 16px;
+}
+.text-button:hover { color: var(--brand-active); }
+
+.code-button {
+  margin-top: 0;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-md);
+  background: var(--card);
+  color: var(--brand);
+  font-size: 15px; font-weight: 650;
+  transition: background 200ms ease-out;
+}
+.code-button:hover:not(:disabled) { background: var(--brand-soft); }
+.code-button:disabled { opacity: 1; color: var(--ink-4); background: var(--field); border-color: transparent; cursor: not-allowed; }
+
+/* ───────────────────────── 页脚 ───────────────────────── */
+.site-footer { border-top: 1px solid var(--stroke); padding: 26px 0 34px; background: transparent; }
+.footer-grid { display: flex; flex-direction: column; gap: 14px; }
+.footer-links { display: flex; flex-wrap: wrap; gap: 2px 22px; font-size: 15px; color: var(--ink-2); }
+/* 链接行也给足高度：手机上 12px 高的链接同样点不准 */
+.footer-links a { display: inline-flex; align-items: center; min-height: 40px; }
+.footer-links a:hover { color: var(--brand); }
+/* 备案号：管局要求悬挂在首页底部并链接工信部首页，逐字不可改 */
+.beian { color: var(--ink-3); }
+
+/* ───────────────────────── 通用块 ───────────────────────── */
+.eyebrow {
+  display: inline-flex; align-items: center; gap: 7px;
+  color: var(--brand); font-size: 14px; font-weight: 650;
+  letter-spacing: 0.06em;
+}
+.eyebrow.dark { color: var(--ink-3); }
+.eyebrow.light { color: rgba(255, 255, 255, 0.85); }
+
+.page-section { padding: 30px 0 56px; }
+/* ★ 标题一律左对齐：窄屏居中标题既浪费横向空间，也更难扫读 */
+.page-header { max-width: 720px; margin: 0 0 24px; }
+.page-header h1 { font-size: clamp(27px, 7vw, 42px); font-weight: 700; letter-spacing: -0.035em; line-height: 1.28; margin: 10px 0 10px; }
+.page-header p { color: var(--ink-2); line-height: 1.75; font-size: 16px; margin: 0; }
+
+.section { padding: 40px 0; }
+.section-title {
+  font-size: clamp(23px, 5.8vw, 34px); line-height: 1.3;
+  letter-spacing: -0.03em; font-weight: 700;
+  margin: 0 0 18px;
+}
+
+.loading-block { min-height: 200px; display: flex; justify-content: center; align-items: center; gap: 12px; color: var(--ink-3); font-size: 16px; }
+.spinner {
+  width: 20px; height: 20px;
+  border: 2px solid var(--stroke); border-top-color: var(--brand);
+  border-radius: 50%; animation: spin 800ms linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.error-block, .catalog-empty {
+  padding: 30px 20px; text-align: center;
+  border: 1px dashed var(--stroke); border-radius: var(--r-lg);
+  background: var(--card);
+  display: flex; flex-direction: column; gap: 8px; align-items: center;
+  color: var(--ink-2); font-size: 16px;
+}
+.error-block strong { color: var(--ink); font-size: 17px; }
+
+.empty-state { text-align: center; padding: 40px 22px; border: 1px dashed var(--stroke); border-radius: var(--r-lg); background: var(--card); }
+.empty-icon {
+  width: 56px; height: 56px; border-radius: var(--r-lg);
+  background: var(--brand-light); color: var(--brand);
+  display: grid; place-items: center; margin: 0 auto;
+}
+.empty-state h3 { margin: 16px 0 6px; font-size: 19px; font-weight: 650; }
+.empty-state p { color: var(--ink-2); font-size: 16px; margin: 0 0 18px; line-height: 1.7; }
+
+/* AI 生成标识：AI 产出的图片在页面上必须可见地标注出来（合规要求），
+   不要为了「好看」把它藏掉或裁掉。 */
+.media-badge {
+  position: absolute; left: 8px; bottom: 8px;
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px; border-radius: var(--r-pill);
+  background: rgba(17, 17, 20, 0.6); color: #fff;
+  font-size: 10px; letter-spacing: 0.02em;
+  backdrop-filter: blur(6px);
+}
+.media-frame { position: relative; overflow: hidden; border-radius: var(--r-lg); background: var(--field); }
+
+/* ───────────────────────── 首页 · 首屏 ─────────────────────────
+   ★ 手机端顺序＝**先说清是什么，再给图**：文字 → 按钮 → 承诺 → 图。
+     门店老板要先判断「这跟我有没有关系」，图片放在文字之后转化更好。 */
+.hero { padding: 24px 0 4px; }
+.hero-grid { display: flex; flex-direction: column; gap: 24px; }
+.hero-copy { min-width: 0; }
+/* 品牌字标：与小程序首页一致（楷体 / 红 / 轻微旋转 / 一条手绘下划线）。
+   ★ 只保留**一条**下划线：上一版还有第二条回笔线和两个墨点，那层是纯装饰，
+     与「简单直接」冲突。字标本身保留——它是品牌识别，不是装饰。
+   ★ 字号必须明显小于 h1（h1 是 30-54px），否则两层大字互相抢。
+   ★ 楷体族要用**简体**：繁体「輕」在没装楷体的机器上会掉字。 */
+.brand-mark-script { display: inline-block; position: relative; margin: 0 0 10px; }
+.brand-mark-script em {
+  font-family: 'STKaiti', 'KaiTi', 'Kaiti SC', serif;
+  font-style: normal; font-weight: 800;
+  font-size: clamp(22px, 5.8vw, 30px);
+  color: var(--brand);
+  display: inline-block;
+  transform: rotate(-1.5deg);
+  letter-spacing: 0.02em;
+}
+.brand-mark-script .underline {
+  position: absolute; left: 2%; right: 6%; bottom: -2px; height: 5px;
+  pointer-events: none;
+}
+.hero-copy h1 {
+  /* 8.4vw 在 390px 上约 33px，在 1024px 以上封顶 54px */
+  font-size: clamp(30px, 8.4vw, 54px);
+  line-height: 1.26; letter-spacing: -0.04em; font-weight: 700;
+  margin: 0 0 16px;
+  text-wrap: balance;
+}
+/* 导语按「两行、每行 17 个字」排：字号上限由**栏宽**定，不是由审美定。
+   320px 窄屏下 16px × 17 字 = 272px < 280px（容器宽），刚好放得下不折行；
+   若调大字号，第一行会掉出孤字。改文案或字号前先按这个算式核一遍。 */
+.hero-lead {
+  font-size: clamp(16px, 4.4vw, 19px); line-height: 1.75; color: var(--ink-2);
+  max-width: 34em; margin: 0;
+  text-wrap: pretty;
+}
+.hero-actions { display: flex; flex-direction: column; gap: 12px; margin: 24px 0 14px; }
+.hero-actions .button { width: 100%; }
+.hero-note { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; color: var(--ink-2); }
+.hero-note svg { color: var(--success); flex: 0 0 auto; }
+.hero-media { min-width: 0; }
+.hero-media .media-frame { border: 1px solid var(--stroke); box-shadow: var(--sh-1); }
+/* 首屏主视觉：源图 3:2 横版 ⇒ 手机端容器更方，cover 会裁两侧，
+   object-position 定在偏左，保住「人与手机」这组主体，别裁掉动作本身。 */
+.hero-media img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; object-position: 42% center; }
+
+/* ───────────────────────── 首页 · 三步 ───────────────────────── */
+.steps-grid { display: grid; gap: 12px; }
+/* 手机端＝「序号 + 文字」横排：竖向卡片会把页面拉得很长 */
+.step-card {
+  display: flex; gap: 14px; align-items: flex-start;
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 18px;
+}
+.step-num {
+  width: 38px; height: 38px; flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--brand-light); color: var(--brand);
+  display: grid; place-items: center;
+  font-size: 19px; font-weight: 700;
+}
+.step-card h3 { margin: 0 0 5px; font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
+.step-card p { margin: 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+
+/* ───────────────────────── 首页 · 适合门店 ───────────────────────── */
+.case-band {
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-lg);
+  box-shadow: var(--sh-1);
+  padding: 20px 16px 16px;
+}
+.case-band .section-title { margin-bottom: 14px; }
+/* 手机端三张并排：一眼看全「像我这样的店也在用」，不占一屏高度 */
+.case-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
+.case-card { min-width: 0; }
+.case-card .media-frame { border-radius: var(--r-md); }
+.case-card img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; }
+.case-card h3 { margin: 9px 0 0; font-size: 14px; font-weight: 650; text-align: center; }
+.case-note { margin: 14px 0 0; font-size: 13px; color: var(--ink-3); text-align: center; }
+
+/* ───────────────────────── 首页 · 收尾 ───────────────────────── */
+.cta-section { padding: 4px 0 44px; }
+.cta-card {
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); box-shadow: var(--sh-1);
+  padding: 22px 18px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+.cta-card h2 { margin: 0 0 6px; font-size: clamp(22px, 5.6vw, 30px); letter-spacing: -0.03em; font-weight: 700; }
+.cta-card p { margin: 0; font-size: 16px; color: var(--ink-2); }
+.cta-card .button { width: 100%; }
+
+/* ───────────────────────── 套餐 / 积分 ───────────────────────── */
+.pricing-section-title { display: flex; flex-direction: column; gap: 4px; margin-bottom: 16px; }
+.pricing-section-title > div { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.pricing-section-title svg { color: var(--brand); width: 21px; }
+.pricing-section-title p { font-size: 15px; color: var(--ink-2); margin: 0; }
+.pricing-section-title.spaced { margin-top: 36px; }
+
+.plan-grid, .package-grid { display: grid; gap: 14px; }
+.price-card {
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 22px; position: relative;
+  box-shadow: var(--sh-1); display: flex; flex-direction: column;
+}
+/* 推荐档：红描边 + 角标（规范：推荐档红色描边 + 「最超值」角标） */
+.price-card.featured { border: 1.5px solid var(--brand); box-shadow: var(--sh-2); }
+.recommended {
+  position: absolute; right: 18px; top: 18px;
+  padding: 4px 10px; background: var(--brand); color: #fff;
+  font-size: 12px; border-radius: var(--r-pill); font-weight: 650;
+}
+.price-icon {
+  width: 44px; height: 44px; border-radius: var(--r-md);
+  background: var(--brand-light); color: var(--brand);
+  display: grid; place-items: center; flex: 0 0 auto;
+}
+.price-icon.small { width: 40px; height: 40px; }
+.price-card h3 { font-size: 19px; font-weight: 650; margin: 16px 0 4px; }
+.price { margin: 8px 0 18px; display: flex; align-items: baseline; gap: 6px; }
+.price strong { font-size: 34px; font-weight: 700; }
+.price-card ul { list-style: none; padding: 0; margin: 0 0 20px; display: flex; flex-direction: column; gap: 12px; font-size: 16px; color: var(--ink-2); }
+.price-card li { display: flex; align-items: center; gap: 9px; }
+.price-card li svg { width: 17px; color: var(--ink-3); flex: 0 0 auto; }
+.price-card li b { color: var(--ink); font-weight: 650; }
+.price-card .button { margin-top: auto; }
+
+.package-card {
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 18px; display: flex; flex-direction: column;
+}
+.package-head { display: flex; gap: 14px; align-items: center; }
+.package-head h3 { margin: 0 0 4px; font-size: 17px; font-weight: 650; }
+.package-head strong { color: var(--ink); font-size: 17px; font-weight: 650; }
+.bean-total {
+  margin: 18px 0 6px; padding: 15px;
+  background: var(--bean-soft); border-radius: var(--r-md);
+  display: flex; justify-content: space-between; align-items: center;
+}
+.bean-total span { font-size: 14px; color: var(--ink-2); }
+.bean-total b { font-size: 23px; color: var(--bean); font-weight: 700; }
+.package-card > p { font-size: 14px; color: var(--ink-3); margin: 0 0 18px; }
+.package-card .button { margin-top: auto; }
+
+.action-error, .payment-note {
+  margin-top: 18px; padding: 15px 16px;
+  border-radius: var(--r-md);
+  display: flex; gap: 12px; align-items: flex-start;
+  font-size: 16px; line-height: 1.7;
+}
+.action-error { background: var(--brand-soft); color: var(--brand-active); }
+.payment-note { background: var(--field); color: var(--ink-2); }
+.payment-note svg, .action-error svg { flex: 0 0 auto; margin-top: 3px; }
+.payment-note strong { color: var(--ink); }
+.payment-note p { margin: 5px 0 0; font-size: 15px; line-height: 1.7; }
+
+/* ───────────────────────── 登录 ───────────────────────── */
+.auth-page { padding: 30px 0 56px; }
+.auth-grid { display: flex; flex-direction: column; gap: 26px; }
+.auth-copy h1 { font-size: clamp(28px, 7.4vw, 44px); line-height: 1.25; letter-spacing: -0.04em; font-weight: 700; margin: 10px 0 14px; }
+.auth-copy > p { color: var(--ink-2); line-height: 1.75; font-size: 17px; margin: 0; }
+
+.auth-card {
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 22px 18px; box-shadow: var(--sh-1);
+}
+.auth-card-title { display: flex; gap: 14px; align-items: center; margin-bottom: 22px; }
+.auth-card-title h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
+.auth-card-title p { margin: 0; color: var(--ink-3); font-size: 14px; }
+.round-icon {
+  width: 46px; height: 46px; border-radius: var(--r-md);
+  background: var(--brand-light); color: var(--brand);
+  display: grid; place-items: center; flex: 0 0 auto;
+}
+
+.auth-card form > label:not(.agreement) { display: block; font-size: 16px; font-weight: 650; margin-bottom: 18px; color: var(--ink-2); }
+/* 输入框 52px：与主按钮同高，手指点得准 */
+.input-wrap {
+  margin-top: 8px; height: 52px;
+  border: 1.5px solid transparent; border-radius: var(--r-md);
+  display: flex; align-items: center; padding: 0 14px; gap: 9px;
+  color: var(--ink-3); background: var(--field);
+  transition: background 200ms ease-out, border-color 200ms ease-out, box-shadow 200ms ease-out;
+}
+.input-wrap:focus-within {
+  background: var(--card);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3.5px rgba(225, 37, 27, 0.16);
+  color: var(--brand);
+}
+.input-wrap input { border: 0; outline: 0; width: 100%; min-width: 0; background: none; color: var(--ink); font-size: 17px; }
+.input-wrap input::placeholder { color: var(--ink-4); }
+.code-row { display: grid; grid-template-columns: 1fr 116px; gap: 10px; }
+.code-row .code-button { margin-top: 8px; height: 52px; }
+.agreement { display: flex; align-items: flex-start; gap: 9px; color: var(--ink-2); font-size: 15px; line-height: 1.6; margin: 16px 0; }
+.agreement input { margin-top: 3px; width: 22px; height: 22px; accent-color: var(--brand); flex: 0 0 auto; }
+.agreement a { color: var(--brand); }
+.submit-button { width: 100%; }
+.form-notice { padding: 10px 13px; border-radius: var(--r-sm); font-size: 15px; line-height: 1.65; margin: 0 0 14px; }
+.form-notice.error { background: var(--brand-soft); color: var(--brand-active); }
+.form-notice.success { background: var(--success-soft); color: #1f7a54; }
+
+/* ───────────────────────── 账户中心 ───────────────────────── */
+.account-hero {
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 20px;
+  display: flex; flex-direction: column; gap: 18px;
+  box-shadow: var(--sh-1);
+}
+.profile-block { display: flex; gap: 14px; align-items: center; }
+.profile-avatar {
+  width: 54px; height: 54px; border-radius: var(--r-lg);
+  background: var(--field); color: var(--ink-2);
+  display: grid; place-items: center; flex: 0 0 auto;
+}
+.profile-avatar svg { width: 26px; }
+.profile-block span { font-size: 14px; color: var(--ink-3); }
+.profile-block h2 { margin: 4px 0 2px; font-size: 22px; font-weight: 700; letter-spacing: -0.03em; }
+.profile-block p { font-size: 14px; color: var(--ink-3); margin: 0; }
+.member-badge {
+  display: flex; gap: 12px; align-items: center;
+  background: var(--field); padding: 13px 16px; border-radius: var(--r-md);
+}
+.member-badge svg { color: var(--ink-3); flex: 0 0 auto; }
+.member-badge.active { background: var(--bean-soft); }
+.member-badge.active svg { color: var(--member); }
+.member-badge span, .member-badge strong { display: block; }
+.member-badge span { font-size: 14px; color: var(--ink-3); margin-bottom: 3px; }
+.member-badge strong { font-size: 16px; font-weight: 650; color: var(--ink); }
+
+.stat-grid { display: grid; gap: 14px; margin: 16px 0; }
+.stat-card {
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 20px;
+}
+.stat-icon { color: var(--brand); margin-bottom: 14px; }
+.stat-icon svg { width: 23px; }
+.stat-card > span, .stat-card > strong, .stat-card > small { display: block; }
+.stat-card > span { font-size: 15px; color: var(--ink-2); }
+.stat-card > strong { font-size: 32px; font-weight: 700; margin: 5px 0; }
+.stat-card > strong.date-value { font-size: 19px; margin: 12px 0; }
+.stat-card > small { color: var(--ink-3); font-size: 14px; }
+
+.account-actions { display: grid; gap: 12px; }
+.account-actions > a {
+  display: flex; align-items: center; gap: 14px;
+  min-height: 72px; padding: 16px; border: 1px solid var(--stroke); border-radius: var(--r-lg);
+  background: var(--card);
+}
+.account-actions > a > svg:first-child { color: var(--brand); flex: 0 0 auto; }
+.account-actions > a > svg:last-child { margin-left: auto; color: var(--ink-4); width: 19px; flex: 0 0 auto; }
+.account-actions strong { display: block; font-size: 17px; font-weight: 650; }
+.account-actions span { display: block; font-size: 14px; color: var(--ink-3); margin-top: 3px; }
+
+.continue-pay {
+  width: 100%; border: 1px solid var(--stroke); background: var(--card);
+  min-height: 60px; padding: 14px 16px; border-radius: var(--r-md);
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  color: var(--ink); margin-bottom: 16px; font-size: 16px;
+}
+.continue-pay span { display: flex; align-items: center; gap: 8px; color: var(--ink-2); }
+.continue-pay svg, .continue-pay strong { color: var(--brand); }
+
+/* ───────────────────────── 订单 ───────────────────────── */
+.order-list { border: 1px solid var(--stroke); border-radius: var(--r-lg); overflow: hidden; background: var(--card); }
+.order-row {
+  display: grid; grid-template-columns: auto 1fr; gap: 14px;
+  padding: 16px; border-bottom: 1px solid var(--line);
+}
+.order-row:last-child { border-bottom: 0; }
+.order-kind { width: 44px; height: 44px; border-radius: var(--r-md); display: grid; place-items: center; flex: 0 0 auto; }
+.order-kind.member { background: var(--bean-soft); color: var(--member); }
+.order-kind.bean { background: var(--success-soft); color: var(--success); }
+.order-kind svg { width: 21px; }
+.order-main { min-width: 0; }
+.order-main > div { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.order-main h3 { font-size: 17px; font-weight: 650; margin: 0; }
+.order-main p { margin: 6px 0 2px; }
+.order-main p, .order-main small { color: var(--ink-3); font-size: 14px; }
+.status { font-size: 13px; border-radius: var(--r-sm); padding: 3px 8px; background: var(--field); color: var(--ink-2); font-weight: 650; }
+.status.paid { background: var(--success-soft); color: var(--success); }
+.status.pending { background: var(--bean-soft); color: var(--bean); }
+.status.expired, .status.cancelled { background: var(--field); color: var(--ink-3); }
+.order-amount { grid-column: 2; text-align: left; }
+.order-amount strong { display: block; font-size: 17px; font-weight: 650; }
+.order-amount button { border: 0; background: none; color: var(--brand); font-size: 15px; margin-top: 6px; font-weight: 650; min-height: 40px; }
+.pagination { display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 20px; font-size: 16px; color: var(--ink-3); }
+.pagination button {
+  display: flex; align-items: center; gap: 3px;
+  border: 1px solid var(--stroke); background: var(--card);
+  border-radius: var(--r-sm); min-height: 46px; padding: 8px 16px; color: var(--ink); font-size: 16px;
+}
+.pagination button:disabled { opacity: 1; color: var(--ink-4); cursor: not-allowed; }
+.pagination svg { width: 16px; }
+
+/* ───────────────────────── 收银台 ───────────────────────── */
+.pay-page { padding: 24px 0 56px; }
+.pay-card {
+  width: min(600px, 100%); margin: auto;
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 22px 18px; box-shadow: var(--sh-1); text-align: center;
+}
+.pay-head h1 { margin: 10px 0 8px; font-size: 24px; font-weight: 700; letter-spacing: -0.03em; }
+.pay-head p { font-size: 14px; color: var(--ink-3); margin: 0; word-break: break-all; }
+.pay-amount { margin: 18px 0; padding: 18px; border-radius: var(--r-lg); background: var(--field); }
+.pay-amount span, .pay-amount strong, .pay-amount small { display: block; }
+.pay-amount span { font-size: 15px; color: var(--ink-2); }
+.pay-amount strong { font-size: 38px; font-weight: 700; margin: 5px 0; }
+.pay-amount small { display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--ink-3); font-size: 14px; }
+.pay-amount svg { width: 14px; }
+.pay-method { padding: 6px 0 16px; }
+.qr-code { width: min(216px, 100%); height: auto; aspect-ratio: 1; margin: 0 auto; border: 8px solid #fff; box-shadow: var(--sh-1); border-radius: var(--r-md); }
+.qr-loading { height: 216px; display: flex; justify-content: center; align-items: center; color: var(--ink-3); gap: 8px; font-size: 16px; }
+.qr-loading svg { animation: spin 900ms linear infinite; }
+.pay-method h2 { font-size: 19px; font-weight: 650; margin: 16px 0 6px; }
+.pay-method p, .missing-payment p { font-size: 16px; color: var(--ink-2); line-height: 1.75; margin: 0; }
+.h5-button { margin: 24px auto 14px; }
+.wechat-warning {
+  display: flex; gap: 10px; text-align: left; padding: 13px;
+  background: var(--bean-soft); color: #8a6118;
+  border-radius: var(--r-md); font-size: 15px; line-height: 1.65;
+}
+.wechat-warning svg { flex: 0 0 auto; margin-top: 3px; }
+.missing-payment { padding: 20px 0; }
+.missing-payment > svg { color: var(--bean); width: 38px; height: 38px; }
+.missing-payment h2 { font-size: 19px; margin: 14px 0 8px; }
+.pay-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.pay-actions .button { width: 100%; }
+.pay-security {
+  display: flex; gap: 8px; text-align: left;
+  padding-top: 18px; margin-top: 20px; border-top: 1px solid var(--stroke);
+  font-size: 14px; color: var(--ink-3); line-height: 1.65;
+}
+.pay-security svg { color: var(--success); flex: 0 0 auto; margin-top: 3px; }
+
+/* ───────────────────────── 结果页 ───────────────────────── */
+.result-page { min-height: 520px; display: grid; place-items: center; }
+.result-card {
+  text-align: center; background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 30px 20px;
+  width: min(500px, calc(100% - 40px)); box-shadow: var(--sh-1);
+}
+.result-card > svg { width: 54px; height: 54px; }
+.success-icon { color: var(--success); }
+.warning-icon { color: var(--bean); }
+.result-card h1 { font-size: 24px; font-weight: 700; letter-spacing: -0.03em; margin: 16px 0 10px; }
+.result-card p { color: var(--ink-2); line-height: 1.75; margin: 0 0 22px; font-size: 16px; }
+
+/* ───────────────────────── 协议页 ───────────────────────── */
+/* 协议页标题普遍较长，比通用标题收一档，避免在窄屏掉出孤字 */
+.legal-page .page-header h1 { font-size: clamp(25px, 6.4vw, 36px); }
+.legal-card {
+  background: var(--card); border: 1px solid var(--stroke);
+  border-radius: var(--r-lg); padding: 22px 18px;
+  line-height: 1.9; color: var(--ink-2); font-size: 16px;
+}
+.legal-meta { font-size: 14px; color: var(--ink-3); border-bottom: 1px solid var(--stroke); padding-bottom: 16px; margin-bottom: 22px; }
+.legal-card h2 { font-size: 19px; font-weight: 650; color: var(--ink); margin: 26px 0 8px; }
+.legal-card p { font-size: 16px; margin: 0 0 4px; }
+.legal-notice {
+  padding: 15px; background: var(--brand-soft);
+  border-left: 3px solid var(--brand); border-radius: var(--r-sm);
+  color: var(--brand-active); font-size: 15px; line-height: 1.8;
+}
+
+/* ═════════════════════════ 放大到平板 / 桌面 ═════════════════════════ */
+@media (min-width: 480px) {
+  /* 顶栏放得下了，才把手机号显出来 */
+  .chip-label { display: inline; }
+}
+
+@media (min-width: 768px) {
+  .container, .narrow { width: min(100% - 64px, 1160px); }
+  .site-header { height: 68px; }
+
+  .nav-links {
+    display: flex; align-items: center; gap: 26px;
+    font-size: 16px; color: var(--ink-2);
+  }
+  .nav-links > a { position: relative; padding: 6px 0; }
+  .nav-links > a.active { color: var(--brand); font-weight: 650; }
+  .nav-links > a.active::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px;
+    background: var(--brand); border-radius: 2px;
+  }
+
+  .hero { padding: 44px 0 10px; }
+  .hero-actions { flex-direction: row; }
+  .hero-actions .button { width: auto; }
+  .hero-media img { aspect-ratio: 16 / 10; }
+
+  .section { padding: 52px 0; }
+  .steps-grid { grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .case-band { padding: 26px; border-radius: var(--r-xl); }
+  .case-grid { gap: 16px; }
+  .case-card h3 { font-size: 16px; }
+  .case-note { font-size: 14px; }
+  .cta-card { flex-direction: row; align-items: center; justify-content: space-between; padding: 26px 30px; }
+  .cta-card .button { width: auto; }
+
+  .page-section { padding: 48px 0 72px; }
+  .page-header { margin-bottom: 32px; }
+  .plan-grid, .package-grid, .stat-grid, .account-actions { grid-template-columns: repeat(2, 1fr); gap: 18px; }
+  .account-hero { flex-direction: row; align-items: center; justify-content: space-between; gap: 24px; padding: 26px 30px; }
+  .member-badge { flex: 0 0 auto; }
+  .order-row { grid-template-columns: auto 1fr auto; align-items: center; padding: 18px 20px; }
+  .order-amount { grid-column: auto; text-align: right; }
+  .auth-grid { gap: 32px; }
+  .auth-card { padding: 26px 24px; }
+  .legal-card { padding: 32px; }
+  .pay-actions { flex-direction: row; justify-content: center; }
+  .pay-actions .button { width: auto; }
+  .footer-grid { flex-direction: row; align-items: center; justify-content: space-between; gap: 24px; }
+  .footer-links a { min-height: 34px; }
+}
+
+@media (min-width: 1024px) {
+  .hero { padding: 68px 0 14px; }
+  /* 桌面才分两栏：手机端一栏到底，避免把图和文字挤成两半都读不清 */
+  .hero-grid { display: grid; grid-template-columns: 1fr 1.05fr; gap: 64px; align-items: center; }
+  .hero-media img { aspect-ratio: 3 / 2; }
+  .section { padding: 64px 0; }
+  .cta-section { padding: 6px 0 72px; }
+  .plan-grid, .package-grid, .stat-grid, .account-actions { grid-template-columns: repeat(3, 1fr); }
+  .auth-grid { display: grid; grid-template-columns: 1fr 440px; gap: 72px; align-items: center; }
+  .auth-page { padding: 56px 0 80px; }
+  .pay-page { padding: 40px 0 80px; }
+  .pay-card { border-radius: var(--r-xl); padding: 32px; box-shadow: var(--sh-2); }
+}

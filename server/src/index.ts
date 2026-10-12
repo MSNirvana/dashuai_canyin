@@ -14,6 +14,7 @@ import renderRouter from './routes/renders.js'
 import mediaRouter from './routes/media.js'
 import uploadRouter from './routes/upload.js'
 import orderRouter from './routes/orders.js'
+import webRouter from './routes/web.js'
 import payRouter from './routes/pay.js'
 import xpayRouter from './routes/xpay.js'
 import adminRouter from './routes/admin.js'
@@ -30,6 +31,7 @@ import { ensureLocalStorage, isLocalStorage, localStorageRoot } from './lib/loca
 import { smsTestCodeConfig } from './auth/sms.js'
 
 const app: Express = express()
+app.set('trust proxy', ['loopback'])
 const PORT = Number(process.env.PORT ?? 3000)
 
 // ── 进程级兜底（最后一道网）──
@@ -116,6 +118,7 @@ app.use('/api/v1/creations', renderRouter)
 app.use('/api/v1/media', mediaRouter)
 app.use('/api/v1/upload', uploadRouter)
 app.use('/api/v1/orders', orderRouter)
+app.use('/api/v1/web', webRouter)
 // 本轮补全：人设（门店级，挂 stores 子路由）/ 镜头库 / 账户查询 / 免费预览 / 公开系统设置
 app.use('/api/v1/stores/:storeId/persona', personaRouter)
 app.use('/api/v1/shot-library', shotLibraryRouter)

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="大帅餐饮助手">
+  <rect width="48" height="48" rx="11" fill="#e1251b"/>
+  <circle cx="24" cy="28.6" r="12.4" stroke="#ffffff" stroke-width="3" fill="none"/>
+  <path d="M9.9 17.9 L38.1 7.3" stroke="#ffffff" stroke-width="3.4" stroke-linecap="round"/>
+  <path d="M9.9 22.5 L38.1 11.9" stroke="#ffffff" stroke-width="2" stroke-linecap="round" opacity=".62"/>
+  <path d="M21.5 23.9 L31 28.8 L21.5 33.7 Z" fill="#ffffff" stroke="#ffffff" stroke-width="2.2" stroke-linejoin="round"/>
+</svg>

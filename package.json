@@ -10,6 +10,10 @@
     "server:typecheck": "cd server && npm run typecheck",
     "mini:typecheck": "cd apps/mini && npm run typecheck",
     "mini:build:prod": "bash scripts/build-weapp-prod.sh",
+    "web:install": "cd apps/web && npm install",
+    "web:dev": "cd apps/web && npm run dev",
+    "web:typecheck": "cd apps/web && npm run typecheck",
+    "web:build": "cd apps/web && npm run build",
     "deploy:server": "bash deploy/deploy.sh"
   }
 }

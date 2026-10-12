@@ -1,5 +1,10 @@
 node_modules/
 dist/
+
+# apps/web/node_modules 是**软链**（指向隔离的托管依赖目录）。上面 `node_modules/` 带斜杠
+# 只匹配真实目录、匹配不到软链，于是它一直以 `??` 出现在 git status 里 ——
+# 一旦 `git add apps/web` 就会把这个指向本机绝对路径的软链提交进仓库（换台机器全是坏链接）。
+apps/web/node_modules
 .DS_Store
 .env
 .env.local

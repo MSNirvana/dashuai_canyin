@@ -155,6 +155,63 @@ export interface JsapiOrderInput {
   timeExpire?: string
 }
 
+export type WebPayScene = 'NATIVE' | 'H5'
+
+export class WebPayProviderError extends Error {
+  constructor(readonly providerCode: string, readonly httpStatus: number) {
+    super(`微信网页支付失败：${providerCode}`)
+    this.name = 'WebPayProviderError'
+  }
+}
+
+export interface WebPayOrderInput {
+  description: string
+  outTradeNo: string
+  amountFen: number
+  timeExpire: string
+  scene: WebPayScene
+  payerClientIp?: string
+}
+
+/** 网页支付复用商户签名与微信响应验签，URL 只返回给客户端。 */
+export async function createWebPayOrder(input: WebPayOrderInput): Promise<{ codeUrl?: string; h5Url?: string }> {
+  const url = `/v3/pay/transactions/${input.scene === 'NATIVE' ? 'native' : 'h5'}`
+  const body = JSON.stringify({
+    appid: appId,
+    mchid: mchId,
+    description: input.description,
+    out_trade_no: input.outTradeNo,
+    notify_url: notifyUrl,
+    amount: { total: input.amountFen, currency: 'CNY' },
+    time_expire: input.timeExpire,
+    ...(input.scene === 'H5' ? {
+      scene_info: {
+        payer_client_ip: input.payerClientIp,
+        h5_info: { type: 'Wap', app_name: '大帅餐饮助手', app_url: 'https://dspcz.top' },
+      },
+    } : {}),
+  })
+  const resp = await fetch(`${BASE}${url}`, {
+    method: 'POST',
+    headers: {
+      Authorization: signRequestHeader('POST', url, body),
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      'Accept-Language': 'zh-CN',
+    },
+    body,
+    signal: AbortSignal.timeout(WX_PAY_TIMEOUT_MS),
+  })
+  const text = await resp.text()
+  if (!verifyResponse(resp.headers, text)) throw new WebPayProviderError('INVALID_SIGNATURE', 502)
+  let data: { code?: string; code_url?: string; h5_url?: string }
+  try { data = JSON.parse(text) } catch { throw new WebPayProviderError('INVALID_RESPONSE', 502) }
+  if (!resp.ok) throw new WebPayProviderError(data.code ?? `HTTP_${resp.status}`, resp.status)
+  const value = input.scene === 'NATIVE' ? data.code_url : data.h5_url
+  if (typeof value !== 'string' || !value) throw new WebPayProviderError('INVALID_RESPONSE', 502)
+  return input.scene === 'NATIVE' ? { codeUrl: value } : { h5Url: value }
+}
+
 /** 创建 JSAPI 支付订单，返回 prepay_id */
 export async function createJsapiOrder(input: JsapiOrderInput): Promise<{ prepayId: string }> {
   const url = '/v3/pay/transactions/jsapi'
