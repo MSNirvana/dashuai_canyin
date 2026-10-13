@@ -44,7 +44,13 @@ export default function AssetUploader({
   endpoint: string
   kind: 'video' | 'cover'
   accept: string
-  maxMb: number
+  /**
+   * 客户端预校验上限（MB）。**不传就是不限**（教学视频已放开大小上限）。
+   *
+   * ★ 这只是给运营一句人话的提前拦截，**不是权威校验**：权威校验在服务端
+   *   （multer 的 limits）与 nginx 的 `client_max_body_size`，少了任何一处都只在上线后才暴露。
+   */
+  maxMb?: number
   uploadLabel: string
   value: string
   hint?: string
@@ -67,7 +73,8 @@ export default function AssetUploader({
     if (!file) return
 
     const mb = file.size / 1024 / 1024
-    if (mb > maxMb) {
+    // `maxMb` 不传（或传成非有限值）= **不限大小**：教学视频已放开上限，这里不能再拦。
+    if (maxMb !== undefined && Number.isFinite(maxMb) && mb > maxMb) {
       message.error(`${kind === 'video' ? '视频' : '封面'}不能超过 ${maxMb}MB（当前 ${mb.toFixed(1)}MB）`)
       return
     }
@@ -82,7 +89,8 @@ export default function AssetUploader({
         url: `${endpoint}?kind=${kind}`,
         method: 'POST',
         data: fd,
-        // 默认 30s 不够：100MB 上传（尤其运营在弱网下）轻松超时
+        // 默认 30s 不够：视频/大文件上传（尤其运营在弱网下）轻松超时。
+        // 教学视频已不限大小 ⇒ 索性不设超时（与服务端 Node 的 requestTimeout=0 对齐）
         timeout: 0,
         onUploadProgress: (ev) => {
           if (ev.total) setPct(Math.round((ev.loaded / ev.total) * 100))

@@ -997,7 +997,8 @@ router.post('/works/from-render-task', async (req, res) => {
 // 这层原本写在「教学中心」那一段里，第二个调用方（作品）出现时就该提出来，
 // 否则「上传失败」的错误文案与 multer 的错误映射会被抄成两份、然后各改各的。
 //
-// 为什么不收 raw body（像轮播图那样）而收 multipart：这两类是**视频**，100MB 级。
+// 为什么不收 raw body（像轮播图那样）而收 multipart：这两类是**视频**，几十 MB 到 GB 级
+// （教学视频 2026-10-13 起已不限大小）。
 // raw 会把整段字节读进内存再交给业务层；multer 直接落盘中转，之后的
 // ffmpeg 抽帧与流式上传都能按文件路径处理，内存占用与文件大小无关。
 // 轮播图 ≤5MB，raw 反而更简单（少一层表单解析）—— 两条路按体积分。
@@ -1007,15 +1008,22 @@ router.post('/works/from-render-task', async (req, res) => {
  * 不拦的话 multer 走 `next(err)` 一路落到全局 errorHandler，变成「服务器内部错误 500」
  * —— 运营看到 500 完全不知道是自己的文件太大。
  * ⚠ 注意 client_max_body_size：nginx 先于本层拒绝时返回的是 413 页面，
- *   与本函数无关（deploy/nginx/dashuai-admin.conf 已同步放开到 110m）。
+ *   与本函数无关（deploy/nginx/dashuai-admin.conf 现在是 `0`，即关闭检查 ——
+ *   教学视频已不限大小；`maxBytes` 传 Infinity 时下面的文案也会退化成
+ *   一句「文件过大」而不是「不能超过 InfinityMB」）。
  */
 function uploadSingle(upload: multer.Multer, maxBytes: number) {
   return (req: Request, res: Response, next: NextFunction): void => {
     upload.single('file')(req, res, (err: unknown) => {
       if (!err) return next()
       const tooLarge = err instanceof multer.MulterError && err.code === 'LIMIT_FILE_SIZE'
-      const maxMb = Math.round(maxBytes / 1024 / 1024)
-      fail(res, 400, tooLarge ? `文件不能超过 ${maxMb}MB` : '文件上传失败，请重试', 400)
+      // ★ 不能无条件拼 `不能超过 ${maxMb}MB`：教学视频已放开上限（maxBytes = Infinity），
+      //   拼出来就是「文件不能超过 InfinityMB」。这条分支理论上不可达（busboy 在 Infinity 下
+      //   不会抛 LIMIT_FILE_SIZE），但真到了这里，给的必须是一句人话。
+      const tooLargeText = Number.isFinite(maxBytes)
+        ? `文件不能超过 ${Math.round(maxBytes / 1024 / 1024)}MB`
+        : '文件过大，上传失败，请重试'
+      fail(res, 400, tooLarge ? tooLargeText : '文件上传失败，请重试', 400)
     })
   }
 }

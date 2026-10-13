@@ -278,11 +278,32 @@ async function main() {
 
     // ─────────────── ⑧ 上限常量 ───────────────
     section('上限常量')
-    check(MAX_TUTORIAL_VIDEO_BYTES === 100 * 1024 * 1024, '视频上限 100MB')
+    // ★ 2026-10-13 起教学视频**不设大小上限**（原来 100MB）。
+    //   断言写 `!Number.isFinite(...)` 而不是 `=== Infinity`：真正的回归是
+    //   「有人又给它加回一个有限上限」，前者能抓住，后者只认那一个具体数字。
+    check(!Number.isFinite(MAX_TUTORIAL_VIDEO_BYTES), '视频不限大小（常量为 Infinity，不是某个有限上限）')
     check(MAX_TUTORIAL_COVER_BYTES === 5 * 1024 * 1024, '封面上限 5MB')
     const adminSrc = readSrc('../src/routes/admin.ts')
     check(/fileSize: tutorialSvc\.MAX_TUTORIAL_VIDEO_BYTES/.test(adminSrc), 'multer 的 limits 用的是同一个常量（不是另写一个数字）')
     check(/id: 'file'|\.single\('file'\)/.test(adminSrc), '上传字段名固定为 file')
+    // ★ 跨包断言：nginx 的 client_max_body_size 必须与「不限大小」一致。
+    //   这是本次改动里**唯一本地测不出来**的一层（vite 直连 3000、不过 nginx）——
+    //   漏掉它的症状是「代码与前端都放开了，上线仍然 413」，而本地全绿。
+    //   文件找不到时**跳过而不是判红**：部署机上本仓是完整克隆，但裁剪副本不该因此变红。
+    let nginxSrc: string | null = null
+    try {
+      nginxSrc = readSrc('../../deploy/nginx/dashuai-admin.conf')
+    } catch {
+      nginxSrc = null
+    }
+    if (nginxSrc === null) {
+      console.log('  ○ 跳过 nginx 断言（找不到 deploy/nginx/dashuai-admin.conf）')
+    } else {
+      check(
+        /client_max_body_size\s+0\s*;/.test(nginxSrc),
+        'admin 域名反代已关闭请求体大小检查（client_max_body_size 0，与视频不限大小一致）',
+      )
+    }
 
     // ─────────────── ⑨ 路由挂载（HTTP 冒烟） ───────────────
     // 期望值是逐个写死的，不再假设「未带 token 一律 401」：

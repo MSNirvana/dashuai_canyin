@@ -183,6 +183,15 @@ async function bootstrap() {
     }
   })
 
+  // ★ 大文件上传不被 5 分钟掐断（教学视频已放开大小上限，2026-10-13）。
+  //   Node 18+ 的 `server.requestTimeout` 默认 **300 秒**，它是**整请求**超时、不是空闲超时
+  //   ⇒ 一个 1GB 的视频在 3.5MB/s 的上行下正好会撞上它，表现为传到中途 408，
+  //   而前端只能报一句「上传失败，请重试」——和「文件太大」的现象完全一样，极难定位。
+  //   置 0 = 不超时，与 apps/admin 里 AssetUploader 的 `timeout: 0`（axios 侧）对齐。
+  // ★ 只关这一个：`headersTimeout` / `keepAliveTimeout` 保持默认 —— 它们防的是
+  //   「慢速发头部」这类攻击，与本需求无关，关掉等于白送一个 DoS 面。
+  if (httpServer) httpServer.requestTimeout = 0
+
   // 真实 FFmpeg worker：轮询 RenderTask(QUEUED)。生产建议 `npm run worker` 独立进程/独立机部署，
   // 这里同进程拉起只是为了让本地一条命令即可端到端联调
   if (process.env.FFMPEG_WORKER === 'true') {

@@ -35,16 +35,30 @@ import { detectImageType } from './profile.service.js'
 export const TUTORIAL_KEY_PREFIX = 'tutorials/'
 
 /**
- * 单个视频上限，100MB。
+ * 教学视频**不设大小上限**（2026-10-13 按要求放开原来的 100MB）。
  *
- * ⚠ 这个数字有三处必须一起改，漏掉 nginx 那处的话本地开发（vite 直连 3000，不过 nginx）
- *   永远测不出问题，上线才 413：
- *     1) 本常量（服务端权威校验）
- *     2) apps/admin/src/pages/Tutorials.tsx 的上传前预校验文案
- *     3) deploy/nginx/dashuai-admin.conf 的 `/admin/api/v1/` location 里 client_max_body_size
+ * 为什么保留这个常量、值写成 `Number.POSITIVE_INFINITY`，而不是把它删掉：
+ *   这条上传链有好几层都要「上限」这个入参（multer 的 limits、uploadSingle 的错误文案、
+ *   前端预校验、契约测试）。删掉常量就得在每处各写一次「没有上限」，反而更容易漏掉一层；
+ *   留着常量 = 仍然只有一个开关。
+ *
+ * `Infinity` 是真的会让上限失效，不是「写一个很大的数」：
+ *   busboy（multer 的底层）判据是
+ *   `fileSizeLimit = typeof limits.fileSize === 'number' ? limits.fileSize : Infinity`，
+ *   而掐断判据 `fileSize === fileSizeLimit` 在 Infinity 下**永不成立** ⇒ 不再掐断。
+ *
+ * ⚠ 放开大小之后，还有两条会**先拦住大文件**的天花板（都不是大小，改错的表现是
+ *   「传一半断掉」，且与「文件太大」的现象几乎一样，极难区分）：
+ *     1) nginx：deploy/nginx/dashuai-admin.conf 的 `client_max_body_size` 必须是 `0`
+ *        （0 = 关闭检查；留成 110m 会在 413 处返回 nginx 自己的 HTML 错误页）。
+ *        ★ 本地开发是 vite 直连 3000、不过 nginx，**永远测不出这一条**，只有上线才炸。
+ *     2) Node：http server 的 `requestTimeout`（Node 18+ 默认 300 秒，是**整请求**超时）
+ *        —— 见 src/index.ts，已置 0。
  *   （dashuai-api.conf 的 20m 不用动：上传走的是 admin 域名那条反代，不是小程序那条）
+ *
+ * ★ 封面图仍然限 5MB（见 MAX_TUTORIAL_COVER_BYTES）——本次只放开视频。
  */
-export const MAX_TUTORIAL_VIDEO_BYTES = 100 * 1024 * 1024
+export const MAX_TUTORIAL_VIDEO_BYTES = Number.POSITIVE_INFINITY
 
 /** 封面图上限。与 public-asset 的轮播图同值，都是「运营出图」的量级 */
 export const MAX_TUTORIAL_COVER_BYTES = 5 * 1024 * 1024

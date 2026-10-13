@@ -13,7 +13,7 @@ import { request } from '../lib/http'
  *
  * ── 这个页面与其它运营页最大的不同：它带**上传** ───────────────────────────
  * 后台此前没有任何上传端点（见 HomeCarousel.tsx 顶部注释：轮播图只能填 URL）。
- * 教学视频是 100MB 级的二进制，手填对象键完全不现实，所以本轮补了后台第一条上传通道：
+ * 教学视频是几十 MB 到几百 MB 级的大二进制，手填对象键完全不现实，所以本轮补了后台第一条上传通道：
  * `POST /admin/api/v1/tutorials/upload`（字段名 `file`，另带 `kind=video|cover`）。
  * 上传**复用了 lib/http 的 axios 实例**而不是 tdesign 的 Upload：
  *   · 组件走自己的请求实现就绕过了拦截器里的 Authorization 与统一错误提示，
@@ -33,12 +33,16 @@ const CATEGORIES = [
 const categoryLabel = (code: string) => CATEGORIES.find((c) => c.value === code)?.label ?? code
 
 /**
- * ⚠ 这三个数字必须同值，改一个就要改全部：
+ * ⚠ 封面这两个数字必须同值，改一个就要改全部：
  *   · 本文件（选文件时的预校验，给运营一句人话）
- *   · server/src/services/tutorial.service.ts 的 MAX_TUTORIAL_VIDEO_BYTES / MAX_TUTORIAL_COVER_BYTES
- *   · deploy/nginx/dashuai-admin.conf 的 client_max_body_size（110m）
+ *   · server/src/services/tutorial.service.ts 的 MAX_TUTORIAL_COVER_BYTES
+ *
+ * ★ 视频 2026-10-13 已按要求**放开大小限制**，所以这里不再有对应的 MB 常量：
+ *   AssetUploader 不传 `maxMb` 即「不限」。权威校验只剩两处 ——
+ *   server/src/services/tutorial.service.ts 的 MAX_TUTORIAL_VIDEO_BYTES（= Infinity）
+ *   与 deploy/nginx/dashuai-admin.conf 的 `client_max_body_size 0`。
+ *   ⚠ 那两处**本地都测不出来**（vite 直连 3000、不过 nginx），改的时候别只改前端。
  */
-const MAX_VIDEO_MB = 100
 const MAX_COVER_MB = 5
 
 interface Tutorial {
@@ -305,13 +309,12 @@ export default function TutorialsPage() {
           <Field
             label="视频"
             required
-            help={`支持 MP4 / MOV / WebM / AVI，不超过 ${MAX_VIDEO_MB}MB。小程序端建议用 H.264 编码的 MP4，兼容性最好。`}
+            help="支持 MP4 / MOV / WebM / AVI，不限大小。视频越大传得越久，上传过程中请不要关闭或刷新页面；小程序端建议用 H.264 编码的 MP4，兼容性最好。"
           >
             <AssetUploader
               endpoint="/tutorials/upload"
               kind="video"
               accept="video/*"
-              maxMb={MAX_VIDEO_MB}
               uploadLabel="选择视频并上传"
               value={form.videoKey}
               onClear={() => setForm((f) => ({ ...f, videoKey: '' }))}
