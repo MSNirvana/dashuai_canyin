@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { ArrowRight, Check } from 'lucide-react'
-import { AiBadge } from './components'
+import { useSiteImages } from './site-images'
 
 /**
  * 首页。
@@ -19,13 +19,23 @@ import { AiBadge } from './components'
  *   `.case-band` / `.cta-card` 这种大圆角卡片承载，边界是「一张卡片」，而不是「整幅换色」。
  *   **不要**再给某个 section 单独加底色。
  *
- * ★ 海报**全部是餐饮门店拍摄场景**（`public/images`），四张一套，不要再混入其他品类：
+ * ★★★ 四张展示图**现在是后台可替换的**（2026-10-14）：
+ *   内置默认值在 `site-images.ts::DEFAULT_SITE_IMAGES`，运营在后台「官网图片」页
+ *   （`apps/admin/src/pages/WebSite.tsx`）上传替换，走 `GET /api/v1/web/site` 免登录下发。
+ *   ⇒ 本文件**不再写死任何图片路径**；默认图清单、比例要求、alt 文案都在 `site-images.ts`。
+ *   ⇒ 后台留空 = 用内置默认图，所以「删掉自己传的图」与「一次都没配过」是同一件事。
+ *   ⇒ ★ 默认值刻意放在官网这一侧（而不是服务端一起返回）：默认图是官网包里的文件，
+ *     只有官网知道路径。服务端也知道的话，换默认图就得前后端同时发版，一次只发一半 ⇒ 图 404。
+ *   ⇒ ★ 接口不可用时**必须照常显示内置图** —— 这一页是花钱投放的落地页，不能因为一次
+ *     配置读取失败就变成四张裂图。
+ *
+ * ★ 内置四张默认图**全部是餐饮门店拍摄场景**，不要再混入其他品类：
  *      hero.jpg         门店里用手机拍刚出锅的菜
  *      case-kitchen.jpg 后厨出锅：厨师一手端着刚出锅的菜、一手持厨具（**这张没有手机**）
  *      case-table.jpg   餐桌摆盘：店主用三脚架上的手机拍摆好的菜
  *      case-prep.jpg    备菜备料：厨师双手持手机、低头看着屏幕取景拍案台食材
  *
- * ★★ 三张 case 的**动作是刻意分开的**，换图必须保持：出锅装盘 / 三脚架固定机位 / 手持取景。
+ * ★★ 三张案例图的**动作是刻意分开的**，换图必须保持：出锅装盘 / 三脚架固定机位 / 手持取景。
  *   上一版三张都是「低头摆弄手机或三脚架」，并排看像同一张放了三遍；那版另有两处
  *   **裁不掉**的硬伤：`case-kitchen` 人脸被一道横梁横切（看着像没头）、
  *   `case-prep` 人被左边框裁掉一半。所以这三张是重出的，不是裁出来的。
@@ -34,13 +44,18 @@ import { AiBadge } from './components'
  *   ★ 反面教训：写「手机背面朝向镜头、屏幕对着食材」是**自相矛盾**的（背面朝我们
  *     ⇒ 镜头就朝着我们，不在拍食材）。要「在拍」就写「低头看着手机屏幕取景」，
  *     这是最不会误读的姿态。
- *   因此：
- *   1. 每张图上都有 `AiBadge` 显式标识，别摘；
- *   2. 文案只能写成「场景示意」，**不得**说成客户实拍或真实案例。
  *
+ * ★ 2026-10-14（用户要求）：**去掉了图上的「AI 生成」标识，也去掉了
+ *   「画面为 AI 生成的场景示意，不是客户实拍」那句说明**。
+ *   原来的标识是我们自己叠的 `AiBadge`（`components.tsx`），已连同它的样式一起删除。
+ *   ⚠ 这几张图确实是 AI 生成的，公开呈现时标注更稳妥。**若之后要恢复**，
+ *     正确做法是给每张图加一个「这张是 AI 生成的」开关（跟着图走、后台可配），
+ *     而不是把标识重新写死 —— 因为运营换上**真实门店照片**后，写死的「AI 生成」反而是错的。
+ */
+/**
  * ★★★ 四张源图**已经裁掉了底部 80px**（`hero.jpg` 1536×944，三张 case 1024×1456）。
  *   原因：出图工具在**右下角烧进了自己的水印**（白字两行，距底 11–61px），
- *   那是**像素里的杂质**，不是我们叠的标识 —— 叠 `AiBadge` **盖不掉它**
+ *   那是**像素里的杂质**，不是我们叠的标识 —— 所以在图上叠任何 badge **都盖不住它**
  *   （badge 在左下、水印在右下，会并存成两个「AI 生成」），而且源图比例与展示框比例
  *   相同时 `object-fit: cover` **根本不会裁掉边角**。
  *   ⇒ 已裁底，见 `public/images/`。**不要**把底边加回来；换新图后先看**源图右下角**再用。
@@ -66,13 +81,24 @@ const steps = [
   { title: '出成片', text: '自动加字幕配音，导出竖版视频。' },
 ]
 
-const scenes = [
-  { img: '/images/case-kitchen.jpg', title: '后厨出锅', alt: '厨师端着刚出锅的菜品装盘' },
-  { img: '/images/case-table.jpg', title: '餐桌摆盘', alt: '店主用手机三脚架拍摄摆好盘的菜品' },
-  { img: '/images/case-prep.jpg', title: '备菜备料', alt: '厨师低头看着手机屏幕拍摄案台上的食材' },
+/**
+ * 首屏那两句话。做成**带序号的列表**：它们是一件流程的两步，序号本身就是信息
+ * （先做 1 再做 2），比两个并列的句子更好读；而且把它降级成列表后，上面那行 h1
+ * 的视觉权重才立得住（原来两行正文和一句话正文一样大，首屏没有主次）。
+ *
+ * ★ 文案刻意保持 17 字以内：320px 窄屏下 `.hero-lead li` 的可读宽度约 252px、
+ *   字号 clamp 下限 15px ⇒ 每行约 16.8 字。超了会在窄屏折行（已用
+ *   `text-wrap: balance` 均分，不会掉孤字），但也别随手加长。
+ */
+const heroPoints = [
+  '输入菜名和卖点，自动生成文案分镜。',
+  '拍完自动加字幕配音，导出竖版视频。',
 ]
 
 export function Home() {
+  // 先用内置默认图渲染，接口返回后台配置后再替换（接口不可用就一直是内置图）。
+  // 不是「等接口回来再渲染」—— 那会让首屏空白几百毫秒，接口挂了还会永久空白。
+  const images = useSiteImages()
   return (
     <>
       <section className="hero">
@@ -87,10 +113,18 @@ export function Home() {
               </svg>
             </span>
             <h1>好菜拍下来，<br />帮你做成短视频</h1>
-            {/* ★ 这里**故意不写 <br/> 以外的换行**：两行各 17 个字，在 320px 窄屏 + 16px
-                字号下也放得下（272px < 280px），所以硬换行是安全的、断句也干净。
-                改文案前先按这个算式核一遍，否则会掉出孤字。 */}
-            <p className="hero-lead">输入菜名和卖点，自动生成文案分镜。<br />拍完自动加字幕配音，导出竖版视频。</p>
+            {/* ★ 做成**带序号的列表**：这两句是一件流程的两步，序号本身就是信息（先 1 后 2），
+                比两个并列的句子更好读；降级成辅助信息后，上面那行 h1 的视觉权重才立得住。
+                ★ `aria-hidden` 是必须的：读屏软件会把「1」念成正文的一部分，
+                  而 <ol> 已经会念「第 1 项」，两处一起念就是「1、第 1 项、输入菜名…」。 */}
+            <ul className="hero-lead">
+              {heroPoints.map((text, i) => (
+                <li key={text}>
+                  <span className="hero-lead__num" aria-hidden="true">{i + 1}</span>
+                  {text}
+                </li>
+              ))}
+            </ul>
             <div className="hero-actions">
               <Link className="button" to="/pricing">开始使用 <ArrowRight size={18} /></Link>
             </div>
@@ -98,8 +132,11 @@ export function Home() {
           </div>
           <div className="hero-media">
             <div className="media-frame">
-              <img src="/images/hero.jpg" alt="门店经营者用手机拍摄刚出锅的菜品" width={1536} height={1024} />
-              <AiBadge text="AI 生成 · 场景示意" />
+              {/* ★ 不再写 width/height 属性：图现在由后台替换，真实尺寸不再可知，
+                  写死一个数字就是一句假话（而且当初 `<img width height>` 那个坑
+                  正是从「属性与真实尺寸不一致」开始的）。
+                  展示比例由 CSS 的 `.hero-media img { aspect-ratio }` 决定 ⇒ 没有布局抖动。 */}
+              <img src={images.hero.image} alt={images.hero.alt} />
             </div>
           </div>
         </div>
@@ -126,18 +163,23 @@ export function Home() {
         <div className="container">
           <div className="case-band">
             <h2 className="section-title">店里能拍的场景</h2>
+            {/* ★ 图与标题都来自 `images.cases`（后台可替换，留空用内置默认图）。
+                ★ 遍历的是**内置的格数**（`mergeSiteImages` 里按 `DEFAULT_SITE_IMAGES.cases`
+                  的刻度合并），后台多配一格或少配一格都不会改变这里的版式。
+                ★ 不再写 width/height：图由运营替换，真实尺寸不可知。展示比例由
+                  `.case-card img { aspect-ratio: 2 / 3 }` 决定，所以不会布局抖动。
+                ★ `loading="lazy"` 保留：这三张在首屏之下，晚点加载能省首屏带宽。
+                  ⚠ 取证截图时别忘了先滚全页 —— lazy 图不进视口就一直是空白。 */}
             <div className="case-grid">
-              {scenes.map(({ img, title, alt }) => (
-                <article className="case-card" key={title}>
+              {images.cases.map(({ image, title, alt }, i) => (
+                <article className="case-card" key={i}>
                   <div className="media-frame">
-                    <img src={img} alt={alt} width={1024} height={1456} loading="lazy" />
-                    <AiBadge text="AI 生成" />
+                    <img src={image} alt={alt} loading="lazy" />
                   </div>
                   <h3>{title}</h3>
                 </article>
               ))}
             </div>
-            <p className="case-note">画面为 AI 生成的场景示意，不是客户实拍。</p>
           </div>
         </div>
       </section>
@@ -145,8 +187,22 @@ export function Home() {
       <section className="cta-section">
         <div className="container cta-card">
           <div>
-            <h2>手机上就能开始</h2>
-            <p>用手机号登录，和小程序是同一个账号。</p>
+            {/* ★ 2026-10-14（用户要求）：原来是「手机上就能开始」，改成明确写出
+                在哪开始 —— 「微信小程序【大帅餐饮助手】」。老板看完这一页要的是
+                「我去哪找你」，而不是一句形容方便的形容词。
+                ⚠ 「微信小程序」是官方通用叫法（不是第三方商标标识），小程序端也用同一说法；
+                  但**不要**在这里贴微信 logo（品牌视觉规范）。
+                ★★ `nowrap-name` 是**必需的**，不是修饰：320 档实测标题会折行，而
+                   「微信小程序【大帅餐饮助手】」在 22px 下会自动断成
+                   「微信小程序【大帅餐饮助」/「手】」—— 把**品牌名劈开**，还掉一个孤字。
+                   套上 nowrap 后断点被钉在「微信小程序」与名称之间，两行都完整。 */}
+            <h2>微信小程序<span className="nowrap-name">【大帅餐饮助手】</span></h2>
+            {/* ★ 顺手去掉了重复：原来写的是「用手机号登录，和小程序是同一个账号」。
+                上面那行已经点明「微信 小程序」了，这句再说「和小程序是同一个账号」就
+                没有指代对象了（谁和谁同一个账号？）；而且首屏 `.hero-note` 已经说过
+                「和小程序是同一个账号」——「同一句话全站只出现一次」是本站的既定规矩。
+                现在改成回答 h2 新引出的那个问题：**去哪儿找**。 */}
+            <p>微信里搜索就能找到，用手机号登录。</p>
           </div>
           <Link className="button" to="/pricing">查看套餐 <ArrowRight size={18} /></Link>
         </div>

@@ -311,19 +311,12 @@ main { flex: 1; }
 .empty-state h3 { margin: 16px 0 6px; font-size: 19px; font-weight: 650; }
 .empty-state p { color: var(--ink-2); font-size: 16px; margin: 0 0 18px; line-height: 1.7; }
 
-/* AI 生成标识：AI 产出的图片在页面上必须可见地标注出来（合规要求），
-   不要为了「好看」把它藏掉或裁掉。 */
-.media-badge {
-  position: absolute; left: 8px; bottom: 8px;
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 8px; border-radius: var(--r-pill);
-  background: rgba(17, 17, 20, 0.6); color: #fff;
-  /* ★ 12px 是下限：这是**合规标识**，比页面正文更不许「看不清」。
-     原来写 10px，是全场最小的字 —— 一个必须让用户读到的信息不该是最小的。
-     缩到 10px 也换不来多少画面：案例图手机上宽 76–113px，标签仍占一半左右。 */
-  font-size: 12px; letter-spacing: 0.02em;
-  backdrop-filter: blur(6px);
-}
+/* ★ 2026-10-14：`.media-badge`（图片左下角那个「AI 生成」标签）**已删除**。
+   原来这里写着「AI 产出的图片必须可见地标注出来（合规要求），不要为了好看藏掉」——
+   那条注释已经不适用于当前状态：用户明确要求去掉标识。
+   ⚠ 要恢复的话，请改成**跟着每张图走的开关**（后台可配，落进 site-images 那份配置），
+   而不是把标签写死回 CSS 里；详情见 `components.tsx` 里删掉 `AiBadge` 时留的说明。
+   ⇒ 注意 `.media-frame` 仍是 `position: relative`（下面一行），因为其他覆盖层还要用它。 */
 .media-frame { position: relative; overflow: hidden; border-radius: var(--r-lg); background: var(--field); }
 
 /* ───────────────────────── 首页 · 首屏 ─────────────────────────
@@ -358,13 +351,46 @@ main { flex: 1; }
   margin: 0 0 16px;
   text-wrap: balance;
 }
-/* 导语按「两行、每行 17 个字」排：字号上限由**栏宽**定，不是由审美定。
-   320px 窄屏下 16px × 17 字 = 272px < 280px（容器宽），刚好放得下不折行；
-   若调大字号，第一行会掉出孤字。改文案或字号前先按这个算式核一遍。 */
+/* ★ 2026-10-14（用户要求）：这两句改成一条**带序号的列表**，字号整体调小一号。
+   改动的理由与算式，改文案/字号前先读一遍：
+   - **序号**：这两句是一件流程的两步，「1 / 2」本身就是信息（先做 1 再做 2），
+     比两个并列的句子好读；而且把它降级成辅助信息后，上面那行 h1 的视觉权重才立得住
+     （原来两行 19px 正文和一句话正文一样大，首屏没有主次）。
+   - **字号** 16/19 → 15/17：**刻意没有低于 15px**。本站的准则是「正文 ≥16px、
+     副信息 ≥15px」（见 `body` 的注释：门店老板多在 40 岁上下，小字看不清），
+     这两句属于副信息（`.hero-note` 也是 15px），再往下到 13-14px 就违背自己的准则了。
+   - ★ `text-wrap: pretty` 对**中文完全无效**（它按「词」断行，中文没有空格分词），
+     改用 `text-wrap: balance`：320 档万一放不下会折两行，balance 把两行**等宽均分**，
+     不会出现「第二行只剩一个字」的孤字（同页 `.step-card p` 在 320 档实测 127 / 127 均分）。
+     本条实测 320–1440 四档都是**一行**（252 / 262 / 286 / 286px），balance 是保险不是主力。
+   - **320 档容量核算**：容器 280px − 序号槽 22px（16px 圆点 + 6px 间距）= 258px 文本列；
+     最长一句 17 字 × 15px，再算上 `body` 的 `letter-spacing: -0.01em`（每字 −0.15px）
+     ⇒ 约 252.5px ≤ 258px，**仍是一行**。改字号或改文案前必须重跑这个算式，
+     或者直接量一遍（`Range.getClientRects()` 拿每个行盒的宽度，别拿元素整体高度）。 */
 .hero-lead {
-  font-size: clamp(16px, 4.4vw, 19px); line-height: 1.75; color: var(--ink-2);
-  max-width: 34em; margin: 0;
-  text-wrap: pretty;
+  list-style: none;
+  margin: 0; padding: 0;
+  font-size: clamp(15px, 4vw, 17px);
+  line-height: 1.7; color: var(--ink-2);
+  max-width: 34em;
+  display: flex; flex-direction: column; gap: 7px;
+}
+.hero-lead li { text-wrap: balance; }
+/* 序号做成浅红圆点，而不是裸数字：裸数字容易被当成句子的一部分（「1输入菜名…」），
+   圆点是通用且无需解释的编号符号。
+   ★ 对比度：`--brand-ink` #c21b12 压 `--brand-light` #FDECEA = 5.31:1 ✓（11px 小字也过 AA）。
+   ★ 对齐：`vertical-align: middle`，**不要**改成 `align-items: baseline` 的 flex 写法 ——
+     圆点若用 flex/grid 且内部居中，它自己就没有可用的基线（按边框盒合成），和旁边文字对不齐。
+     实测「圆点中心 − 首行文字中心」在 320/390/430/1440 四档分别是 2 / 2 / 2 / 2px 与
+     3 / 1 / 2 / 1px（两句），都在 ±3px 内 ⇒ 视觉居中。
+   ★ 11px 是这套字号下能读的最小值：圆点直径 16px，12px 的数字会顶到圆边。 */
+.hero-lead__num {
+  display: inline-block;
+  width: 16px; height: 16px; line-height: 16px;
+  text-align: center; border-radius: 50%;
+  background: var(--brand-light); color: var(--brand-ink);
+  font-size: 11px; font-weight: 700; letter-spacing: 0;
+  margin-right: 6px; vertical-align: middle;
 }
 .hero-actions { display: flex; flex-direction: column; gap: 12px; margin: 24px 0 14px; }
 .hero-actions .button { width: 100%; }
@@ -418,8 +444,10 @@ main { flex: 1; }
 /* 案例标题 14 → 16px：它和卡片正文同属「要读的内容」，不该比正文小一号。
    三张卡片的标题都是 4 字，320 档列宽 76px 下 4×16 = 64px 仍放得下，不会折行。 */
 .case-card h3 { margin: 9px 0 0; font-size: 16px; font-weight: 650; text-align: center; }
-/* 案例小注 13 → 15px：它承载「这是 AI 生成的场景，不是客户实拍」这句**必须被读到**的声明 */
-.case-note { margin: 14px 0 0; font-size: 15px; color: var(--ink-2); text-align: center; }
+/* ★ 2026-10-14：`.case-note`（「画面为 AI 生成的场景示意，不是客户实拍」那句）**已删除**。
+   它当初的存在理由就是给上面三张图做免责声明；图去掉标识、说明也去掉，这一行就没有内容了。
+   ⚠ 这里**不再新增任何**卡下注脚：`.case-band` 的底部内边距是 16px（见上面 `.case-band`），
+   注解删掉后三张图下面直接收到卡片边，视觉上是干净的，别为了「填空」再塞一句话。 */
 
 /* ───────────────────────── 首页 · 收尾 ───────────────────────── */
 .cta-section { padding: 4px 0 44px; }
@@ -430,6 +458,13 @@ main { flex: 1; }
   display: flex; flex-direction: column; gap: 18px;
 }
 .cta-card h2 { margin: 0 0 6px; font-size: clamp(22px, 5.6vw, 30px); letter-spacing: -0.03em; font-weight: 700; }
+/* ★★ `.nowrap-name` 是**必需的**，不是装饰：320 档标题放不下一行（容器 242px，
+   13 个字符 × 21.3px ≈ 277px > 242px），浏览器会在**任意字之间**断行 —— 实测断成
+   「微信小程序【大帅餐饮助」/「手】」，品牌名被劈开、第二行还只剩两个字符。
+   套上 `white-space: nowrap` 后断点被钉在「微信小程序」与名称之间：
+   第一行 5 字（107px）、第二行 8 字（171px），两行都是完整的词。
+   ⚠ 只对**品牌全名**用这个类（它是不可分割的专名）；正文千万别套，否则窄屏直接溢出。 */
+.cta-card h2 .nowrap-name { white-space: nowrap; }
 .cta-card p { margin: 0; font-size: 16px; color: var(--ink-2); }
 .cta-card .button { width: 100%; }
 
