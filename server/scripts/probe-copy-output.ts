@@ -135,9 +135,19 @@ async function pickStore() {
     const leak = [storeName, '我们家', '我们店'].filter(has)
     console.log(`★ 门店/生意泄漏：${leak.length ? leak.join('、') + '  ← 话题稿不该出现' : '无'}`)
   } else if (sceneArg === 'copy_knowledge') {
-    // 知识型唯一的硬规矩：不出现自家店名/菜名（一出现就变成广告，掉完播）
-    const leak = [storeName, dishName].filter(has)
-    console.log(`★ 自家店/菜泄漏：${leak.length ? leak.join('、') + '  ← 知识型不许出现' : '无'}`)
+    /**
+     * ★ 2026-10-14 起这一型是**条件式**的（见 prisma/prompts.ts 的 COPY_KNOWLEDGE_PROMPT），
+     *   所以核对方式必须跟着「这次选没选菜」走 —— 写死一个方向，两种输入里必有一种被判错：
+     *   · 选了菜 ⇒ 这条稿子就讲这道菜，**必须报出菜名**；但仍不许报价（那是产品型的活）。
+     *   · 没选菜 ⇒ 讲通用知识，这时自家店名/菜名一个都不许出现（一出现就变成广告，掉完播）。
+     */
+    if (dishName) {
+      console.log(`菜名是否报出：${has(dishName) ? '是（选了菜 ⇒ 知识型也讲这道菜）' : '否  ← 选了菜却没报菜名'}`)
+      console.log(`★ 报价类词：${priceRe.test(text) ? '有  ← 知识型不报价（选了菜也不报）' : '无'}`)
+    } else {
+      const leak = [storeName, dishName].filter(has)
+      console.log(`★ 自家店/菜泄漏：${leak.length ? leak.join('、') + '  ← 没选菜的知识型不许出现' : '无'}`)
+    }
   } else if (sceneArg === 'copy_persona') {
     // 人设型卖人不卖货：不该荐菜、不该报价
     const leak = [dishName].filter(has)

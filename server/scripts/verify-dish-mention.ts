@@ -105,9 +105,25 @@ for (const code of DISH_MENTION_SCENES) {
 for (const code of withConstraint) {
   check(DISH_MENTION_SCENES.has(code), `含该约束的 ${code} 已登记进名单（否则兜底漏接线）`)
 }
-// 反向：人设型/知识型的定义就是不荐菜，绝不能要求它们报菜名
-for (const code of ['copy_persona', 'copy_knowledge', 'copy_traffic']) {
+// 反向：人设型的定义就是不荐菜，绝不能要求它报菜名
+for (const code of ['copy_persona', 'copy_traffic']) {
   check(!DISH_MENTION_SCENES.has(code), `${code} 不在名单里（这一型不荐菜/不报货）`)
+}
+// ★★ 知识型（copy_knowledge）在这条线上**是特例，必须单独钉住两半**：
+//   它的模板是**条件式**的（有菜名 ⇒ 讲这道菜且必须报出来；没菜名 ⇒ 讲通用知识），
+//   所以「在名单里」与「模板里有那条正向约束」必须**同时**成立。
+//   只查一半的代价：漏查模板 ⇒ 代码在强制一件模板没要求的事（重试必然白花钱）；
+//   漏查名单 ⇒ 选了菜的知识型稿子跑偏也没人拉回来（那正是 2026-10-14 用户报的「菜是起泡豆干、文案讲大虾」）。
+{
+  const t = TPLS.find((x) => x.code === 'copy_knowledge')!
+  check(
+    DISH_MENTION_SCENES.has('copy_knowledge') && t.tpl.includes(MUST_MENTION),
+    '★ 知识型：既在名单里、模板里也有「必须报出菜名」约束（条件式的两半都要在）',
+  )
+  check(
+    t.tpl.includes('【菜品】**为空**') && t.tpl.includes('通用知识'),
+    '★ 知识型的「没选菜 ⇒ 讲通用知识」那条分支还在（否则空值路径会要求它报一个不存在的菜名）',
+  )
 }
 
 // ──────────────────────── ③ 空值注解的契约 ────────────────────────
@@ -192,9 +208,17 @@ check(
   guard({ sceneCode: 'copy_recommend' }) === 'RETRY',
   '种草型（copy_recommend）同样要兜底',
 )
-// ★ 反向：这三类场景**绝不能**触发重试 —— 前两型的定义就是不荐菜，话题稿手里没有菜品资料。
-//   写反了的后果是「每次都判不合格 ⇒ 每次白花一次调用」，而且不报错。
-for (const code of ['copy_persona', 'copy_knowledge', 'copy_generate', 'copy_traffic', 'storyboard_generate']) {
+// ★ 2026-10-14：知识型**选了菜**时也要兜底（它的模板已改成「有菜名就必须报出来」）。
+//   与产品型/种草型不同，它还有一条**没选菜就不适用**的路径 —— 那一条由下面
+//   `dishName: '' ⇒ NOT_APPLICABLE` 那条统一覆盖（知识型的款式稿走的正是那条）。
+check(
+  guard({ sceneCode: 'copy_knowledge' }) === 'RETRY',
+  '★ 知识型选了菜、正文没报菜名 ⇒ 同样 RETRY（2026-10-14 起，它的硬约束改为条件式）',
+)
+// ★ 反向：这三类场景**绝不能**触发重试 —— 人设型的定义就是不荐菜，通用兜底与话题稿
+//   手里根本没有菜品资料（或模板里没有这条约束）。写反了的后果是「每次都判不合格 ⇒
+//   每次白花一次调用」，而且不报错。
+for (const code of ['copy_persona', 'copy_generate', 'copy_traffic', 'storyboard_generate']) {
   check(guard({ sceneCode: code }) === 'NOT_APPLICABLE', `${code} 不触发重试（这一型不要求报菜名）`)
 }
 check(guard({ dishName: '' }) === 'NOT_APPLICABLE', '没选菜 ⇒ NOT_APPLICABLE（不适用，不是「没命中」）')

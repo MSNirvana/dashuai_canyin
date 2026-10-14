@@ -47,11 +47,17 @@ export function dishEmptyNoteFor(dishName: string): string {
  * 正文里**必须**出现菜名的场景。
  *
  * ★ 这份名单必须与 prisma/prompts.ts 里那条硬约束一一对应：
- *   `copy_product`（产品型）与 `copy_recommend`（种草型）的硬约束段里都有
- *   「只要【菜品】一节有内容，正文里就必须出现这个菜名 —— 没出现就是不合格稿」。
- * ★ 故意**不含**这两个：
- *   · `copy_persona`（人设型）、`copy_knowledge`（知识型）—— 这两型的定义就是不荐菜不报货，
- *     要求它们报菜名等于让它们违反自己的边界；
+ *   模板的硬约束段里写着「只要【菜品】一节有内容，正文里就必须出现这个菜名」的场景，
+ *   一个都不能漏（漏了 ⇒ 那个场景的兜底根本没接上，而且**全绿通过**）。
+ * ★ `copy_knowledge`（知识型）是 2026-10-14 才进来的：
+ *   它的模板原来是「不许出现自家菜名」，所以不在名单里；
+ *   那一版与它自己的 CONTEXT_BLOCK（把【菜品】菜名、简介、卖点一起喂进去）**自相矛盾** ——
+ *   生产创作 #169（选「起泡豆干」+ 知识型）就是这么整篇改讲门店里的大虾火锅的。
+ *   现在模板改成条件式（有菜名 ⇒ 讲这道菜、必须报出来；没菜名 ⇒ 讲通用知识），
+ *   名单跟着补上：**没选菜时 `dishName` 为空 ⇒ 本判据自动 NOT_APPLICABLE，不会误重试**。
+ * ★ 仍然**故意不含**这两个：
+ *   · `copy_persona`（人设型）—— 它的定义就是卖人不卖货、不荐菜不报价，
+ *     要求它报菜名等于让它们违反自己的边界；
  *   · `copy_generate`（通用兜底）—— 它的模板里没有这条约束，代码却去强制它，
  *     会变成「反复重试必然失败」的白花钱。
  * ★ 名单与模板的一致性由 `scripts/verify-dish-mention.ts` 钉死（正反两个方向都断言），
@@ -60,6 +66,7 @@ export function dishEmptyNoteFor(dishName: string): string {
 export const DISH_MENTION_SCENES: ReadonlySet<string> = new Set<string>([
   SCENE.copy_product,
   SCENE.copy_recommend,
+  SCENE.copy_knowledge,
 ])
 
 /**
