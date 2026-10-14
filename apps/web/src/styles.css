@@ -29,8 +29,24 @@
   --brand-light: #fdecea;
   --brand-soft: #fef6f5;
   --brand-disabled: #f3c0bc;
+  /* ★ 红字压在**浅红底**上时必须用这个，不能用 --brand：
+     --brand #E1251B 配白底 4.69:1 达标，但配 --brand-light #FDECEA 只剩 **4.10:1**（低于 AA 4.5）。
+     同一个红，换个底就不达标 —— 所以单独给一个「浅红底上的红字」token：5.31:1 ✓ */
+  --brand-ink: #c21b12;
+  --brand-light-hover: #fbdcd9;
 
-  /* 文字：冷灰阶（对齐 iOS System Gray）——「高级感」的主要来源 */
+  /* 文字：冷灰阶（对齐 iOS System Gray）——「高级感」的主要来源。
+     ★★★ 四档的用途是**固定的**，对应小程序 `UI设计规范.md` 的四个 token，别混用：
+           --ink     #111114  标题 / 正文        白底 18.85:1
+           --ink-2   #5c6066  **说明 / 副信息**   白底  6.33:1
+           --ink-3   #8e939a  **占位符**          白底  3.09:1 ← **不达 AA**，只配当占位
+           --ink-4   #bfc3c9  **禁用态**          白底  1.77:1 ← 禁用态豁免，别拿去当正文
+
+     ★ 踩过的坑：曾把 `--ink-3`（占位符色）当**正文色**用了 20 多处 —— 订单说明、
+       支付截止时间、备案号、案例小注全在内。白底 3.09:1、灰底 2.79:1，
+       **低于 WCAG AA 的 4.5:1**。而规范里「说明 / 副信息」本来就是 `--ink-2`。
+       后果不是「不好看」，是 30-50 岁的目标用户在浅灰小字上**真的读不清**。
+     ★ 新增文字色前先算对比度：门槛 4.5:1（18.66px+ 或 24px+bold 才放宽到 3:1）。 */
   --ink: #111114;
   --ink-2: #5c6066;
   --ink-3: #8e939a;
@@ -53,6 +69,16 @@
   --success: #2ba471;
   --success-soft: #eaf7f1;
   --danger: #c21b12;
+  /* ★★ 每个语义色都需要一个「深色兄弟」给**文字**用：
+     `--success` 配 `--success-soft` 只有 2.87:1，`--bean` 配 `--bean-soft` 只有 2.76:1
+     —— 13px 的状态徽章文字（已支付 / 待支付）根本读不清。
+     ★ 判据：凡是「同色浅底 + 同色文字/图标」，一律走 ink 兄弟。已全部改过来：
+       `.status.paid|pending`、`.order-kind.bean|member`、`.form-notice.success`、
+       `.wechat-warning`、`.bean-total b`。
+     ★ 反过来，**大图标压白底**（38–54px 的 `.success-icon` / `.warning-icon` /
+       `.missing-payment > svg`）仍用亮色 —— 那是 WCAG 1.4.11 的「图形对象」，门槛 3:1，实测 3.02–3.16 达标。 */
+  --success-ink: #1f7a54;   /* 配 --success-soft = 4.80:1 ✓ */
+  --bean-ink: #8a6118;      /* 配 --bean-soft    = 5.05:1 ✓ */
 
   /* 圆角 */
   --r-sm: 6px;
@@ -193,11 +219,12 @@ main { flex: 1; }
 .button:disabled { background: var(--field); color: var(--ink-4); box-shadow: none; cursor: not-allowed; transform: none; }
 .button.small { min-height: 44px; padding: 0 14px; font-size: 15px; border-radius: var(--r-sm); }
 .button.full { width: 100%; }
-/* 次要操作：浅红底红字（规范里的 Secondary）——不是第二个红实心 */
+/* 次要操作：浅红底红字（规范里的 Secondary）——不是第二个红实心。
+   ★ 文字用 `--brand-ink` 而不是 `--brand`：品牌红压在浅红底上只有 4.10:1（见 token 注释）。 */
 .button.secondary {
-  background: var(--brand-light); color: var(--brand); box-shadow: none;
+  background: var(--brand-light); color: var(--brand-ink); box-shadow: none;
 }
-.button.secondary:hover { background: #fbdcd9; }
+.button.secondary:hover { background: var(--brand-light-hover); }
 .button.secondary:disabled { background: var(--field); color: var(--ink-4); }
 /* 三级：白底细描边（Ghost） */
 .button.ghost { background: var(--card); color: var(--ink); border: 1px solid var(--stroke); box-shadow: none; }
@@ -234,7 +261,7 @@ main { flex: 1; }
 .footer-links a { display: inline-flex; align-items: center; min-height: 44px; }
 .footer-links a:hover { color: var(--brand); }
 /* 备案号：管局要求悬挂在首页底部并链接工信部首页，逐字不可改 */
-.beian { color: var(--ink-3); }
+.beian { color: var(--ink-2); }
 
 /* ───────────────────────── 通用块 ───────────────────────── */
 .eyebrow {
@@ -242,7 +269,7 @@ main { flex: 1; }
   color: var(--brand); font-size: 14px; font-weight: 650;
   letter-spacing: 0.06em;
 }
-.eyebrow.dark { color: var(--ink-3); }
+.eyebrow.dark { color: var(--ink-2); }
 .eyebrow.light { color: rgba(255, 255, 255, 0.85); }
 
 .page-section { padding: 30px 0 56px; }
@@ -258,7 +285,7 @@ main { flex: 1; }
   margin: 0 0 18px;
 }
 
-.loading-block { min-height: 200px; display: flex; justify-content: center; align-items: center; gap: 12px; color: var(--ink-3); font-size: 16px; }
+.loading-block { min-height: 200px; display: flex; justify-content: center; align-items: center; gap: 12px; color: var(--ink-2); font-size: 16px; }
 .spinner {
   width: 20px; height: 20px;
   border: 2px solid var(--stroke); border-top-color: var(--brand);
@@ -392,7 +419,7 @@ main { flex: 1; }
    三张卡片的标题都是 4 字，320 档列宽 76px 下 4×16 = 64px 仍放得下，不会折行。 */
 .case-card h3 { margin: 9px 0 0; font-size: 16px; font-weight: 650; text-align: center; }
 /* 案例小注 13 → 15px：它承载「这是 AI 生成的场景，不是客户实拍」这句**必须被读到**的声明 */
-.case-note { margin: 14px 0 0; font-size: 15px; color: var(--ink-3); text-align: center; }
+.case-note { margin: 14px 0 0; font-size: 15px; color: var(--ink-2); text-align: center; }
 
 /* ───────────────────────── 首页 · 收尾 ───────────────────────── */
 .cta-section { padding: 4px 0 44px; }
@@ -437,7 +464,7 @@ main { flex: 1; }
 .price strong { font-size: 34px; font-weight: 700; }
 .price-card ul { list-style: none; padding: 0; margin: 0 0 20px; display: flex; flex-direction: column; gap: 12px; font-size: 16px; color: var(--ink-2); }
 .price-card li { display: flex; align-items: center; gap: 9px; }
-.price-card li svg { width: 17px; color: var(--ink-3); flex: 0 0 auto; }
+.price-card li svg { width: 17px; color: var(--ink-2); flex: 0 0 auto; }
 .price-card li b { color: var(--ink); font-weight: 650; }
 .price-card .button { margin-top: auto; }
 
@@ -454,8 +481,10 @@ main { flex: 1; }
   display: flex; justify-content: space-between; align-items: center;
 }
 .bean-total span { font-size: 14px; color: var(--ink-2); }
-.bean-total b { font-size: 23px; color: var(--bean); font-weight: 700; }
-.package-card > p { font-size: 14px; color: var(--ink-3); margin: 0 0 18px; }
+/* 23px 粗字压在 `--bean-soft` 上：`--bean` 只有 2.76:1，**连大文本放宽后的 3:1 都不过**
+   ⇒ 用 `--bean-ink`（5.05:1）。 */
+.bean-total b { font-size: 23px; color: var(--bean-ink); font-weight: 700; }
+.package-card > p { font-size: 14px; color: var(--ink-2); margin: 0 0 18px; }
 .package-card .button { margin-top: auto; }
 
 .action-error, .payment-note {
@@ -482,7 +511,7 @@ main { flex: 1; }
 }
 .auth-card-title { display: flex; gap: 14px; align-items: center; margin-bottom: 22px; }
 .auth-card-title h2 { margin: 0 0 4px; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; }
-.auth-card-title p { margin: 0; color: var(--ink-3); font-size: 14px; }
+.auth-card-title p { margin: 0; color: var(--ink-2); font-size: 14px; }
 .round-icon {
   width: 46px; height: 46px; border-radius: var(--r-md);
   background: var(--brand-light); color: var(--brand);
@@ -495,7 +524,7 @@ main { flex: 1; }
   margin-top: 8px; height: 52px;
   border: 1.5px solid transparent; border-radius: var(--r-md);
   display: flex; align-items: center; padding: 0 14px; gap: 9px;
-  color: var(--ink-3); background: var(--field);
+  color: var(--ink-2); background: var(--field);
   transition: background 200ms ease-out, border-color 200ms ease-out, box-shadow 200ms ease-out;
 }
 .input-wrap:focus-within {
@@ -505,7 +534,10 @@ main { flex: 1; }
   color: var(--brand);
 }
 .input-wrap input { border: 0; outline: 0; width: 100%; min-width: 0; background: none; color: var(--ink); font-size: 17px; }
-.input-wrap input::placeholder { color: var(--ink-4); }
+/* 占位符＝`--ink-3`（规范 `--td-text-color-placeholder` = #8E939A）。
+   原来写成 `--ink-4`（那是**禁用态**色 #BFC3C9，白底只有 1.77:1）⇒ 占位文字几乎看不见。
+   ★ 占位符不承载内容，AA 不强制；但「看不见的占位」等于没写 —— 用户不知道该填什么。 */
+.input-wrap input::placeholder { color: var(--ink-3); }
 .code-row { display: grid; grid-template-columns: 1fr 116px; gap: 10px; }
 .code-row .code-button { margin-top: 8px; height: 52px; }
 .agreement { display: flex; align-items: flex-start; gap: 9px; color: var(--ink-2); font-size: 15px; line-height: 1.6; margin: 16px 0; }
@@ -514,7 +546,7 @@ main { flex: 1; }
 .submit-button { width: 100%; }
 .form-notice { padding: 10px 13px; border-radius: var(--r-sm); font-size: 15px; line-height: 1.65; margin: 0 0 14px; }
 .form-notice.error { background: var(--brand-soft); color: var(--brand-active); }
-.form-notice.success { background: var(--success-soft); color: #1f7a54; }
+.form-notice.success { background: var(--success-soft); color: var(--success-ink); }
 
 /* ───────────────────────── 账户中心 ───────────────────────── */
 .account-hero {
@@ -530,18 +562,18 @@ main { flex: 1; }
   display: grid; place-items: center; flex: 0 0 auto;
 }
 .profile-avatar svg { width: 26px; }
-.profile-block span { font-size: 14px; color: var(--ink-3); }
+.profile-block span { font-size: 14px; color: var(--ink-2); }
 .profile-block h2 { margin: 4px 0 2px; font-size: 22px; font-weight: 700; letter-spacing: -0.03em; }
-.profile-block p { font-size: 14px; color: var(--ink-3); margin: 0; }
+.profile-block p { font-size: 14px; color: var(--ink-2); margin: 0; }
 .member-badge {
   display: flex; gap: 12px; align-items: center;
   background: var(--field); padding: 13px 16px; border-radius: var(--r-md);
 }
-.member-badge svg { color: var(--ink-3); flex: 0 0 auto; }
+.member-badge svg { color: var(--ink-2); flex: 0 0 auto; }
 .member-badge.active { background: var(--bean-soft); }
 .member-badge.active svg { color: var(--member); }
 .member-badge span, .member-badge strong { display: block; }
-.member-badge span { font-size: 14px; color: var(--ink-3); margin-bottom: 3px; }
+.member-badge span { font-size: 14px; color: var(--ink-2); margin-bottom: 3px; }
 .member-badge strong { font-size: 16px; font-weight: 650; color: var(--ink); }
 
 .stat-grid { display: grid; gap: 14px; margin: 16px 0; }
@@ -555,7 +587,7 @@ main { flex: 1; }
 .stat-card > span { font-size: 15px; color: var(--ink-2); }
 .stat-card > strong { font-size: 32px; font-weight: 700; margin: 5px 0; }
 .stat-card > strong.date-value { font-size: 19px; margin: 12px 0; }
-.stat-card > small { color: var(--ink-3); font-size: 14px; }
+.stat-card > small { color: var(--ink-2); font-size: 14px; }
 
 .account-actions { display: grid; gap: 12px; }
 .account-actions > a {
@@ -564,9 +596,11 @@ main { flex: 1; }
   background: var(--card);
 }
 .account-actions > a > svg:first-child { color: var(--brand); flex: 0 0 auto; }
-.account-actions > a > svg:last-child { margin-left: auto; color: var(--ink-4); width: 19px; flex: 0 0 auto; }
+/* 右侧 chevron：原来是 `--ink-4`（禁用色，1.77:1）—— 太淡，看不出「这一行可以点」。
+   它是**图形对象**不是文字 ⇒ 按 WCAG 1.4.11 的门槛 3:1 走，用 `--ink-3`（3.09:1）。 */
+.account-actions > a > svg:last-child { margin-left: auto; color: var(--ink-3); width: 19px; flex: 0 0 auto; }
 .account-actions strong { display: block; font-size: 17px; font-weight: 650; }
-.account-actions span { display: block; font-size: 14px; color: var(--ink-3); margin-top: 3px; }
+.account-actions span { display: block; font-size: 14px; color: var(--ink-2); margin-top: 3px; }
 
 .continue-pay {
   width: 100%; border: 1px solid var(--stroke); background: var(--card);
@@ -585,22 +619,28 @@ main { flex: 1; }
 }
 .order-row:last-child { border-bottom: 0; }
 .order-kind { width: 44px; height: 44px; border-radius: var(--r-md); display: grid; place-items: center; flex: 0 0 auto; }
-.order-kind.member { background: var(--bean-soft); color: var(--member); }
-.order-kind.bean { background: var(--success-soft); color: var(--success); }
+/* ★ 图标压在**同色浅底**上，要用 ink 兄弟：`--success` 配 `--success-soft` 只有 2.87:1，
+   连 WCAG 1.4.11 对图形对象的 3:1 都不过；`--bean-ink` / `--success-ink` 是 5.05 / 4.80:1。
+   ★ member 也一并换成 `--bean-ink`：同一支金底上的两块 44px 图标，颜色该是同一个。 */
+.order-kind.member { background: var(--bean-soft); color: var(--bean-ink); }
+.order-kind.bean { background: var(--success-soft); color: var(--success-ink); }
 .order-kind svg { width: 21px; }
 .order-main { min-width: 0; }
 .order-main > div { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .order-main h3 { font-size: 17px; font-weight: 650; margin: 0; }
 .order-main p { margin: 6px 0 2px; }
-.order-main p, .order-main small { color: var(--ink-3); font-size: 14px; }
+.order-main p, .order-main small { color: var(--ink-2); font-size: 14px; }
 .status { font-size: 13px; border-radius: var(--r-sm); padding: 3px 8px; background: var(--field); color: var(--ink-2); font-weight: 650; }
-.status.paid { background: var(--success-soft); color: var(--success); }
-.status.pending { background: var(--bean-soft); color: var(--bean); }
-.status.expired, .status.cancelled { background: var(--field); color: var(--ink-3); }
+/* ★★ 13px 徽章文字 = 普通文本，**必须过 AA 4.5:1**（不够大，不能放宽到 3:1）：
+   `--success` 配 `--success-soft` 2.87:1、`--bean` 配 `--bean-soft` 2.76:1，两个都不达标。
+   换 ink 兄弟后 4.80 / 5.05:1。 */
+.status.paid { background: var(--success-soft); color: var(--success-ink); }
+.status.pending { background: var(--bean-soft); color: var(--bean-ink); }
+.status.expired, .status.cancelled { background: var(--field); color: var(--ink-2); }
 .order-amount { grid-column: 2; text-align: left; }
 .order-amount strong { display: block; font-size: 17px; font-weight: 650; }
 .order-amount button { border: 0; background: none; color: var(--brand); font-size: 15px; margin-top: 6px; font-weight: 650; min-height: 40px; }
-.pagination { display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 20px; font-size: 16px; color: var(--ink-3); }
+.pagination { display: flex; justify-content: center; align-items: center; gap: 16px; margin-top: 20px; font-size: 16px; color: var(--ink-2); }
 .pagination button {
   display: flex; align-items: center; gap: 3px;
   border: 1px solid var(--stroke); background: var(--card);
@@ -617,23 +657,23 @@ main { flex: 1; }
   border-radius: var(--r-lg); padding: 22px 18px; box-shadow: var(--sh-1); text-align: center;
 }
 .pay-head h1 { margin: 10px 0 8px; font-size: 24px; font-weight: 700; letter-spacing: -0.03em; }
-.pay-head p { font-size: 14px; color: var(--ink-3); margin: 0; word-break: break-all; }
+.pay-head p { font-size: 14px; color: var(--ink-2); margin: 0; word-break: break-all; }
 .pay-amount { margin: 18px 0; padding: 18px; border-radius: var(--r-lg); background: var(--field); }
 .pay-amount span, .pay-amount strong, .pay-amount small { display: block; }
 .pay-amount span { font-size: 15px; color: var(--ink-2); }
 .pay-amount strong { font-size: 38px; font-weight: 700; margin: 5px 0; }
-.pay-amount small { display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--ink-3); font-size: 14px; }
+.pay-amount small { display: flex; align-items: center; justify-content: center; gap: 5px; color: var(--ink-2); font-size: 14px; }
 .pay-amount svg { width: 14px; }
 .pay-method { padding: 6px 0 16px; }
 .qr-code { width: min(216px, 100%); height: auto; aspect-ratio: 1; margin: 0 auto; border: 8px solid #fff; box-shadow: var(--sh-1); border-radius: var(--r-md); }
-.qr-loading { height: 216px; display: flex; justify-content: center; align-items: center; color: var(--ink-3); gap: 8px; font-size: 16px; }
+.qr-loading { height: 216px; display: flex; justify-content: center; align-items: center; color: var(--ink-2); gap: 8px; font-size: 16px; }
 .qr-loading svg { animation: spin 900ms linear infinite; }
 .pay-method h2 { font-size: 19px; font-weight: 650; margin: 16px 0 6px; }
 .pay-method p, .missing-payment p { font-size: 16px; color: var(--ink-2); line-height: 1.75; margin: 0; }
 .h5-button { margin: 24px auto 14px; }
 .wechat-warning {
   display: flex; gap: 10px; text-align: left; padding: 13px;
-  background: var(--bean-soft); color: #8a6118;
+  background: var(--bean-soft); color: var(--bean-ink);
   border-radius: var(--r-md); font-size: 15px; line-height: 1.65;
 }
 .wechat-warning svg { flex: 0 0 auto; margin-top: 3px; }
@@ -645,7 +685,7 @@ main { flex: 1; }
 .pay-security {
   display: flex; gap: 8px; text-align: left;
   padding-top: 18px; margin-top: 20px; border-top: 1px solid var(--stroke);
-  font-size: 14px; color: var(--ink-3); line-height: 1.65;
+  font-size: 14px; color: var(--ink-2); line-height: 1.65;
 }
 .pay-security svg { color: var(--success); flex: 0 0 auto; margin-top: 3px; }
 
@@ -670,7 +710,7 @@ main { flex: 1; }
   border-radius: var(--r-lg); padding: 22px 18px;
   line-height: 1.9; color: var(--ink-2); font-size: 16px;
 }
-.legal-meta { font-size: 14px; color: var(--ink-3); border-bottom: 1px solid var(--stroke); padding-bottom: 16px; margin-bottom: 22px; }
+.legal-meta { font-size: 14px; color: var(--ink-2); border-bottom: 1px solid var(--stroke); padding-bottom: 16px; margin-bottom: 22px; }
 .legal-card h2 { font-size: 19px; font-weight: 650; color: var(--ink); margin: 26px 0 8px; }
 .legal-card p { font-size: 16px; margin: 0 0 4px; }
 .legal-notice {
