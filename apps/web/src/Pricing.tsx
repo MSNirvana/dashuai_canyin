@@ -13,6 +13,21 @@ import type { AccountInfo, Catalog, OrderKind, PayOrder, PayScene } from './type
  *   不写「价格与权益均实时读取服务端配置」这种给审计看的句子。
  *   ⚠ 但**价格与积分数字本身一个字都不能改**——它们直接来自服务端目录。
  */
+/**
+ * 有效期文案：整年按「年」写，其余按「天」。
+ *
+ * ★ 为什么不能直接写 `{plan.durationDays} 天`：
+ *   套餐名是后台填的（当前叫「订阅 · 3年」），天数来自套餐行（1095）。
+ *   两者并排在同一张卡上，一个写「3 年」、另一个写「1095 天」，用户得在脑子里做除法
+ *   才能确认它们说的是同一件事 —— 读起来就像又一处自相矛盾。
+ *   （2026-10-14 之前更糟：名字 3 年、有效期 30 天，是两个**真的**不一样的数字。）
+ * ★ 只认「能被 365 整除」的整年：1095 ⇒ 3 年、365 ⇒ 1 年，而 400 天仍写「400 天」，
+ *   不编造「1.1 年」这种用户没法核对的数字。
+ */
+function formatDuration(days: number): string {
+  return days >= 365 && days % 365 === 0 ? `${days / 365} 年` : `${days} 天`
+}
+
 export function Pricing() {
   const { session } = useAuth()
   const navigate = useNavigate()
@@ -74,7 +89,7 @@ export function Pricing() {
                     <h3>{plan.name}</h3>
                     <div className="price"><strong>{formatMoney(plan.priceFen)}</strong></div>
                     <ul>
-                      <li><CalendarDays /><span>有效期 <b>{plan.durationDays} 天</b></span></li>
+                      <li><CalendarDays /><span>有效期 <b>{formatDuration(plan.durationDays)}</b></span></li>
                       <li><Coins /><span>赠送 <b>{formatNumber(plan.grantBeans)} 积分</b></span></li>
                       <li><Check /><span>可以购买积分加油包</span></li>
                     </ul>

@@ -21,7 +21,6 @@ import { markOrderPaid } from '../src/services/order.service.js'
 import { scanGrantExpiry } from '../src/services/grant-expiry.service.js'
 import { scanStaleAiRequests } from '../src/ai/ai-recovery.service.js'
 import { settleAiCharge } from '../src/ai/ai.service.js'
-import { getNumber } from '../src/lib/settings.js'
 
 const prisma = new PrismaClient()
 const PHONE = '13900009997' // 与 membership:verify(…9999) / pay-reconcile:verify(…9998) 区分
@@ -125,8 +124,11 @@ async function main() {
   const mid = (await prisma.merchant.findUniqueOrThrow({ where: { phone: PHONE } })).id
   tempMerchantId = mid
 
-  const subDays = await getNumber(prisma, 'subscription', 'duration_days', 30)
-  const subGrant = BigInt(Math.round(await getNumber(prisma, 'subscription', 'grant_points', 98000)))
+  // ★ 期望值必须与**实发**同源：`markOrderPaid → activateMembership` 读的是**套餐行**
+  //   （`member_package.duration_days` / `grant_beans`），不是 `SystemSetting.subscription.*`。
+  //   照抄 SystemSetting 会让本守护在两者不同时**假红**（2026-10-14 线上就是 1095 天 vs 30 天）。
+  const subDays = pkg.durationDays
+  const subGrant = pkg.grantBeans
 
   // ── ① 两笔会员订单并发结算：必须续两期 ──────────────────────────
   console.log('\n════ ① 同一商户两笔会员订单并发结算 ⇒ 会员期必须增加两期 ════')

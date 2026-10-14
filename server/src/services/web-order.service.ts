@@ -2,7 +2,6 @@ import type { PrismaClient, Order } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
 import { paymentsEnabled } from '../lib/config.js'
-import { getNumber } from '../lib/settings.js'
 import { createWebPayOrder, wxpayEnabled, type WebPayScene } from '../lib/wxpay.js'
 import { PackageNotFoundError, PaymentUnavailableError } from './order.service.js'
 import { queryAndSettle } from './pay-reconcile.service.js'
@@ -46,15 +45,41 @@ function payerIp(scene: WebPayScene, ip?: string) {
 }
 
 export async function getWebCatalog(prisma: PrismaClient) {
-  const [plans, packages, durationDays, grantPoints] = await Promise.all([
+  /**
+   * ★★★ 展示口径 = 套餐行自己的值（`member_package.duration_days` / `grant_beans`）。
+   *
+   * 曾经这里读的是 `SystemSetting.subscription.{duration_days,grant_points}`，
+   * 与套餐行的值**并存两套**。代价在 2026-10-14 上线后立刻现形：
+   * 套餐叫「订阅 · 3年」（`member_package.name`，后台「会员套餐」页配的）、
+   * `member_package.duration_days` 也是 1095，但线上有效期显示 **30 天** ——
+   * 因为 SystemSetting 那一条是 30，而它**压过了**套餐行。
+   * 于是同一个商品在**名称里写 3 年、在有效期里写 30 天**，公开页面自相矛盾。
+   *
+   * 为什么唯一源必须是套餐行而不是 SystemSetting：
+   *   ① 套餐天然是**多档**的（每行一套周期/赠积分），SystemSetting 是**全局单值** ——
+   *      用它覆盖等于宣布「多档套餐永远只能同周期」，那这个表就不用按档建了；
+   *   ② 后台「会员套餐」页编辑的正是这两个字段（`admin-extra.service.ts::updatePackage`），
+   *      而**全仓没有任何地方写 `subscription.duration_days`** ⇒ 运营在后台改完、保存成功、
+   *      线上毫无变化，且没有任何报错 —— 最典型的静默失效。
+   *   ③ 产品定义本身也是 3 年：`lib/xpay.ts` 的商品表逐条写着
+   *      `{ productId: 'SUBSCRIPTION', goodsPriceFen: 98000, 说明: '订阅 · 3年' }`。
+   *   ⇒ 30 天是那条遗留配置的错，不是这里该迁就的对象。
+   *
+   * ⚠ `system_setting` 里的 `subscription.duration_days` / `grant_points` 自此**不再被读取**，
+   *   仅为历史留痕。改会员周期请去后台「会员套餐」页。
+   */
+  const [plans, packages] = await Promise.all([
     prisma.memberPackage.findMany({ where: { enabled: true }, orderBy: { sort: 'asc' } }),
     prisma.beanPackage.findMany({ where: { enabled: true }, orderBy: { sort: 'asc' } }),
-    getNumber(prisma, 'subscription', 'duration_days', 30),
-    getNumber(prisma, 'subscription', 'grant_points', 98000),
   ])
-  const grantBeans = BigInt(Math.round(grantPoints)).toString()
   return {
-    plans: plans.map(p => ({ id: p.id.toString(), name: p.name, priceFen: p.priceFen, durationDays, grantBeans })),
+    plans: plans.map(p => ({
+      id: p.id.toString(),
+      name: p.name,
+      priceFen: p.priceFen,
+      durationDays: p.durationDays,
+      grantBeans: p.grantBeans.toString(),
+    })),
     packages: packages.map(p => ({ id: p.id.toString(), name: p.name, priceFen: p.priceFen, beans: p.beans.toString(), bonusBeans: p.bonusBeans.toString() })),
     capabilities: webPayCapabilities(),
   }

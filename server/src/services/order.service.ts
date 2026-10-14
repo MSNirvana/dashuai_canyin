@@ -17,7 +17,6 @@ import {
   beanProductId,
   type VirtualPayParams,
 } from '../lib/xpay.js'
-import { getNumber } from '../lib/settings.js'
 import { paymentsEnabled } from '../lib/config.js'
 import { activeSubscription, getStorage, SubscriptionRequiredError } from './subscription.service.js'
 import { raiseOpsAlert, type RaiseOpsAlertInput } from './ops-alert.service.js'
@@ -609,12 +608,17 @@ export async function markOrderPaid(
   if (!order) throw new Error(`order not found: ${orderNo}`)
   if (order.status === 'PAID') return
 
-  // 订阅参数后台可改，在事务外读取（getNumber 不接受 TransactionClient）
-  const subDurationDays = await getNumber(prisma, 'subscription', 'duration_days', 30)
-  const subGrantPoints = BigInt(
-    Math.round(await getNumber(prisma, 'subscription', 'grant_points', 98000)),
-  )
-
+  /**
+   * ★★★ 会员周期与赠积分**不再从 `SystemSetting.subscription.*` 读取**，一律用套餐行自己的值。
+   *
+   * 曾经的写法是在这里读出 `subDurationDays` / `subGrantPoints`，再作为 `override` 传给
+   * `activateMembership()` 去**压过**套餐行 —— 「展示 30 天、实发 30 天」看似自洽，
+   * 却与套餐名（「订阅 · 3年」）和 `member_package.duration_days`(1095) 同时矛盾，
+   * 而且让后台「会员套餐」页改天数**静默失效**（全仓无人写那条 SystemSetting）。
+   *
+   * 唯一源收敛到套餐行后：后台改什么就是什么，展示与实发仍然同源（都走这里）。
+   * 详见 `web-order.service.ts::getWebCatalog` 的同一段说明。
+   */
   /**
    * 事务内**收集**、提交后**才发**的告警。
    *
@@ -675,9 +679,10 @@ export async function markOrderPaid(
       await recharge(tx, { merchantId: order.merchantId, amount: order.beans, bizId: order.orderNo })
       grantedBeans = order.beans
     } else if (order.orderType === 'MEMBER') {
+      // ★ 只传 grantRemark：周期与赠积分交给 `activateMembership()` 从套餐行读，
+      //   与 `getWebCatalog()` 展示的**完全同源**（override 一律不传）。
+      //   一旦这里再传 durationDays/grantPoints，展示与实发就会重新分叉。
       const activated = await activateMembership(tx, order.merchantId, order.refId, order.id, {
-        durationDays: subDurationDays,
-        grantPoints: subGrantPoints,
         grantRemark,
       })
       grantedBeans = activated.grantedPoints
@@ -724,12 +729,16 @@ async function activateMembership(
   merchantId: bigint,
   packageId: bigint,
   sourceOrderId: bigint | null,
-  override?: { durationDays: number; grantPoints: bigint; grantRemark?: string },
+  override?: { durationDays?: number; grantPoints?: bigint; grantRemark?: string },
 ): Promise<{ endAt: Date; grantedPoints: bigint; renewed: boolean }> {
   const pkg = await tx.memberPackage.findUnique({ where: { id: packageId } })
   if (!pkg) throw new PackageNotFoundError()
   const now = new Date()
-  // 后台可改：SystemSetting.subscription.* 优先于套餐默认值
+  // ★★ 唯一源 = 套餐行（`member_package.duration_days` / `grant_beans`）。
+  //   `override` 只在**刻意**开一期与套餐不同的会员时才用；线上目前**没有任何**调用方传它
+  //   （`markOrderPaid` 只传 grantRemark —— 见那里的长注释）。
+  //   曾经这里是 `SystemSetting.subscription.* 优先于套餐默认值`，后果是后台
+  //   「会员套餐」页改天数**静默失效**：保存成功、线上一点没变、也不报错。
   const durationDays = override?.durationDays ?? pkg.durationDays
   const grantPoints = override?.grantPoints ?? pkg.grantBeans
   const durationMs = durationDays * 24 * 60 * 60 * 1000
@@ -808,7 +817,8 @@ export interface AdminMembershipResult {
  *   · 赠积分走 `grant(source:'MEMBERSHIP')` → 进**会员桶**，随会员到期清零（与线上购买完全一致）
  *   · 幂等键 = `membership:<orderId>`，每次开通都是一张新订单 ⇒ 重复开通就是真续期，不会双发
  *   · 在后台「最近订单」里留下一行可追溯记录（orderNo 以 `A` 开头 = 后台单，无微信交易号）
- *   · 时长 / 赠积分取 `SystemSetting.subscription.*`，与线上购买共用同一份配置
+ *   · 时长 / 赠积分取**套餐行**（`member_package.duration_days` / `grant_beans`）——
+ *     与线上购买（`markOrderPaid` → `activateMembership`）读的是**同一个源**
  *
  * 操作人记录在赠积分流水的 remark 里（BeanLedger 是唯一有留痕字段的账务表）。
  */
@@ -823,8 +833,9 @@ export async function adminActivateMembership(
   if (!pkg.enabled) throw new PackageNotFoundError()
 
   const before = await activeMembership(prisma, merchantId)
-  // 与 markOrderPaid 读的是同一份配置（SystemSetting.subscription.*），仅用于回显
-  const grantedThisTime = BigInt(Math.round(await getNumber(prisma, 'subscription', 'grant_points', 98000)))
+  // 与实发同源：套餐行自己的 `grant_beans`（markOrderPaid → activateMembership 也读它），
+  // 这里只用于回显本次开通赠送了多少积分。
+  const grantedThisTime = pkg.grantBeans
 
   // 单号前缀 A = ADMIN，与线上充值 B / 线上会员 M 区分
   const orderNo = `A${Date.now().toString().slice(-10)}${randomUUID().slice(0, 6)}`

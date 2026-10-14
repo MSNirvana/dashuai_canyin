@@ -311,8 +311,14 @@ async function main(): Promise<void> {
   )
 
   console.log('D. 目录：展示口径 = 结算口径')
-  // ★ 缓存键是 group.key 且 TTL 60s：不 invalidate 就会把上一组配置的答案留下来，
-  //   于是「改了后台设置但目录不变」这种真缺陷会被自己的缓存掩盖成通过。
+  // ★★ 这里的 `settings` 是**故意写成与套餐行不同**的值（1095/30000 vs 套餐行 30/0），
+  //   用来证明 `SystemSetting.subscription.*` 已经**不再影响目录**。
+  //
+  //   ⚠ 这段断言在 2026-10-14 之前期望值是**反的**（「会员周期取后台配置而不是套餐原值」）：
+  //     它把「套餐名写『订阅 · 3年』、有效期却显示 30 天」这个线上矛盾**固化成了契约**，
+  //     于是真实的数据源缺陷被守护照单全收、测试全绿。
+  //     ⇒ 守护断言一旦写反，红灯永远等不到。改这里时必须让 settings 与套餐行**不同**，
+  //       否则「读没读 settings」根本区分不出来（两边相等时怎么读都通过）。
   invalidate()
   const catalogDb = makeDb({
     plans: PLANS,
@@ -322,8 +328,8 @@ async function main(): Promise<void> {
   const catalog = await getWebCatalog(catalogDb)
   check('只列启用的会员套餐', JSON.stringify((catalogDb.inputArgs.memberPlans as { where?: unknown })?.where), JSON.stringify({ enabled: true }))
   check('只列启用的加油包', JSON.stringify((catalogDb.inputArgs.beanPackages as { where?: unknown })?.where), JSON.stringify({ enabled: true }))
-  check('会员周期取后台配置而不是套餐原值', catalog.plans[0]?.durationDays, 1095)
-  check('赠送积分取后台配置而不是套餐原值', catalog.plans[0]?.grantBeans, '30000')
+  check('会员周期取套餐行原值，不被 SystemSetting 覆盖', catalog.plans[0]?.durationDays, PLANS[0]!.durationDays)
+  check('赠送积分取套餐行原值，不被 SystemSetting 覆盖', catalog.plans[0]?.grantBeans, PLANS[0]!.grantBeans.toString())
   check('价格仍来自套餐行', catalog.plans[0]?.priceFen, 98000)
   check('加油包原价直出不本地打折', catalog.packages[0]?.priceFen, 9900)
   check('目录能力位与服务端开关同源', catalog.capabilities, webPayCapabilities())
