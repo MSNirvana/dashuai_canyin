@@ -42,6 +42,17 @@ router.post('/sms/send', async (req, res) => {
       // e.reason 含腾讯云内部错误码与账号状态，只进服务端日志，不回给客户端。
       // 这条日志是排查「用户说收不到短信」的第一现场 —— 余额不足 / 签名模板未过审 / 限频都在这里现形。
       console.error(`[SMS] 发送失败：${e.reason}`)
+      // ★★★ 腾讯侧的「按自然日」频控必须单独翻成人话，不能并进下面那句「请稍后重试」。
+      //   实测（2026-10-14 线上）：同一个号当天发到第 3 条起，腾讯返回
+      //   `LimitExceeded.PhoneNumberDailyLimit`。这一档「稍后重试」永远不会好 —— 要等次日 0 点。
+      //   本进程自己的限额（DAILY_LIMIT_PER_PHONE / RESEND_COOLDOWN_SEC）兜不住它：
+      //   腾讯按手机号跨模板、跨场景另算一套，两边不是同一个计数器。
+      //   判据在 `SmsSendFailedError.rateLimitKind`（与 lib/errors.ts 共用同一个函数，不许各写一遍）。
+      //   两端客户端都是「服务端 message 优先、码表只兜底」⇒ 在这里给对话术即可，不必改前端。
+      if (e.rateLimitKind === 'day') {
+        fail(res, 1007, '该号码今日接收验证码次数已达上限，请明天再试', 429)
+        return
+      }
       fail(res, 1005, '短信发送失败，请稍后重试', 502)
       return
     }

@@ -23,6 +23,33 @@ export class SmsSendFailedError extends Error {
     super(`短信发送失败：${reason}`)
     this.name = 'SmsSendFailedError'
   }
+
+  /**
+   * ★★★ 腾讯侧频控的**唯一判据**。两个调用点（`routes/auth.ts` 的 /sms/send、
+   * `lib/errors.ts` 的全局兜底）都用它决定回哪句人话 —— **不许各自写一遍
+   * `reason.includes('LimitExceeded')`**：两处各写一遍，供应商改一个字就只修好一半，
+   * 另一半会静默地继续回错话术（2026-10-14 那次线上事故就是「判据分散」的形态）。
+   *
+   * 为什么必须把 `'day'` 单独分出来：
+   * 腾讯云的频控有几档，**只有「按自然日」的那一档「稍后重试」永远不会好**。
+   * 实测（2026-10-14 线上，同一个号当天第 3 条即被拒）：
+   *   `LimitExceeded.PhoneNumberDailyLimit the number of sms messages sent from
+   *    a single mobile number every day exceeds the upper limit`
+   * 沿用通用的「短信发送失败，请稍后重试」会让用户反复点「发送验证码」，
+   * 而真正要等的是**次日 0 点**。⇒ 这一档必须把话说明白。
+   *
+   * ⚠ 应用侧自己的限额（`DAILY_LIMIT_PER_PHONE` / `RESEND_COOLDOWN_SEC`）兜不住它 ——
+   * 那是本进程自己数的，腾讯侧按手机号跨模板、跨场景另算一套，两边不是同一个计数器。
+   *
+   * 判据只认子码里的 `DailyLimit` / `OneDayLimit` 字样，**不依赖前缀**：
+   * 腾讯在 `LimitExceeded.*` 之下还有按小时、按 30 秒的档位（那些「稍后」确实会好，
+   * 归 `'short'`），前缀将来若变（如 `FailedOperation.*`）也不会漏判。
+   */
+  get rateLimitKind(): 'day' | 'short' | null {
+    if (/(Daily|OneDay)Limit/.test(this.reason)) return 'day'
+    if (/LimitExceeded/.test(this.reason)) return 'short'
+    return null
+  }
 }
 
 export type SmsProviderMode = 'tencent' | 'none'

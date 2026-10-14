@@ -1,6 +1,6 @@
 // 短信登录链路契约测试。
 //
-// 验证七件事：
+// 验证八件事：
 //   A. `smsProviderMode()` —— 只认 `tencent`，未知取值一律视为「未配置」（不猜、不静默降级）
 //   B. `readTencentSmsConfig()` —— 五项缺任一即为 null；region 默认 ap-guangzhou
 //   C. 安全性质：配置不全时**绝不假装发送成功**（生产必须明确失败，不能 fail-open）
@@ -19,8 +19,11 @@
 //      开了也**只认白名单**、名单外的报错能自证真因。
 //      它允许后门在 production 生效，所以是本文件里最该被测死的一段 ——
 //      背景见 src/auth/sms.ts::smsTestCodeConfig 的注释。
+//   H. ★ 腾讯侧频控的话术分档：`LimitExceeded.PhoneNumberDailyLimit`（按自然日）必须单独
+//      翻成「请明天再试」（1007），不能并进通用的「请稍后重试」—— 后者永远等不到好转。
+//      H1~H7 测分类、H8~H11 测 `mapError` 的接线（只改分类不改接线 = 线上照旧错话术）。
 //
-// A~C、E 是纯函数测试（注入 env，不碰网络与数据库）。
+// A~C、E、H 是纯函数测试（注入 env，不碰网络与数据库）；D/F/G 需要数据库。
 // D、F 需要数据库；D 还依赖外网（用假密钥真实请求腾讯云以取得一个确定的失败）：
 //   期望「抛 SmsSendFailedError + 记录被删除」。网络不通时走的同样是失败路径，用例依然成立
 //   —— 这正是本项目的一条纪律：不把「第三方偶发不可用」当作测试失败。
@@ -38,6 +41,7 @@ import {
   SmsProviderNotConfiguredError,
 } from '../src/auth/sms.js'
 import { isDemoPhone, loadDemoPolicy } from '../src/lib/demo-account.js'
+import { mapError } from '../src/lib/errors.js'
 
 let pass = 0
 let fail = 0
@@ -453,6 +457,62 @@ async function main(): Promise<void> {
       await prisma.smsCode.deleteMany({ where: { phone: { in: [TEST_PHONE, NON_WHITELIST] } } })
     }
   }
+
+  // ─────────── H. 腾讯侧频控的话术分档 ───────────
+  //
+  // 2026-10-14 线上：同一个号当天发到第 3 条起，腾讯回 `LimitExceeded.PhoneNumberDailyLimit`，
+  // 而代码把它并进了通用的「短信发送失败，请稍后重试」—— 用户于是反复点「发送验证码」，
+  // 永远等不到。这一层频控是**按自然日**算的，「稍后」永远不会好，要等次日 0 点。
+  //
+  // 两件事各测一遍，缺一不可：
+  //   ① 分类准 —— `SmsSendFailedError.rateLimitKind`（纯函数，不碰网络与数据库）；
+  //   ② ⚠ **接线准** —— `mapError()` 真的据此回了 1007。只改分类不改接线，线上照旧是错话术。
+  console.log('\nH. 腾讯侧频控：按自然日 / 按小时 / 非频控，三档必须是不同的话')
+
+  // H1 的三个理由串是**等价的**：按自然日的那一档，前缀可能是 LimitExceeded 也可能是别的，
+  // 判据刻意只认子码里的 DailyLimit / OneDayLimit、不依赖前缀 —— 所以三条都必须判成 day。
+  for (const r of [
+    'LimitExceeded.PhoneNumberDailyLimit the number of sms messages sent from a single mobile number every day exceeds the upper limit',
+    'LimitExceeded.PhoneNumberOneDayLimit',
+    'FailedOperation.PhoneNumberDailyLimit',
+  ]) {
+    check(`H1 「按自然日」→ day（${r.slice(0, 44)}…）`, new SmsSendFailedError(r).rateLimitKind, 'day')
+  }
+  check(
+    'H2 按小时 → short（这一档「稍后重试」确实会好，不能也说「明天」）',
+    new SmsSendFailedError('LimitExceeded.PhoneNumberOneHourLimit').rateLimitKind,
+    'short',
+  )
+  check('H3 按 30 秒 → short', new SmsSendFailedError('LimitExceeded.PhoneNumberThirtySecondLimit').rateLimitKind, 'short')
+  check('H4 请求 QPS 超限 → short', new SmsSendFailedError('RequestLimitExceeded').rateLimitKind, 'short')
+  // ★★ H5~H7 是反向边界，防「把所有失败都说成太频繁」：余额不足 / 签名未过审时让用户
+  //    「稍后重试」是在指错路 —— 那时真正要动的是后台（充值 / 重新报备签名模板）。
+  check(
+    'H5 余额不足 → null（不是频控，不许说「太频繁」）',
+    new SmsSendFailedError('FailedOperation.BalanceNotEnough').rateLimitKind,
+    null,
+  )
+  check(
+    'H6 签名/模板未过审 → null',
+    new SmsSendFailedError('FailedOperation.SignatureIncorrectOrUnapproved').rateLimitKind,
+    null,
+  )
+  check('H7 网络异常 → null', new SmsSendFailedError('请求异常').rateLimitKind, null)
+
+  const dayMapped = mapError(new SmsSendFailedError('LimitExceeded.PhoneNumberDailyLimit xxx'))
+  check('H8 ★ 日限额的**接线**：1007 / 429（不是 1005）', [dayMapped.code, dayMapped.httpStatus], [1007, 429])
+  check('H9 ★ 日限额不再说「稍后重试」—— 就是这句让人白点', dayMapped.message.includes('稍后重试'), false)
+  const otherMapped = mapError(new SmsSendFailedError('FailedOperation.BalanceNotEnough'))
+  check(
+    'H10 非频控的通道失败 → 仍是 1005 / 502（本段不改变原有行为）',
+    [otherMapped.code, otherMapped.httpStatus],
+    [1005, 502],
+  )
+  check(
+    'H11 通道原始 reason 一律不回给客户端（含腾讯内部码与账号状态）',
+    otherMapped.message.includes('BalanceNotEnough') || dayMapped.message.includes('LimitExceeded'),
+    false,
+  )
 
   console.log(`\n${'─'.repeat(52)}`)
   console.log(`通过 ${pass} · 失败 ${fail}${skip ? ` · 跳过 ${skip}` : ''}`)

@@ -42,7 +42,7 @@ export interface MappedError {
   unexpected?: boolean
 }
 
-function mapError(e: unknown): MappedError {
+export function mapError(e: unknown): MappedError {
   // 参数类错误优先：路径/查询/请求体参数非法、zod 校验失败都应返回 400，而不是 500
   if (e instanceof InvalidIdParamError) return { code: 4000, message: '参数不合法', httpStatus: 400 }
   if (e instanceof ZodError) return { code: 4000, message: '参数错误', httpStatus: 400 }
@@ -58,6 +58,11 @@ function mapError(e: unknown): MappedError {
   if (e instanceof SmsProviderNotConfiguredError) return { code: 1004, message: e.message, httpStatus: 503 }
   // 通道侧发送失败（余额不足 / 签名模板未过审 / 网络异常）。
   // 刻意不回传 e.reason：它含腾讯云内部错误码与账号状态，对用户无意义，只进服务端日志。
+  // ★ 判据与 routes/auth.ts 的 /sms/send 共用 `SmsSendFailedError.rateLimitKind`（不许两处各写一遍）。
+  //   这条全局兜底正常走不到（/sms/send 自己 catch 了），但只要将来有别的路由调用 sendCode，
+  //   用户看到的必须是同一句人话 —— 否则「按自然日」的上限又会被说成「请稍后重试」。
+  if (e instanceof SmsSendFailedError && e.rateLimitKind === 'day')
+    return { code: 1007, message: '该号码今日接收验证码次数已达上限，请明天再试', httpStatus: 429 }
   if (e instanceof SmsSendFailedError) return { code: 1005, message: '短信发送失败，请稍后重试', httpStatus: 502 }
   if (e instanceof StoreLimitError) return { code: 2003, message: e.message, httpStatus: 400 }
   if (e instanceof StoreDefaultDeleteError) return { code: 2003, message: e.message, httpStatus: 400 }
