@@ -66,25 +66,31 @@
   border-radius: 50%;
 }
 
-/* 右上角两条控件（切换镜头 / 补光）：都是 64rpx 的圆钮，里面放图标。
+/* ── 底部两条控件（切换镜头 / 补光）：都搬到了**底部两侧**、从 64rpx 加大到 104rpx。
+   ★★ 为什么从右上角搬走（2026-10-14 真机反馈）：右上角就是微信的**胶囊按钮**
+     （「…」与「○」），其中「○」按下去就是**退出小程序**。一个 64rpx 的圆钮和它挤在
+     同一块地方，用户切镜头时动不动就把小程序关了 —— 这不是手滑，是位置本身就不该放。
+   ⇒ 现在取景层的**右上角整块留白给胶囊**，「顶部」只剩左上角的 ✕；
+     两个钮落到快门左右两侧（下面），尺寸翻倍、离胶囊尽量远，顺手也更好按。
    ★ 图标必须是 `<cover-image>` —— 这一层是盖在 camera 上的 cover-view，
      里面只允许嵌套 cover-view 与 cover-image，字体图标在这一层渲染不出来。 */
 .shotcam__tool {
   position: absolute;
-  right: 28rpx;
-  width: 64rpx;
-  height: 64rpx;
+  bottom: calc(96rpx + env(safe-area-inset-bottom));
+  width: 104rpx;
+  height: 104rpx;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.42);
 }
 /* 切换镜头：环形双箭头。★ 只有符号、没有「前置/后置」四个字（用户要求只留两条文案） */
 .shotcam__tool--device {
-  top: calc(20rpx + env(safe-area-inset-top));
+  left: 72rpx;
 }
 /* 补光：只给后置（前置摄像头没有闪光灯，`flash='torch'` 在它身上必然无效 ——
-   上一轮「补光也没有用」就是这么来的，不是坏了） */
+   上一轮「补光也没有用」就是这么来的，不是坏了）。
+   ★ 一并搬到底部右侧：它原来在右上角**胶囊正下方**，和切镜头是同一类误触。 */
 .shotcam__tool--flash {
-  top: calc(104rpx + env(safe-area-inset-top));
+  right: 72rpx;
 }
 /* 「开」：加一层很淡的暖色底。
    ★ 不能用实色黄 —— 图标是白的，压在实色黄上就糊成一片了。 */
@@ -92,15 +98,17 @@
   background: rgba(255, 197, 61, 0.22);
 }
 
-/* 图标本体：cover-view 不吃 flex ⇒ 居中只能用 left/top 50% + 负 margin */
+/* 图标本体：cover-view 不吃 flex ⇒ 居中只能用 left/top 50% + 负 margin。
+   ★ 尺寸跟着圆钮一起放大（44 → 56rpx）：圆钮 104rpx 配 44rpx 的图标会显得空。
+     图标源图是 120px 的 PNG，缩到 56rpx（≈28px）仍然是缩小的方向，不会糊。 */
 .shotcam__icon {
   position: absolute;
   left: 50%;
   top: 50%;
-  margin-left: -22rpx;
-  margin-top: -22rpx;
-  width: 44rpx;
-  height: 44rpx;
+  margin-left: -28rpx;
+  margin-top: -28rpx;
+  width: 56rpx;
+  height: 56rpx;
 }
 /* 补光「关」用的是空心闪电，本来就比实心的弱；再压一点透明度，两种状态的差别更明确 */
 .shotcam__icon--dim {
@@ -108,16 +116,31 @@
 }
 
 /* ── 屏幕上**只有这两条文案**：口播文案（大，要念的）+ 画面文案（小，要拍到的）──
-   ★ 不加底色：用户要的就是「文案直接浮在画面上」。可读性靠 text-shadow 撑
-     （覆盖层对 shadow 的支持不保证，真机若发现亮背景下看不清，再补一层半透明底）。 */
+   ★★ 2026-10-14 真机反馈「白字不太显」，修法是**加一条半透明底**，而不是加大 text-shadow：
+     cover-view 官方支持样式里**没有 shadow**（只支持定位/布局/文本样式），
+     原来那两句 `text-shadow` 在真机上很可能根本没生效 —— 白字直接压在亮画面上，
+     越亮的地方越看不见。background 是 cover-view 明确支持的，所以底条才是有效手段。
+   ★ 底条铺在 `.shotcam__prompt` 这一层（不是每条各自一条底），两条文案共用一块，
+     看起来就是一条「提词条」；左右各留 16rpx，配 16rpx 内边距 ⇒ 文字可用宽 ≈686rpx，
+     下面的字号档位就是照这个宽度定的（见 promptline 的 ★）。 */
 .shotcam__prompt {
   position: absolute;
-  left: 40rpx;
-  right: 40rpx;
+  left: 16rpx;
+  right: 16rpx;
   top: calc(150rpx + env(safe-area-inset-top));
+  padding: 22rpx 16rpx;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 18rpx;
 }
 /* ★ 字号按字数下台阶：cover-view 默认 nowrap，长句会被**静默裁掉**（不换行、不报错）。
-   750rpx 屏、左右各留 40rpx ⇒ 可用约 670rpx；中文按 1 字约等于 1 个字号宽估算。 */
+   750rpx 屏、prompt 左右各 16rpx + 内边距 16rpx ⇒ 可用约 686rpx；
+   中文按 1 字约等于 1 个字号宽估算 ⇒ 字号上限 = 686 / 字数（取整留一点余量）：
+     ≤11 字 ⇒ ≤62rpx（11×62=682）
+     ≤16 字 ⇒ ≤42rpx（16×42=672）
+     更长   ⇒ 32rpx（按 21 字算 672）
+   ★ 这三档比 2026-09 那版（56/40/30）各上调了一档；再往上就必须依赖
+     `white-space: normal` 真的换行 —— 那一条在真机上**不保证生效**，
+     一旦不生效就是整句被裁（静默、不报错），所以字号只敢加到「单行一定排得下」为止。 */
 .shotcam__promptline {
   text-align: center;
   font-weight: 700;
@@ -127,15 +150,15 @@
   white-space: normal;
   word-break: break-all;
 }
-.shotcam__promptline--s1 { font-size: 56rpx; }  /* ≤11 字 */
-.shotcam__promptline--s2 { font-size: 40rpx; }  /* ≤16 字 */
-.shotcam__promptline--s3 { font-size: 30rpx; }  /* 更长 */
+.shotcam__promptline--s1 { font-size: 62rpx; }  /* ≤11 字 */
+.shotcam__promptline--s2 { font-size: 42rpx; }  /* ≤16 字 */
+.shotcam__promptline--s3 { font-size: 32rpx; }  /* 更长 */
 .shotcam__promptvisual {
-  margin-top: 16rpx;
+  margin-top: 14rpx;
   text-align: center;
-  font-size: 26rpx;
-  line-height: 1.6;
-  color: rgba(255, 255, 255, 0.78);
+  font-size: 30rpx;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.92);
   text-shadow: 0 2rpx 8rpx rgba(0, 0, 0, 0.7);
   white-space: normal;
   word-break: break-all;

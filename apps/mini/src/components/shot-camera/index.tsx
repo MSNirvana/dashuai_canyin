@@ -60,7 +60,10 @@ import Taro from '@tarojs/taro'
 //   图标由 `scripts/gen-shotcam-icons.py` 生成（白描、透明底），改形状请改脚本重跑。
 //   ★ 这三个 PNG 都是 2–3KB，会被 webpack 的图片规则**内联成 base64**，而 <cover-image>
 //     的 src 官方只声明支持「临时路径 / 网络地址 / 云文件ID」⇒ 已在 config/index.ts 里
-//     关掉内联（`mini.imageUrlLoaderOption.limit = 0`），必须是**真文件**。
+//     关掉内联（`mini.imageUrlLoaderOption.limit = true`），必须是**真文件**。
+//     ★★ 值是 `true`，不是 `0` —— 那个配置的语义是**反的**：`true` ⇒ maxSize 0 ⇒ 永不内联；
+//        写 `0` 是 falsy，等于「没配」，会静默回落成 2048 字节 ⇒ **只错一部分**
+//        （体积刚好大于 2048 的那些仍然正常），是最难查的一类。（本条注释一度写着 0。）
 import iconSwitch from '../../assets/shotcam/switch-camera.png'
 import iconFlashOn from '../../assets/shotcam/flash-on.png'
 import iconFlashOff from '../../assets/shotcam/flash-off.png'
