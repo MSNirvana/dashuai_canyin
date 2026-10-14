@@ -9,7 +9,22 @@
     <title>大帅餐饮助手 · 餐饮门店轻松拍</title>
   </head>
   <body>
-    <div id="root"></div>
+    <!-- ★★ 备案号「静态回退」—— 合规硬要求，勿删 ★★
+         React 页脚（src/components.tsx 的 .beian）里的备案号是 JS 渲染的，**不在 HTML 源码里**：
+         直接取 HTML（爬虫、管局抓取、`curl`）看不到，旧静态页（deploy/site/index.html）的
+         全部意义就是解决这件事。所以这里放一份静态副本。
+         React 18 的 createRoot().render() 会清空 #root 原有子节点 ⇒ 浏览器里只显示页脚那一个，
+         不会出现两个；JS 没加载出来时这一行仍在。
+         ⚠ 备案号必须与备案系统**逐字**一致（末位的网站序号不能省），链接必须指向工信部备案官网首页。
+         ⚠ 本注释里**刻意不写备案号字面量** —— 否则下方 grep 判据会命中注释而「自己给自己放水」。 -->
+    <div id="root">
+      <footer style="padding: 26px 20px 34px; font-size: 15px; line-height: 1.9; color: #4a4f57;">
+        <div>© 2026 廊坊大帅餐饮管理有限公司</div>
+        <div>
+          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" style="color: #4a4f57;">冀ICP备2023045927号-2</a>
+        </div>
+      </footer>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
