@@ -5,6 +5,7 @@
 //    所以本守护把**接线**（AI 的行真的上了屏、真的没被二次归一化合回去）
 //    和**判据**（丢字/加字/改字/超宽一律拒绝）分开断言。
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   allocateSubtitleDurations,
   mergeSubtitleSegments,
@@ -137,6 +138,43 @@ assert.ok(task52Ending?.every((line) => subtitleDisplayWidth(line) >= 4), '★ �
 
 // 时长分配：总时长充足时每条至少 700ms；不足时仍要严格守住原段总时长。
 assert.deepEqual(allocateSubtitleDurations(2_100, [1, 8, 8]), [700, 700, 700], '★ 三条字幕各至少 700ms')
+// ── ⑤c ★★★ 2026-10-14 事故回归：弱行的「最优切点」就是它自己 ⇒ 必须收敛，不许原地打转 ──
+/**
+ * 真因（线上快照 `ai_call_log id=514` / requestId `subtitle-split-74`，2026-10-14 14:45:36）：
+ *   模型第一行给的是「吃虾」（宽 2 ⇒ 弱行），而它正好落在原句逗号之后。
+ *   `bestSplit` 给「标点边界」−100 的权重 ⇒ 它选出的最优切点**就是这条弱行自己的边界**
+ *   ⇒ `splice` 换回原样、`index` 被倒回原处 ⇒ 那个 for 循环再也不前进。
+ *   后果不是「这条字幕难看」，而是**整个 Node 事件循环被占满**：所有接口一起超时
+ *   （后台连登录都登不上），pm2 仍报 online、日志停在进函数之前、没有任何报错。
+ *
+ * ⚠⚠ 这条断言**回归时的现象是「脚本卡死」而不是红灯**（同步死循环会占满事件循环，
+ *   连 `setTimeout` 都不会触发）—— 所以请用 `timeout 60 npm run subtitle-split:verify` 跑。
+ *   为了让「把出口判据删掉」这件事至少有红灯，下面另有一条**源码级**断言先钉住它。
+ */
+const T74_ORIGINAL = '吃虾，我每回都会点一份他家的花青素组合，紫白菜、紫花菜、紫玉米，'
+const T74_LINES = ['吃虾', '我每回都会点', '一份他家的', '花青素组合', '紫白菜', '紫花菜', '紫玉米']
+
+assert.deepEqual(
+  rebalanceWeakLines(T74_LINES, T74_ORIGINAL, SUBTITLE_MAX_WIDTH),
+  T74_LINES,
+  '★★★ task 74：「吃虾」的最优切点就是它自己 ⇒ 修不动就**原样返回**（绝不许原地打转）',
+)
+assert.equal(
+  acceptLines(T74_LINES, T74_ORIGINAL, SUBTITLE_MAX_WIDTH),
+  null,
+  '★ task 74：这一条含弱行 ⇒ 整条退回内建算法（设计意图：宁可不优化）',
+)
+// ★ 源码级判据：把「原地踏步就放弃」的出口删掉 = 死循环 ⇒ 必须先在文本上钉住它（见上面 ⚠⚠）
+const SUBTITLE_SPLIT_SRC = readFileSync(
+  new URL('../src/render/subtitle-split.service.ts', import.meta.url),
+  'utf8',
+)
+assert.ok(
+  SUBTITLE_SPLIT_SRC.includes('split[0] === result[firstIndex] && split[1] === result[firstIndex + 1]'),
+  '★★★ `rebalanceWeakLines` 必须有「切分结果与当前两行逐字相同 ⇒ 放弃」这条判据：'
+    + '它是死循环的唯一出口（2026-10-14 事故把整个后端卡死）。重构它可以，但改完必须重新论证终止性',
+)
+
 const tightDurations = allocateSubtitleDurations(1_200, [2, 8])
 assert.equal(tightDurations.reduce((sum, value) => sum + value, 0), 1_200, '★★ 分配后总时长不得漂移')
 assert.ok(tightDurations.every((value) => value > 0), '★ 总时长不足时按权重退化，但不能出现零时长')

@@ -148,6 +148,22 @@ function bestSplit(text: string, maxWidth: number, preferred: Set<number>): [str
 /**
  * 修复模型偶发的「哎呀」/「扣一」孤屏：保持逐字不变，只移动相邻两行的边界。
  * 修不了就返回原结果，交给后面的质量闸门拒绝，而不是硬吞一个更差的断点。
+ *
+ * ⚠⚠⚠ **这个循环必须能证明自己会终止** —— 它一旦不收敛，代价不是「这条字幕难看」，
+ * 而是**整个 Node 进程的事件循环被占满**（见下面 `if (!split) continue` 的注释）。
+ *
+ * 2026-10-14 生产事故（task 74）：AI 分行第一行给了「吃虾」（宽度 2 ⇒ 弱行），
+ * 而它正好落在原句逗号之后 ⇒ `bestSplit` 的「标点边界 −100」权重让它选中**自己这条边界**
+ * ⇒ `splice` 换回原样、`index` 又被倒回原位 ⇒ for 循环再也不前进。
+ * 现场：`top` 显示 STAT=R / %CPU 110，MySQL、Redis 建连数为 **0**，无子进程，
+ * 日志停在进 `applyAiSynthesis` 之前；**后台连登录都登不上**（所有接口一起超时），
+ * 而 pm2 一直报 online —— 全靠 `failRender` + `pm2 restart` 人工止血。
+ *
+ * ★ 终止性依赖的不变量（改这里之前先读）：
+ *   `combined`（这两行拼接后的串）与 `localPreferred`、`offset` 只由「这两行」决定，
+ *   而 `splice` **不改变拼接结果** ⇒ 在同一个 `firstIndex` 上第二次算出的必然是同一个 `split`，
+ *   于是它必然与当前内容相同 ⇒ 必然命中下面那条「原地踏步就放弃」的判据。
+ *   若将来把 `splice` 换成一拆三（拼接结果变了），这条证明立刻失效，必须重新论证。
  */
 export function rebalanceWeakLines(lines: string[], original: string, maxWidth: number): string[] {
   const result = [...lines]
@@ -160,8 +176,17 @@ export function rebalanceWeakLines(lines: string[], original: string, maxWidth: 
     const offset = result.slice(0, firstIndex).join('').length
     const localPreferred = new Set([...preferred].map((value) => value - offset).filter((value) => value > 0 && value < combined.length))
     const split = bestSplit(combined, maxWidth, localPreferred)
-    if (!split) continue
+    /**
+     * ★★★ 「原地踏步就放弃」是**死循环的唯一出口**，绝不能删（2026-10-14 事故，见函数头注释）。
+     *
+     * 切分结果与当前这两行**逐字相同** ⇒ 这一行修不动：
+     * 保留原样，交给 `acceptLines` 末段的质量闸门整条退回内建算法（这正是设计意图）。
+     * ⚠ 少了这条判据，下面那行 `index = Math.max(-1, firstIndex - 1)` 会把下标倒回原处，
+     *   而 `bestSplit` 每次都会给出同一个「就是原边界」的切点 ⇒ 无限循环。
+     */
+    if (!split || (split[0] === result[firstIndex] && split[1] === result[firstIndex + 1])) continue
     result.splice(firstIndex, 2, ...split)
+    // ★ 只有**真的改动了**才回看上一行；配合上面那条判据，同一个位置最多评估两次
     index = Math.max(-1, firstIndex - 1)
   }
   return result
