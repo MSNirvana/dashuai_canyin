@@ -21,9 +21,19 @@ import { AiBadge } from './components'
  *
  * ★ 海报**全部是餐饮门店拍摄场景**（`public/images`），四张一套，不要再混入其他品类：
  *      hero.jpg         门店里用手机拍刚出锅的菜
- *      case-kitchen.jpg 后厨拍出锅
- *      case-table.jpg   餐桌拍摆盘
- *      case-prep.jpg    备菜拍过程
+ *      case-kitchen.jpg 后厨出锅：厨师一手端着刚出锅的菜、一手持厨具（**这张没有手机**）
+ *      case-table.jpg   餐桌摆盘：店主用三脚架上的手机拍摆好的菜
+ *      case-prep.jpg    备菜备料：厨师双手持手机、低头看着屏幕取景拍案台食材
+ *
+ * ★★ 三张 case 的**动作是刻意分开的**，换图必须保持：出锅装盘 / 三脚架固定机位 / 手持取景。
+ *   上一版三张都是「低头摆弄手机或三脚架」，并排看像同一张放了三遍；那版另有两处
+ *   **裁不掉**的硬伤：`case-kitchen` 人脸被一道横梁横切（看着像没头）、
+ *   `case-prep` 人被左边框裁掉一半。所以这三张是重出的，不是裁出来的。
+ *   出图时统一写「主体居中、面部完整不被任何前景遮挡、人物占上部三分之二、
+ *   下方三分之一是台面与菜品」—— 这句话是**三张并排像一套**的关键。
+ *   ★ 反面教训：写「手机背面朝向镜头、屏幕对着食材」是**自相矛盾**的（背面朝我们
+ *     ⇒ 镜头就朝着我们，不在拍食材）。要「在拍」就写「低头看着手机屏幕取景」，
+ *     这是最不会误读的姿态。
  *   因此：
  *   1. 每张图上都有 `AiBadge` 显式标识，别摘；
  *   2. 文案只能写成「场景示意」，**不得**说成客户实拍或真实案例。
@@ -33,8 +43,14 @@ import { AiBadge } from './components'
  *   那是**像素里的杂质**，不是我们叠的标识 —— 叠 `AiBadge` **盖不掉它**
  *   （badge 在左下、水印在右下，会并存成两个「AI 生成」），而且源图比例与展示框比例
  *   相同时 `object-fit: cover` **根本不会裁掉边角**。
- *   ⇒ 已用 `jpegtran -crop`（**无损，不重新压缩**）裁底，见 `public/images/`。
- *   **不要**把底边加回来；换新图后先看**源图右下角**再用。
+ *   ⇒ 已裁底，见 `public/images/`。**不要**把底边加回来；换新图后先看**源图右下角**再用。
+ *   ★ 定位水印**别用固定阈值、别用边缘检测、也别用行均亮度**：`case-kitchen` 底部本就
+ *     是暗色灶台、`case-prep` 是明亮大理石台面，「亮于本行中位」在这几张上**满屏误报**，
+ *     根本读不出水印在哪。唯一可靠的是**把右下角切下来放大 3 倍用眼睛看**。
+ *   ★ 两批（8 张）实测水印几何一致：y 1475–1525、距底 11–61px。但**下一批不要照抄**，
+ *     每次都要重新量 —— 这次我在 3x 拼图上目测出「位置更高了」，量完发现是看错了缩放比。
+ *   ★ 出图给的是 PNG ⇒ 本轮的裁切是 PIL 裁 + 直接编码 JPEG(q85)，**没有** jpegtran 那一步，
+ *     所以不受 `-crop 宽高须为 16 的倍数` 约束（那个约束只在无损裁已有 JPEG 时才要管）。
  */
 /**
  * ★★ 这三句的长度是**算过字宽**的，不要随手加字：
@@ -51,9 +67,9 @@ const steps = [
 ]
 
 const scenes = [
-  { img: '/images/case-kitchen.jpg', title: '后厨出锅', alt: '厨师用手机拍摄刚出锅的菜品' },
+  { img: '/images/case-kitchen.jpg', title: '后厨出锅', alt: '厨师端着刚出锅的菜品装盘' },
   { img: '/images/case-table.jpg', title: '餐桌摆盘', alt: '店主用手机三脚架拍摄摆好盘的菜品' },
-  { img: '/images/case-prep.jpg', title: '备菜备料', alt: '店员用手机拍摄备菜过程' },
+  { img: '/images/case-prep.jpg', title: '备菜备料', alt: '厨师低头看着手机屏幕拍摄案台上的食材' },
 ]
 
 export function Home() {
@@ -114,7 +130,7 @@ export function Home() {
               {scenes.map(({ img, title, alt }) => (
                 <article className="case-card" key={title}>
                   <div className="media-frame">
-                    <img src={img} alt={alt} width={1024} height={1536} loading="lazy" />
+                    <img src={img} alt={alt} width={1024} height={1456} loading="lazy" />
                     <AiBadge text="AI 生成" />
                   </div>
                   <h3>{title}</h3>
