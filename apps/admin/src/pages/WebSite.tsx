@@ -326,12 +326,16 @@ export default function WebSitePage() {
 
   /**
    * 一个图片槽位：预览 + 上传/更换 + 清除。
-   * ★ 预览尺寸按**官网真实展示比例**给：主视觉 3:2 横图、案例图 2:3 竖图。
+   * ★ 预览尺寸按**官网真实展示比例**给：主视觉 4:3 横图、案例图 2:3 竖图。
+   *   ⚠ 官网主视觉是**响应式**的（手机 4:3 / ≥778px 16:10 / ≥809px 3:2，见 apps/web 的
+   *     `.hero-media img`）。一个预览只能取一档，取**裁得最狠的手机档 4:3** ——
+   *     受众是门店经营者、主要在手机上看；而且「在最坏比例下还看不看得过去」才是这张
+   *     预览要回答的问题。取桌面档会让手机上被切掉的部分永远看不到。
    *   套公共的 `.upload-field__preview`（固定 300×112 + cover，是给 16:6 的轮播图用的）
    *   会把竖图裁成一条 —— 运营在后台看到的东西和官网上根本不是同一张。
    */
   const renderSlot = (target: UploadTarget, value: string, size: 'hero' | 'case', hint: string) => {
-    const box = size === 'hero' ? { width: 240, height: 160 } : { width: 96, height: 144 }
+    const box = size === 'hero' ? { width: 240, height: 180 } : { width: 96, height: 144 }
     return (
     <div className="upload-field">
       {value ? (
@@ -393,7 +397,7 @@ export default function WebSitePage() {
         显示在<b>官网首页（dspcz.top）</b>：顶部主视觉 1 张 +「店里能拍的场景」3 张。<br />
         图片<b>直接上传</b>即可 —— 服务端会把它存到对象存储并返回一条公开直链，不用手填地址。<br />
         <b>留空 = 官网用内置的默认图</b>，所以想回到出厂状态，点「清除」即可，不用找我们改数据。<br />
-        主视觉建议 <b>1536×1024（3:2 横图）</b>，案例图建议 <b>1024×1456（约 2:3 竖图）</b>；
+        主视觉建议 <b>1536×1152（4:3 横图）</b>，案例图建议 <b>1024×1456（约 2:3 竖图）</b>；
         支持 jpg / png / webp / gif，单张不超过 5MB。<b>改完即自动保存</b>，刷新官网即可看到。
       </div>
 
@@ -407,9 +411,12 @@ export default function WebSitePage() {
 
       <div className="web-image-editor">
         {/* 效果示意：把官网首页那两块按同样的版式画一遍。
-            ⚠ 只是版式示意，不是像素级预览 —— 留空的格子画成虚线框并注明「用内置图」。 */}
+            ⚠ 只是版式示意，不是像素级预览 —— 留空的格子画成虚线框并注明「用内置图」。
+            ⚠ 主视觉按**手机端 4:3** 画（官网主视觉是响应式的，手机 4:3 / 桌面 16:10、3:2）。
+              取手机档是因为它裁得最狠，也是绝大多数访客看到的那一档；标题里写明，
+              免得运营拿一张按桌面档做的图来问「为什么预览里被切了」。 */}
         <div className="web-preview">
-          <div className="web-preview__caption">官网首页 效果示意</div>
+          <div className="web-preview__caption">官网首页 效果示意（主视觉按手机端 4:3）</div>
           <div className="web-preview__hero">
             {form.hero.image ? (
               <img src={form.hero.image} alt="" />
@@ -443,7 +450,7 @@ export default function WebSitePage() {
                 看着有分组、实际没有，反倒让「哪几行属于同一组」更难读。 */}
             <div className="section-heading"><h3>主视觉</h3></div>
             <Field label="图片" help="官网首屏右边那张横图。留空则用内置默认图">
-              {renderSlot({ kind: 'hero' }, form.hero.image, 'hero', '官网首屏右侧，3:2 横图')}
+              {renderSlot({ kind: 'hero' }, form.hero.image, 'hero', '官网首屏右侧，4:3 横图（按手机端）')}
             </Field>
             <Field label="图片说明" help="给搜索引擎和读屏软件看的，不显示在页面上；换图后请顺带改这里">
               <Input
