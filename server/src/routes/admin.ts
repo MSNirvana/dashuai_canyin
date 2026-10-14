@@ -1120,6 +1120,7 @@ interface PublicImageRoute {
 const PUBLIC_IMAGE_ROUTES: readonly PublicImageRoute[] = [
   { path: '/uploads/carousel-image', label: '轮播图', save: publicAssetSvc.saveCarouselImage },
   { path: '/uploads/contact-qrcode', label: '联系我们二维码', save: publicAssetSvc.saveContactQrcodeImage },
+  { path: '/uploads/web-site-image', label: '官网图片', save: publicAssetSvc.saveWebSiteImage },
 ]
 
 for (const route of PUBLIC_IMAGE_ROUTES) {

@@ -59,6 +59,9 @@ const MENU_GROUPS = [
     label: '页面与系统',
     items: [
       { label: '首页轮播图', icon: <ImageIcon />, path: '/home-carousel' },
+      // 官网图片与首页轮播图是**同一类东西**（运营图，且都免登录下发），但消费端不同：
+      // 轮播图喂小程序、官网图片喂 dspcz.top。相邻放，运营一眼能看出「改哪儿影响哪一端」。
+      { label: '官网图片', icon: <ImageIcon />, path: '/web-site' },
       // 与「首页轮播图」同属「小程序上长什么样」这一类，所以同组相邻放
       { label: '联系我们', icon: <LogoWechatIcon />, path: '/contact' },
       { label: '教学中心', icon: <VideoIcon />, path: '/tutorials' },

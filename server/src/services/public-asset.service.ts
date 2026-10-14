@@ -49,6 +49,19 @@ const CAROUSEL_KEY_PREFIX = 'static/admin/carousel'
  */
 const CONTACT_KEY_PREFIX = 'static/admin/contact'
 
+/**
+ * ★ 2026-10-14 新增：官网（`apps/web` · dspcz.top）的展示图（主视觉 1 张 + 案例 3 张）。
+ *
+ * 前缀仍落在 `static/` 下，不是为了「归组好看」，而是**保命**：这一批图和轮播图一样
+ * **不落进任何业务表**（只存在 `system_setting` 的 JSON 里），所以指望「登记进 GC 的
+ * 已引用键集合」是行不通的；真正保命的是 gc-orphan-objects.ts 的默认扫描前缀与删除前
+ * 白名单里**都没有 `static/`**。挪到 `uploads/` 下会立刻被 GC 当成孤儿删掉。
+ *
+ * ⚠ 别再新增一个前缀去区分「主视觉」和「案例图」：两者消费端、生命周期、清理方式
+ *   完全一样，拆开只会多一处要同步改的地方。
+ */
+const WEB_KEY_PREFIX = 'static/admin/web'
+
 /** 本地模式的令牌有效期，见 publicUrl() 的说明 */
 const LOCAL_MEDIA_TTL_SECONDS = 10 * 365 * 24 * 3600
 
@@ -163,4 +176,9 @@ export function saveCarouselImage(buffer: Buffer): Promise<PublicImage> {
 /** 后台「联系我们」用：二维码图 */
 export function saveContactQrcodeImage(buffer: Buffer): Promise<PublicImage> {
   return savePublicImage(CONTACT_KEY_PREFIX, buffer)
+}
+
+/** 后台「官网图片」用：主视觉与案例图（同一个前缀，见 WEB_KEY_PREFIX 的说明） */
+export function saveWebSiteImage(buffer: Buffer): Promise<PublicImage> {
+  return savePublicImage(WEB_KEY_PREFIX, buffer)
 }

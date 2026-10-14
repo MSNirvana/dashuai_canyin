@@ -65,6 +65,85 @@ router.get('/catalog', async (_req, res) => {
   catch (e) { paymentFailure(res, e) }
 })
 
+/**
+ * 官网首页的展示图（**免登录**，必须在 `router.use(auth)` 之前）。
+ *
+ * ── 为什么另开一个接口，而不是让官网去读 `/api/v1/system/settings` ──────────────
+ * 那个接口是给小程序用的：它把**全部** `isPublic` 的配置按组返回，而且 JSON 类型被
+ * `coerceValue` 又 stringify 了一次，消费端得自己再 parse 一遍。官网只要 4 张图，
+ * 让它去解析几十项别人的配置、还要踩那个「拿到的是字符串」的坑，是把一个内部实现
+ * 细节变成官网的长期依赖。这里给一个**已经收敛好、且已做地址校验**的小响应。
+ *
+ * ── 为什么空表是正常返回、而不是 404 ────────────────────────────────────────
+ * 这个功能上线时线上**一条配置都没有**。空串在这一层的语义是「这一格没配」，
+ * 官网收到后用内置默认图补上 —— 所以「一次都没配过」和「配了又清空」都必须
+ * 是**同一件事**：正常返回空表，不是错误。把没配写成 404 的话，官网就得把
+ * 「404」也当成正常分支处理，错误与正常状态从此分不开。
+ *
+ * ⚠ 不要在这里合并内置默认图：默认图是官网包里的静态资源（`/images/*.jpg`），
+ *   由官网自己知道；服务端一旦也知道这份清单，换图就得两边同时改。
+ */
+const SITE_GROUP = 'web'
+const SITE_KEY = 'site'
+
+/** 案例图固定 3 格，与官网首页 `.case-grid` 的 3 张卡一一对应。少则补空，多则丢弃。 */
+const CASE_SLOTS = 3
+
+/** 地址只放行绝对 http(s)。空串合法 = 没配。理由见 pickUrl 的调用处说明。 */
+function pickUrl(v: unknown): string {
+  const s = typeof v === 'string' ? v.trim() : ''
+  return /^https?:\/\//i.test(s) ? s : ''
+}
+
+function pickText(v: unknown, max: number): string {
+  const s = typeof v === 'string' ? v.trim() : ''
+  return s.length > max ? s.slice(0, max) : s
+}
+
+function asRecord(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+}
+
+const EMPTY_SITE = {
+  hero: { image: '', alt: '' },
+  cases: Array.from({ length: CASE_SLOTS }, () => ({ image: '', title: '', alt: '' })),
+}
+
+router.get('/site', async (_req, res) => {
+  let row: { settingVal: string; isPublic: boolean } | null
+  try {
+    row = await prisma.systemSetting.findUnique({
+      where: { groupKey_settingKey: { groupKey: SITE_GROUP, settingKey: SITE_KEY } },
+      select: { settingVal: true, isPublic: true },
+    })
+  } catch (e) {
+    // ★ 读库失败要**出声**：这一条和「没配」是两回事，混在一起就永远发现不了库出问题
+    console.error('[web] 官网图片配置读取失败:', e)
+    return fail(res, 500, '读取失败', 500)
+  }
+  // 没这一项、或后台把它关成非公开 ⇒ 回空表，官网用内置默认图
+  if (!row || !row.isPublic) return ok(res, EMPTY_SITE)
+
+  // 值被人手改坏（不是 JSON 对象 / 结构不对）⇒ 同样当「没配」，别让首页整块塌掉。
+  // 这类情况运营在后台看得到（页面会亮红条），不需要官网也报错。
+  let raw: unknown
+  try { raw = JSON.parse(row.settingVal) } catch { return ok(res, EMPTY_SITE) }
+  const it = asRecord(raw)
+  if (Object.keys(it).length === 0) return ok(res, EMPTY_SITE)
+  const hero = asRecord(it.hero)
+  const casesRaw = Array.isArray(it.cases) ? it.cases : []
+
+  ok(res, {
+    hero: { image: pickUrl(hero.image), alt: pickText(hero.alt, 120) },
+    cases: Array.from({ length: CASE_SLOTS }, (_, i) => {
+      const c = asRecord(casesRaw[i])
+      // ★ 案例图最多 3 格：超出的直接丢弃，而不是让官网拿到一个 4 张的数组去硬塞进
+      //   一个三列的网格里（那会挤成一条，而且是运营在后台改数据时才现形）。
+      return { image: pickUrl(c.image), title: pickText(c.title, 20), alt: pickText(c.alt, 120) }
+    }),
+  })
+})
+
 router.use(auth)
 router.post('/orders', async (req, res) => {
   try {
