@@ -230,8 +230,8 @@ main { flex: 1; }
 .site-footer { border-top: 1px solid var(--stroke); padding: 26px 0 34px; background: transparent; }
 .footer-grid { display: flex; flex-direction: column; gap: 14px; }
 .footer-links { display: flex; flex-wrap: wrap; gap: 2px 22px; font-size: 15px; color: var(--ink-2); }
-/* 链接行也给足高度：手机上 12px 高的链接同样点不准 */
-.footer-links a { display: inline-flex; align-items: center; min-height: 40px; }
+/* 链接行给足高度：40 → 44px，与全站触控区下限对齐（主按钮 52 / 次级 44） */
+.footer-links a { display: inline-flex; align-items: center; min-height: 44px; }
 .footer-links a:hover { color: var(--brand); }
 /* 备案号：管局要求悬挂在首页底部并链接工信部首页，逐字不可改 */
 .beian { color: var(--ink-3); }
@@ -291,7 +291,10 @@ main { flex: 1; }
   display: inline-flex; align-items: center; gap: 5px;
   padding: 3px 8px; border-radius: var(--r-pill);
   background: rgba(17, 17, 20, 0.6); color: #fff;
-  font-size: 10px; letter-spacing: 0.02em;
+  /* ★ 12px 是下限：这是**合规标识**，比页面正文更不许「看不清」。
+     原来写 10px，是全场最小的字 —— 一个必须让用户读到的信息不该是最小的。
+     缩到 10px 也换不来多少画面：案例图手机上宽 76–113px，标签仍占一半左右。 */
+  font-size: 12px; letter-spacing: 0.02em;
   backdrop-filter: blur(6px);
 }
 .media-frame { position: relative; overflow: hidden; border-radius: var(--r-lg); background: var(--field); }
@@ -339,7 +342,11 @@ main { flex: 1; }
 .hero-actions { display: flex; flex-direction: column; gap: 12px; margin: 24px 0 14px; }
 .hero-actions .button { width: 100%; }
 .hero-note { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; color: var(--ink-2); }
-.hero-note svg { color: var(--success); flex: 0 0 auto; }
+/* ★ 图标不要用语义色（原来写的是 --success 绿）：这里的「✓」表达的是**说明**，
+   不是「操作成功」。首屏已经有一个红实心按钮承载主行动，再叠一个语义绿
+   ⇒ 一屏出现两个「有颜色含义」的元素，各自都在喊，反而都不突出。
+   让图标跟随文字色即可，勾号本身就足够表意。 */
+.hero-note svg { flex: 0 0 auto; }
 .hero-media { min-width: 0; }
 .hero-media .media-frame { border: 1px solid var(--stroke); box-shadow: var(--sh-1); }
 /* 首屏主视觉：源图 3:2 横版 ⇒ 手机端容器更方，cover 会裁两侧，
@@ -362,7 +369,10 @@ main { flex: 1; }
   font-size: 19px; font-weight: 700;
 }
 .step-card h3 { margin: 0 0 5px; font-size: 19px; font-weight: 650; letter-spacing: -0.02em; }
-.step-card p { margin: 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); }
+/* ★★ `text-wrap: pretty` 对中文**无效** —— 它按「词」断行，中文无空格分词、浏览器不会为此调整。
+   中文防孤字要用 `balance`：把两行**均分**，而不是留下「话。」「然。」这种第二行只剩一两个字。
+   （实测 320 档卡片正文列宽 ~190px ÷ 16px ≈ 每行 11 字 ⇒ 16 字的句子必然两行，靠它是兜底。） */
+.step-card p { margin: 0; font-size: 16px; line-height: 1.7; color: var(--ink-2); text-wrap: balance; }
 
 /* ───────────────────────── 首页 · 适合门店 ───────────────────────── */
 .case-band {
@@ -378,8 +388,11 @@ main { flex: 1; }
 .case-card { min-width: 0; }
 .case-card .media-frame { border-radius: var(--r-md); }
 .case-card img { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; }
-.case-card h3 { margin: 9px 0 0; font-size: 14px; font-weight: 650; text-align: center; }
-.case-note { margin: 14px 0 0; font-size: 13px; color: var(--ink-3); text-align: center; }
+/* 案例标题 14 → 16px：它和卡片正文同属「要读的内容」，不该比正文小一号。
+   三张卡片的标题都是 4 字，320 档列宽 76px 下 4×16 = 64px 仍放得下，不会折行。 */
+.case-card h3 { margin: 9px 0 0; font-size: 16px; font-weight: 650; text-align: center; }
+/* 案例小注 13 → 15px：它承载「这是 AI 生成的场景，不是客户实拍」这句**必须被读到**的声明 */
+.case-note { margin: 14px 0 0; font-size: 15px; color: var(--ink-3); text-align: center; }
 
 /* ───────────────────────── 首页 · 收尾 ───────────────────────── */
 .cta-section { padding: 4px 0 44px; }
@@ -696,8 +709,8 @@ main { flex: 1; }
   .steps-grid { grid-template-columns: repeat(3, 1fr); gap: 16px; }
   .case-band { padding: 26px; border-radius: var(--r-xl); }
   .case-grid { gap: 16px; }
-  .case-card h3 { font-size: 16px; }
-  .case-note { font-size: 14px; }
+  /* 案例标题 / 小注的字号已在基准里定好（16 / 15px），桌面端不再覆盖 ——
+     原来这里写 16 / 14px，小注会让**桌面比手机还小**，是手机优先改造的残留。 */
   .cta-card { flex-direction: row; align-items: center; justify-content: space-between; padding: 26px 30px; }
   .cta-card .button { width: auto; }
 
@@ -714,7 +727,7 @@ main { flex: 1; }
   .pay-actions { flex-direction: row; justify-content: center; }
   .pay-actions .button { width: auto; }
   .footer-grid { flex-direction: row; align-items: center; justify-content: space-between; gap: 24px; }
-  .footer-links a { min-height: 34px; }
+  .footer-links a { min-height: 40px; }
 }
 
 @media (min-width: 1024px) {
