@@ -38,6 +38,7 @@ import * as opsAlert from '../services/ops-alert.service.js'
 import * as premium from '../render/premium.js'
 import * as premiumDeliverSvc from '../services/premium-delivery.service.js'
 import { invalidate } from '../lib/settings.js'
+import { validateRenderColorSetting } from '../render/color-settings.js'
 import { UnsafeOutboundUrlError } from '../lib/outbound-url.js'
 import type { Prisma } from '@prisma/client'
 
@@ -1174,6 +1175,14 @@ const settingInput = z.object({
   description: z.string().max(500).nullable().optional(),
   sort: z.number().int().optional(),
   isPublic: z.boolean().optional(),
+}).superRefine((input, ctx) => {
+  if (!validateRenderColorSetting(input)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['settingVal'],
+      message: 'AI 成片调色参数必须是 -100 到 100 之间的整数，类型必须为 INT',
+    })
+  }
 })
 router.post('/settings', async (req, res) => {
   try {

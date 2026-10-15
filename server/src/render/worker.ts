@@ -49,6 +49,7 @@ import { breakSubtitleLines as breakSubtitleLinesByAi } from './subtitle-split.s
 import { dispatchBgmFromPool, noteBgmDispatched } from './bgm-dispatch.js'
 import { recentBgmTracksForMerchant, storeBgmTrack } from './bgm-history.js'
 import { activeTtsProvider, providerForVoice } from '../services/tts-provider.service.js'
+import { readRenderColorSettings } from './color-settings.js'
 import { estimateSpeechMs } from './tts.js'
 import { resolveShotSpeech } from './shot-speech.js'
 import { ensureSpeechCutClip } from './speech-cut.js'
@@ -456,8 +457,9 @@ async function processTask(
   const inputClips = p.clips ?? []
   if (inputClips.length === 0) throw new Error('合成任务没有可用素材')
   const output = p.output ?? { width: 1080, height: 1920, fps: 30 }
-  const color = p.color ?? DEFAULT_COLOR
+  const taskColor = p.color ?? DEFAULT_COLOR
   const aiMode = p.aiMode ?? true // v5：默认 AI 合成
+  const color = aiMode ? await readRenderColorSettings(prisma) : taskColor
   // AUTO is intentionally conservative. Older clients may send a stale
   // transition selection, so do not let that state re-enable xfade.
   const isAutoEdit = aiMode && (p.chatcut?.editMode ?? 'AUTO') === 'AUTO'
@@ -734,7 +736,7 @@ async function processTask(
     //    这样 N 个镜头只编码 1 次；重调色时可完全复用归一化缓存，只跑「拼接 + 一遍调色」，
     //    相比首次合成省掉全部源解码与缩放 —— 这正是 RECOLOR 只收 10 积分的成本依据
     let finalPath = concatPath
-    if (buildColorFilter(color)) {
+    if (!aiMode && buildColorFilter(color)) {
       finalPath = join(dir, 'final.mp4')
       await ffmpegApplyColor(concatPath, finalPath, color, TASK_TIMEOUT_MS, preFinalTier)
     }
@@ -863,6 +865,7 @@ async function processTask(
             //   原来这里写 0.10、而模块默认是 0.12：改模块那处，这条照旧生效，
             //   于是「改了但听感没变」且日志里没有任何痕迹（见 BGM_MIX_GAIN 的注释）。
             backgroundMusicGain: BGM_MIX_GAIN,
+            color,
             /**
              * AI 分行（2026-09-29）：字幕文本仍然**来自原声 ASR**（`subtitleMode='SOURCE_AUDIO'`），
              * 但「在哪里换行」交给模型判断 —— 用户原话「需要 AI 做好分行再添加到字幕里」。
@@ -1300,8 +1303,16 @@ async function finishChatCutTask(
     const probe = await probeVideo(target)
     if (!probe.ok) throw new ExternalResultInvalidError(probe.reason ?? '下载到的文件不是可播放视频')
 
+    // ChatCut 不经过本地字幕合成，因此后台调色在下载后的最后一趟编码中应用。
+    const color = await readRenderColorSettings(prisma)
+    let uploadTarget = target
+    if (buildColorFilter(color)) {
+      uploadTarget = join(dir, 'color-graded.mp4')
+      await ffmpegApplyColor(target, uploadTarget, color, TASK_TIMEOUT_MS, ENCODE_DELIVERY)
+    }
+
     const resultKey = `renders/${task.merchantId.toString()}/${task.id.toString()}.mp4`
-    const resultSize = BigInt(await uploadFile(target, resultKey, 'video/mp4'))
+    const resultSize = BigInt(await uploadFile(uploadTarget, resultKey, 'video/mp4'))
 
     await prisma.$transaction((tx) => completeRender(tx, task.merchantId, task.id, {
       resultKey,

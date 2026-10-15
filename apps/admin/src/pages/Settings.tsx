@@ -18,12 +18,19 @@ interface Setting {
 }
 
 const TYPES: Setting['valueType'][] = ['STRING', 'INT', 'BOOL', 'JSON', 'DECIMAL']
+const COLOR_SETTINGS = [
+  { key: 'color_brightness', label: '亮度' },
+  { key: 'color_contrast', label: '对比度' },
+  { key: 'color_saturation', label: '饱和度' },
+  { key: 'color_sharpen', label: '锐化' },
+] as const
 
 export default function SettingsPage() {
   const [list, setList] = useState<Setting[]>([])
   const [group, setGroup] = useState<string | undefined>('bean')
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Setting | null>(null)
+  const [colorDraft, setColorDraft] = useState<Record<string, number>>({})
   const [form, setForm] = useState({
     groupKey: 'bean', settingKey: '', settingVal: '', valueType: 'STRING' as Setting['valueType'],
     displayName: '', description: '', sort: 0, isPublic: false,
@@ -38,6 +45,28 @@ export default function SettingsPage() {
   const groups = useMemo(() => Array.from(new Set(list.map((s) => s.groupKey))), [list])
 
   const filtered = list.filter((s) => group ? s.groupKey === group : true)
+  const colorSettings = COLOR_SETTINGS.map((item) => ({
+    ...item,
+    setting: list.find((s) => s.groupKey === 'render' && s.settingKey === item.key),
+  }))
+
+  const updateColorSetting = async (setting: Setting) => {
+    const value = colorDraft[setting.settingKey] ?? Number(setting.settingVal)
+    if (!Number.isInteger(value) || value < -100 || value > 100) {
+      message.warning('请输入 -100 到 100 之间的整数')
+      return
+    }
+    if (String(value) === setting.settingVal) return
+    try {
+      await request({
+        url: `/settings/${setting.id}`,
+        method: 'PUT',
+        data: { ...setting, settingVal: String(value) },
+      })
+      setList((current) => current.map((item) => item.id === setting.id ? { ...item, settingVal: String(value) } : item))
+      message.success('调色参数已保存，最迟 60 秒内用于新开始的 AI 合成')
+    } catch {}
+  }
 
   const startCreate = () => {
     setEditing(null)
@@ -83,6 +112,32 @@ export default function SettingsPage() {
             options={groups.map((g) => ({ label: g, value: g }))} />
           <Button theme="primary" onClick={startCreate}>新增配置</Button>
         </div>
+      </div>
+
+      <div className="form-card" style={{ marginBottom: 20 }}>
+        <h3 style={{ marginTop: 0, marginBottom: 8 }}>AI 成片调色</h3>
+        <p style={{ marginTop: 0, color: 'var(--td-text-color-secondary)' }}>
+          统一作用于新开始的 AI 合成。范围 -100～100；保持 0 时不添加对应滤镜，也不会增加额外处理。
+        </p>
+        <FieldGroup labelWidth={120}>
+          {colorSettings.map(({ key, label, setting }) => (
+            <Field key={key} label={label}>
+              {setting ? (
+                <InputNumber
+                  value={colorDraft[key] ?? Number(setting.settingVal)}
+                  min={-100}
+                  max={100}
+                  step={1}
+                  onChange={(value) => setColorDraft((current) => ({ ...current, [key]: Number(value) }))}
+                  onBlur={() => void updateColorSetting(setting)}
+                  style={{ width: 220 }}
+                />
+              ) : (
+                <span style={{ color: 'var(--td-error-color)' }}>配置未初始化，请先运行调色配置初始化脚本</span>
+              )}
+            </Field>
+          ))}
+        </FieldGroup>
       </div>
 
       <DataTable

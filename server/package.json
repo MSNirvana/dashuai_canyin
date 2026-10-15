@@ -53,6 +53,8 @@
     "works:hide-placeholders": "tsx scripts/hide-placeholder-works.ts",
     "input-trim:verify": "tsx scripts/verify-input-trim.ts",
     "color-preview:verify": "tsx scripts/verify-color-preview.ts",
+    "render-color:seed": "tsx scripts/seed-render-color.ts",
+    "render-color:verify": "tsx scripts/verify-render-color-settings.ts",
     "encode-quality:verify": "tsx scripts/verify-encode-quality.ts",
     "demo-account:verify": "tsx scripts/verify-demo-account.ts",
     "demo-account:seed": "tsx scripts/seed-demo-account-config.ts",

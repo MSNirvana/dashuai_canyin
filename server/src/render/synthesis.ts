@@ -23,6 +23,7 @@ import {
   probeDurationMs,
   probeSpeechEndMs,
   MAX_SPEECH_TEMPO,
+  buildColorFilter,
 } from './ffmpeg.js'
 import { transcribeAudio, type TranscriptionSegment } from './transcription.js'
 import type { TtsProviderConfig } from '../services/tts-provider.service.js'
@@ -177,6 +178,8 @@ export interface SynthesisOptions {
   sourceAudioPath?: string
   /** 对最终音轨做响度均衡。 */
   normalizeAudio?: boolean
+  /** 后台统一的成片调色；非零时在字幕/图层之前进入同一趟视频编码。 */
+  color?: import('../services/render.service.js').ColorGrade
   /** 删除明显过长的静音段，并用静音补回视频总时长。 */
   removeSilence?: boolean
   /** 已生成或已授权的背景音乐文件；默认模式会与原声/旁白轻量混音。 */
@@ -967,7 +970,7 @@ export async function applyAiSynthesis(
         subtitled = await muxWithSubtitles(muxVideoPath, mixedAudioPath, assPath, font, outPath, timeoutMs, options)
       } else if (await ffmpegSupportsFilter('drawtext')) {
         console.warn('[synthesis] FFmpeg 缺少 libass，改用 drawtext 烧录字幕')
-        subtitled = await muxWithDrawtext(muxVideoPath, mixedAudioPath, normalizedSubtitleSegments, font, outPath, timeoutMs)
+        subtitled = await muxWithDrawtext(muxVideoPath, mixedAudioPath, normalizedSubtitleSegments, font, outPath, timeoutMs, options)
       } else {
         console.warn('[synthesis] FFmpeg 缺少 libass/drawtext，改用图片叠加烧录字幕')
         subtitled = await muxWithCaptionOverlays(
@@ -978,14 +981,15 @@ export async function applyAiSynthesis(
           workDir,
           outPath,
           timeoutMs,
+          options,
         )
       }
     }
 
     // 3) 字幕关闭时仅替换自定义/TTS音轨；没有旁白时保留原视频声音。
     if (!subtitled) {
-      if (mixedAudioPath) await muxAudioOnly(muxVideoPath, mixedAudioPath, outPath, timeoutMs)
-      else if (options.normalizeAudio || options.removeSilence) await processVideoAudio(muxVideoPath, outPath, options, timeoutMs)
+      if (mixedAudioPath) await muxAudioOnly(muxVideoPath, mixedAudioPath, outPath, timeoutMs, options.color)
+      else if (options.normalizeAudio || options.removeSilence || buildColorFilter(options.color ?? { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 })) await processVideoAudio(muxVideoPath, outPath, options, timeoutMs)
       else await copyFile(muxVideoPath, outPath)
     }
     return { subtitled }
@@ -1053,11 +1057,15 @@ async function muxWithDrawtext(
   font: CjkFont,
   outPath: string,
   timeoutMs: number,
+  options: SynthesisOptions,
 ): Promise<boolean> {
   if (!font.file || !existsSync(font.file)) throw new Error('字幕无法生成：服务器未找到可用的中文字体文件')
   const normalized = normalizeSubtitleSegments(segments)
   if (!normalized.length) return false
-  const { filters, lastNode: current } = buildDrawtextFilterChain(normalized, font.file)
+  const colorFilter = options.color ? buildColorFilter(options.color) : null
+  const startNode = colorFilter ? 'graded' : '0:v'
+  const { filters, lastNode: current } = buildDrawtextFilterChain(normalized, font.file, startNode)
+  if (colorFilter) filters.unshift(`[0:v]${colorFilter}[graded]`)
   const args = ['-i', videoPath]
   if (audioPath) args.push('-i', audioPath)
   args.push('-filter_complex', `${filters.join(';')};[${current}]null[v]`, '-map', '[v]')
@@ -1120,6 +1128,7 @@ async function muxWithCaptionOverlays(
   workDir: string,
   outPath: string,
   timeoutMs: number,
+  options: SynthesisOptions,
 ): Promise<boolean> {
   if (!(await ffmpegSupportsFilter('overlay'))) throw new Error('字幕无法生成：服务器 FFmpeg 缺少 overlay 滤镜')
   const normalized = normalizeSubtitleSegments(segments)
@@ -1136,8 +1145,9 @@ async function muxWithCaptionOverlays(
   if (audioPath) args.push('-i', audioPath)
   for (const captionPath of captionPaths) args.push('-loop', '1', '-i', captionPath)
   const imageStartIndex = audioPath ? 2 : 1
-  let current = '0:v'
-  const filters: string[] = []
+  const colorFilter = options.color ? buildColorFilter(options.color) : null
+  let current = colorFilter ? 'graded' : '0:v'
+  const filters: string[] = colorFilter ? [`[0:v]${colorFilter}[graded]`] : []
   normalized.forEach((segment, index) => {
     const next = `ov${index}`
     const imageIndex = imageStartIndex + index
@@ -1234,7 +1244,9 @@ async function muxWithSubtitles(
 ): Promise<boolean> {
   try {
     // 字号、画布、边距均写在 ASS 头里，避免 libass 使用 384x288 默认画布放大样式。
-    const vf = `subtitles=${escapeFilterPath(subtitlePath)}:fontsdir=${escapeFilterPath(font.dir)}`
+    const subtitleFilter = `subtitles=${escapeFilterPath(subtitlePath)}:fontsdir=${escapeFilterPath(font.dir)}`
+    const colorFilter = options.color ? buildColorFilter(options.color) : null
+    const vf = [colorFilter, subtitleFilter].filter(Boolean).join(',')
     const args = ['-i', videoPath]
     if (audioPath) args.push('-i', audioPath)
     args.push('-filter_complex', `[0:v]${vf}[v]`, '-map', '[v]')
@@ -1266,20 +1278,17 @@ async function muxWithSubtitles(
 }
 
 async function processVideoAudio(videoPath: string, outPath: string, options: SynthesisOptions, timeoutMs: number): Promise<void> {
-  if (!(await hasAudioStream(videoPath))) {
+  const colorFilter = options.color ? buildColorFilter(options.color) : null
+  if (!(await hasAudioStream(videoPath)) && !colorFilter) {
     await copyFile(videoPath, outPath)
     return
   }
-  await execFileP(
-    ffmpegBin(),
-    [
-      '-i', videoPath,
-      '-map', '0:v', '-map', '0:a',
-      '-c:v', 'copy', '-af', audioFilter(options), ...audioEncodeArgs(),
-      '-movflags', '+faststart', '-y', outPath,
-    ],
-    { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
-  )
+  const args = ['-i', videoPath, '-map', '0:v', '-map', '0:a?']
+  if (colorFilter) args.push('-vf', colorFilter, ...videoEncodeArgs(ENCODE_DELIVERY))
+  else args.push('-c:v', 'copy')
+  if (await hasAudioStream(videoPath)) args.push('-af', audioFilter(options), ...audioEncodeArgs())
+  args.push('-movflags', '+faststart', '-y', outPath)
+  await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
 }
 
 async function muxAudioOnly(
@@ -1287,15 +1296,12 @@ async function muxAudioOnly(
   audioPath: string,
   outPath: string,
   timeoutMs: number,
+  color?: import('../services/render.service.js').ColorGrade,
 ): Promise<void> {
-  await execFileP(
-    ffmpegBin(),
-    [
-      '-i', videoPath, '-i', audioPath,
-      '-map', '0:v', '-map', '1:a',
-      '-c:v', 'copy', ...audioEncodeArgs(),
-      '-shortest', '-y', outPath,
-    ],
-    { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
-  )
+  const colorFilter = color ? buildColorFilter(color) : null
+  const args = ['-i', videoPath, '-i', audioPath, '-map', '0:v', '-map', '1:a']
+  if (colorFilter) args.push('-vf', colorFilter, ...videoEncodeArgs(ENCODE_DELIVERY))
+  else args.push('-c:v', 'copy')
+  args.push(...audioEncodeArgs(), '-shortest', '-y', outPath)
+  await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
 }
