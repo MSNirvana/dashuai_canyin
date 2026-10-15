@@ -14,7 +14,7 @@
  *   变成一个模型看得见、用户却填不了的假段落。
  */
 const COPY_VARS = [
-  'storeName', 'storeIntro', 'category', 'city',
+  'storeName', 'storeIntro', 'category', 'city', 'province', 'district', 'address', 'fullAddress',
   'dishName', 'dishIntro', 'sellingPoints',
   /**
    * ★★ «【菜品】那一行的空值注解»：没选菜时是那段说明，选了菜时是**空串**

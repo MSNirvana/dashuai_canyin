@@ -79,6 +79,7 @@ import {
   StyleCreationDishForbiddenError,
   StyleCreationTrackForbiddenError,
   speakerRoleFor,
+  unsupportedAddressFacts,
 } from '../src/services/creation.service.js'
 import { upsertAiScene, AdminAiInvalidTemplateError } from '../src/services/admin-ai.service.js'
 // ★ 菜品空值注解：模板侧是 {{dishEmptyNote}}，取值在 src/lib/dish-mention.ts。
@@ -281,6 +282,11 @@ check(
   '场景清单完整（文案 6 + 分镜 1）',
 )
 
+check(unsupportedAddressFacts('地址在经十路100号，欢迎到店', '山东省济南市历下区经十路100号').length === 0, '输入地址中的街道不会被误判')
+check(unsupportedAddressFacts('地址在和平路88号，欢迎到店', '山东省济南市历下区经十路100号').includes('和平路88号'), '地址触发词后的未提供街道会被拦截')
+check(unsupportedAddressFacts('庆丰路那家，老板就一个想法', '河北省廊坊市固安县新中东街103号').includes('庆丰路'), '隐含地址指代中的未提供街道会被拦截')
+check(unsupportedAddressFacts('这一路都很热闹，中心位置方便', '山东省济南市历下区经十路100号').length === 0, '普通文本不触发地址事实校验')
+
 // ──────────────────────── ② 判据一致性（离线） ────────────────────────
 section('② 判据一致性：白名单提取正则 == 网关替换正则')
 
@@ -413,7 +419,16 @@ async function makeStore(
   persona: { bossTags: string | null; activity: string | null } | null,
 ) {
   const store = await prisma.store.create({
-    data: { merchantId, name: `契约测试门店-${tag}`, category: '川菜', city: '济南', intro },
+    data: {
+      merchantId,
+      name: `契约测试门店-${tag}`,
+      category: '川菜',
+      province: '山东省',
+      city: '济南市',
+      district: '历下区',
+      address: '经十路100号',
+      intro,
+    },
   })
   if (persona) {
     await prisma.persona.create({
@@ -461,6 +476,12 @@ if (dbReady) {
       v.persona,
     )
     check(v.dishName === '契约测试菜品-full', '菜品名称仍在变量里')
+    check(
+      v.province === '山东省' && v.city === '济南市' && v.district === '历下区' &&
+        v.address === '经十路100号' && v.fullAddress === '山东省济南市历下区经十路100号',
+      '省/市/区县/详细地址及完整地址都进入变量',
+      v.fullAddress,
+    )
     check(v.sellingPoints === '分量实在 / 价格透明', '菜品卖点仍在变量里')
     // ★★ 2026-09-29：选了菜时，那段「空 = 这次没选具体菜品…改讲门店本身」的说明**必须消失**。
     //    它原来写死在模板里，于是菜名后面紧跟着一句「改讲门店本身」，模型照做 ⇒ 整篇改写门店介绍。
@@ -477,6 +498,7 @@ if (dbReady) {
     check(rendered.includes(BOSS_TAGS) && rendered.includes(ACTIVITY), '渲染后提示词含门店人设两字段')
     check(!rendered.includes('{{'), '渲染后提示词已无残留占位符', rendered.match(/\{\{[^}]*\}\}/g)?.join('、') ?? '')
     check(rendered.includes('【门店介绍】'), '提示词保留了【门店介绍】段落标题')
+    check(rendered.includes('经十路100号') && rendered.includes('完整地址'), '文案提示词含详细地址与完整地址核对段')
 
     // ★ 4.1b 套餐链路：光测纯函数只能验格式，「include 有没有真把 comboItems 读出来」
     //   只有连库才测得到 —— 漏了 include 的话 comboInfo 会静默变成「（门店还没有填具体菜品）」，

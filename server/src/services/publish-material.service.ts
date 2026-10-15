@@ -28,7 +28,7 @@ import type { PrismaClient } from '@prisma/client'
 import type { AiGateway } from '../ai/gateway.js'
 import { runBilledScene } from '../ai/ai.service.js'
 import { SCENE } from '../ai/scene-codes.js'
-import { buildVariables } from './creation.service.js'
+import { buildVariables, unsupportedAddressFacts } from './creation.service.js'
 import { CreationNotFoundError } from './creation.service.js'
 import { requireSubscription } from './subscription.service.js'
 import { uploadFile, downloadToFile } from '../lib/cos.js'
@@ -242,9 +242,18 @@ export async function generatePublishMaterial(
       caption = localCaption(vars.copyText)
       coverPrompt = ''
     } else {
-      title = parsed.title
-      caption = parsed.caption || localCaption(vars.copyText)
-      coverPrompt = parsed.coverPrompt
+      const addressFacts = unsupportedAddressFacts(`${parsed.title}\n${parsed.caption}`, vars.fullAddress)
+      if (addressFacts.length) {
+        degraded = true
+        title = localTitle(vars.copyText, vars.dishName)
+        caption = localCaption(vars.copyText)
+        coverPrompt = ''
+        notice = `生成结果含未提供的具体地址（${addressFacts.join('、')}），已改用口播原文`
+      } else {
+        title = parsed.title
+        caption = parsed.caption || localCaption(vars.copyText)
+        coverPrompt = parsed.coverPrompt
+      }
     }
     if (degraded) {
       notice = '标题与文案这次是简单拼出来的（AI 没给出可用结果），可以重新生成一次'

@@ -357,12 +357,29 @@ export function storeLocationOf(store: {
   province?: string | null
   city?: string | null
   district?: string | null
+  address?: string | null
 }): string | null {
   const parts = [store.province, store.city, store.district]
     .map((s) => (s ?? '').trim())
     .filter((s) => s.length > 0)
   const uniq = parts.filter((s, i) => parts.indexOf(s) === i)
   return uniq.length > 0 ? uniq.join('') : null
+}
+
+/** 地址字段的稳定快照：保留省、市、区县、详细地址的来源边界，便于生成后事实校验。 */
+export function formatStoreAddress(store: {
+  province?: string | null
+  city?: string | null
+  district?: string | null
+  address?: string | null
+}): { province: string; city: string; district: string; address: string; fullAddress: string } {
+  const province = (store.province ?? '').trim()
+  const city = (store.city ?? '').trim()
+  const district = (store.district ?? '').trim()
+  const address = (store.address ?? '').trim()
+  const parts = [province, city, district, address].filter(Boolean)
+  const unique = parts.filter((s, i) => parts.indexOf(s) === i)
+  return { province, city, district, address, fullAddress: unique.join('') }
 }
 
 /**
@@ -386,7 +403,7 @@ async function resolveTopicHostStore(
   const store = await prisma.store.findFirst({
     where: { merchantId, deletedAt: null },
     orderBy: [{ isDefault: 'desc' }, { id: 'asc' }],
-    select: { id: true, province: true, city: true, district: true },
+    select: { id: true, province: true, city: true, district: true, address: true },
   })
   if (!store) throw new TopicHostStoreMissingError()
   return { id: store.id, location: storeLocationOf(store) }
@@ -934,6 +951,22 @@ export function copyFingerprint(text: string): string {
   return createHash('sha256').update(normalizeCopyForCompare(text)).digest('hex')
 }
 
+const ADDRESS_FACT_RE = /(?:地址(?:是|在)?|位于|就在|店在|门店在|导航到|到店(?:地址)?|来(?:店)?(?:里)?)[：:]?\s*([\u4e00-\u9fa5A-Za-z0-9·]{2,32}(?:大道|大街|街道|路|巷|胡同|弄|里|村|镇|乡|社区|小区|广场|商场|中心|号院|号楼|号))/g
+const ADDRESS_NOUN_RE = /([\u4e00-\u9fa5A-Za-z0-9·]{2,24}(?:大道|大街|街道|路|巷|胡同|弄|社区|小区|广场|商场|号院|号楼|号))/g
+const ADDRESS_REFERENCE_TAIL_RE = /(?:这家|那家|这边|那边|附近|门店|店里|店内)/
+
+/** 只检查明确地址句式，以及「道路名 + 那家/附近」这类隐含地址指代。 */
+export function unsupportedAddressFacts(text: string, fullAddress: string): string[] {
+  const source = normalizeCopyForCompare(fullAddress)
+  const explicit = [...text.matchAll(ADDRESS_FACT_RE)].map((m) => m[1]!).filter(Boolean)
+  const referenced = [...text.matchAll(ADDRESS_NOUN_RE)]
+    .filter((m) => ADDRESS_REFERENCE_TAIL_RE.test(text.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + 4)))
+    .map((m) => m[1]!)
+    .filter(Boolean)
+  const hits = [...explicit, ...referenced]
+  return [...new Set(hits.filter((hit) => !source.includes(normalizeCopyForCompare(hit))))]
+}
+
 function copyNgrams(text: string, size = 4): Set<string> {
   const normalized = normalizeCopyForCompare(text)
   const grams = new Set<string>()
@@ -1084,11 +1117,16 @@ export async function buildVariables(
   const hideDish = topic || mode === 'STYLE'
   const hideStore = topic
   const dishName = hideDish ? '' : (c.dish?.name ?? '')
+  const address = hideStore ? { province: '', city: '', district: '', address: '', fullAddress: '' } : formatStoreAddress(c.store)
   return {
     storeName: hideStore ? '' : c.store.name,
     storeIntro: hideStore ? '' : (c.store.intro ?? ''),
     category: hideStore ? '' : (c.store.category ?? ''),
-    city: hideStore ? '' : (c.store.city ?? ''),
+    city: address.city,
+    province: address.province,
+    district: address.district,
+    address: address.address,
+    fullAddress: address.fullAddress,
     dishName,
     /**
      * ★★ «【菜品】那一行的空值注解»：**只在没选菜时**有内容，选了菜就是空串。
@@ -1259,6 +1297,7 @@ export async function generateCopy(
     ...vars,
     recentCopyAvoid: `${retryRecent.prompt}\n这次重试必须换一个主题族和叙述落点，禁止回到「家乡那道菜」或「天凉了想吃热乎的」。`,
   }
+  const addressFacts = unsupportedAddressFacts(copyText, vars.fullAddress)
   const copyTooLong = copyExceedsComplexityLimit(copyText, complexity)
   const initialFingerprint = copyFingerprint(copyText)
   const duplicateCopy = retryRecent.copies.some((old) => copyFingerprint(old) === initialFingerprint)
@@ -1303,7 +1342,8 @@ export async function generateCopy(
         copyFingerprint(old) === copyFingerprint(againText) || copySimilarity(old, againText) >= 0.72,
       )
       const retryTooLong = copyExceedsComplexityLimit(againText, complexity)
-      if (!stillDuplicate && !retryTooLong) {
+      const retryAddressFacts = unsupportedAddressFacts(againText, vars.fullAddress)
+      if (!stillDuplicate && !retryTooLong && retryAddressFacts.length === 0) {
         copyText = againText
         if (againPicked && picked) picked.copy = againPicked.copy
       } else {
@@ -1333,7 +1373,7 @@ export async function generateCopy(
       requestId: `${requestId}#dish`,
       variables: vars,
     })
-    if (again.ok && again.text && mentionsDish(again.text, vars.dishName)) {
+    if (again.ok && again.text && mentionsDish(again.text, vars.dishName) && unsupportedAddressFacts(again.text, vars.fullAddress).length === 0) {
       copyText = again.text.trim()
       console.warn(
         `[copy] 未报出菜名「${vars.dishName}」，重试一次命中（未二次扣积分）：creation=${creationId} scene=${sceneCode} 首次耗时=${elapsedMs}ms`,
@@ -1350,7 +1390,8 @@ export async function generateCopy(
    *   正常返回永远是 `copy` 有内容，这里只兜住损坏输出。
    */
   const brokenTopic = picked !== null && !copyText
-  if (!r.isFallbackTemplate && r.text && !brokenTopic) {
+  const invalidAddressFacts = unsupportedAddressFacts(copyText, vars.fullAddress)
+  if (!r.isFallbackTemplate && r.text && !brokenTopic && invalidAddressFacts.length === 0) {
     const data: { copyText: string; title?: string | null } = { copyText }
     /**
      * ★ 话题稿没有门店/菜品可拼名字（见 `createCreation` 的 title 兜底），所以让这次文案调用
@@ -1431,7 +1472,7 @@ export async function updateCreation(
   if (isTopicRow && row?.topicCity === null && row.storeId !== null) {
     const store = await prisma.store.findFirst({
       where: { id: row.storeId, merchantId },
-      select: { province: true, city: true, district: true },
+      select: { province: true, city: true, district: true, address: true },
     })
     const loc = store ? storeLocationOf(store) : null
     if (loc) data.topicCity = loc
@@ -1576,6 +1617,10 @@ export async function generateShots(
         : Array.isArray((parsedBody as { shots?: unknown[] }).shots)
           ? (parsedBody as { shots: unknown[] }).shots
           : []
+      const storyboardAddressFacts = unsupportedAddressFacts(r.text, vars.fullAddress)
+      if (storyboardAddressFacts.length) {
+        throw new Error(`分镜含输入地址之外的具体地点：${storyboardAddressFacts.join('、')}`)
+      }
       // 镜头库 code → id，用于把 AI 选中的拍摄手法落库
       // ★ 解析出空数组 ≠ 生成成功。
       //
