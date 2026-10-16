@@ -10,7 +10,7 @@ import {
   copySimilarity,
   normalizeCopyForCompare,
 } from '../src/services/creation.service.js'
-import { topicDirections } from '../src/lib/topic.js'
+import { topicDirections, topicFamilyOf } from '../src/lib/topic.js'
 
 let pass = 0
 let fail = 0
@@ -48,7 +48,12 @@ check(firstCuts.every((text) => !/家乡那一口|老家来的那口|家里哪�
 
 const all = dates.flatMap((date) => topicDirections(date))
 check(all.some((text) => /彩礼|房租|加班|朋友|暗号|规矩|一桌人/.test(text)), '方向库覆盖关系、人情、生活选择等非菜品主题')
-check(all.some((text) => /天凉|降温|下雨|秋天/.test(text)), '方向库仍保留时令主题，但不独占')
+// ★ 2026-10-12 判据从「文本里出现某个词」换成「**族**还在」：时令已独立成「天气时令」一族、
+//   按窗口轮转取材 —— 某个 7 天窗口里抽到的那几条未必正好含这些词，按词判会假红（当天踩到过）。
+check(
+  all.some((text) => topicFamilyOf(text) === '天气时令'),
+  '方向库仍保留时令主题，但不独占',
+)
 
 console.log(`\n通过 ${pass} 项，失败 ${fail} 项`)
 if (fail) process.exitCode = 1

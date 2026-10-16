@@ -64,7 +64,7 @@ import {
 import { renderTemplate } from '../src/ai/gateway.js'
 import { formatDateInfo, shanghaiYmd, upcomingNodes, LUNAR_FESTIVAL_MAX_YEAR } from '../src/lib/festival.js'
 // 话题方向库（流量款独立功能的时间/话题来源）
-import { formatTopicInfo, topicDirections, IDENTITY_CUTS, EVERGREEN_TOPICS } from '../src/lib/topic.js'
+import { formatTopicInfo, topicDirections, IDENTITY_CUTS, EVERGREEN_TOPICS, topicFamilyOf } from '../src/lib/topic.js'
 import {
   buildVariables,
   formatPersona,
@@ -1294,7 +1294,7 @@ const day1b = topicDirections(at('2026-09-20T09:00:00+08:00'))
 check(JSON.stringify(day1) === JSON.stringify(day1b), '同一天两次调用结果完全一致（无随机）')
 
 // 6.2 数量：太少就永远同一句，太多模型会挑花眼
-check(day1.length >= 2 && day1.length <= 4, `方向数落在 2~4 条之间（实得 ${day1.length}）`, day1.join(' ｜ '))
+check(day1.length >= 2 && day1.length <= 6, `方向数落在 2~6 条之间（实得 ${day1.length}）`, day1.join(' ｜ '))
 
 // 6.3 去重：节点方向与时令方向可能撞句，输出里不许有重复
 check(new Set(day1).size === day1.length, '输出里没有重复方向')
@@ -1309,7 +1309,7 @@ check(day1.some((x) => x.includes('中秋') || x.includes('月饼')), '中秋前
 //     2026-10-20 最近的节点是 3 天后的霜降（10/23），立冬在 11/7（18 天后）——
 //     18 > 14 ⇒ 立冬那条方向**不许**出现。这条会随 WINDOW/窗口常量的改动而变红，是刻意的。
 const oct = topicDirections(at('2026-10-20T09:00:00+08:00'))
-check(oct.some((x) => x.includes('降温第一天')), '10-20 给出 3 天后霜降的方向', oct.join(' ｜ '))
+check(oct.some((x) => /(霜降|降温第一天|一天比一天冷)/.test(x)), '10-20 给出 3 天后霜降的方向', oct.join(' ｜ '))
 check(!oct.includes('立冬这天该吃点扎实的'), '★ 18 天后的立冬没有抢头条（14 天窗口生效）')
 
 // 6.6 隔天轮换：同一季节相邻两天的方向不应完全一样，否则一个月里天天同一句
@@ -1364,30 +1364,28 @@ check(
   '单级位置（只填了区县）也能取出一条例句',
 )
 
-// 6.9 ★★ 常驻基线：**地域身份线每天必出**，且永远在第一位。
-//   一份 39 条真实对标清单里，地域身份族（省级身份／老乡／本地区县／方言）占「同城热点」组
-//   的 61.5%，是这一档真正的主引擎。它一旦混进 EVERGREEN_TOPICS 的按天轮转，
-//   就只在十几组里轮到 1 组 —— 等于把主力方向摊薄成约 1/15（原实现实测错配 6~9 倍），
-//   而且**全程不报错**：方向照常产出、其余用例全绿，只是主力方向大部分天里根本不出现。
+// 6.9 ★★ 常驻基线：**地域身份线每天必出**，但**位置不限**（2026-10-12 改）。
+//   为什么不再固定第 1：一份 39 条真实对标清单里，地域身份族（省级身份／老乡／本地区县／方言）
+//   占「同城热点」组的 61.5%，是这一档真正的主引擎 —— 但把它钉在第 1 条、还加「主力方向」标注，
+//   等于**每次都把模型推回老乡 / 家乡那道菜**，正是用户反馈「流量型老是同一个」的直接来源。
+//   ⇒ 现在的契约是「每天必出（不许断档）＋ 位置由 seed 决定」，出题权交回给族轮转。
 const identityIdx = (x: string[]) => x.findIndex((d) => (IDENTITY_CUTS as readonly string[]).includes(d))
-check(identityIdx(day1) === 0, '★ 地域身份线是每天的第一条方向（常驻基线，不进轮转池）', day1.join(' ｜ '))
-check(identityIdx(oct) === 0, '★ 2026-10-20 那天基线同样在第一位', oct.join(' ｜ '))
+check(identityIdx(day1) >= 0, '★ 地域身份线每天必出（常驻基线，不进轮转池）', day1.join(' ｜ '))
+check(identityIdx(oct) >= 0, '★ 2026-10-20 那天基线同样出现', oct.join(' ｜ '))
 check(
   IDENTITY_CUTS.length >= 3,
   `基线自带多个「切口」（实得 ${IDENTITY_CUTS.length} 个）—— 只写死一句会让用户连着几天看到同一句话`,
 )
-// 切口按天轮转：7 天里至少换过 3 种；而且换出来的必须**都还是**地域身份线（换族 = 基线断档）
-const cuts7 = [0, 1, 2, 3, 4, 5, 6].map(
-  (i) => topicDirections(at(`2026-09-${String(20 + i).padStart(2, '0')}T09:00:00+08:00`))[0]!,
-)
+// 切口按天轮转：7 天里至少换过 3 种；而且**每天都必须有一条**（缺一天 = 基线断档）
+const cuts7 = [0, 1, 2, 3, 4, 5, 6].map((i) => {
+  const dirs = topicDirections(at(`2026-09-${String(20 + i).padStart(2, '0')}T09:00:00+08:00`))
+  return dirs.find((d) => (IDENTITY_CUTS as readonly string[]).includes(d)) ?? ''
+})
+check(cuts7.every((d) => d !== ''), '★ 7 天里每天都有地域身份线（位置不限，但不许缺）', cuts7.join(' ｜ '))
 check(
   new Set(cuts7).size >= 3,
   `★ 基线的「切口」在 7 天里至少换过 3 种（实得 ${new Set(cuts7).size} 种）`,
   cuts7.join(' ｜ '),
-)
-check(
-  cuts7.every((d) => (IDENTITY_CUTS as readonly string[]).includes(d)),
-  '★ 基线只在地域身份线**内部**换切口，不许换成别族方向',
 )
 
 // 6.10 ★ 反向：地域身份**不许**同时留在轮转池里。
@@ -1413,17 +1411,58 @@ check(
   everPool.filter((d) => d.length < 8).join(' ｜ '),
 )
 
-// 6.11 ★ topicInfo 要把第 1 条标成「主力方向」。不标出来，模型会平均地在几条里随手挑，
-//   把占 61.5% 的主力方向当成四选一的备选 —— 这一条是 §6.9 那个改动的**出口**，
-//   光在库里排序、不写进提示词，模型是看不到的。
+// 6.11 ★★ 2026-10-12 起**不许**再给第 1 条加「主力方向」标注（那是单一化的直接来源），
+//   改成中性的「优先挑与【近期已用文案】不重复的那一条」—— 把选择权交给**新鲜度**。
 check(
-  ti('2026-09-20T09:00:00+08:00').includes('主力方向'),
-  '★ topicInfo 把第 1 条标成「主力方向」（否则排序在库里、模型看不到）',
+  !ti('2026-09-20T09:00:00+08:00').includes('主力方向'),
+  '★★ topicInfo 不许再出现「主力方向」标注（那句话每次把模型推回老乡线）',
 )
 check(
-  ti('2026-09-20T09:00:00+08:00', '河北省廊坊市固安县').includes('主力方向') &&
+  ti('2026-09-20T09:00:00+08:00').includes('优先挑与'),
+  '★ topicInfo 改成「优先挑与【近期已用文案】不重复的那一条」',
+)
+check(
+  ti('2026-09-20T09:00:00+08:00', '河北省廊坊市固安县').includes('优先挑与') &&
     !ti('2026-09-20T09:00:00+08:00', '河北省廊坊市固安县').includes('{{'),
-  '带位置时「主力方向」标注同样在，且无残留占位符',
+  '带位置时中性挑法同样在，且无残留占位符',
+)
+
+// 6.12 ★★「族轮转」这套机制的**承诺**（2026-10-12 新增）。
+//   旧断言守的全是「第 1 条是不是老乡线」，机制一换就整片假红；下面四条守的才是新机制
+//   真正要保证的东西 —— 而且每一条都能钉住一类**静默失效**。
+//   a) 同一天两两不同族：这是「不再单一化」的量化判据。
+const fam = day1.map((d) => topicFamilyOf(d)).filter((f) => f !== null)
+check(new Set(fam).size === fam.length, '★ 同一天的几条方向两两不同族', fam.join(' ｜ '))
+//   b) 一周覆盖 ≥8 族：族池取的是**连续窗口、每天平移 1 位**，7 天并集必然覆盖整个池。
+//      ★ 这一条专治「大步跳」写法（`(seed + i * 3) % N`）：看着更随机，却会让某些族长期
+//        落在窗外 —— 旧实现里「方言暗号」整族从未出现过，就是这一类缺陷，而且全程不报错。
+const weekFams = new Set(
+  [0, 1, 2, 3, 4, 5, 6]
+    .flatMap((i) => topicDirections(at(`2026-10-${String(1 + i).padStart(2, '0')}T09:00:00+08:00`)))
+    .map((d) => topicFamilyOf(d))
+    .filter((f) => f !== null),
+)
+check(weekFams.size >= 8, `★ 一周内至少覆盖 8 个族（实得 ${weekFams.size} 个）`, [...weekFams].join(' ｜ '))
+//   c) variant（由**创作编号**派生）：同一条创作重生成必须**完全一致**，不同创作要**错开**。
+//      ★ 乘数用 `79193` 而不是 `7919`：后者 ≡ −1，相邻创作只挪 1 位，实测 4/6 条仍重合。
+const dv0 = topicDirections(at('2026-09-20T09:00:00+08:00'), 0)
+const dv0b = topicDirections(at('2026-09-20T09:00:00+08:00'), 0)
+const dv1 = topicDirections(at('2026-09-20T09:00:00+08:00'), 1)
+check(JSON.stringify(dv0) === JSON.stringify(dv0b), '★ 同一个 variant 两次调用完全一致（重生成不该换方向）')
+const variantOverlap = dv0.filter((d) => dv1.includes(d)).length
+check(
+  variantOverlap <= dv0.length - 2,
+  `★ 换一个 variant 至少换掉 2 条（实测重合 ${variantOverlap}/${dv0.length} 条）`,
+  dv1.join(' ｜ '),
+)
+//   d) 天气族只写「天气感」，**不许报实际天气**（我们没接天气 API，写了就是编新闻）。
+//      用户 2026-10-12 拍板：天气 = 只写天气感。
+const weatherDirs = EVERGREEN_TOPICS.flat().filter((d) => topicFamilyOf(d) === '天气时令')
+const badWeather = weatherDirs.filter((d) => /\d+\s*(度|℃)|预报|今天(有|是|会)(雨|雪|晴|阴)/.test(d))
+check(
+  weatherDirs.length > 0 && badWeather.length === 0,
+  '★ 天气族只写「天气感」，不报实际天气（没接天气 API，写了就是编）',
+  badWeather.join(' ｜ '),
 )
 
 // ───────── ⑦ 菜品可选项：不选菜品时提示词与兜底都必须成立（2026-09-25） ─────────
