@@ -200,7 +200,9 @@ let deepseekModelId = 0n
   //   · storyboard_generate —— 大输出场景
   //   · edit_plan —— AI 剪辑决策，跑在 worker 内、不参与前端超时预算；主 GPT、备 DeepSeek
   //   · 五个文案款 copy_* —— 2026-09-22 改型后重定：主 DeepSeek、备 GPT、**移出 Claude**
-  const SPECIAL = new Set(['storyboard_generate', 'edit_plan'])
+  //   · subtitle_split —— 2026-10-14 起主 GPT、备 [Claude, DeepSeek]，超时抬到 90s
+  //     （⭐ 当天先判「不加 DeepSeek」，晚上按用户要求加了并**连带抬超时** —— 详见下面那一块）
+  const SPECIAL = new Set(['storyboard_generate', 'edit_plan', 'subtitle_split'])
   const COPY_SCENES = new Set([
     'copy_traffic',
     'copy_persona',
@@ -330,6 +332,90 @@ let deepseekModelId = 0n
     )
   } else {
     check(false, 'storyboard_generate 场景存在')
+  }
+
+  /**
+   * ★★ subtitle_split（字幕分行）的例外必须成立 —— 2026-10-14 新增，当晚又改了一次。
+   *
+   * 它曾是**全 18 个场景里唯一候选链为空的**。2026-10-14 先补成 [GPT → Claude]，
+   * 当晚按用户明确要求补成 [GPT → Claude → DeepSeek]，并把场景超时 60s 抬到 90s。
+   *
+   * 依据一 —— 官方探针（`scripts/probe-subtitle-split-timing.ts`，直连适配器、零计费、
+   * 不写日志，取材 `subtitle-split-77` 真实提示词快照 + 5 条待分行文本，PROBE_TIMEOUT_MS=70000）：
+   *
+   *   通道           档位     耗时              完成 token     acceptLines   断点命中
+   *   gpt    #21     压low    10.2s             121            5/5           13/13   ← 主力
+   *   claude #6      压low    21.1s / 33.7s     2138 / 3026    5/5 / 5/5     8/8 / 13/13
+   *   claude #6      不压     26.1s / 44.5s     2546 / ✗ 4000 打满→空正文
+   *   deepseek #7    压low    70.1s✗ / 49.5s    — / 4805       — / 5/5
+   *   deepseek #7    不压     70.1s✗ / 70.3s✗   —
+   *
+   * 依据二 —— 生产同口径复采（`TO=150000`、`maxOutputTokens=8000`、同款提示词）：
+   *   DeepSeek **6 次 = 51.3 / 61.3 / 63.2 / 65.8 / 67.0 / 74.8s**，中位 ≈64s，质量 6/6 acceptLines 5/5。
+   *   ⇒ 它不是「坏了」，是「**能出正确结果但慢**」。慢的根因是 `reasoning_effort='low'`
+   *     对它**服从度极差**：同一提示词 gpt 只花 **121** completion token，claude 2138~3026，
+   *     deepseek **6463~7760** —— **差 53 倍**（吞吐正常，~102 tok/s；思考量×7 ⇒ 60~75s）。
+   *   ⇒ 所以「后台体检 HEALTHY / 别的场景 8.4s」不能当这条链上可用的证据：体检是**短提示词**探活。
+   *
+   * ⚠ maxOutputTokens 必须 ≥ 8000：Claude 无视 `reasoning_effort`，预算要同时装
+   *   思考+正文，压low 实测已用到 3026/4000（76%）⇒ 给 4000 有相当概率返回空正文。
+   * ⚠ timeout 必须 ≥ 90s：这是**跟 DeepSeek 配套的**，不是顺手抬的 ——
+   *   它中位 64s、最坏样本 74.8s，对 60s 是确定性失败（加了等于没加），
+   *   90s 才对最坏样本留 1.2 倍余量。改这一对值时必须一起重算最坏耗时（见最后一条断言）。
+   * ⚠ 顺序有意：**Claude 在前、DeepSeek 在最后** —— DeepSeek 只在 gpt 与 Claude 都
+   *   不可用时才轮到，所以那 64s 中位只花在长尾上。若有人把 DeepSeek 提到 Claude 前面，
+   *   正常的备用路径会从 21~34s 变成 60~75s，这是**性能退化**，不许。
+   */
+  const ss = scenes.find((s) => s.code === 'subtitle_split')
+  if (ss) {
+    const c = chainOf(ss)
+    check(
+      c.length === 3 && c[0] === gptModelId && c[1] === claudeModelId && c[2] === deepseekModelId,
+      'subtitle_split 候选链 = [GPT → Claude → DeepSeek]',
+      `实际 ${JSON.stringify(c.map((v) => String(v)))}`,
+    )
+    check(
+      c.indexOf(deepseekModelId) === c.length - 1,
+      '★ DeepSeek 排在候选链**最后**（中位 64s，只当前两个都倒了才轮到；提前它就是性能退化）',
+      `实际位置 ${c.indexOf(deepseekModelId)}/${c.length - 1}`,
+    )
+    check(
+      (ss.maxOutputTokens ?? 0) >= 8_000,
+      '★ subtitle_split 输出预算 ≥ 8000（Claude 无视 reasoning_effort，给 4000 会返回空正文）',
+      `实际 ${ss.maxOutputTokens}`,
+    )
+    check(
+      ss.timeoutMs >= 90_000 && ss.timeoutMs <= 120_000,
+      '★ subtitle_split 超时 ∈ [90s, 120s]（跟 DeepSeek 配套：其中位 64s / 最坏 74.8s，60s 装不下）',
+      `实际 ${ss.timeoutMs}ms`,
+    )
+    check(
+      ss.maxRetries === 0,
+      'subtitle_split 不重试（换通道比重试同一通道划算）',
+      `实际 ${ss.maxRetries}`,
+    )
+    /**
+     * ★★★ 这一条是这个场景**最容易被改错**的地方，必须守：
+     *   `subtitle_split` 在 `NO_TRIP_SCENES` 里 —— 它的失败**不许**熔断通道
+     *   （判据见 scene-codes.ts：它超时多半是模型抽风，不是通道坏了）。
+     *   ⇒ 反过来说，**它的可用性完全依赖候选链够长**：熔断键是按供应商的
+     *     （`ai:cb:open:{providerId}`），别的场景一次超时就能把 tokenbox-gpt
+     *     关门 5 分钟，而它自己既不会熔断、也不留 `noteChannelFailure` 证据。
+     *     2026-10-14 那 5 次 FAILED（历时 0.0s）就是这么来的 ——
+     *     `bgm_select` 用 30s 超时把 gpt 打超时，1 秒后字幕就被这道门挡住。
+     *   ⇒ 若哪天有人把 NO_TRIP 去掉，必须同时重新审视这条候选链；
+     *     反之若有人把候选链改回 `[]`，这个场景会再次 100% 吃别人造成的熔断。
+     */
+    check(
+      NO_TRIP_SCENES.has('subtitle_split'),
+      '★ subtitle_split 仍在 NO_TRIP_SCENES（失败不熔断通道）⇒ 所以它不能没有备用链',
+    )
+    check(
+      c.length * ss.timeoutMs * (ss.maxRetries + 1) <= 600_000,
+      `subtitle_split 最坏耗时 ${c.length * ss.timeoutMs * (ss.maxRetries + 1)}ms ≤ render task 预算 600s`,
+    )
+  } else {
+    check(false, 'subtitle_split 场景存在')
   }
 
   /**

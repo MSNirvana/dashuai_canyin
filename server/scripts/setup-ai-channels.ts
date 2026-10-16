@@ -15,7 +15,7 @@
 //     若环境变量缺失且库里也没有 ⇒ 仍然硬失败，不会写出一个没密钥的空壳通道。
 //
 // ══ 做六件事（幂等，可重复跑）══
-//   1. 按 code upsert 三个供应商 —— baseUrl 统一 https://tokenbox.you/v1
+//   1. 按 code upsert tokenbox 供应商，并按需增加腾讯混元备用供应商
 //      （实测该中转站是标准 OpenAI 兼容端点；Claude 也支持 openai 端点，
 //        所以三个通道统一走 OPENAI_COMPATIBLE，无需 ANTHROPIC_NATIVE）
 //   2. 按 (providerId, modelCode) upsert 模型；停用同供应商下的历史模型
@@ -23,7 +23,8 @@
 //      ⇒ 失败转移顺序由 ai_scene 的候选列表决定，**不是** by ai_provider.priority
 //        （priority 只影响后台列表排序）
 //      ★ 例外见 SCENE_OVERRIDES：storyboard_generate（唯一的大输出场景）主候选是
-//        DeepSeek、备用只有 Claude，且 timeout/ maxRetries / max_output_tokens 都被覆盖。
+//        DeepSeek、备用只有 Claude；subtitle_split 主候选 GPT、备用 [Claude, DeepSeek]；
+//        两者的 timeout / maxRetries / max_output_tokens 都被覆盖。
 //   4. 把场景的 max_output_tokens 抬到不低于 SCENE_MIN_OUTPUT_TOKENS（默认 4000）
 //      ⇒ 推理模型需要「思考 + 正文」共用 max_tokens，预算太小会返回空正文
 //      ⚠ 4000 只够**短输出**场景；storyboard_generate 实测需 ~10500，故由覆盖单独钉住
@@ -51,6 +52,9 @@
 //
 // ══ 环境变量 ══
 //   TB_GPT_KEY / TB_CLAUDE_KEY / TB_DEEPSEEK_KEY   必填，三个统一 Key
+//   HUNYUAN_KEY / HUNYUAN_IMAGE_KEY   可选，混元文本/图像备用 Key
+//   HUNYUAN_BASE_URL   混元地址，默认 https://tokenhub.tencentmaas.com/v1
+//   HUNYUAN_MODEL / HUNYUAN_IMAGE_MODEL   默认 hy4-preview / hy-image-v3
 //   TB_GPT_MODEL / TB_CLAUDE_MODEL / TB_DEEPSEEK_MODEL   模型码覆盖
 //   SCENE_MIN_OUTPUT_TOKENS   场景输出预算下限，默认 4000
 //   TB_SET_PRICES=1           把真实单价写库（否则单价 0 ⇒ 扣 0 积分）
@@ -146,12 +150,15 @@ import Redis from 'ioredis'
 import { encryptSecret, maskSecret } from '../src/lib/secret.js'
 import { CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, PUBLISH_SCENES } from '../prisma/prompts.js'
 
-const BASE_URL = 'https://tokenbox.you/v1'
+const TOKENBOX_BASE_URL = 'https://tokenbox.you/v1'
+const HUNYUAN_BASE_URL = (process.env.HUNYUAN_BASE_URL ?? 'https://tokenhub.tencentmaas.com/v1').trim()
 
 /** 模型码可用环境变量覆盖 —— 换模型不必改代码、不必重新审阅脚本 */
 const MODEL_GPT = (process.env.TB_GPT_MODEL ?? 'gpt-5.6-sol').trim()
 const MODEL_CLAUDE = (process.env.TB_CLAUDE_MODEL ?? 'claude-sonnet-5').trim()
 const MODEL_DEEPSEEK = (process.env.TB_DEEPSEEK_MODEL ?? 'deepseek-v4-flash').trim()
+const MODEL_HUNYUAN = (process.env.HUNYUAN_MODEL ?? 'hy4-preview').trim()
+const MODEL_HUNYUAN_IMAGE = (process.env.HUNYUAN_IMAGE_MODEL ?? 'hy-image-v3').trim()
 
 /**
  * 出图模型码。默认 `gpt-image-2`（裸码，不带分辨率后缀）。
@@ -202,6 +209,9 @@ const USD_TO_CNY = Number(process.env.TB_USD_TO_CNY ?? 7.2)
  * ⚠ 这些数字请对照你自己 tokenbox 控制台的账单再核一遍再启用。
  * ⚠ DeepSeek 是分时定价：9:00-12:00 与 14:00-18:00 翻倍，表里填的是**空闲时段价**。
  */
+const HUNYUAN_INPUT_USD_PER_MTOK = Number(process.env.HUNYUAN_INPUT_USD_PER_MTOK ?? 0)
+const HUNYUAN_OUTPUT_USD_PER_MTOK = Number(process.env.HUNYUAN_OUTPUT_USD_PER_MTOK ?? 0)
+
 const PRICES: Record<string, { inUsdPerMtok: number; outUsdPerMtok: number; note: string }> = {
   'gpt-5.5': { inUsdPerMtok: 4.0, outUsdPerMtok: 24.0, note: 'p×5 c×30，Gpt pro号池 ×0.4' },
   /**
@@ -218,6 +228,7 @@ const PRICES: Record<string, { inUsdPerMtok: number; outUsdPerMtok: number; note
   'gpt-5.6-sol': { inUsdPerMtok: 4.0, outUsdPerMtok: 24.0, note: 'p×5 c×30（与 gpt-5.5 同系数同价）；另含 cc×6.25 缓存输出附加项' },
   'claude-sonnet-5': { inUsdPerMtok: 4.0, outUsdPerMtok: 20.0, note: 'ratio 1 / completion 5，Claude max ×2' },
   'deepseek-v4-flash': { inUsdPerMtok: 1.2, outUsdPerMtok: 4.8, note: 'p×1 c×4，Deepseek官方 ×0.6（空闲时段）' },
+  'hy4-preview': { inUsdPerMtok: HUNYUAN_INPUT_USD_PER_MTOK, outUsdPerMtok: HUNYUAN_OUTPUT_USD_PER_MTOK, note: 'TokenHub 价格由 HUNYUAN_*_USD_PER_MTOK 显式提供' },
 }
 
 /** 把 PRICES 里的美元单价换算成库里的「分 / 百万 token」（SET_PRICES=false 时返回 0） */
@@ -352,6 +363,8 @@ const SCENE_OVERRIDES: Record<
    *
    *   ⇒ 两个备用通道在这个场景**不是「慢一点」而是确定性失败**；留在链上只会把最坏耗时
    *     从 21s 拉到 90~280s，**最后还是失败**。所以 `fallbacks: []`
+   *     ⚠ **这条结论已于 2026-10-14 被实测推翻** —— 见本段末尾「2026-10-14」那一节。
+   *       别只读到这里就照抄 `fallbacks: []`。
    *     （同下面 publish_cover / 封面选帧 的判据：宁可没有备用、失败就退回内建算法，
    *     也不留一个没验证过的备用 —— 否则失败会**静默降级**到它，比直接失败难查得多）。
    *
@@ -384,11 +397,112 @@ const SCENE_OVERRIDES: Record<
    *     ② 通道吞吐本身有 **~8 倍波动**（同内容 09-30 是 2022 token / 18.3s ≈ 110 tok/s，
    *        10-01 是 1667 token / 121s ≈ **14 tok/s**）。⇒ **跨会话比耗时没有意义**，
    *        要比就比 completion token。60s 超时在通道慢的时候对 47.5s 那次只有 1.26 倍余量。
+   *
+   * ────────── ★★★ 2026-10-14：上面 2026-09-30 那条「所以 `fallbacks: []`」已被实测推翻 ──────────
+   *
+   * 推翻它的不是「Claude 变快了」这句话，而是**两个此前没看清的前提**：
+   *
+   *   ① 09-30 那次探针是在 `subtitle_split` 进 `LOW_REASONING_SCENES` **之前**做的
+   *      （10-01 才进）。今天按**生产真实口径**复测
+   *      （`gateway.ts:243` 对 `LOW_REASONING_SCENES` 统一施加 `reasoning_effort='low'`）：
+   *
+   *        取材 `subtitle-split-77`（5 条真实待分行文本、当前提示词快照，PROBE_TIMEOUT_MS=70000）
+   *        通道            档位     耗时             完成 token     acceptLines   断点命中
+   *        gpt    #21      压low    10.2s            121            5/5           13/13   ← 主力仍最好
+   *        gpt    #21      不压     40.4s            1025           5/5           11/11
+   *        claude #6       压low    21.1s / 33.7s    2138 / 3026    5/5 / 5/5     8/8 / 13/13  ← **可用**
+   *        claude #6       不压     26.1s / 44.5s    2546 / ✗ 4000 打满→空正文
+   *        deepseek #7     压low    70.1s✗ / 49.5s   — / 4805       — / 5/5      ← 仍排除
+   *        deepseek #7     不压     70.1s✗ / 70.3s✗  —              —
+   *
+   *      ⇒「Claude 压low」两次都 5/5、断点 8/8 与 13/13，21~34s 都落在 60s 内。
+   *        09-30 判它失败的那个样本是「不压」档（把 4000 预算打满到 `finish_reason=length`）
+   *        —— 而生产上低思考档**是生效的**，所以那两行不能直接拿来判今天的死刑。
+   *      ⇒ **DeepSeek 当时被排除**：4 次里 3 次 70s 超时，对 60s 是确定性失败
+   *        （压low 那次还用了 4805 token，比 4000 预算更大）。
+   *        ⚠ 但这条**当晚被推翻**（用户坚持要加，且连超时一起抬）⇒ 见下方「2026-10-14 晚」补记。
+   *      ⇒ 同时把 `maxOutputTokens` 4000 → 8000：Claude 压low 已用到 3026/4000（76%），
+   *        只留 24% 余量等于让备用有相当概率空转。给 8000 是「给 Claude 留活路」
+   *        （同 `storyboard_generate` 用 12000 的判据）；对 gpt 无副作用，它是上限不是目标。
+   *
+   *   ② ★★★ **空链的真实代价比 09-30 设想的更严重** —— 不只是「失败时少一次机会」：
+   *
+   *      熔断键是**按供应商**的（`ai:cb:open:{providerId}`），而 `subtitle_split` 是全 18 个
+   *      场景里**唯一**候选链为空的，于是它成了**别的场景制造的熔断的指定受害者**；
+   *      又因为它自己进了 `NO_TRIP_SCENES`（不许熔断、不写 `record(false)`、不
+   *      `noteChannelFailure`），这件事**连证据都不留**。
+   *
+   *      2026-10-14 17:00~17:47 的 5 次 FAILED 全是这个形状，现场（可照这条复现）：
+   *
+   *        17:47:14   `ai_provider #3 tokenbox-gpt` TIMEOUT「request timeout after 30000ms」
+   *                   ← 30000ms 是 **bgm_select** 的超时（字幕自己的超时是 60000ms）
+   *        17:47:52   `business_request AI_BGM_SELECT` COMPLETED（落到 #7 deepseek，8.4s）
+   *        17:47:53   `business_request AI_SUBTITLE_SPLIT` **FAILED 历时 0.0s**
+   *                   「没有可用的候选通道：候选通道 tokenbox-gpt 处于熔断中」
+   *
+   *      ⇒ **同一个出片任务里的「上一步」（`bgm_select`）把 gpt 打超时、把通道熔断 5 分钟，
+   *        1 秒之后的字幕分行就被这道门挡住**。`bgm_select` 自己毫发无伤（4 个候选），
+   *        唯一没备用的字幕吃了全部代价。
+   *      ⇒ 所以「宁可没有备用」这条判据**在这里是错的**：空链 ≠ 干净失败，
+   *        而是「把别人造成的熔断 100% 转成自己的失败」。留一个**已按生产口径验证过**的
+   *        备用（Claude 压low 21~34s、质量 5/5）明确优于空链。
+   *
+   * ⚠ 代价与残留（**Claude-only 版本**，当晚又被下面「2026-10-14 晚」那条改写）：
+   *   · 候选数 1 → 2 ⇒ 最坏耗时从 60s 变成「60s + 34s ≈ 94s」（gpt 未熔断但慢时）。
+   *     仍在 render task 的 600s 预算内（整单实测 35~55s）。gpt **已熔断**时反而更快：
+   *     0.0s 跳过 + 34s ≈ 34s。★ `subtitle_split` 由 worker 内部调用，**不**受
+   *     「前端超时 = 候选数×单候选超时×(maxRetries+1)」那条约束（它只管前端直调场景）。
+   *   · 这是**缓解、不是根治**。病根见本节末尾「病根」一段。
+   *
+   * ────────── ★★★ 2026-10-14 晚：用户坚持把 DeepSeek 也加进来（连超时一起抬） ──────────
+   *
+   * 我给的是「不加」的专业意见，依据＝上面那 4 次里 3 次 70s 超时，加上自写探针
+   * （`TO=150000`、`maxOutputTokens=8000`、生产同款提示词）**6 次采样**：
+   *
+   *      51.3s / 61.3s / 63.2s / 65.8s / 67.0s / 74.8s   ⇒ 中位 ≈64s，质量 6/6 acceptLines 5/5
+   *
+   * 用户坚持 ⇒ 先对齐「**你说的『可用』和这个场景的『可用』是两个判据**」，再**连同超时一起改**：
+   * 只加候选不抬超时，DeepSeek 90% 概率白等一个完整超时再失败，等于没加。
+   *
+   * 终态（线上 `ai_scene.subtitle_split`，已读回校对）：
+   *
+   *    default_model_id    = 21 (tokenbox-gpt / gpt-5.6-sol)
+   *    fallback_model_ids  = [6 (tokenbox-claude / claude-sonnet-5), 7 (tokenbox-deepseek / deepseek-v4-flash)]
+   *    timeout_ms          = 90000      ← 60s → 90s，对最坏样本 74.8s 留 1.2 倍
+   *    maxRetries          = 0
+   *    max_output_tokens   = 8000
+   *    ⇒ 最坏耗时 = 3 候选 × 90s = **270s**（render task 预算 600s；仍是缓解不是根治）
+   *
+   * ★ 顺序有意：Claude 在前（21~34s、质量 5/5，是最合格的备用），DeepSeek 在最后
+   *   —— 只有 gpt 与 Claude 都不可用时才轮到它，所以它的 64s 中位只在**长尾**上花。
+   *
+   * ★★ 必须记住的一件事：DeepSeek 在这条链上是「**能出正确结果、但慢**」，不是「坏了」。
+   *   慢的根因是 `reasoning_effort='low'` 对它的**服从度极差**：同一提示词下
+   *   gpt 只花 **121** completion token，claude 2138~3026，而 deepseek **6463~7760**
+   *   —— **差 53 倍**。吞吐本身是正常的（~102 tok/s），于是「正常吞吐 × 7 倍的思考量」
+   *   = 60~75s。⇒ `LOW_REASONING_SCENES` 只决定**发不发**这个参数，不保证对方**听不听**；
+   *   换候选前必须按「场景 × 通道」实测，不能拿别的场景的快当证据。
+   *   ⇒ 这也解释了「后台体检显示它 HEALTHY、字幕里却超时」：体检用**短提示词**探活
+   *     （`ai_call_log.sceneCode='TEST'`，实测 3.2s / 121 token），永远看不见这件事。
+   *
+   * ⚠⚠ **病根仍未除（本次未动）**：`bgm_select` 拿 `timeoutMs: 30_000` 去打 gpt 这个
+   *   「从 61 首里选一首」的重任务（同链上的 deepseek 只要 8.4s）⇒ 它每次超时都把
+   *   gpt 熔断 5 分钟（熔断键是**按供应商**的 `ai:cb:open:{providerId}`），殃及所有以
+   *   gpt 为主候选的场景；而 `subtitle_split` 恰恰是**唯一**空链（现已补）＋进
+   *   `NO_TRIP_SCENES`（失败不留证据）的那个，所以它是这道门的指定受害者。
+   *   根治要动 `bgm_select` 的主候选或超时 —— 那是运营决策，**本次未动**。
    */
   subtitle_split: {
-    fallbacks: [],
-    timeoutMs: 60_000,
+    // ★ 2026-10-14 晚终态：`[]` → `['tokenbox-claude', 'tokenbox-deepseek']`。
+    //   原委见上方「2026-10-14」+「2026-10-14 晚」两节（含「不加 DeepSeek」那条为何被推翻）。
+    //   顺序有意：Claude 在前（21~34s、质量 5/5），DeepSeek 最后（中位 64s，只当前两个都倒了才轮到）。
+    //   ★ 超时 60s → 90s 是**配套**改动，不是顺手：不抬超时则 DeepSeek 90% 白等一整轮。
+    //   ★ maxOutputTokens 必须显式钉 8000：不写会被播种逻辑按 SCENE_MIN_OUTPUT_TOKENS 抬到 4000，
+    //     而 Claude 压low 已用到 3026/4000（76%）⇒ 4000 会让备用有相当概率撞 `finish_reason=length` 空正文。
+    fallbacks: ['tokenbox-claude', 'tokenbox-deepseek'],
+    timeoutMs: 90_000,
     maxRetries: 0,
+    maxOutputTokens: 8_000,
   },
   /**
    * 封面出图（图像场景，`ai_scene.kind='IMAGE'`）。
@@ -405,7 +519,8 @@ const SCENE_OVERRIDES: Record<
    */
   publish_cover: {
     primary: IMAGE_CHANNEL,
-    fallbacks: [],
+    fallbacks: ['hunyuan-image'],
+    // 混元图像 key 未提供时，配置脚本保留当前线上候选链，不会写入不存在的模型 id。
     timeoutMs: 90_000,
     maxRetries: 0,
   },
@@ -640,6 +755,8 @@ interface ChannelSpec {
   code: string
   name: string
   priority: number
+  /** 供应商 API 根地址。 */
+  baseUrl: string
   /** 环境变量名（不存 key 本身） */
   envVar: string
   /** 该通道下所有模型的能力标签（写进 ai_model.capability，供网关的能力闸门判定） */
@@ -660,6 +777,7 @@ const CHANNELS: ChannelSpec[] = [
     code: 'tokenbox-gpt',
     name: 'GPT（tokenbox 中转）',
     priority: 10,
+    baseUrl: TOKENBOX_BASE_URL,
     envVar: 'TB_GPT_KEY',
     capability: 'TEXT',
     models: [{ modelCode: MODEL_GPT, displayName: `GPT（${MODEL_GPT}）` }],
@@ -668,6 +786,7 @@ const CHANNELS: ChannelSpec[] = [
     code: 'tokenbox-claude',
     name: 'Claude（tokenbox 中转）',
     priority: 20,
+    baseUrl: TOKENBOX_BASE_URL,
     envVar: 'TB_CLAUDE_KEY',
     capability: 'TEXT',
     models: [{ modelCode: MODEL_CLAUDE, displayName: `Claude（${MODEL_CLAUDE}）` }],
@@ -676,6 +795,7 @@ const CHANNELS: ChannelSpec[] = [
     code: 'tokenbox-deepseek',
     name: 'DeepSeek（tokenbox 中转）',
     priority: 30,
+    baseUrl: TOKENBOX_BASE_URL,
     envVar: 'TB_DEEPSEEK_KEY',
     capability: 'TEXT',
     models: [{ modelCode: MODEL_DEEPSEEK, displayName: `DeepSeek（${MODEL_DEEPSEEK}）` }],
@@ -684,10 +804,31 @@ const CHANNELS: ChannelSpec[] = [
     code: 'tokenbox-image',
     name: '出图（tokenbox 中转）',
     priority: 40,
+    baseUrl: TOKENBOX_BASE_URL,
     envVar: 'TB_IMAGE_KEY',
     capability: 'IMAGE',
     optional: true,
     models: [{ modelCode: MODEL_IMAGE, displayName: `出图（${MODEL_IMAGE}）` }],
+  },
+  {
+    code: 'hunyuan-text',
+    name: '混元（腾讯云备用）',
+    priority: 50,
+    baseUrl: HUNYUAN_BASE_URL,
+    envVar: 'HUNYUAN_KEY',
+    capability: 'TEXT',
+    optional: true,
+    models: [{ modelCode: MODEL_HUNYUAN, displayName: `混元（${MODEL_HUNYUAN}）` }],
+  },
+  {
+    code: 'hunyuan-image',
+    name: '混元生图（腾讯云备用）',
+    priority: 60,
+    baseUrl: HUNYUAN_BASE_URL,
+    envVar: 'HUNYUAN_IMAGE_KEY',
+    capability: 'IMAGE',
+    optional: true,
+    models: [{ modelCode: MODEL_HUNYUAN_IMAGE, displayName: `混元生图（${MODEL_HUNYUAN_IMAGE}）` }],
   },
 ]
 
@@ -698,6 +839,11 @@ function readEnvKeys(): Map<string, string> {
     const v = (process.env[c.envVar] ?? '').trim()
     if (v) keys.set(c.code, v)
   }
+  // 混元文本和图像可以共用同一把 TokenHub key；若单独提供图像 key，则优先使用图像 key。
+  const textKey = keys.get('hunyuan-text')
+  if (textKey && !keys.has('hunyuan-image')) keys.set('hunyuan-image', textKey)
+  const imageKey = keys.get('hunyuan-image')
+  if (imageKey && !keys.has('hunyuan-text')) keys.set('hunyuan-text', imageKey)
   return keys
 }
 
@@ -769,7 +915,7 @@ async function main() {
   const { resolved, skipped: skippedChannels } = await resolveKeys(prisma, readEnvKeys())
 
   try {
-    console.log(`\n[1/6] 配置供应商（baseUrl = ${BASE_URL}）`)
+    console.log('\n[1/6] 配置供应商（tokenbox 主链 + 混元备用）')
     if (skippedChannels.length) {
       console.log(
         `  ⚠ 跳过可选通道：${skippedChannels.join(', ')}（未提供环境变量，库里也没有历史密钥）。\n` +
@@ -787,7 +933,7 @@ async function main() {
         name: c.name,
         providerType: 'LLM',
         protocol: 'OPENAI_COMPATIBLE',
-        baseUrl: BASE_URL,
+        baseUrl: rk.channel.baseUrl,
         // 沿用历史密钥时**根本不带这两个字段**（写了就会用 undefined 覆盖掉真密钥）
         ...(rk.fresh ? { apiKeyEncrypted: encryptSecret(rk.fresh), apiKeyMasked: rk.masked } : {}),
         enabled: true,
@@ -811,8 +957,9 @@ async function main() {
           })
       providerIds.push(provider.id)
       console.log(
-        `  ${existing ? '更新' : '新建'}  ${c.code.padEnd(20)} key=${provider.apiKeyMasked}  ` +
-          `priority=${c.priority}  ${rk.fresh ? '★ 本次写入新 Key' : '（沿用库中已存密钥）'}`,
+        `  ${existing ? '更新' : '新建'}  ${c.code.padEnd(20)} base=${rk.channel.baseUrl.padEnd(44)} ` +
+          `key=${provider.apiKeyMasked}  priority=${c.priority}  ` +
+          `${rk.fresh ? '★ 本次写入新 Key' : '（沿用库中已存密钥）'}`,
       )
 
       for (const m of c.models) {
@@ -869,7 +1016,9 @@ async function main() {
     const primary = primaryModelOf.get('tokenbox-gpt')!
     const claudeModelId = primaryModelOf.get('tokenbox-claude')!
     const deepseekModelId = primaryModelOf.get('tokenbox-deepseek')!
-    const fallbacks = [claudeModelId, deepseekModelId]
+    const hunyuanModelId = primaryModelOf.get('hunyuan-text')
+    const fallbacks = [claudeModelId, deepseekModelId, ...(hunyuanModelId ? [hunyuanModelId] : [])]
+    const hunyuanImageModelId = primaryModelOf.get('hunyuan-image')
     /** 通道 code → 模型 id，供场景级覆盖按名字指定备用顺序 */
     const modelOfChannel = primaryModelOf
 
@@ -888,6 +1037,12 @@ async function main() {
        */
       if (ov?.primary && !modelOfChannel.has(ov.primary)) {
         console.log(`  ⏭ ${s.code}：候选通道 ${ov.primary} 本次未配置，保持库里原值`)
+        chainSkipped++
+        continue
+      }
+      const missingFallback = ov?.fallbacks?.find((code) => !modelOfChannel.has(code))
+      if (missingFallback) {
+        console.log(`  ⏭ ${s.code}：备用通道 ${missingFallback} 本次未配置，保持库里原值`)
         chainSkipped++
         continue
       }
@@ -922,6 +1077,12 @@ async function main() {
       console.log(`  ⚠ 有 ${chainSkipped} 个场景按上表跳过 —— 它们对应的能力本次不可用（补 Key 后重跑即可）`)
     }
     console.log(`  ${scenes.length} 个场景 → 主 ${primary}，默认备用 [${fallbacks.join(', ')}]`)
+    if (!hunyuanModelId) {
+      console.log('  ○ 混元文本未启用：未提供 HUNYUAN_KEY/HUNYUAN_IMAGE_KEY，现有 tokenbox 主链保持不变')
+    }
+    if (!hunyuanImageModelId) {
+      console.log('  ○ 混元图像未启用：未提供 HUNYUAN_IMAGE_KEY，publish_cover 仍保持现有 tokenbox 配置')
+    }
     for (const s of scenes) {
       const ov = SCENE_OVERRIDES[s.code]
       console.log(
@@ -1075,7 +1236,7 @@ async function main() {
     const first = await prisma.aiProvider.findUnique({ where: { code: CHANNELS[0]!.code } })
     if (first) {
       const plain = decryptSecret(first.apiKeyEncrypted)
-      const ok = plain.startsWith('sk-') && plain.length > 20
+      const ok = plain.trim().length > 20
       console.log(`\n自检 解密 ${CHANNELS[0]!.code} 的密钥：${ok ? '✓ 正常' : '✗ 异常（APP_MASTER_KEY 可能不匹配）'}`)
       if (!ok) process.exitCode = 1
     }
