@@ -849,6 +849,71 @@
   &__render {
     flex: 1;
   }
+  /* ── 「返回首页」小方按钮（2026-10-15，凸先生指定挂在**底部结算条**主按钮右侧）──
+     ★ 高度与 `&__render` 一致（84rpx，见文件末尾那条覆写），两条按钮才会在同一水平线上；
+       「正方形」= 宽高写同一个数，别只改一个。
+     ★ `margin: 0` 必须：`&__bar` 是 flex 行，而微信原生 button 自带
+       `margin-left/right: auto`，不清零会被推歪。
+       （★ 尺寸**不要**写成 `flex: none` —— 那是 `flex: 0 0 auto`，会退回去读 `width`，
+        正好踩进基础库那条 184px；原因见紧邻的下一条注释。）
+     ★ 宽度账（可用 702rpx ＝ 750 − 底栏左右各 24rpx / 见 `.rcompose .ds-footer`）：
+       主按钮原本独占 702 − 成本块（≈231rpx）− 行 gap 24rpx ≈ 447rpx；
+       让出 84rpx ＋ gap 24rpx 后仍有 ≈339rpx，而「重新生成」只需 ≈176rpx
+       （28rpx × 4 字 ≈ 112rpx ＋ 按钮内边距）⇒ 主按钮文案不会折行，也不会被压扁。
+       ⚠ 主按钮文案再变长、或成本块明显变长时要重算这笔账。 */
+  /* ★★★ 2026-10-15 真机实测踩坑（必须留档）：这个按钮的**主轴尺寸只能用 `flex-basis`**。
+     小程序基础库给原生按钮钉了一条 `wx-button:not([size=mini]) { width: 184px }`，
+     特异性 **0,1,1**，**压过**下面这条单类名的 **0,1,0** ⇒ 端上这个「小方按钮」被撑成
+     **184px 宽**（不是 84rpx）；而 `&__render` 的 `flex: 1` 只吃得到剩下的 ≈116rpx
+     （＝一个字 28rpx ＋ 按钮左右内边距 88rpx）⇒ 主按钮「重新生成」竖排折行、文字被裁掉，
+     整个底栏塌掉。实测证据：截图里主按钮红块只有 54px 宽、方按钮描边盒却有 166px 宽。
+     ⇒ 两件事一起做：① 这里用 `flex: 0 0 84rpx` —— flex-basis 决定主轴尺寸，`width`
+        对主轴失效；② 文件末尾再用 `.rcompose .rcompose__homebtn` 把权重抬到 **0,2,0**
+        兜住 `width`（与 `pages/mine/index.scss` 里同一个坑的处置口径一致）。
+     ⚠ 这条**只在真机 / 开发者工具上暴露**：H5 端 Taro 自带 `taro-button-core { width: 100% }`
+       （0,0,1，低于我们）⇒ H5 一路正常，**不能拿 H5 验收**。
+     ⚠ 下面那行 `width: 84rpx` 只为兜底（H5 / 以后别的基础库），它不是端上生效的那条。 */
+  /* ★★★ 2026-10-15 真机第二处踩坑：房子图标**贴顶**，下面空出 ≈20px（实测上 0.4px / 下 20.7px）。
+     根因：`line-height` ＋ `text-align:center` 只居中**行内内容**；图标是 `<Image>`，被下面那条
+     `display:block` 变成**块级子元素** ⇒ 它只会停在按钮内容盒的原点，而 `height:84rpx`
+     剩下的空间全空在下方（水平是居中的，因为块级 ＋ `margin:0 auto`）。
+     ⇒ 修法＝让按钮自己当 flex 容器，两个轴一起居中。
+     ★ 为什么敢给**微信原生 button** 设 `display:flex`：这正是本项目 `.ds-btn` 的既有范式
+       （`display:inline-flex; align-items:center; justify-content:center`），而且 `button.ds-btn`
+       明确把 `line-height` 压到 **1.2**（＝废掉了行高居中），兄弟按钮 `rcompose__render`
+       的文字在端上依旧视觉居中 ⇒ 靠的只能是 flex，**这条在本项目是线上验证过的**。
+     ★ 顺带删掉 `line-height` / `text-align`：有了 flex 它们不再生效，留着只会误导下一个人。
+     ⚠ 与 `pages/creation/edit.tsx` 里那条「给原生 button 设 display:flex 会影响内部渲染」的历史
+       结论并不冲突：那条讲的是**想让按钮自己被居中**（按钮不能靠自己的 display 居中自己），
+       这里要的是**居中按钮自己的内容**，正是 flex 的本职。 */
+  &__homebtn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 84rpx;
+    width: 84rpx;
+    min-width: 84rpx;
+    height: 84rpx;
+    margin: 0;
+    padding: 0;
+    border: 1rpx solid var(--td-component-stroke);
+    border-radius: var(--td-radius-default);
+    background: var(--td-bg-color-container);
+    color: var(--td-brand-color);
+    box-sizing: border-box;
+    /* 微信原生 button 的 `::after` 自带一条 1rpx 边框，不清掉会和上面的 border 叠成双线 */
+    &::after { border: 0; }
+  }
+  /* 图标是 `<Image>`（tabBar 那张 home-active.png），不是文字 ⇒ 尺寸只能写死在这里。
+     ★ 44rpx 是**选出来的**，不是算出来的：按钮盒 84rpx、四周留 ~20rpx 呼吸位刚好不顶到描边。
+       （旧注释写「84 − 2×20 内边距」是错的 —— `&__homebtn` 的 `padding` 是 **0**，别再被它带跑。）
+     ★ 它现在是 flex item，两个轴的居中由父级 `&__homebtn` 负责，这里**不要**再写 `margin: auto`。 */
+  &__homeicon {
+    display: block;
+    width: 44rpx;
+    height: 44rpx;
+    margin: 0;
+  }
 }
 
 /* ── 产品化页面编排 ─────────────────────────────────────────────
@@ -1014,3 +1079,14 @@
 .rcompose__render { height: 84rpx; font-size: 28rpx; }
 .rcompose__cost-value { font-size: 40rpx; }
 .rcompose__balance { margin-top: 6rpx; font-size: 20rpx; }
+
+/* ★★★ 2026-10-15：把「返回首页」小方按钮的宽度，从基础库那条
+   `wx-button:not([size=mini]) { width: 184px }`（特异性 **0,1,1**）手里抢回来。
+   单类名 `.rcompose__homebtn` 是 **0,1,0**，**压不过它** ⇒ 端上那个 84rpx 的小方按钮
+   实际被撑成 **184px**，把 `&__render`（flex: 1）挤到只剩 ≈116rpx，主按钮「重新生成」
+   竖排折行、文字裁切。
+   ⇒ 这里加一层祖先把权重抬到 **0,2,0**（与 `pages/mine/index.scss` 里同一个坑的处置口径一致）。
+   ★ 实测对账（390pt 屏、1rpx = 0.52px，截图缩放 0.9145）：
+     方按钮描边盒 168 图像px ÷ 0.9145 = **183.7 ≈ 184px** ✓ 与这条基础库规则完全吻合；
+     主按钮红块 54 图像px ÷ 0.9145 = 59px ≈ 116rpx（＝1 个字 28rpx ＋ 左右内边距 88rpx）✓。 */
+.rcompose .rcompose__homebtn { width: 84rpx; min-width: 84rpx; }

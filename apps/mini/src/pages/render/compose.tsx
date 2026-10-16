@@ -16,6 +16,14 @@ import { readRouteId, isNumericId } from '../../utils/route-id'
 import { formatMinute } from '../../utils/time'
 import ProgressLine from '../../components/progress-line'
 import { useAppShare } from '../../utils/app-share'
+/**
+ * 底部「返回首页」小方按钮的图标。
+ * ★ 用**已有的 tabBar 首页图标**（品牌色那版）而不是画一个字符（如 `⌂` U+2302）：
+ *   字符要靠字体，而小程序只能吃系统字体 —— `⌂` 这类冷门码位在部分安卓机上直接渲染成
+ *   豆腐块；PNG 则一定画得出来。
+ * ★ 与 tabBar 上的「首页」用的是同一张图 ⇒ 用户一眼就认得出这是回首页。
+ */
+import homeTabIcon from '../../assets/tabbar/home-active.png'
 import './compose.scss'
 
 const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
@@ -1752,6 +1760,23 @@ export default function RenderCompose() {
             onClick={() => void doRender('FULL')}
           >
             {pendingTask ? '正在生成中' : lastSuccess ? '重新生成' : '生成成片'}
+          </Button>
+          {/* ★ 2026-10-15：紧挨主按钮右侧的「返回首页」小方按钮（凸先生指定的位置 —— 是
+              **底部结算条**这一根，不是「发布素材」卡片标题行里那个同名的 mini 按钮）。
+              ★ 独立 class，不复用 `rcompose__headbtn`：那个是卡片标题行里的文字按钮
+                （`size='mini'`、靠 `margin-left: auto` 顶到行末），两者尺寸与语境都不同。
+              ★ 也不放进 `.ds-footer__note` 那一类 —— 底栏只承担「结算 + 唯一主动作」，
+                这个按钮是**回退路径**，所以做小、做成次要样式（描边白底、品牌色图标），
+                不与主按钮抢视觉权重。 */}
+          <Button
+            className='rcompose__homebtn'
+            hoverClass='ds-hover'
+            aria-label='返回首页'
+            onClick={() => void Taro.switchTab({ url: '/pages/home/index' })}
+          >
+            {/* mode='aspectFit' + 盒子里写死 44rpx：图标本身是方的，等比缩放进方盒子里
+                不会变形；不用 `aspectFill`，那会在比例不符时把图标裁掉一条。 */}
+            <Image className='rcompose__homeicon' src={homeTabIcon} mode='aspectFit' />
           </Button>
         </View>
       </View>
