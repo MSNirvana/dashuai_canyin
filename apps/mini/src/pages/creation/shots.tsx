@@ -590,8 +590,16 @@ export default function CreationShots() {
       })}
 
       <View className='ds-footer'>
+        {/* ★ 2026-10-15：这一行是「次要 + 主」的同排范式，**两个按钮同高同字号**
+            （都走 `.ds-btn` 的 96rpx / 32rpx），次要按钮只靠**内容收窄**
+            （宽度规则在 app.scss 的 `.ds-footer__row .ds-btn--ghost`）。
+            ⚠ 次要按钮原先多挂了一个 `ds-btn--sm`（72rpx / 26rpx）：比主按钮矮一档、字小一号，
+              看着像颗「小按钮」（用户 2026-10-15 就是这个观感）；而且它当时**没有任何宽度声明**，
+              端上会被小程序基础库的 `wx-button:not([size=mini]){ width:184px }` 撑到 184px
+              （本色只需 184rpx ＝ 95.7px），反过来把主按钮从 528rpx 挤到 309rpx。
+              经用户确认后，两处一起退回本来的设计。 */}
         <View className='ds-footer__row'>
-          <Button className='ds-btn ds-btn--ghost ds-btn--sm' hoverClass='ds-hover' onClick={onBack}>
+          <Button className='ds-btn ds-btn--ghost' hoverClass='ds-hover' onClick={onBack}>
             上一步
           </Button>
           <Button

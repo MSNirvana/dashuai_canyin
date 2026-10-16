@@ -288,6 +288,16 @@ button.ds-btn {
   flex: 1;
   width: auto;
 }
+// ★★★ 2026-10-15：把上面那句注释「次要按钮按内容收窄」**真的写出来**。
+//   它此前只描述了主按钮那条（`.ds-btn--block`，0,2,0），而**次要按钮没有任何宽度声明**
+//   ⇒ 端上只能吃小程序基础库的 `wx-button:not([size=mini]) { width: 184px }`（特异性 **0,1,1**）
+//   ⇒ 拍摄页「上一步」实测被撑成 **182.7px ≈ 184px**（本色只需 3字×32rpx ＋ 2×44rpx ＝ 184rpx ＝ 95.7px），
+//     还反过来把主按钮从 528rpx 挤到 **308.8rpx**。判据见 MEMORY-detail §184px §九。
+//   ⇒ 抬一层祖先把权重做到 **0,2,0**，压过那条 0,1,1（与 `pages/mine/index.scss` 的处置口径一致）。
+//   ★ 这里要的是「按内容收窄」，所以写 `width: auto` 就好，**别写成 `flex: none`**——
+//     那是 `flex: 0 0 auto`，主轴尺寸会退回去读 `width`，等于把上面这条的意义又交回去；
+//     flex 保持默认值还额外留了收缩余地。
+.ds-footer__row .ds-btn--ghost { width: auto; }
 // 底部操作区下方的一行说明（积分预估、下一步做什么等）
 .ds-footer__note {
   margin-top: 14rpx;
