@@ -598,13 +598,18 @@ export default function CreationEdit() {
       //   不清零的话跳转失败会被报成「分镜这一步没成功」，用户点重试就再买一次分镜
       //   —— 明明内容早就在库里（实测：同一条创作白扣了两笔分镜积分）。
       failing = ''
-      if (usedFallback) {
-        Taro.showToast({ title: 'AI 繁忙，已用兜底内容', icon: 'none' })
-      }
-      // 编号必须落到 URL 里：拿不到就不跳，否则会跳到 `?id=undefined`，
-      // 合成页拿这个字符串当编号去查，只会得到一句「参数不合法」。
-      if (!isNumericId(id)) throw new Error('编号丢失')
-      Taro.navigateTo({ url: `/pages/creation/shots?id=${id}` })
+      // ★ 2026-10-09 按需求：生成完成后**不再自动跳拍摄页**（原来是
+      //   `Taro.navigateTo('/pages/creation/shots')`）。那一跳的后果是「点了生成、
+      //   人已经在拍摄页」—— 用户既没看到刚生成的文案与分镜，也没机会在扣完积分之后
+      //   确认内容对不对（不对只能整条重来）。现在停在本页结果视图（步骤条推进到「素材」），
+      //   看完再自己点底部「下一步」进拍摄。
+      //   ⚠ 出口没变：`finally` 里照旧 loadDetail + setAutoRunning(false)，
+      //     页面靠它切到结果视图 —— 这一步省了就永远停在生成遮罩上。
+      Taro.showToast({
+        title: usedFallback ? 'AI 繁忙，已用兜底内容' : '文案与分镜已生成',
+        icon: 'none',
+        duration: 2000,
+      })
     } catch {
       // 用户主动取消时的失败不必再报「生成中断」——那是他自己按掉的；
       // 已过期的旧运行也不许碰悬浮窗（新运行正在用它）。
