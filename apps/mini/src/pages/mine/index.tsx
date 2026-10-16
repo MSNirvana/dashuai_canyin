@@ -178,6 +178,7 @@ export default function Mine() {
       setShowLogin(false)
       await refreshMe().catch(() => undefined)
       Taro.showToast({ title: '登录成功', icon: 'success' })
+      await Taro.switchTab({ url: '/pages/home/index' })
     } catch (err) {
       Taro.showToast({ title: (err as { message?: string })?.message ?? '登录失败，请重试', icon: 'none', duration: 2500 })
     } finally {
@@ -194,6 +195,7 @@ export default function Mine() {
       setShowLogin(false)
       await refreshMe().catch(() => undefined)
       Taro.showToast({ title: '开发登录成功', icon: 'success' })
+      await Taro.switchTab({ url: '/pages/home/index' })
     } catch (err) {
       Taro.showToast({ title: (err as { message?: string })?.message ?? '开发登录失败', icon: 'none', duration: 2500 })
     } finally {
@@ -284,6 +286,7 @@ export default function Mine() {
       setShowLogin(false)
       await refreshMe().catch(() => undefined)
       Taro.showToast({ title: '登录成功', icon: 'success' })
+      await Taro.switchTab({ url: '/pages/home/index' })
     } catch (err) {
       toastErr(err, '登录失败，请重试')
     } finally {
