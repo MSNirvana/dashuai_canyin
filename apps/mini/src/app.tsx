@@ -24,6 +24,18 @@ function App({ children }: PropsWithChildren) {
     return () => Taro.offAppShow(refresh)
   }, [])
 
+  /**
+   * ★ 这里**只能**返回 children（外加 Provider）。
+   *
+   * 曾经试过在这层加一个「全局弹窗」兄弟节点（`{children}<GuideDialogHost/>`），
+   * 结论是**小程序端根本不会渲染**，已撤回。依据在 Taro 运行时里：
+   *   · 页面数据里的所有路径都以 `root` 为根 —— `@tarojs/runtime` 的
+   *     `findCustomWrapper(root, dataPathArr)` 第一句就是 `dataPathArr.slice(1)`（删掉 `root`）。
+   *   · `createPageConfig` 的 ONLOAD 里只做 `pageElement.performUpdate()`，
+   *     同步的是**页面元素自己的子树**。
+   *   ⇒ 与页面同级的兄弟节点在 app 树里存在，却不在任何页面的 `root` 里，端上没有对应模板数据。
+   * 需要全局/跨页的 UI，请挂在**页面**里（见 `components/guide-dialog/index.tsx` 的挂载说明）。
+   */
   return children
 }
 

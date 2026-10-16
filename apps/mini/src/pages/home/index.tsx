@@ -1,9 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { CoverView, Image, ScrollView, Swiper, SwiperItem, Text, Video, View } from '@tarojs/components'
 import Taro, { useDidHide, useDidShow, useReachBottom } from '@tarojs/taro'
 import { useMerchantStore } from '../../store/merchant'
 import { STORAGE_KEYS } from '../../config'
 import { guideLogin } from '../../utils/login-guide'
+import { GuideDialogHost, useGuideDialogVisible } from '../../components/guide-dialog'
 import { useAppShare } from '../../utils/app-share'
 import { listCreations, type CreationItem } from '../../services/creation'
 import { getWork, listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
@@ -251,6 +252,14 @@ export default function HomePage() {
   // 回来还会看到一张「播完停在最后一帧」的卡片。
   useDidHide(() => { setPlaying(null) })
 
+  // ★ 2026-10-15：全局说明弹窗（自绘）一打开，先把播放中的视频收掉。
+  //   自绘弹窗靠**同层渲染**盖住原生组件（官方口径见 components/guide-dialog/index.tsx
+  //   文件头 ★），而同层渲染在 iOS 页面节点树不稳定时**存在失败率**（官方原文）。
+  //   真失手的话，弹窗恰好会被这张 autoplay 的 `<Video>` 压住 —— 与其赌它，
+  //   不如在弹窗出现前直接把播放态收掉（顺带也是更合理的行为：整屏都要被弹窗盖住了）。
+  const guideVisible = useGuideDialogVisible()
+  useEffect(() => { if (guideVisible) setPlaying(null) }, [guideVisible])
+
   // ★ 2026-10-01：原 `goMine`（跳「我的」去登录）只服务于首页那张「登录后开始创作 /
   //   去登录」卡。该卡已按微信审核要求删除（未浏览即要求授权，见 goCreate 与页面底部
   //   未登录分支的说明），故一并删掉。
@@ -284,7 +293,12 @@ export default function HomePage() {
    * 这正是「还没看任何功能就被要求授权」的那条连锁。
    */
   const goCreate = () => {
-    if (!isLoggedIn) { guideLogin({ reason: '开始创作需要先登录' }); return }
+    // ★ 2026-10-16 按需求改文案：正文由「开始创作需要先登录」→「**可添加客服领取试用**」。
+    //   原句已删。注意这个框的 title 仍是「登录后可用」、确认键仍是「去登录」，所以
+    //   「为什么要点去登录」这层意思还在，只是重心从「解释」挪到了「给一条别的路」。
+    //   ⚠ 正文与底部小字（note）现在是同一件事的两种写法，形近重复 —— 见日志 2026-10-16。
+    //   （另两处 guideLogin 没动：它们是「生成同款 / 套用配方」，用户已经在看具体作品了。）
+    if (!isLoggedIn) { guideLogin({ reason: '可添加客服领取试用', note: '联系客服领取试用' }); return }
     if (!currentStoreId) { goNewStore(); return }
     Taro.navigateTo({ url: '/pages/creation/edit' })
   }
@@ -674,5 +688,11 @@ export default function HomePage() {
       )}
       </>}
     </View>
+
+    {/* ★ 自绘说明弹窗的宿主（login-guide 那层「登录后可用」）。
+        必须挂在**页面里** —— 挂 app.tsx 小程序端不渲染（依据见
+        components/guide-dialog/index.tsx 文件头 ★ 挂载点与 app.tsx 的注释）。
+        关闭时它渲染 null，不占位、不影响布局。 */}
+    <GuideDialogHost />
   </View>
 }

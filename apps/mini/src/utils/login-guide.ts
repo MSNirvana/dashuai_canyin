@@ -15,6 +15,7 @@
 // 注意它不是「鉴权闸门」：真正的闸门永远在服务端（requireSubscription / auth 中间件）。
 // 这里只是把「接下来要发生的事」提前说清楚，绕过它也不会获得任何权限。
 import Taro from '@tarojs/taro'
+import { openGuideDialog } from '../components/guide-dialog'
 
 interface LoginGuideOptions {
   /** 一句话说清**为什么**需要登录，例如「套用同款配方需要先登录」。不要写「请先登录」这种空话 */
@@ -23,17 +24,26 @@ interface LoginGuideOptions {
   confirmText?: string
   /** 取消按钮文案，默认「再逛逛」—— 用户是从作品页过来的，别把他往外赶 */
   cancelText?: string
+  /**
+   * ★ 卡片最底部的一行**小字**（可选），例如「联系客服领取试用」。
+   *
+   *   为什么要单开一档、而不是拼进 `content`：`Taro.showModal` 的 content 是**纯字符串**，
+   *   微信没给任何样式入参（无富文本、无字号）⇒ 原生弹窗里那行字只能跟正文**一样大**，
+   *   「小字」这个层级根本表达不出来。所以自 2026-10-15 起本函数改走自绘弹窗，
+   *   原理与边界见 `components/guide-dialog/index.tsx` 的文件头 ★★。
+   */
+  note?: string
 }
 
 /** 弹一次登录引导；用户点了确认才跳「我的」（那里会弹手机号快捷登录） */
 export function guideLogin(options: LoginGuideOptions): void {
-  void Taro.showModal({
+  openGuideDialog({
     title: '登录后可用',
     content: options.reason,
     confirmText: options.confirmText ?? '去登录',
     cancelText: options.cancelText ?? '再逛逛',
     confirmColor: '#e1251b',
-  }).then((r) => {
-    if (r.confirm) Taro.switchTab({ url: '/pages/mine/index' })
+    note: options.note,
+    onConfirm: () => { Taro.switchTab({ url: '/pages/mine/index' }) },
   })
 }

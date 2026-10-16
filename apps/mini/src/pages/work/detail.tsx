@@ -5,6 +5,7 @@ import { getWork, markWorkClone, markWorkView, type WorkDetail } from '../../ser
 import { COMPLEXITY_OPTIONS, COPY_TRACK_OPTIONS, normalizeTrack } from '../../services/creation'
 import { useMerchantStore } from '../../store/merchant'
 import { guideLogin } from '../../utils/login-guide'
+import { GuideDialogHost } from '../../components/guide-dialog'
 import { readRouteId, isBrokenRouteId } from '../../utils/route-id'
 import { useAppShare } from '../../utils/app-share'
 import './detail.scss'
@@ -214,6 +215,11 @@ export default function WorkDetailPage() {
           <Text>AI 直接生成</Text>
         </View>
       </View>
+
+      {/* ★ 自绘说明弹窗的宿主（本页「套用同款配方需要先登录」那层）。
+          必须挂在页面里 —— 挂 app.tsx 小程序端不渲染，依据见
+          components/guide-dialog/index.tsx 文件头 ★ 挂载点。关闭时渲染 null。 */}
+      <GuideDialogHost />
     </View>
   )
 }

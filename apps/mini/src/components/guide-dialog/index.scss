@@ -1,0 +1,97 @@
+/* 通用说明弹窗（自绘） · 见 index.tsx 文件头 ★★ 为什么不用原生 showModal
+ *
+ * 造型刻意**贴着微信原生弹窗**做（白卡 + 居中 + 细线分隔的两键），
+ * 这样把 `Taro.showModal` 换成本组件时，用户看到的是「同一个弹窗多了一行小字」，
+ * 而不是「弹窗被换了一套样式」。
+ * 尺寸取自 `docs/ui-design/UI设计规范.md` 的字阶与圆角：弹层圆角用 `--td-radius-extra`，
+ * 与 `pages/mine/index.scss` 的 `mine__login-modal` 保持一致。 */
+
+.guide-dialog {
+  position: fixed;
+  inset: 0;
+  /* ★ 必须压过所有页面内浮层：全库最高的两个是 `.ds-footer`（z-index 10）
+     与 `mine__login-mask`（z-index 20），这里给足一个数量级。 */
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48rpx;
+  box-sizing: border-box;
+
+  &__mask {
+    position: absolute;
+    inset: 0;
+    background: rgba(17, 17, 20, 0.42);
+  }
+
+  &__card {
+    position: relative; /* 抬到遮罩之上（同级里后写的本来就在上面，这里写死更明白） */
+    width: 100%;
+    max-width: 620rpx;
+    box-sizing: border-box;
+    padding: 48rpx 0 28rpx;
+    background: var(--td-bg-color-container);
+    border-radius: var(--td-radius-extra);
+    box-shadow: 0 24rpx 80rpx rgba(17, 17, 20, 0.18);
+    text-align: center;
+  }
+
+  /* `<Text>` 在端上默认是 inline，必须显式成块，否则 padding / text-align 都不按预期走 */
+  &__title {
+    display: block;
+    padding: 0 48rpx;
+    font-size: 34rpx;
+    font-weight: 650;
+    line-height: 48rpx;
+    color: var(--td-text-color-primary);
+  }
+
+  &__desc {
+    display: block;
+    padding: 16rpx 48rpx 0;
+    font-size: 30rpx;
+    line-height: 44rpx;
+    color: var(--td-text-color-secondary);
+  }
+
+  /* 两键那一条：上边一条细线拉满卡宽，两键等分 —— 和原生弹窗的按钮栏同构 */
+  &__actions {
+    display: flex;
+    align-items: stretch;
+    margin-top: 40rpx;
+    border-top: 1rpx solid var(--td-component-border);
+  }
+
+  &__btn {
+    /* flex-basis 写 0 让两键**严格等分**；只写 flex:1 在端上会被内容宽度带偏 */
+    flex: 1 1 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 96rpx;
+    font-size: 32rpx;
+    line-height: 1.2;
+
+    &--cancel {
+      color: var(--td-text-color-secondary);
+    }
+
+    &--confirm {
+      /* 左细线是「一键」的分界。用 border-left 而不是插一个空 View：
+         空 View 在 flex 里会被第一颗按钮的 flex-basis 挤压，线宽不稳。 */
+      border-left: 1rpx solid var(--td-component-border);
+      font-weight: 650;
+    }
+  }
+
+  /* ★ 本组件存在的理由：卡片最底部那一行小字。
+     字号取规范里的 Caption 一档（23rpx）再收 1rpx 到 24rpx —— 24 是偶数，
+     750rpx 屏上折 12px 整，端上不会有半像素的糊边。 */
+  &__note {
+    display: block;
+    padding: 24rpx 48rpx 0;
+    font-size: 24rpx;
+    line-height: 34rpx;
+    color: var(--td-text-color-placeholder);
+  }
+}
