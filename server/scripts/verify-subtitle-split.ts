@@ -1,9 +1,7 @@
 // AI 字幕分行（`subtitle_split`）守护 —— 纯函数级，不需要数据库、不需要 AI 通道。
 //
-// ★★ 这个功能最危险的失效方式是「**静默退回内建算法**」：用户看到的还是老样子，
-//    日志里也没有异常，无从判断是「模型没切好」还是「接线断了」。
-//    所以本守护把**接线**（AI 的行真的上了屏、真的没被二次归一化合回去）
-//    和**判据**（丢字/加字/改字/超宽一律拒绝）分开断言。
+// ★★ AI 分行是当前字幕质量的必要步骤：失败必须让渲染任务失败并进入可重试状态，
+//    不能静默退回本地分条；本守护同时钉住 AI 行的接线与逐字质量判据。
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
@@ -96,7 +94,8 @@ const ACCEPT_CASES: ReadonlyArray<readonly [string, unknown, string[] | null]> =
   ['丢字', ['廊坊想吃火锅的', '千万别划走'], null],
   ['加字', ['廊坊想吃火锅的哦', '千万别划走这盘牛肚'], null],
   ['改字', ['廊坊想吃火锅呢', '千万别划走这盘牛肚'], null],
-  ['带标点（去标点后逐字相同 ⇒ 放行）', ['廊坊想吃火锅的，', '千万别划走这盘牛肚。'], REAL_LINES],
+  ['换序', ['千万别划走这盘牛肚', '廊坊想吃火锅的'], null],
+  ['带标点（提示词要求不输出，不能静默擦除后放行）', ['廊坊想吃火锅的，', '千万别划走这盘牛肚。'], null],
   ['空行', ['廊坊想吃火锅的', ''], null],
   ['只有空白', ['廊坊想吃火锅的', '   '], null],
   ['不是字符串', ['廊坊想吃火锅的', 123], null],
@@ -135,13 +134,23 @@ assert.deepEqual(
   '★★ 任务 #52：两字尾巴“扣一”必须并回 CTA，且原声字符一个不能丢',
 )
 assert.ok(task52Ending?.every((line) => subtitleDisplayWidth(line) >= 4), '★ 修复后每条至少有可读信息量')
+assert.deepEqual(
+  acceptLines(['吃虾', '我每回都会点一份'], '吃虾我每回都会点一份', SUBTITLE_MAX_WIDTH),
+  ['吃虾', '我每回都会点一份'],
+  '★ 两字完整短语不因宽度阈值被一刀切拒绝；语义质量由提示词约束',
+)
+const repairedFiller = acceptLines(['嗯', '我每回都会点一份'], '嗯我每回都会点一份', SUBTITLE_MAX_WIDTH)
+assert.ok(
+  repairedFiller !== null && repairedFiller[0] !== '嗯' && repairedFiller.join('') === '嗯我每回都会点一份',
+  '★ 明确的口水词不得独占一屏：能无损重排时应修好，而不是机械整条拒绝',
+)
 
 // 时长分配：总时长充足时每条至少 700ms；不足时仍要严格守住原段总时长。
 assert.deepEqual(allocateSubtitleDurations(2_100, [1, 8, 8]), [700, 700, 700], '★ 三条字幕各至少 700ms')
 // ── ⑤c ★★★ 2026-10-14 事故回归：弱行的「最优切点」就是它自己 ⇒ 必须收敛，不许原地打转 ──
 /**
  * 真因（线上快照 `ai_call_log id=514` / requestId `subtitle-split-74`，2026-10-14 14:45:36）：
- *   模型第一行给的是「吃虾」（宽 2 ⇒ 弱行），而它正好落在原句逗号之后。
+ *   模型第一行给的是「吃虾」（当时旧判据宽度 ≤2 ⇒ 弱行），而它正好落在原句逗号之后。
  *   `bestSplit` 给「标点边界」−100 的权重 ⇒ 它选出的最优切点**就是这条弱行自己的边界**
  *   ⇒ `splice` 换回原样、`index` 被倒回原处 ⇒ 那个 for 循环再也不前进。
  *   后果不是「这条字幕难看」，而是**整个 Node 事件循环被占满**：所有接口一起超时
@@ -159,15 +168,37 @@ assert.deepEqual(
   T74_LINES,
   '★★★ task 74：「吃虾」的最优切点就是它自己 ⇒ 修不动就**原样返回**（绝不许原地打转）',
 )
-assert.equal(
+assert.deepEqual(
   acceptLines(T74_LINES, T74_ORIGINAL, SUBTITLE_MAX_WIDTH),
-  null,
-  '★ task 74：这一条含弱行 ⇒ 整条退回内建算法（设计意图：宁可不优化）',
+  T74_LINES,
+  '★ task 74：终止性回归仍保留，但两字完整词不再由机械宽度阈值整条拒绝',
 )
 // ★ 源码级判据：把「原地踏步就放弃」的出口删掉 = 死循环 ⇒ 必须先在文本上钉住它（见上面 ⚠⚠）
 const SUBTITLE_SPLIT_SRC = readFileSync(
   new URL('../src/render/subtitle-split.service.ts', import.meta.url),
   'utf8',
+)
+const SYNTHESIS_SRC = readFileSync(new URL('../src/render/synthesis.ts', import.meta.url), 'utf8')
+const WORKER_SRC = readFileSync(new URL('../src/render/worker.ts', import.meta.url), 'utf8')
+const SUBTITLE_SERVICE_SRC = SUBTITLE_SPLIT_SRC
+assert.ok(
+  SUBTITLE_SPLIT_SRC.includes("return failed('AI 分行走了兜底模板')")
+    && SUBTITLE_SPLIT_SRC.includes('return failed(`AI 分行调用失败'),
+  '★★ AI 通道/兜底模板失败必须标成 failed，不能返回普通空 Map',
+)
+assert.ok(
+  SYNTHESIS_SRC.includes('if (outcome.failed) throw new Error(outcome.notice)')
+    && !SYNTHESIS_SRC.includes('AI 分行失败，改用内建分条算法'),
+  '★★ AI 分行失败必须抛给渲染任务，不能在 synthesis 层吞错后退回本地算法',
+)
+assert.ok(
+  WORKER_SRC.includes('return outcome'),
+  '★ worker 必须把 failed 状态完整传给 synthesis，不能只返回 lines 丢失失败信号',
+)
+assert.ok(
+  SUBTITLE_SERVICE_SRC.includes("const requestId = reusePrevious")
+    && SUBTITLE_SERVICE_SRC.includes("baseRequestId}-r${Date.now()}"),
+  '★★ 字幕 AI 上一次 FAILED 后，重试必须换新 requestId，不能再次命中旧失败终态',
 )
 assert.ok(
   SUBTITLE_SPLIT_SRC.includes('split[0] === result[firstIndex] && split[1] === result[firstIndex + 1]'),
@@ -248,8 +279,20 @@ assert.ok(
   '★★★ 不许把「行数越少越好」写回去 —— 它不是中性建议，而是把模型拉向贪心填满的那只手',
 )
 assert.ok(
-  SUBTITLE_SPLIT_PROMPT.includes('先按意思切，再看长度'),
-  '★ 顺序不能反：先意思、后长度。反了就退化成「按宽度装箱」，这个场景也就没有存在理由了',
+  SUBTITLE_SPLIT_PROMPT.includes('意思完整 > 词语完整 > 不出现孤词碎片 > 各行宽度均衡'),
+  '★★ 冲突时必须有明确优先级，否则同一输入会在「语义完整」与「凑宽度」之间随机摇摆',
+)
+assert.ok(
+  SUBTITLE_SPLIT_PROMPT.includes('两边都成立才可以切'),
+  '★ 语义要求必须落成可执行的切点检查，而不是只写一句抽象口号',
+)
+assert.ok(
+  SUBTITLE_SPLIT_PROMPT.includes('多数行以 6～9 个字为宜'),
+  '★ 必须给出目标宽度区间，避免模型把每行都贴着硬上限填满',
+)
+assert.ok(
+  SUBTITLE_SPLIT_PROMPT.includes('你知道') && SUBTITLE_SPLIT_PROMPT.includes('吃虾'),
+  '★ 必须用真实故障同型的孤短语示例约束模型，但不得照抄完整生产句',
 )
 assert.ok(
   !SUBTITLE_SPLIT_PROMPT.includes('廊坊想吃火锅的'),

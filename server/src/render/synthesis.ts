@@ -198,7 +198,7 @@ export interface SynthesisOptions {
    *   **不需要数据库、不需要 AI 通道**。一旦在这里 import prisma，所有字幕断言都会变成集成测试。
    * ★ 返回空 Map / 抛异常都算「不可用」⇒ 退回内建 `splitSubtitleText`（绝不拦住出片）。
    */
-  breakSubtitleLines?: (texts: readonly string[]) => Promise<Map<string, string[]>>
+  breakSubtitleLines?: (texts: readonly string[]) => Promise<{ lines: Map<string, string[]>; failed: boolean; notice: string }>
 }
 
 function toSrtTime(msIn: number): string {
@@ -799,27 +799,23 @@ async function processVoiceTrack(input: string, output: string, targetDurationMs
  *   所以这里不自己实现合并，直接复用同一个函数。
  * ★ 只保留**真正被切成多行**的条目：单行结果与内建算法等价，留在映射里只会让
  *   「AI 到底改了什么」更难对照。
- * ★ 任何异常都吞掉并返回 null —— 分行是增强步骤，绝不能拦住出片。
+ * ★ AI 分行失败直接抛错：不能静默改用本地分条算法，否则用户拿到的不是要求的 AI 字幕。
  */
 async function collectAiSubtitleLines(
   segments: TranscriptionSegment[],
-  breaker: (texts: readonly string[]) => Promise<Map<string, string[]>>,
-): Promise<Map<string, string[]> | null> {
-  try {
-    const texts: string[] = []
-    for (const segment of mergeSubtitleSegments(segments)) {
-      const text = String(segment.text ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
-      if (text) texts.push(text)
-    }
-    if (!texts.length) return null
-    const raw = await breaker(texts)
-    const multi = new Map<string, string[]>()
-    for (const [text, lines] of raw) if (lines.length > 1) multi.set(text, lines)
-    return multi.size ? multi : null
-  } catch (e) {
-    console.warn('[synthesis] AI 分行失败，改用内建分条算法：', (e as Error).message)
-    return null
+  breaker: (texts: readonly string[]) => Promise<{ lines: Map<string, string[]>; failed: boolean; notice: string }>,
+): Promise<Map<string, string[]>> {
+  const texts: string[] = []
+  for (const segment of mergeSubtitleSegments(segments)) {
+    const text = String(segment.text ?? '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim()
+    if (text) texts.push(text)
   }
+  if (!texts.length) throw new Error('AI 分行失败：没有可分行的原声文本')
+  const outcome = await breaker(texts)
+  if (outcome.failed) throw new Error(outcome.notice)
+  const multi = new Map<string, string[]>()
+  for (const [text, lines] of outcome.lines) if (lines.length > 1) multi.set(text, lines)
+  return multi
 }
 
 interface CjkFont {
@@ -946,13 +942,15 @@ export async function applyAiSynthesis(
     if (!subtitleSegments.length && (subtitleMode === 'SOURCE_AUDIO' || subtitleMode === 'VOICE_AND_SOURCE')) {
       subtitleSegments = lineSegments(shots)
     }
-    const aiLines = subtitleMode === 'OFF' || !options.breakSubtitleLines
+    const aiLines = subtitleMode === 'OFF'
       ? null
-      : await collectAiSubtitleLines(subtitleSegments, options.breakSubtitleLines)
-    if (aiLines) console.log(`[synthesis] ${aiLines.size} 条文本使用了 AI 分行（其余走内建算法）`)
+      : options.breakSubtitleLines
+        ? await collectAiSubtitleLines(subtitleSegments, options.breakSubtitleLines)
+        : (() => { throw new Error('AI 分行失败：未注入 AI 分行服务') })()
+    console.log(`[synthesis] ${aiLines?.size ?? 0} 条文本使用了 AI 分行`)
     const normalizedSubtitleSegments = subtitleMode === 'OFF'
       ? []
-      : normalizeSubtitleSegments(subtitleSegments, aiLines ? (text) => aiLines.get(text) ?? null : undefined)
+      : normalizeSubtitleSegments(subtitleSegments, (text) => aiLines?.get(text) ?? null)
     let mixedAudioPath = voicePath
     if (options.backgroundMusicPath) {
       mixedAudioPath = join(workDir, 'mixed-audio.m4a')
@@ -1286,9 +1284,15 @@ async function processVideoAudio(videoPath: string, outPath: string, options: Sy
   const args = ['-i', videoPath, '-map', '0:v', '-map', '0:a?']
   if (colorFilter) args.push('-vf', colorFilter, ...videoEncodeArgs(ENCODE_DELIVERY))
   else args.push('-c:v', 'copy')
-  if (await hasAudioStream(videoPath)) args.push('-af', audioFilter(options), ...audioEncodeArgs())
+  if (await hasAudioStream(videoPath)) {
+    args.push('-af', audioFilter(options), ...audioEncodeArgs())
+  }
   args.push('-movflags', '+faststart', '-y', outPath)
-  await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
+  await execFileP(
+    ffmpegBin(),
+    args,
+    { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+  )
 }
 
 async function muxAudioOnly(
@@ -1299,9 +1303,16 @@ async function muxAudioOnly(
   color?: import('../services/render.service.js').ColorGrade,
 ): Promise<void> {
   const colorFilter = color ? buildColorFilter(color) : null
-  const args = ['-i', videoPath, '-i', audioPath, '-map', '0:v', '-map', '1:a']
+  const args = [
+    '-i', videoPath, '-i', audioPath,
+    '-map', '0:v', '-map', '1:a',
+  ]
   if (colorFilter) args.push('-vf', colorFilter, ...videoEncodeArgs(ENCODE_DELIVERY))
   else args.push('-c:v', 'copy')
   args.push(...audioEncodeArgs(), '-shortest', '-y', outPath)
-  await execFileP(ffmpegBin(), args, { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 })
+  await execFileP(
+    ffmpegBin(),
+    args,
+    { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+  )
 }

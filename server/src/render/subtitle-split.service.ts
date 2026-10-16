@@ -1,13 +1,13 @@
 /**
  * AI 字幕分行 —— 把 ASR 认出来的整段口语，交给模型切成一屏一条的字幕行。
  *
- * ⚠⚠ 与 `edit-plan.service.ts` 同一条硬纪律：**绝不抛错**。
+ * ⚠⚠ 与业务计费边界：本模块将失败显式返回；由 `applyAiSynthesis` 抛错、worker 负责退款与重试。
  *
- *   出片链路里，分行是一个**增强步骤**：它失败的最坏后果应该是「按内建算法分行」，
- *   而**绝不能**是「整单 FAILED、用户白等 4 分钟、还得退积分」。
- *   所以下面每一个失败分支（开关关、没有待分行文本、AI 调用抛错、模型返回的不是 JSON、
- *   JSON 合法但行数与输入对不上、行里有丢字/加字/超宽）都**返回空 Map 而不是 throw**，
- *   调用方拿到空 Map 就完全走内建的 `splitSubtitleText` —— 那条路径是早就跑通的。
+ *   出片链路里，AI 分行是当前字幕质量的必要步骤：它失败时必须让渲染任务失败，
+ *   由任务层统一退款并允许用户重试，不能静默退回本地分条算法。
+ *   所以下面每一个 AI 失败分支（开关关、AI 调用失败、模型返回的不是 JSON、
+ *   JSON 合法但行数与输入对不上、行里有丢字/加字/超宽）都会返回 `failed: true`，
+ *   由 `applyAiSynthesis` 抛错交给 worker 的失败处理。没有待分行文本时不需要调用 AI。
  *
  * ★ 为什么一次调用处理**全部**待分行文本，而不是逐条调用：
  *   逐条必然把「一次调用」变成「N 次调用」，N 次等待直接压在出片预算上（同 `editPlan` 给
@@ -62,10 +62,19 @@ export interface SubtitleSplitRequest {
 }
 
 export interface SubtitleSplitOutcome {
-  /** 原文 → 行数组。空 Map = 没拿到可用结果，调用方走内建算法 */
+  /** 原文 → 行数组。失败时为空；调用方必须把失败继续抛给渲染任务。 */
   lines: Map<string, string[]>
   /** 给日志看的一句话；成功与失败都会给 */
   notice: string
+  /** AI 没有给出可用分行时为 true；不能静默改走本地分行。 */
+  failed: boolean
+}
+
+export class SubtitleSplitError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SubtitleSplitError'
+  }
 }
 
 /** 比较用：去掉全部标点与空白（模型被要求「标点全部去掉」，此处只是宽容一点） */
@@ -75,13 +84,17 @@ function comparable(text: string): string {
   return text.replace(PUNCT_AND_SPACE, '')
 }
 
-/** 两字以内的口水词/尾巴不应独占一屏；它们必须与相邻语义合并后重新均分。 */
-const WEAK_STANDALONE = new Set(['哎呀', '哎哟', '哎呦', '嗯', '啊', '呀', '哦', '呃', '额', '这个', '那个'])
+/**
+ * 单字、这些口水词与明确的 CTA 尾巴不应独占一屏；它们必须与相邻语义合并后重新均分。
+ * ★ 不再把「所有两字词」一刀切判弱：例如「怕刺」可能就是完整回答；模型提示词负责语义质量，
+ *   代码只拦能客观判定的碎片，避免把好结果错误退回更差的内建算法。
+ */
+const WEAK_STANDALONE = new Set(['哎呀', '哎哟', '哎呦', '嗯', '啊', '呀', '哦', '呃', '额', '这个', '那个', '扣一'])
 const BAD_LINE_END = /[的了着啊呀呢吧嘛么和与及又就把给在是只别不也都还]$/
 const BAD_LINE_START = /^[的了着啊呀呢吧嘛么和与及又就把给在是只别不也都还]/
 
 function isWeakStandalone(line: string): boolean {
-  return WEAK_STANDALONE.has(line) || subtitleDisplayWidth(line) <= 2
+  return WEAK_STANDALONE.has(line) || subtitleDisplayWidth(line) <= 1
 }
 
 /** 原文标点后的字符位置；重新均分时优先沿用真实语气停顿，避免从词中间劈开。 */
@@ -152,7 +165,7 @@ function bestSplit(text: string, maxWidth: number, preferred: Set<number>): [str
  * ⚠⚠⚠ **这个循环必须能证明自己会终止** —— 它一旦不收敛，代价不是「这条字幕难看」，
  * 而是**整个 Node 进程的事件循环被占满**（见下面 `if (!split) continue` 的注释）。
  *
- * 2026-10-14 生产事故（task 74）：AI 分行第一行给了「吃虾」（宽度 2 ⇒ 弱行），
+ * 2026-10-14 生产事故（task 74）：当时 AI 分行第一行给了「吃虾」（旧判据宽度 ≤2 ⇒ 弱行），
  * 而它正好落在原句逗号之后 ⇒ `bestSplit` 的「标点边界 −100」权重让它选中**自己这条边界**
  * ⇒ `splice` 换回原样、`index` 又被倒回原位 ⇒ for 循环再也不前进。
  * 现场：`top` 显示 STAT=R / %CPU 110，MySQL、Redis 建连数为 **0**，无子进程，
@@ -208,26 +221,34 @@ function extractJson(text: string): unknown {
 /**
  * 校验并归一化模型给的行数组。
  *
- * 返回 `null` = 这一条不可用（丢字/加字/超宽/空行）⇒ 整条退回内建算法。
+ * 返回 `null` = 这一条不可用（丢字/加字/换序/带标点/超宽/空行）⇒ 整条退回内建算法。
  * ★ 为什么是「整条退回」而不是「把不合法的行剔掉再用剩下的」：
  *   剔掉一行就等于**丢了一句字**，字幕会与口播直接对不上 —— 比不优化严重得多。
  */
 export function acceptLines(raw: unknown, original: string, maxWidth: number): string[] | null {
   if (!Array.isArray(raw) || raw.length === 0) return null
+  const source = comparable(original)
+  // 非空行不可能多于可比字符数；先拦异常膨胀，避免让畸形结果进入重排。
+  if (raw.length > source.length) return null
   const lines: string[] = []
+  let consumed = 0
   for (const item of raw) {
     if (typeof item !== 'string') return null
-    // 标点一律不写进字幕（与 `splitSubtitleText` 同一口径）
-    const line = item.replace(PUNCT_AND_SPACE, '').trim()
+    // ★ 提示词明确要求不输出标点：发现标点/空白就拒绝，而不是静默帮模型擦掉错误。
+    if (item !== comparable(item)) return null
+    const line = item.trim()
     if (!line) return null
     if (subtitleDisplayWidth(line) > maxWidth) return null
+    // ★ 每一行必须是原文当前位置的连续子串；这比最终 join 相等更早暴露换序/跨段拼接。
+    if (!source.startsWith(line, consumed)) return null
+    consumed += line.length
     lines.push(line)
   }
-  // ★★ 逐字相同才算过：这是本模块唯一的硬底线（丢字/改字会让字幕与口播对不上）
-  if (comparable(lines.join('')) !== comparable(original)) return null
+  // ★★ 逐字相同才算过：模型只准决定换行位置，不准改动口播字符。
+  if (consumed !== source.length || lines.join('') !== source) return null
   const balanced = rebalanceWeakLines(lines, original, maxWidth)
   if (balanced.some((line) => subtitleDisplayWidth(line) > maxWidth || isWeakStandalone(line))) return null
-  if (comparable(balanced.join('')) !== comparable(original)) return null
+  if (balanced.join('') !== source) return null
   return balanced
 }
 
@@ -240,9 +261,10 @@ export function buildLineInput(texts: readonly string[]): string {
  * 生成分行。**永不抛错** —— 任何失败都退化成空 Map。
  */
 export async function breakSubtitleLines(input: SubtitleSplitRequest): Promise<SubtitleSplitOutcome> {
-  const empty = (notice: string): SubtitleSplitOutcome => ({ lines: new Map(), notice })
+  const empty = (notice: string): SubtitleSplitOutcome => ({ lines: new Map(), notice, failed: false })
+  const failed = (notice: string): SubtitleSplitOutcome => ({ lines: new Map(), notice, failed: true })
 
-  if (!subtitleSplitEnabled()) return empty('AI 分行已关闭（SUBTITLE_AI_SPLIT_ENABLED=false）⇒ 用内建算法')
+  if (!subtitleSplitEnabled()) return failed('AI 分行已关闭（SUBTITLE_AI_SPLIT_ENABLED=false）')
 
   // 相同的文本只处理一次（ASR 会重复出「哎呀」这种短句；去重后编号仍与传入顺序一致）
   const unique: string[] = []
@@ -250,7 +272,7 @@ export async function breakSubtitleLines(input: SubtitleSplitRequest): Promise<S
     const clean = String(text ?? '').trim()
     if (clean && !unique.includes(clean)) unique.push(clean)
   }
-  if (!unique.length) return empty('没有待分行的文本 ⇒ 用内建算法')
+  if (!unique.length) return empty('没有待分行的文本')
 
   const maxWidth = input.maxWidth ?? SUBTITLE_MAX_WIDTH
 
@@ -295,12 +317,12 @@ export async function breakSubtitleLines(input: SubtitleSplitRequest): Promise<S
     })
 
     // 兜底模板 = 场景没配好/通道全挂，网关返回了一段预置文本 —— 那**不是**分行结果。
-    if (r.isFallbackTemplate) return empty('AI 分行走了兜底模板 ⇒ 用内建算法')
+    if (r.isFallbackTemplate) return failed('AI 分行走了兜底模板')
 
     const parsed = extractJson(r.text) as { lines?: unknown } | null
     const rows = parsed?.lines
     if (!Array.isArray(rows) || rows.length !== unique.length) {
-      return empty(`AI 分行结果与输入条数不符（给 ${Array.isArray(rows) ? rows.length : 0} 条，要 ${unique.length} 条）⇒ 用内建算法`)
+      return failed(`AI 分行结果与输入条数不符（给 ${Array.isArray(rows) ? rows.length : 0} 条，要 ${unique.length} 条）`)
     }
 
     const lines = new Map<string, string[]>()
@@ -311,7 +333,7 @@ export async function breakSubtitleLines(input: SubtitleSplitRequest): Promise<S
       else rejected.push(`#${index}`)
     })
 
-    if (!lines.size) return empty(`AI 分行结果全部不合法（${rejected.join('、')}）⇒ 用内建算法`)
+    if (!lines.size) return failed(`AI 分行结果全部不合法（${rejected.join('、')}）`)
 
     const changed = [...lines.values()].filter((value) => value.length > 1).length
     /**
@@ -328,6 +350,7 @@ export async function breakSubtitleLines(input: SubtitleSplitRequest): Promise<S
     }
     return {
       lines,
+      failed: false,
       notice:
         `AI 分行：${lines.size}/${unique.length} 条可用（其中 ${changed} 条被切成多行）` +
         (rejected.length ? `，${rejected.length} 条不合法已退回内建算法（${rejected.join('、')}）` : '') +
@@ -336,6 +359,6 @@ export async function breakSubtitleLines(input: SubtitleSplitRequest): Promise<S
   } catch (e) {
     // ★ 这里 catch 的是 runBilledScene 的一切失败：场景没建/被停用、候选链全灭、超时、熔断、积分不足……
     const msg = (e as Error)?.message ?? String(e)
-    return empty(`AI 分行调用失败（${msg.slice(0, 80)}）⇒ 用内建算法`)
+    return failed(`AI 分行调用失败（${msg.slice(0, 80)}）`)
   }
 }

@@ -741,7 +741,8 @@ async function processTask(
       await ffmpegApplyColor(concatPath, finalPath, color, TASK_TIMEOUT_MS, preFinalTier)
     }
 
-    // 3.5) AI 合成：支持多音色、自定义配音和独立的原声 ASR 字幕。
+    // 3.5) AI 合成：调色交给 applyAiSynthesis，与字幕烧录合并为同一趟视频编码；
+    //      无字幕时由 synthesis 内部兜底，避免后台非零参数静默失效。
     if (aiMode) {
       await reportProgress(task.id, 82, fence)
       // 逐分镜探测实际时长（归一化产物），并携带口播文案，供配音/字幕按时间轴布时
@@ -869,8 +870,7 @@ async function processTask(
             /**
              * AI 分行（2026-09-29）：字幕文本仍然**来自原声 ASR**（`subtitleMode='SOURCE_AUDIO'`），
              * 但「在哪里换行」交给模型判断 —— 用户原话「需要 AI 做好分行再添加到字幕里」。
-             * 无论成败都打 `notice`：这个功能最危险的失效方式是**静默退回内建算法**，
-             * 那时用户看到的就是「还是老样子」，而日志里什么都没有，无从判断是不是没生效。
+             * AI 失败直接让渲染任务失败：不再静默退回本地分条，用户可从失败态重新提交。
              */
             breakSubtitleLines: async (texts) => {
               const outcome = await breakSubtitleLinesByAi({
@@ -879,7 +879,7 @@ async function processTask(
                 texts,
               })
               console.log(`[render-worker] task ${task.id} ${outcome.notice}`)
-              return outcome.lines
+              return outcome
             },
           },
         )
