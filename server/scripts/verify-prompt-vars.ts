@@ -243,15 +243,32 @@ check(
 const copyTpls = TEMPLATES.filter((t) => t.code.startsWith('copy_') && t.code !== 'copy_generate').map((t) => t.tpl)
 check(new Set(copyTpls).size === copyTpls.length, '4 款文案模板互不相同', `共 ${copyTpls.length} 份`)
 
-// ★ 产品型也必须先有钩子，但它的钩子是「点单判断 / 价格内容 / 做法场景」，不是种草型的探店口吻。
+// ★ 产品型也必须先有钩子。2026-10-19 起它的钩子按**动作**分五类（取舍/纠错/门槛/数字/场景），
+//   不再给「视角 + 示例句」——旧写法五个标签共用一个句法骨架，模型照抄句式、开头必然同质化。
 check(COPY_PRODUCT_PROMPT.includes('【开头钩子 · 第一优先级】'), '产品型明确要求首句先给钩子')
+// ★★ 2026-10-19：钩子从「5 个视角 + 示例句」改成「5 类动作」，并补上跨次避让。
+//   旧断言钉的是那 5 个视角标签（点单选择/价格或套餐/菜品特点/用餐场景/避坑判断）——
+//   而那 5 个标签其实是**同一个句法骨架**（[一个前提]，先看/先讲清[一个对象]），
+//   模型抄的是句式不是角度 ⇒ 5 个选项只产出 1 种开头。守护若继续钉旧标签，
+//   就等于把「同质化」当成契约固化下来，下次谁也改不动。
 check(
-  COPY_PRODUCT_PROMPT.includes('点单选择') &&
-    COPY_PRODUCT_PROMPT.includes('价格或套餐') &&
-    COPY_PRODUCT_PROMPT.includes('菜品特点') &&
-    COPY_PRODUCT_PROMPT.includes('用餐场景') &&
-    COPY_PRODUCT_PROMPT.includes('避坑判断'),
-  '产品型钩子覆盖点单、价格套餐、菜品特点、场景和避坑判断',
+  ['取舍型', '纠错型', '门槛型', '数字型', '场景型'].every((t) => COPY_PRODUCT_PROMPT.includes(t)),
+  '产品型钩子覆盖取舍/纠错/门槛/数字/场景五类动作',
+)
+check(
+  COPY_PRODUCT_PROMPT.includes('不要沿用任何示例句式'),
+  '产品型明确禁止照抄示例句式（否则五类动作会退化成一个模板）',
+)
+// ★★★ 这一条是本次真正的修复：产品型原先**没接** recentCopyAvoid
+//   （变量在 creation.service.ts 已按 merchantId+track 对所有款式算好，只是模板没用它）
+//   ⇒ 同一道菜连着写几条，开头必然收敛。少了这条断言，将来删掉它也没人发现。
+check(
+  COPY_PRODUCT_PROMPT.includes('{{recentCopyAvoid}}'),
+  '产品型接了近期避让（同一道菜连写要换开头类型）',
+)
+check(
+  COPY_PRODUCT_PROMPT.includes('写完自检'),
+  '产品型有自己的写完自检（两句都泛就重写开头）',
 )
 check(
   COPY_PRODUCT_PROMPT.includes('第二句话必须马上回答钩子') &&
