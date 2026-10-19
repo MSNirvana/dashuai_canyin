@@ -983,26 +983,72 @@ export function copySimilarity(a: string, b: string): number {
   return intersection / (left.size + right.size - intersection)
 }
 
-/** 只比较近期同类型文案，避免全库扫描，也避免把旧版本风格误判成当前重复。 */
+/**
+ * 取一条文案的「开头句」—— 避让最有效的参照就是它。
+ * 只按句末标点切，不发散：钩子就是第一句，模型换路数看这一行就够。
+ * ★ 句末标点**要留着**（`？`/`！`）：问句开头和陈述开头在名单里必须一眼能分辨，
+ *   否则模型看到的 15 条都是光秃秃一句，判断不出「上面已经问过好几次了」。
+ * 超长时优先在逗号处断开，再不行才硬截 —— 硬截会切出半句，但作为「已用示例」仍然可用。
+ */
+export function copyOpeningLine(text: string, max = 26): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const end = flat.search(/[。！？!?]/)
+  const first = end >= 0 ? flat.slice(0, end + 1).trim() : flat
+  if (first.length <= max) return first
+  const comma = first.lastIndexOf('，', max)
+  // ★ 逗号处断开也补 `…`：不补的话截出来是一句「看起来完整」的陈述，
+  //   模型会以为上一稿就是这么说的，读不出这是被截断的半句。
+  return comma >= 8 ? `${first.slice(0, comma)}…` : `${first.slice(0, max)}…`
+}
+
+/**
+ * ★★ 2026-10-19 重写：从「列出近期全文」改成「开头句 + 全文」两段，并把**当前这一篇**也纳入避让。
+ *
+ * 为什么原来「每次都不能重复」做不到，有三个硬边界：
+ *   ① 窗口 `take: 8` ⇒ 第 9 条起看不到第 1 条；
+ *   ② ★★★ 连点「重新生成」时避让**空转**：`POST /creations/:id/copy` 复用同一个 creationId，
+ *      而旧 where 写着 `id: { not: creationId }`（把自己排除在外），结尾 update 又是**覆盖**上一稿
+ *      ⇒ 10 次看到的避让名单**静态不变**，模型每次对着同一份名单写；
+ *   ③ 路数只有五类，10 条必然出现类重复（鸽巢），能保证的只有「不连续同类 + 同类不同句」。
+ * 这次修的是 ①②：窗口 8→15、去掉自我排除（那一行里存的就是上一稿），并把开头句单独列出来。
+ * ★ 只比较同 track：跨款式比较会把「种草型的口吻」当成「产品型的重复」误判。
+ */
+/**
+ * 把一批历史文案拼成避让块。**纯函数**，探针与契约测试复用同一份格式 ——
+ * 否则探针测出来的「不重复」跟线上看到的不是同一段话，等于没测。
+ */
+export function buildRecentCopyAvoidPrompt(copies: string[]): string {
+  const openings = [...new Set(copies.map((text) => copyOpeningLine(text)).filter(Boolean))]
+  if (!openings.length) return ''
+  return [
+    '【近期已用文案，仅用于避让】',
+    '近期用过的开头（下面这些路数和句式**都已经用了**，这一条必须换）：',
+    ...openings.map((line, i) => `${i + 1}. ${line}`),
+    '要求：',
+    '- 换**路数**，不是换同义词 —— 上面有逼问的，这条别再用问句开头；上面有劝退的，这条别再赶人；',
+    '- 换**句式** —— 问句 / 陈述 / 祈使 / 数字开头 / 先让步再翻手，轮着来；',
+    '- 不复用这些文案的核心落点、招牌信息的排序和收尾；',
+    '★ 只许换路数和句式，不许为了显得不同去编资料里没有的价格、份量或优惠。',
+  ].join('\n')
+}
+
 async function recentCopyAvoidText(
   prisma: PrismaClient,
   merchantId: bigint,
-  creationId: bigint,
   track: CopyTrack,
+  currentCopy?: string | null,
 ): Promise<{ prompt: string; copies: string[] }> {
   const rows = await prisma.creation.findMany({
-    where: { merchantId, track, id: { not: creationId }, copyText: { not: null } },
+    where: { merchantId, track, copyText: { not: null } },
     orderBy: { updatedAt: 'desc' },
-    take: 8,
+    take: 15,
     select: { copyText: true },
   })
   const copies = rows.map((row) => row.copyText?.trim() ?? '').filter(Boolean)
-  return {
-    copies,
-    prompt: copies.length
-      ? `【近期已用文案，仅用于避让】\n${copies.map((text, i) => `${i + 1}. ${text}`).join('\n')}\n要求：不要复用这些文案的开头、核心落点或收尾，不要只换同义词。`
-      : '',
-  }
+  // ★ 编辑器里这一稿可能还没落库（生成中/用户刚改过），一并纳入；放在最前面＝最新，优先避让。
+  const current = (currentCopy ?? '').trim()
+  if (current && !copies.includes(current)) copies.unshift(current)
+  return { copies, prompt: buildRecentCopyAvoidPrompt(copies) }
 }
 
 export function formatPersona(p: { bossTags?: string | null; activity?: string | null } | null): string {
@@ -1111,8 +1157,12 @@ export async function buildVariables(
    *   现在拆成两个判据：topic 清空全部门店/菜品；STYLE 只清空菜品相关字段。
    */
   const topic = mode === 'TOPIC'
+  /**
+   * ★ `c.copyText` 是这条创作上一次生成的结果（同一条创作重复生成时，就是「上一稿」）。
+   *   传进去当避让项，连点「重新生成」才有东西可换 —— 否则模型每次都对着同一份名单写。
+   */
   const avoid = opts.merchantId
-    ? await recentCopyAvoidText(prisma, opts.merchantId, creationId, track)
+    ? await recentCopyAvoidText(prisma, opts.merchantId, track, c.copyText)
     : { prompt: '', copies: [] as string[] }
   const hideDish = topic || mode === 'STYLE'
   const hideStore = topic
@@ -1292,10 +1342,14 @@ export async function generateCopy(
   // ★ 收窄成 string：`r.text` 在类型上是 `string | undefined`，而落库字段不接受 undefined
   let copyText: string = picked ? picked.copy : (r.text ?? '')
 
-  const retryRecent = await recentCopyAvoidText(prisma, merchantId, creationId, finalTrack)
+  /**
+   * ★ 重试要的是「换一稿」，所以把**刚生成这稿**（还没落库的 `copyText`）也塞进避让名单：
+   *   否则重试拿到的仍是旧名单，很容易再写回同一个开头。
+   */
+  const retryRecent = await recentCopyAvoidText(prisma, merchantId, finalTrack, copyText)
   const retryVars = {
     ...vars,
-    recentCopyAvoid: `${retryRecent.prompt}\n这次重试必须换一个主题族和叙述落点，禁止回到「家乡那道菜」或「天凉了想吃热乎的」。`,
+    recentCopyAvoid: `${retryRecent.prompt}\n这次重试必须换一个开头路数和叙述落点（上一稿的路数已经作废），禁止回到「家乡那道菜」或「天凉了想吃热乎的」。`,
   }
   const addressFacts = unsupportedAddressFacts(copyText, vars.fullAddress)
   const copyTooLong = copyExceedsComplexityLimit(copyText, complexity)

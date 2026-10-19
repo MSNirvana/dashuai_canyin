@@ -4,9 +4,11 @@
  */
 import {
   COMPLEXITIES,
+  buildRecentCopyAvoidPrompt,
   copyCharCount,
   copyExceedsComplexityLimit,
   copyFingerprint,
+  copyOpeningLine,
   copySimilarity,
   normalizeCopyForCompare,
 } from '../src/services/creation.service.js'
@@ -32,6 +34,47 @@ check(normalizeCopyForCompare(same) === normalizeCopyForCompare(punctOnly), '空
 check(copyFingerprint(same) === copyFingerprint(punctOnly), '规范化后精确重复指纹一致')
 check(copySimilarity(same, punctOnly) === 1, '精确重复的 n-gram 相似度为 1')
 check(copySimilarity(same, changed) < 0.72, '明显不同主题不会误判为高相似')
+
+/**
+ * ★★★ 2026-10-19 新增：避让块里的「开头句」。
+ * 为什么专门钉它：用户要求「每次都不能重复」，而模型实际只看得到避让块这一处。
+ * 这里取错（取成整篇、或把句末问号吃掉），避让块就退化成「15 段长文」/「15 句光秃秃的话」——
+ * 模型看不出「上面已经问过三次」，重复照旧，**而且不报错**。所以它必须被守护盯住。
+ */
+check(
+  copyOpeningLine(same) === '天凉了，想念家乡的那口热菜。',
+  '开头句按句末标点切出第一句（带句号）',
+)
+const questionOpening = '你真知道几个人点几个菜够吃吗？'
+check(copyOpeningLine(questionOpening) === questionOpening, '问句开头保留问号，模型才看得出上一稿是问句')
+// ★ 超长时从逗号处断，也要补 `…`：不补就切出一句「看着像完整陈述」的半句，
+//   模型读不出这是被截断的，会把半句当成上一稿的原话。
+const longOpening = `${'这道菜的做法说起来简单'.repeat(4)}，其实最难的是火候。后面还有一长段。`
+check(
+  copyOpeningLine(longOpening).endsWith('…') && copyOpeningLine(longOpening).length <= 27,
+  '过长的开头句会截断成一句，不把整篇带进避让名单',
+)
+check(
+  copyOpeningLine(changed).endsWith('…'),
+  '逗号处断开的截断句也带省略号（模型才知道那不是完整一句）',
+)
+
+/**
+ * ★★★ 避让块本身：它是「每次不能重复」在提示词里唯一的着力点。
+ * 空历史必须渲染成**空串**（不然首条稿子会看到「近期用过的开头：」下面一片空白，
+ * 模型会以为资料不全而保守化）；有历史时每条开头都要出现。
+ */
+check(buildRecentCopyAvoidPrompt([]) === '', '避让块在空历史时渲染成空串')
+const avoidBlock = buildRecentCopyAvoidPrompt([same, changed])
+check(
+  avoidBlock.includes(copyOpeningLine(same)) && avoidBlock.includes(copyOpeningLine(changed)),
+  '避让块包含每条历史文案的开头句',
+)
+check(avoidBlock.includes('换**路数**'), '避让块明确要求换路数（不是换同义词）')
+check(
+  buildRecentCopyAvoidPrompt([same, same]).match(/天凉了/g)?.length === 1,
+  '同一开头只列一次（历史里重复的稿子不会把名单灌满）',
+)
 
 const simpleWithin = '这道菜先讲一个重点，口感和做法都说清楚。'
 const simpleTooLong = `${simpleWithin}超过简单版口播上限后必须重新生成，不能把长稿硬塞进两个镜头里。`
