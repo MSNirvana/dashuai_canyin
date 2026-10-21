@@ -244,12 +244,52 @@ export const COMPLEXITIES = {
 export type Complexity = keyof typeof COMPLEXITIES
 export const DEFAULT_COMPLEXITY: Complexity = 'COMPLEX'
 
+/**
+ * ★★★ 人设型专用的口播长度（2026-10-21）：比其它款式**长 2~3 倍**。
+ *
+ * 为什么必须单独一档：用户给了一份 4.5 万字的实战案例集（149 条餐饮老板口播），
+ * **中位数 237 字、多数落在 250~500 字**，讲的是「一件事的来龙去脉」（起因→做法→结果）。
+ * 而三档通用上限是 45/90/130 —— 90 字只够说一句话，装不下任何故事或论证，
+ * 所以人设型怎么改都「内容少」。这是硬顶，不是措辞问题。
+ *
+ * ★ 只覆盖文案长度，**不动分镜数**：FINE 仍是 6~9 镜，每镜约 45 字刚好念完。
+ * ★ 其它三款不改：它们本来就该短（产品型报完价就该结束）。
+ */
+const PERSONA_COPY_RULES: Record<Complexity, { rule: string; max: number }> = {
+  SIMPLE: {
+    rule: '口播建议 60~100 字，约 13~22 秒；只讲一件事，不铺背景、不带第二个话题。',
+    max: 110,
+  },
+  COMPLEX: {
+    rule: '口播建议 180~260 字，约 40~58 秒；把一件事讲完整：起因、当时怎么做、结果。',
+    max: 280,
+  },
+  FINE: {
+    rule: '口播建议 280~380 字，约 62~84 秒；可以有两层（发生了什么 + 为什么这么坚持），但只能围绕一个人或一件事。',
+    max: 400,
+  },
+}
+
+/** 本次该用的长度规则（人设型走专用表，其余走通用表）。 */
+export function copyRuleFor(complexity: Complexity, track?: CopyTrack): string {
+  return track === 'PERSONA' ? PERSONA_COPY_RULES[complexity].rule : COMPLEXITIES[complexity].copyRule
+}
+
+/** 本次该用的字数上限。★ 超长守卫与变量里的规则必须同源，否则「说 260 字」和「260 字就重试」会互相打架。 */
+export function copyLimitFor(complexity: Complexity, track?: CopyTrack): number {
+  return track === 'PERSONA' ? PERSONA_COPY_RULES[complexity].max : COMPLEXITIES[complexity].maxCopyChars
+}
+
 export function copyCharCount(text: string): number {
   return text.replace(/\\s/g, '').length
 }
 
-export function copyExceedsComplexityLimit(text: string, complexity: Complexity): boolean {
-  return copyCharCount(text) > COMPLEXITIES[complexity].maxCopyChars
+export function copyExceedsComplexityLimit(
+  text: string,
+  complexity: Complexity,
+  track?: CopyTrack,
+): boolean {
+  return copyCharCount(text) > copyLimitFor(complexity, track)
 }
 
 export function isCopyTrack(v: unknown): v is CopyTrack {
@@ -1180,8 +1220,10 @@ export async function buildVariables(
    *     #261 里写着「我这店，名儿就叫大虾店」，而店名逐字就是 `store.name='大虾店'`。
    *     开关叫「菜品与套餐」、端上注释写「都不喂」，行为却是「只关菜品」⇒ 用户当场踩坑。
    *     用户明确选择：**彻底不喂门店资料**。
-   * ★ 代价要认：人设型这一档只剩 `dateInfo` + `styleGuide` + 近期避让，
-   *   产出会更泛（这是「不给资料」的定义决定的，不是 bug）。腾出资料就腾出稿子的具体度。
+   * ★ 代价要认：人设型这一档只剩 `persona` + `dateInfo` + `styleGuide` + 近期避让，
+   *   产出会更泛（这是「不给门店资料」的定义决定的，不是 bug）。腾出资料就腾出稿子的具体度。
+   * ★★ 所以 `persona` **不能跟着一起清**：清掉它是「零资料」，留着它才是「只知道老板是谁、
+   *   不知道是哪家店」—— 后者正是人设型需要的形状。取值的注释见下面 `persona:` 那一行。
    * ★ 所以 `storeEmptyNote` 是**必需**的：清空后 CONTEXT_BLOCK 首行会变成一排空标签，
    *   模型会以为资料漏了而自己编店名 —— 注解必须紧贴空值（见 STORE_EMPTY_NOTE）。
    */
@@ -1224,7 +1266,22 @@ export async function buildVariables(
     dishIntro: hideDish ? '' : (c.dish?.intro ?? ''),
     sellingPoints: hideDish ? '' : (c.dish?.sellingPoints ?? ''),
     comboInfo: hideDish ? '' : formatComboInfo(c.dish),
-    persona: hideStore ? '' : formatPersona(c.store.persona),
+    /**
+     * ★★★ 2026-10-21 修正：人设资料**不跟着门店开关一起清**。
+     *
+     * 判据（按用户当天的原话拆的）：「门店信息」＝店名、招牌、品类自称、城市与地址、
+     * 门店介绍里的具体事 —— 这些都在 `store` 表里，该清就清。而 `persona` 表只有两列
+     * `boss_tags`（老板人设标签）和 `activity`（最近想重点告诉顾客），
+     * **一个店名、一个地名、一个品类都没有**，它描述的是「老板这个人」。
+     *
+     * 为什么必须留：人设型（`mode='STYLE'` + `track='PERSONA'`）的全部原料就是这两列。
+     * 把门店清了、把人设也清掉 ⇒ 这一档输入变成**零**，模板写得再细也只能产出
+     * 「做餐饮要有良心」这类通识空话 —— 这正是用户 2026-10-21 说的「内容少」。
+     * 只清门店、保留人设，才既能满足「不许出现店名/城市/品类」，又让「讲人」有料可讲。
+     *
+     * ⚠ 与小程序的「菜品与套餐」开关语义一致：那个开关关的是**门店与菜品**，不是老板本人。
+     */
+    persona: formatPersona(c.store.persona),
     // ★ 每次生成都现算：创作可能存了一周才生成，缓存住「今天」会让节日提示过期。
     //   代价只是一次 Intl 格式化 + 几十条候选过滤，可忽略。
     //   ⚠ 话题稿也要算它：分镜模板引用 {{dateInfo}}（话题稿同样要分镜）；
@@ -1244,7 +1301,7 @@ export async function buildVariables(
     complexity,
     complexityLabel: COMPLEXITIES[complexity].label,
     shotCountRule: COMPLEXITIES[complexity].rule,
-    copyLengthRule: COMPLEXITIES[complexity].copyRule,
+    copyLengthRule: copyRuleFor(complexity, track),
     shotLibrary: await buildShotLibraryHint(prisma),
     /**
      * ★ 分镜里那个出镜的人该怎么称呼 —— 只给分镜场景用（`STORYBOARD_VARS` 里有它，
@@ -1386,7 +1443,7 @@ export async function generateCopy(
     recentCopyAvoid: `${retryRecent.prompt}\n这次重试必须换一个开头路数和叙述落点（上一稿的路数已经作废），禁止回到「家乡那道菜」或「天凉了想吃热乎的」。`,
   }
   const addressFacts = unsupportedAddressFacts(copyText, vars.fullAddress)
-  const copyTooLong = copyExceedsComplexityLimit(copyText, complexity)
+  const copyTooLong = copyExceedsComplexityLimit(copyText, complexity, finalTrack)
   const initialFingerprint = copyFingerprint(copyText)
   const duplicateCopy = retryRecent.copies.some((old) => copyFingerprint(old) === initialFingerprint)
   const similarCopy = retryRecent.copies.some((old) => copySimilarity(old, copyText) >= 0.72)
@@ -1429,7 +1486,7 @@ export async function generateCopy(
       const stillDuplicate = retryRecent.copies.some((old) =>
         copyFingerprint(old) === copyFingerprint(againText) || copySimilarity(old, againText) >= 0.72,
       )
-      const retryTooLong = copyExceedsComplexityLimit(againText, complexity)
+      const retryTooLong = copyExceedsComplexityLimit(againText, complexity, finalTrack)
       const retryAddressFacts = unsupportedAddressFacts(againText, vars.fullAddress)
       if (!stillDuplicate && !retryTooLong && retryAddressFacts.length === 0) {
         copyText = againText
@@ -1437,7 +1494,7 @@ export async function generateCopy(
       } else {
         console.warn(
           `[copy] 多样性/长度重试仍未达标，保留首稿：creation=${creationId} scene=${sceneCode} ` +
-            `chars=${copyCharCount(againText)} limit=${COMPLEXITIES[complexity].maxCopyChars}`,
+            `chars=${copyCharCount(againText)} limit=${copyLimitFor(complexity, finalTrack)}`,
         )
       }
     }
@@ -1446,7 +1503,7 @@ export async function generateCopy(
     console.warn(
       `[copy] 文案超过${COMPLEXITIES[complexity].label}口播上限，已触发一次免费重试：` +
         `creation=${creationId} scene=${sceneCode} chars=${copyCharCount(copyText)} ` +
-        `limit=${COMPLEXITIES[complexity].maxCopyChars}`,
+        `limit=${copyLimitFor(complexity, finalTrack)}`,
     )
   }
 
