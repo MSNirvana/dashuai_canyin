@@ -54,6 +54,14 @@ import {
   CREATION_SCENE_PROMPTS,
   STORYBOARD_SCENE,
 } from '../prisma/prompts.js'
+// 人设型范文池：数据本身也要守（条数/长度/去重/轮转不重复），不然「抽一条」会静默退化成「总抽同一条」
+import {
+  PERSONA_SAMPLES,
+  personaBandOf,
+  personaSampleIndex,
+  personaSamplesFor,
+  sampleLeaks,
+} from '../src/lib/persona-samples.js'
 import {
   extractPlaceholders,
   findUnknownPlaceholders,
@@ -899,9 +907,15 @@ if (dbReady) {
       data: {
         merchantId,
         name: '契约测试门店-不选菜品',
-        category: '川菜',
-        city: '济南',
-        intro: '开了十二年的老川菜馆，招牌是每天现炒的辣子鸡。',
+        /**
+         * ★★ 2026-10-21 品类与城市改成**绝对独特**的假值（原来是「川菜」「济南」）。
+         *   原因：人设型现在会喂一篇**范文**（别的城市、别的店），范文里出现「川菜」「济南」
+         *   完全合理 —— 拿泛词当「门店标识」的判据，会跟范文撞车、报出一条假红。
+         *   换成独特值后，下面「渲染后不含」那条断言反而更硬：它只可能来自门店变量。
+         */
+        category: '契约测试品类',
+        city: '契约测试城',
+        intro: '契约测试介绍：这段虚构文字只用来验证「哪几项该被清空」。',
       },
     })
     // ★ 这家店**有菜、有人设、有介绍** —— 店里空着的话，③ 就成了一条永远为真的假断言
@@ -974,8 +988,8 @@ if (dbReady) {
       check(!out.includes('{{'), `${t.label} 款式稿渲染后无残留占位符`)
       check(
         !out.includes('契约测试门店-不选菜品') &&
-          !out.includes('川菜') &&
-          !out.includes('济南') &&
+          !out.includes('契约测试品类') &&
+          !out.includes('契约测试城') &&
           !out.includes('不该被款式稿提到的菜'),
         `★★ ${t.label} 款式稿：店名/品类/城市/菜名一个都不进入提示词`,
       )
@@ -1003,7 +1017,7 @@ if (dbReady) {
     const vStoreOnly = await buildVariables(prisma, storeOnly.id, { track: 'PRODUCT' })
     check(
       vStoreOnly.storeName === '契约测试门店-不选菜品' &&
-        vStoreOnly.category === '川菜' &&
+        vStoreOnly.category === '契约测试品类' &&
         vStoreOnly.dishName === '',
       '★ 反向：「只讲门店」照旧拿到门店资料、且没有菜品（没被款式稿的改动波及）',
       `storeName=${JSON.stringify(vStoreOnly.storeName)} dishName=${JSON.stringify(vStoreOnly.dishName)}`,
@@ -1273,8 +1287,15 @@ check(
   '★★★ 人设型「具体」带边界：人只许泛指、数与时只许模糊，且给「能不能被核对」的判据',
 )
 check(
-  personaTpl.includes('不许加引号写成「他说…我说…」的一来一回'),
-  '★ 人设型：别人的话只能转述一句，不许写成剧本式对白（试跑里出现过一来一回）',
+  personaTpl.includes('不许把**某一次具体的对话**写成一来一回') && personaTpl.includes('假设式'),
+  '★ 人设型：禁「回忆某次对话」式剧本，但允许假设式（「你要问我…我就说…」——案例里全是这种写法）',
+)
+// ★★ 概数是这一轮实测才暴露的漏洞：模板写「数量一个字都不许补」，模型就改用
+//   「备菜的上千块货架空了三分之一」—— 没有阿拉伯数字，但量级是编的。
+//   这类词必须点名，否则「不许写数」只约束阿拉伯数字。
+check(
+  personaTpl.includes('概数也算数') && personaTpl.includes('上千块'),
+  '★★ 人设型：概数（上千/上百/几十）也算编造 —— 否则「不许写数」只管住阿拉伯数字',
 )
 // ★★★ 第三轮试跑又抓出两处，都是「规则存在但拦不住」的典型：
 //   ① 第 2 条与第 3 条开头撞了：「都说做餐饮，菜越多生意越大」/「都说菜越多，生意才越大」——
@@ -1313,6 +1334,119 @@ check(
   personaTpl.trimEnd().endsWith('只输出文案正文：不要标题、不要分点、不要 hashtag、不要任何解释'),
   '★ 人设型输出格式收在「只输出文案正文」（重写模板时最容易漏掉的一句）',
 )
+
+// ─────────── 5.x 人设型范文池（2026-10-21）───────────
+//   用户要「从我给你的文案里随机抓一条出来做改写，单用户的生成尽可能不要重复使用」。
+//   「随机」实现成**轮转**（判据见 src/lib/persona-samples.ts::personaSampleIndex），
+//   所以要守两半：模板里那节约束在不在、池子本身有没有坏。
+//   只守一半的代价：模板松了 ⇒ 成稿里出现别人家的城市；池子坏了 ⇒ 每次都抽同一条、没人发现。
+check(
+  personaTpl.includes('{{personaSample}}') && personaTpl.includes('只学样子，不搬内容'),
+  '★★★ 人设型引用了范文变量，且写死「只学样子、不搬内容」',
+)
+check(
+  personaTpl.includes('城市、店名、人名、营业额、家庭关系、菜品、经历，一个都不许出现'),
+  '★★★ 范文的专有信息禁搬（范文里有别人家的城市/店名/营业额/家人，搬过来就是造谣）',
+)
+check(
+  personaTpl.includes('不许学它的方言腔') && personaTpl.includes('不要连错字一起学'),
+  '★ 范文是语音转写稿：禁学方言腔、禁抄错字',
+)
+// ★★★ 实测出来的坑：池子里有 478/492 字的范文，而「复杂版」正文只要 180~260 字。
+//   第一版是「全池轮转 + 模板里劝一句『长度只认复杂度』」，结果 6 条里 **3 条超上限**
+//   （285/286/296），中位数从 248 涨到 285 —— **劝说没用，模型照眼前的实物对齐长度**。
+//   最终修法不是加话，而是**同档抽同档**（personaSamplesFor）；模板这句只是兜底。
+check(
+  personaTpl.includes('范文跟你这次要写的长度是**同一档**的'),
+  '★★★ 范文按复杂度分档抽取（全池轮转时实测 6 条里 3 条超上限，靠模板劝不住）',
+)
+// ★ 分档必须真的覆盖到三档、且每档都有货 —— 某一档空了会静默退化成「全池抽」，
+//   于是又回到「跟着 478 字的范文写超长」。
+{
+  const bands = ['simple', 'complex', 'fine'] as const
+  const counts = bands.map((b) => personaSamplesFor(b).length)
+  check(
+    counts.every((n) => n >= 5),
+    '★★ 三档范文都够抽（某档不足 5 条说明分档区间配错了，轮转很快回环）',
+    `simple=${counts[0]} complex=${counts[1]} fine=${counts[2]}`,
+  )
+  check(
+    personaSamplesFor('complex').every((s) => s.chars >= 150 && s.chars <= 310),
+    '★★ 「复杂版」抽到的范文都在 150~310 字（与 180~260 的建议值同量级）',
+  )
+  check(
+    personaBandOf('SIMPLE') === 'simple' && personaBandOf('FINE') === 'fine' && personaBandOf('COMPLEX') === 'complex',
+    '复杂度 → 长度档的映射正确',
+  )
+}
+check(
+  PERSONA_SAMPLES.length >= 40,
+  '★★ 范文池够大（太小 ⇒ 轮转很快回到同一条，「不要重复使用」名存实亡）',
+  `当前 ${PERSONA_SAMPLES.length} 条`,
+)
+check(
+  PERSONA_SAMPLES.every((s) => s.chars >= 120 && s.chars <= 500 && s.chars === s.text.length),
+  '★★ 每条范文都在 120~500 字内，且 chars 与 text.length 一致（快照对账要靠它）',
+  `越界=${PERSONA_SAMPLES.filter((s) => s.chars < 120 || s.chars > 500 || s.chars !== s.text.length).map((s) => s.id).join('、') || '无'}`,
+)
+check(
+  PERSONA_SAMPLES.every((s, i) => s.id === i + 1),
+  '★ 范文 id 连续（id 会写进日志；跳号说明有人手删过，轮转范围跟着变了却没人知道）',
+)
+{
+  const seen = new Map<string, number>()
+  const dup: string[] = []
+  for (const s of PERSONA_SAMPLES) {
+    const key = s.text.slice(0, 25)
+    const prev = seen.get(key)
+    if (prev !== undefined) dup.push(`#${prev} 与 #${s.id}`)
+    else seen.set(key, s.id)
+  }
+  check(dup.length === 0, '★★ 范文池无重复篇目（同一篇收两次 ⇒ 轮转看着换了、其实没换）', dup.join('、'))
+}
+// ★★★ 轮转的**唯一**可验收判据：同一 seed 连取 total 次必须取遍全部且不重复。
+//   只查「相邻两次不同」不够 —— 那会让「A,B,A,B…」这种两两交替的实现全绿。
+{
+  const total = PERSONA_SAMPLES.length
+  const got = new Set<number>()
+  for (let cursor = 0; cursor < total; cursor++) got.add(personaSampleIndex(123n, cursor))
+  check(
+    got.size === total,
+    `★★★ 同一用户连取 ${total} 次走遍全部范文（「单用户不重复使用」是**可证**的，不是概率的）`,
+    `实际取到 ${got.size} 种`,
+  )
+  check(
+    personaSampleIndex(7n, 0) !== personaSampleIndex(8n, 0),
+    '★ 不同商户起点不同（否则全网前几十条稿子会长成一个样）',
+  )
+  check(
+    personaSampleIndex(5n, 0) === personaSampleIndex(5n, PERSONA_SAMPLES.length),
+    '轮转是环：走满一圈回到起点，不会越界',
+  )
+}
+// ★★ 泄漏检测器自己也要被测（「断言窄于标题」那类教训：检测器坏了，报警永远为空，
+//   看起来一切正常）。正例、反例各给一条，缺任一条它都可能是个「永远返回空」的空壳。
+{
+  const sample = '我在宜春开店八年，昨天营业额只有4000多，夜里两点还在熬牛骨汤。'
+  check(
+    sampleLeaks(sample, '我在宜春干了八年，就认一个理。').includes(
+      '照搬范文地名 宜春',
+    ),
+    '★ 泄漏检测：成稿抄了范文的地名 ⇒ 报出来',
+  )
+  check(
+    sampleLeaks(sample, '最近我把菜单从68道砍到42道，砍的全是卖得少的。').length === 0,
+    '★ 泄漏检测：成稿与范文无关 ⇒ 不误报（误报几次这条报警就没人看了）',
+  )
+  check(
+    sampleLeaks(sample, '夜里两点还在熬牛骨汤，这事我干了八年。').some((s) => s.includes('8 字重合并句')),
+    '★ 泄漏检测：成稿搬了范文的连续 8 字 ⇒ 报出来（相似度闸门 0.72 查不出这种短句搬用）',
+  )
+  check(
+    sampleLeaks(sample, '昨天营业额只有4000多块钱。').some((s) => s.includes('照搬范文数字 4000')),
+    '★ 泄漏检测：成稿搬了范文的数字 ⇒ 报出来',
+  )
+}
 // ★ 2026-09-29 说话人从「老板本人」改成「来推荐的人」之后，这条断言**换了判据**：
 //   原来禁的是「顾客视角」这个**定位**（当时定位是老板，写顾客视角就是跑偏）；
 //   现在定位本身就是推荐者，所以不能再禁「顾客视角」四个字。

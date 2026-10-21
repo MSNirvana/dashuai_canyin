@@ -16,6 +16,8 @@ import { formatDateInfo } from '../lib/festival.js'
 import { formatTopicInfo } from '../lib/topic.js'
 // 套餐判断复用同一个常量：`kind === 'COMBO'` 这种字面量散在两处，哪天改了值只会有一处跟着变
 import { DISH_KIND_COMBO } from './dish.service.js'
+// 人设型范文池：只当「长度与节奏」的标尺，内容一个字都不许搬（见该文件的文件头）
+import { personaBandOf, pickPersonaSample } from '../lib/persona-samples.js'
 // ★ 选了菜却没讲这道菜的兜底：空值注解的取值 + 正文里「报出菜名」的判据 + 重试时间闸门。
 //   背景与 A/B 数据见该文件头部；模板侧的对应变量是 {{dishEmptyNote}}。
 import {
@@ -1237,6 +1239,19 @@ export async function buildVariables(
     : { prompt: '', copies: [] as string[] }
   const hideDish = topic || mode === 'STYLE'
   const hideStore = topic || mode === 'STYLE'
+  /**
+   * ★ 人设型范文：见下面 `personaSample` 那一行的注释。
+   *   放在这里而不是 inline，是因为需要一次 count 查询 —— 写在对象字面量里会变成
+   *   「一个 await 藏在字面量中间」，读的人容易漏掉这里有一次 IO。
+   */
+  const personaSampleText =
+    track === 'PERSONA' && !topic
+      ? pickPersonaSample(
+          c.merchantId,
+          await prisma.creation.count({ where: { merchantId: c.merchantId } }),
+          personaBandOf(complexity),
+        ).text
+      : ''
   const dishName = hideDish ? '' : (c.dish?.name ?? '')
   const address = hideStore ? { province: '', city: '', district: '', address: '', fullAddress: '' } : formatStoreAddress(c.store)
   return {
@@ -1294,6 +1309,20 @@ export async function buildVariables(
     // 第一版先使用项目级风格规则；原始 DOCX 不自动上传、不进线上 prompt，避免把个人素材当事实库。
     styleGuide: `风格参考：真实口语、具体场景、先给冲突或选择，再落到一个可回答的问题；允许反差、自嘲、现场细节和人物关系，禁止套用原句。`,
     recentCopyAvoid: avoid.prompt,
+    /**
+     * ★★★ 人设型范文（2026-10-21）：从 53 条真实成稿里**轮转抽一条**当标尺。
+     *
+     * 为什么轮转不随机：用户要的是「单用户的生成尽可能不要重复使用」。
+     * 判据与取舍全在 `src/lib/persona-samples.ts::personaSampleIndex`，这里只说三件事：
+     *   · `seed` 用 merchantId ⇒ 不同商户起点不同，全网不会长成一个样；
+     *   · `cursor` 用这个商户**已生成过的创作数** ⇒ 同一用户下次必换下一条，53 次内不重样；
+     *   · 不落任何新状态（不加列、不建表）⇒ 重启、多实例都不会串。
+     *
+     * ★ 只在人设型且非话题稿时喂。别的款拿到空串 —— 它们的模板根本没引用这个变量
+     *   （白名单在 `src/ai/prompt-vars.ts` 的 COPY_VARS 里，放开是为了人设型引用得到）。
+     * ★ count 只在 PERSONA 时查，其他款不付这次查询的钱。
+     */
+    personaSample: personaSampleText,
     copyText: c.copyText ?? '',
     track,
     trackLabel: COPY_TRACKS[track].label,
