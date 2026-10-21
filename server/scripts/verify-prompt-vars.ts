@@ -930,28 +930,47 @@ if (dbReady) {
       `title=${JSON.stringify(styleCre.title)}`,
     )
     const vStyle = await buildVariables(prisma, styleCre.id, { track: 'KNOWLEDGE' })
-    const STYLE_DISH_BLANKED = ['dishName', 'dishIntro', 'sellingPoints', 'comboInfo'] as const
-    const STYLE_STORE_PRESERVED = ['storeName', 'storeIntro', 'category', 'city', 'persona'] as const
+    /**
+     * ★★★ 2026-10-21 改回「全空」—— 这正是 §4.5 上面 ①②③ 写的**原始契约**。
+     *   2026-09-28 中途放宽成「只清菜品、保留门店」，理由听上去合理（不给资料只能写空话），
+     *   于是这条断言也跟着改成「保留门店」，等于**把偏离当契约钉住**。
+     *   用户 10-21 实测踩到：关掉「菜品与套餐」开关后稿子仍念出店名
+     *   （creation #261「我这店，名儿就叫大虾店」，店名逐字来自 `store.name`）。
+     *   现在门店与菜品**全空**，`persona` 也算门店资料。
+     */
+    const STYLE_BLANKED = [
+      'storeName', 'storeIntro', 'category', 'city', 'province', 'district', 'address', 'fullAddress',
+      'persona', 'dishName', 'dishIntro', 'sellingPoints', 'comboInfo',
+    ] as const
     check(
-      STYLE_DISH_BLANKED.every((k) => vStyle[k] === '') &&
-        STYLE_STORE_PRESERVED.every((k) => vStyle[k] !== ''),
-      '★★ STYLE 只清空菜品变量、保留门店资料（兼容当前产品逻辑）',
-      `菜品非空=${STYLE_DISH_BLANKED.filter((k) => vStyle[k] !== '').join('、')}；门店空=${STYLE_STORE_PRESERVED.filter((k) => vStyle[k] === '').join('、')}`,
+      STYLE_BLANKED.every((k) => vStyle[k] === ''),
+      '★★ 款式稿：门店与菜品资料全部清空（关掉开关＝一个字都不给）',
+      `仍非空=${STYLE_BLANKED.filter((k) => vStyle[k] !== '').join('、')}`,
     )
+    /**
+     * ★★★ 空标签防线：门店清空后 `CONTEXT_BLOCK` 首行会渲染成「【门店】｜品类：｜城市：」。
+     *   没有这条注解，模型会以为资料漏了、自己编一个店名 —— 比照实写更糟
+     *   （用户投诉的是「不该带」，编出来的是「凭空带」）。
+     */
+    check(vStyle.storeEmptyNote.length > 0, '★ 款式稿带「门店为空」注解（否则模型会自己编店名）')
     check(vStyle.topicInfo === '', '★ 款式稿不补话题素材（topicInfo 为空串 —— 与话题稿刻意不同）')
     check(vStyle.dateInfo.length > 0, 'dateInfo 仍非空（模板那一行不会渲染成空白）')
-    // ③ 两条允许的款式逐份真渲染，断言门店资料保留、菜品资料不进入提示词
+    // ③ 两条允许的款式逐份真渲染：这家店的任何标识都不许进入提示词
     for (const code of ['copy_persona', 'copy_knowledge']) {
       const t = TEMPLATES.find((x) => x.code === code)!
       const out = renderTemplate(t.tpl, vStyle as unknown as Record<string, string>)
       check(!out.includes('{{'), `${t.label} 款式稿渲染后无残留占位符`)
       check(
-        out.includes('契约测试门店-不选菜品') &&
-          out.includes('川菜') &&
-          out.includes('济南') &&
-          out.includes('80后老板') &&
+        !out.includes('契约测试门店-不选菜品') &&
+          !out.includes('川菜') &&
+          !out.includes('济南') &&
+          !out.includes('80后老板') &&
           !out.includes('不该被款式稿提到的菜'),
-        `★★ ${t.label} 款式稿：门店资料进入提示词、具体菜品资料不进入`,
+        `★★ ${t.label} 款式稿：店名/品类/城市/人设/菜名一个都不进入提示词`,
+      )
+      check(
+        out.includes('这次不提供门店资料'),
+        `${t.label} 款式稿：提示词在【门店】行写明「不提供门店资料」`,
       )
       check(out.includes('这次没选具体菜品'), `${t.label} 款式稿：提示词明确说明未选具体菜品`)
     }

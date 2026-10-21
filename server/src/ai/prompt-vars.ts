@@ -15,6 +15,16 @@
  */
 const COPY_VARS = [
   'storeName', 'storeIntro', 'category', 'city', 'province', 'district', 'address', 'fullAddress',
+  /**
+   * ★★ «【门店】那一行的空值注解»：门店资料被清空时（`mode='STYLE'` 不选菜品 / `mode='TOPIC'`）
+   *    是那段说明，门店有资料时是**空串**（取值见 creation.service.ts::STORE_EMPTY_NOTE）。
+   *
+   * 为什么它必须存在：门店变量全空后，`【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}`
+   * 会渲染成一排空标签 ⇒ 模型以为资料漏了、自己编个店名补上。这与本文件 TOPIC_VARS 那段注释
+   * （「模型看到的是一排【门店】｜品类：｜城市：，它会以为门店信息漏了」）是同一个已知失效模式。
+   * ⚠ 它只解决「首行空标签」，`CONTEXT_BLOCK` 末尾那段「都为空时…」的总则仍然要留着。
+   */
+  'storeEmptyNote',
   'dishName', 'dishIntro', 'sellingPoints',
   /**
    * ★★ «【菜品】那一行的空值注解»：没选菜时是那段说明，选了菜时是**空串**

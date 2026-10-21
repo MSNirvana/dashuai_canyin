@@ -164,8 +164,8 @@ export const DEFAULT_COPY_TRACK: CopyTrack = 'PRODUCT'
  *
  * · `DISH`  —— 选门店（+可选菜品），走四款**菜品文案**（人设型 / 知识型 / 产品型 / 种草型）。
  * · `TOPIC` —— 「流量型」：不选门店、不选菜品，只靠节气/节日/时令与生活共识出稿。
- * · `STYLE` —— 「不选菜品」（2026-09-28 新增）：不绑定具体菜品，但仍喂门店资料；
- *   见 `STYLE_TRACKS` 与 `buildVariables` 里 `hideDish` 的说明。
+ * · `STYLE` —— 「不选菜品」（2026-09-28 新增）：门店与菜品资料**都不喂**（2026-10-21 起，
+ *   与开关语义对齐：关掉「菜品与套餐」＝一个字都不给）；见 `STYLE_TRACKS` 与 `hideStore` 的说明。
  *
  * ★ 为什么不靠「track='TRAFFIC' 且 dishId 为空」推断：那个组合在**存量数据里已经存在**
  *   （老用户建过没选菜品的流量款创作），推断会把它们误判成话题稿；
@@ -1069,6 +1069,25 @@ function fenText(fen: number): string {
   return (fen / 100).toFixed(fen % 100 === 0 ? 0 : 2)
 }
 
+/**
+ * «【门店】那一行的空值注解» —— 门店资料被清空时才出现（`mode='STYLE'` / `mode='TOPIC'`）。
+ *
+ * ★★★ 为什么必须有它（2026-10-21 加）：`CONTEXT_BLOCK` 第一行是
+ *   `【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}`。门店资料被清空后，
+ *   这一行会渲染成「【门店】｜品类：｜城市：」—— 一排**空标签**。`src/ai/prompt-vars.ts`
+ *   里 TOPIC_VARS 那段注释记过同一个坑：模型看到空标签会以为「门店信息漏了」，
+ *   于是**自己编一个店名补上**。那比照实写店名更糟（用户投诉的是「不该带」，编出来的是「凭空带」）。
+ *
+ * ★ 与 `dishEmptyNote`（`src/lib/dish-mention.ts`）是同一套机制、同一个理由：
+ *   注解必须写在**值旁边**。测试过一次把它只留在段尾（CONTEXT_BLOCK 末尾那段
+ *   「门店与菜品都为空时…」），模型照样按首行的空标签自行补全。
+ *
+ * ★ 文案与 `CONTEXT_BLOCK` 末尾那段**不重复**：那段是「都为空」时的总则，
+ *   这里只负责首行紧跟其后的即时提醒。两边都改才算改完。
+ */
+export const STORE_EMPTY_NOTE =
+  '（空 = 这次不提供门店资料：正文里不要出现店名、招牌、品类、城市、地址，也不要拿别家店的常见做法冒充本店）'
+
 /** formatComboInfo 需要的最小形状（`dish` 的 include 结果里挑出来的几个字段） */
 export interface ComboInfoDish {
   kind?: string | null
@@ -1151,10 +1170,20 @@ export async function buildVariables(
   const mode: ContentMode = isContentMode(c.mode) ? c.mode : DEFAULT_CONTENT_MODE
 
   /**
-   * ★ 话题稿不绑定门店；STYLE 稿只是不绑定具体菜品，**仍然需要门店资料**。
-   *   旧实现把二者合并成 `noMaterial = topic || mode === 'STYLE'`，导致人设型/知识型
-   *   连店名、品类、城市、门店介绍和人设都拿不到，只能写任何餐饮店都能套用的空话。
-   *   现在拆成两个判据：topic 清空全部门店/菜品；STYLE 只清空菜品相关字段。
+   * ★★ 2026-10-21 用户口径：「不选菜品」＝**门店与菜品资料都不喂**。
+   *
+   * 历史经过（下次别再来回改）：
+   *   · 2026-09-28 原始契约就是「什么都不给」（`verify-prompt-vars` §4.5 的 ①②③ 逐条写着）；
+   *   · 同一天后来放宽成「只清菜品、保留门店」，理由是「否则只能写任何店都能套的空话」——
+   *     这让 §4.5 的断言也跟着放宽了，等于把偏离当契约钉住；
+   *   · 2026-10-21 用户报「关了菜品与套餐的开关，生成出来还带门店信息」，实测 creation
+   *     #261 里写着「我这店，名儿就叫大虾店」，而店名逐字就是 `store.name='大虾店'`。
+   *     开关叫「菜品与套餐」、端上注释写「都不喂」，行为却是「只关菜品」⇒ 用户当场踩坑。
+   *     用户明确选择：**彻底不喂门店资料**。
+   * ★ 代价要认：人设型这一档只剩 `dateInfo` + `styleGuide` + 近期避让，
+   *   产出会更泛（这是「不给资料」的定义决定的，不是 bug）。腾出资料就腾出稿子的具体度。
+   * ★ 所以 `storeEmptyNote` 是**必需**的：清空后 CONTEXT_BLOCK 首行会变成一排空标签，
+   *   模型会以为资料漏了而自己编店名 —— 注解必须紧贴空值（见 STORE_EMPTY_NOTE）。
    */
   const topic = mode === 'TOPIC'
   /**
@@ -1165,11 +1194,16 @@ export async function buildVariables(
     ? await recentCopyAvoidText(prisma, opts.merchantId, track, c.copyText)
     : { prompt: '', copies: [] as string[] }
   const hideDish = topic || mode === 'STYLE'
-  const hideStore = topic
+  const hideStore = topic || mode === 'STYLE'
   const dishName = hideDish ? '' : (c.dish?.name ?? '')
   const address = hideStore ? { province: '', city: '', district: '', address: '', fullAddress: '' } : formatStoreAddress(c.store)
   return {
     storeName: hideStore ? '' : c.store.name,
+    /**
+     * ★ 门店资料被清空时才出现，否则空串。作用与 `dishEmptyNote` 完全对称：
+     *   把「这一项为空 = 这条不涉及它，别替它编」写在**值旁边**，而不是写在离它很远的段尾。
+     */
+    storeEmptyNote: hideStore ? STORE_EMPTY_NOTE : '',
     storeIntro: hideStore ? '' : (c.store.intro ?? ''),
     category: hideStore ? '' : (c.store.category ?? ''),
     city: address.city,

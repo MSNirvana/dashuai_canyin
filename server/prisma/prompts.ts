@@ -38,8 +38,15 @@
  *   所以它现在是变量 `{{dishEmptyNote}}`，**只在没选菜时才有内容**。
  *   ★ 文本本身（那 73 个字）与改前逐字一致，取值见 `src/lib/dish-mention.ts::dishEmptyNoteFor`；
  *     没选菜那条路径的提示词**一个字都没动**。改这段话时两个文件要一起看。
+ *
+ * ★★ «【门店】那一行的空值注解»（2026-10-21）：同样的道理，只是对象换成门店。
+ *   门店资料被清空时（`mode='STYLE'` 不选菜品 / `mode='TOPIC'` 话题稿），这一行会渲染成
+ *   「【门店】｜品类：｜城市：」——一排**空标签**。模型看到空标签会以为「资料漏了」，
+ *   于是自己编一个店名补上，比照实写更糟。所以注解**紧跟在 `{{storeName}}` 后面**，
+ *   与 `dishEmptyNote` 同一套机制、同一个理由（位置决定成败）。
+ *   取值见 `creation.service.ts::STORE_EMPTY_NOTE`；门店有资料时它是**空串**，一个字都不出现。
  */
-const CONTEXT_BLOCK = `【门店】{{storeName}}｜品类：{{category}}｜城市：{{city}}
+const CONTEXT_BLOCK = `【门店】{{storeName}}{{storeEmptyNote}}｜品类：{{category}}｜城市：{{city}}
 【地址】省：{{province}}｜市：{{city}}｜区县：{{district}}｜详细地址：{{address}}
 【完整地址（仅作事实核对，不要擅自补全）】{{fullAddress}}
 【门店介绍】{{storeIntro}}
