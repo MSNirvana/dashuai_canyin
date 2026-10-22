@@ -38,6 +38,8 @@ const pagePath = join(miniRoot, 'pages', 'tutorial', 'index.tsx')
 const pageCfgPath = join(miniRoot, 'pages', 'tutorial', 'index.config.ts')
 const svcMiniPath = join(miniRoot, 'services', 'tutorial.ts')
 const minePath = join(miniRoot, 'pages', 'mine', 'index.tsx')
+const adminRoot = join(here, '..', '..', 'apps', 'admin', 'src')
+const adminTutorialsPath = join(adminRoot, 'pages', 'Tutorials.tsx')
 
 /** 取某个导出函数体（从 `export async function NAME` 到下一个顶层 `export` 之间） */
 function fnBody(name: string): string {
@@ -126,6 +128,30 @@ check('「我的」页分组标题已改名', /ds-label'>参考视频</.test(min
 const hitMine = BANNED.filter((w) => new RegExp(`>[^<>{]*${w}[^<>{]*<`).test(mine))
 check('「我的」页没有渲染中的禁词', hitMine.length === 0, hitMine.length ? `命中：${hitMine.join('、')}` : '')
 check('计数单位是「条」不是「节」', /条</.test(mine) && !/\}\s*节</.test(mine), '「N 节」是课程量词')
+
+// ★★ 2026-10-22 补：光改小程序不够 —— `/api/v1/tutorials` 是**免登录可读**的，
+//    服务端兜底标题、后台下拉文案里的字照样对外可见（后台虽不给审核员看，
+//    但两处各写一份必然会漂移，一起钉住）。
+console.log('\n[B3] 服务端 / 后台文案：同一批禁词')
+const svcTitleStart = src.indexOf('FALLBACK_TITLES')
+const svcTitleBlock = svcTitleStart < 0 ? '' : src.slice(svcTitleStart, src.indexOf('}', svcTitleStart) + 1)
+check('解析到 FALLBACK_TITLES 常量表', svcTitleBlock.length > 0, '常量被改名了')
+const hitSvcTitle = BANNED.filter((w) => svcTitleBlock.includes(w))
+check(
+  '服务端兜底标题无禁词',
+  hitSvcTitle.length === 0,
+  hitSvcTitle.length
+    ? `命中：${hitSvcTitle.join('、')} —— 该接口免登录可读，标题会原样出现在响应体里`
+    : '',
+)
+
+const adminTutorials = stripComments(await readFile(adminTutorialsPath, 'utf8'))
+const adminCatStart = adminTutorials.indexOf('const CATEGORIES')
+const adminCatBlock =
+  adminCatStart < 0 ? '' : adminTutorials.slice(adminCatStart, adminTutorials.indexOf(']', adminCatStart) + 1)
+check('解析到后台 CATEGORIES 常量表', adminCatBlock.length > 0, '常量被改名了')
+const hitAdminCat = BANNED.filter((w) => adminCatBlock.includes(w))
+check('后台分类下拉文案无禁词', hitAdminCat.length === 0, hitAdminCat.length ? `命中：${hitAdminCat.join('、')}` : '')
 
 console.log('')
 if (failures.length) {

@@ -23,10 +23,10 @@ import { request } from '../lib/http'
 
 /** 与 server/src/lib/tutorial-categories.ts 的 code **逐字一致**（文案各端自己拥有） */
 const CATEGORIES = [
-  { label: '拍摄技巧', value: 'SHOOTING' },
-  { label: '剪辑教程', value: 'EDITING' },
-  { label: '运营知识', value: 'OPERATION' },
-  { label: '使用手册', value: 'MANUAL' },
+  { label: '怎么拍', value: 'SHOOTING' },
+  { label: '怎么剪', value: 'EDITING' },
+  { label: '怎么发', value: 'OPERATION' },
+  { label: '怎么用', value: 'MANUAL' },
 ]
 
 const categoryLabel = (code: string) => CATEGORIES.find((c) => c.value === code)?.label ?? code

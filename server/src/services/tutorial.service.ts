@@ -63,12 +63,19 @@ export const MAX_TUTORIAL_VIDEO_BYTES = Number.POSITIVE_INFINITY
 /** 封面图上限。与 public-asset 的轮播图同值，都是「运营出图」的量级 */
 export const MAX_TUTORIAL_COVER_BYTES = 5 * 1024 * 1024
 
-/** 客户端的兜底文案：正常情况下客户端用自己的本地文案（离线也要能渲染），这里只在它没传时才用 */
+/**
+ * 客户端的兜底文案：正常情况下客户端用自己的本地文案（离线也要能渲染），这里只在它没传时才用。
+ *
+ * ★★ 2026-10-22 跟随改名：原来叫「拍摄技巧 / 剪辑教程 / 运营知识 / 使用手册」。
+ *   这几个词（技巧/教程/知识/手册）正是把小程序往「教育服务·在线视频课程」上带的词，
+ *   而 `/api/v1/tutorials` 是**免登录可读**的 —— 标题留在响应体里，改名的意义就打了折。
+ *   注意只换**文案**，`code` 仍是 SHOOTING/EDITING/OPERATION/MANUAL（标识符不动）。
+ */
 const FALLBACK_TITLES: Record<TutorialCategoryCode, string> = {
-  SHOOTING: '拍摄技巧',
-  EDITING: '剪辑教程',
-  OPERATION: '运营知识',
-  MANUAL: '使用手册',
+  SHOOTING: '怎么拍',
+  EDITING: '怎么剪',
+  OPERATION: '怎么发',
+  MANUAL: '怎么用',
 }
 
 export interface TutorialListItem {
