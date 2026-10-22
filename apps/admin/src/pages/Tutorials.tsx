@@ -7,19 +7,18 @@ import { confirmDialog } from '../lib/confirm'
 import { request } from '../lib/http'
 
 /**
- * 教学中心 · 课程管理（平台级，不属于任何商家）。
+ * 参考视频 · 内容管理（平台级，不属于任何商家）。
  *
- * 对应小程序：`我的 → 学习中心` 四宫格 → `pages/tutorial/index?category=…`
+ * 对应小程序：`我的 → 参考视频` 分组列表 → `pages/tutorial/index?category=…`
  *
- * ── 这个页面与其它运营页最大的不同：它带**上传** ───────────────────────────
- * 后台此前没有任何上传端点（见 HomeCarousel.tsx 顶部注释：轮播图只能填 URL）。
- * 教学视频是几十 MB 到几百 MB 级的大二进制，手填对象键完全不现实，所以本轮补了后台第一条上传通道：
- * `POST /admin/api/v1/tutorials/upload`（字段名 `file`，另带 `kind=video|cover`）。
- * 上传**复用了 lib/http 的 axios 实例**而不是 tdesign 的 Upload：
- *   · 组件走自己的请求实现就绕过了拦截器里的 Authorization 与统一错误提示，
- *     401 不会跳登录、后端返回的「只支持 MP4…」也不会显示出来；
- *   · 而这里只需要「表单里放一个文件输入 + 我自己控制什么时候传」，
- *     原生 input + axios 已经够，少一层不受控的黑盒。
+ * ── 2026-10-22 起不再上传视频，改填视频号 feedId ──────────────────────────
+ * 小程序端已经没有播放器（原因见 apps/mini/src/pages/tutorial/index.tsx 顶部：
+ * 内嵌被判「文娱-其他视频」类目，而 `<channel-video>` 又因视频号未认证＝无主体走不通）。
+ * 现在端上只用 `wx.openChannelsActivity` 跳到视频号播放，所以这里要的是 **feedId**。
+ *
+ * ★ 视频上传端点（`POST /tutorials/upload`）**仍然保留**，只是不再有视频入口：
+ *   它还被「封面上传」用着（同一个端点，`kind=cover`）。历史行的 `video_key` 也还在库里，
+ *   编辑老记录时表单会原样带回去（见 FormState.videoKey 的注释）。
  */
 
 /** 与 server/src/lib/tutorial-categories.ts 的 code **逐字一致**（文案各端自己拥有） */
@@ -51,6 +50,10 @@ interface Tutorial {
   title: string
   videoKey: string | null
   coverKey: string | null
+  /** 视频号视频标识。**这是小程序端能不能看这条的唯一判据**（空 ⇒ 不下发） */
+  feedId: string | null
+  /** 视频号 ID；留空 ⇒ 服务端用 env `TUTORIAL_FINDER_USER_NAME` 兜底 */
+  finderUserName: string | null
   durationMs: number | null
   sort: number
   enabled: boolean
@@ -60,8 +63,15 @@ interface Tutorial {
 interface FormState {
   category: string
   title: string
+  /**
+   * ⚠ 表单里**已经不再提供视频上传**（2026-10-22 起小程序只跳转视频号播放）。
+   * 这个字段留着只为「编辑老记录时原样带回去」—— 提交时若传 null 会把库里已存的
+   * 对象键清掉，而那个文件还在 COS 上、GC 也还没扫到，等于凭空断掉一条引用。
+   */
   videoKey: string
   coverKey: string
+  feedId: string
+  finderUserName: string
   /** 表单里用**秒**（人写秒比写毫秒自然），提交时 ×1000 */
   durationSec: number | null
   sort: number
@@ -73,6 +83,8 @@ const EMPTY_FORM: FormState = {
   title: '',
   videoKey: '',
   coverKey: '',
+  feedId: '',
+  finderUserName: '',
   durationSec: null,
   sort: 0,
   enabled: true,
@@ -125,6 +137,8 @@ export default function TutorialsPage() {
       title: t.title,
       videoKey: t.videoKey ?? '',
       coverKey: t.coverKey ?? '',
+      feedId: t.feedId ?? '',
+      finderUserName: t.finderUserName ?? '',
       durationSec: t.durationMs ? Math.round(t.durationMs / 1000) : null,
       sort: t.sort,
       enabled: t.enabled,
@@ -134,7 +148,12 @@ export default function TutorialsPage() {
 
   const submit = async () => {
     if (!form.title.trim()) {
-      message.error('请填写课程标题')
+      message.error('请填写标题')
+      return
+    }
+    // ★ 硬挡：feedId 为空时服务端不会下发这一条，运营却会以为「保存成功了」
+    if (!form.feedId.trim()) {
+      message.error('请填写视频号 feedId —— 不填这条在小程序里不会出现')
       return
     }
     setSaving(true)
@@ -144,6 +163,8 @@ export default function TutorialsPage() {
         title: form.title.trim(),
         videoKey: form.videoKey || null,
         coverKey: form.coverKey || null,
+        feedId: form.feedId.trim() || null,
+        finderUserName: form.finderUserName.trim() || null,
         durationMs: form.durationSec ? Math.round(form.durationSec * 1000) : null,
         sort: form.sort,
         enabled: form.enabled,
@@ -162,8 +183,8 @@ export default function TutorialsPage() {
 
   const remove = async (t: Tutorial) => {
     const ok = await confirmDialog(
-      '删除课程',
-      `删除「${t.title}」？视频文件会一起删除，不可恢复。若只是暂时不想让用户看到，请改用「下架」。`,
+      '删除',
+      `删除「${t.title}」？若这条还传过封面，封面文件会一起删除，不可恢复。视频号里的视频不受影响。若只是暂时不想让用户看到，请改用「下架」。`,
     )
     if (!ok) return
     try {
@@ -190,9 +211,9 @@ export default function TutorialsPage() {
   return (
     <div>
       <div className="page-header">
-        <h2>教学中心 · 课程管理</h2>
+        <h2>参考视频 · 内容管理</h2>
         <Button theme="primary" onClick={startCreate}>
-          新增课程
+          新增一条
         </Button>
       </div>
 
@@ -227,28 +248,25 @@ export default function TutorialsPage() {
           { colKey: 'category', title: '分类', width: 110, render: ({ row }: any) => <Tag>{categoryLabel(row.category)}</Tag> },
           { colKey: 'title', title: '课程标题', ellipsis: true },
           {
-            colKey: 'videoKey',
-            title: '素材',
-            width: 170,
+            colKey: 'feedId',
+            title: '视频号',
+            width: 100,
+            render: ({ row }: any) =>
+              row.feedId ? <Tag theme="success">已配</Tag> : <Tag theme="warning">未配</Tag>,
+          },
+          {
+            colKey: 'coverKey',
+            title: '封面',
+            width: 90,
             render: ({ row }: any) => (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Button
-                  size="small"
-                  variant="text"
-                  disabled={!row.videoKey}
-                  onClick={() => void previewKey(row.videoKey, 'video')}
-                >
-                  {row.videoKey ? '播放视频' : '无视频'}
-                </Button>
-                <Button
-                  size="small"
-                  variant="text"
-                  disabled={!row.coverKey}
-                  onClick={() => void previewKey(row.coverKey, 'image')}
-                >
-                  封面
-                </Button>
-              </div>
+              <Button
+                size="small"
+                variant="text"
+                disabled={!row.coverKey}
+                onClick={() => void previewKey(row.coverKey, 'image')}
+              >
+                {row.coverKey ? '预览' : '无'}
+              </Button>
             ),
           },
           {
@@ -284,7 +302,7 @@ export default function TutorialsPage() {
       />
 
       <Dialog
-        header={editing ? '编辑课程' : '新增课程'}
+        header={editing ? '编辑' : '新增'}
         visible={open}
         onClose={() => setOpen(false)}
         onConfirm={submit}
@@ -299,36 +317,32 @@ export default function TutorialsPage() {
               options={CATEGORIES}
             />
           </Field>
-          <Field label="课程标题" required>
+          <Field label="标题" required>
             <Input
               value={form.title}
               onChange={(v) => setForm((f) => ({ ...f, title: v as string }))}
-              placeholder="如：【门店拍摄】前推 / 环绕 / 旋转 / 后拉"
+              placeholder="如：手机横着拿，画面才稳"
             />
           </Field>
           <Field
-            label="视频"
+            label="视频号 feedId"
             required
-            help="支持 MP4 / MOV / WebM / AVI，不限大小。视频越大传得越久，上传过程中请不要关闭或刷新页面；小程序端建议用 H.264 编码的 MP4，兼容性最好。"
+            help="视频号助手（channels.weixin.qq.com）→「动态管理」→ 找到这条视频 → 复制 feedId。格式是 export/ 开头的一长串。★ 不填这条在小程序里不会出现：端上已改为跳转视频号播放，这一列就是唯一判据。"
           >
-            <AssetUploader
-              endpoint="/tutorials/upload"
-              kind="video"
-              accept="video/*"
-              uploadLabel="选择视频并上传"
-              value={form.videoKey}
-              onClear={() => setForm((f) => ({ ...f, videoKey: '' }))}
-              onUploaded={(r) =>
-                setForm((f) => ({
-                  ...f,
-                  videoKey: r.videoKey ?? f.videoKey,
-                  // 服务端会自动抽首帧当封面，但**只在运营没有手选封面时**补上，不覆盖人工选择
-                  coverKey: f.coverKey || r.coverKey || '',
-                }))
-              }
+            <Input
+              value={form.feedId}
+              onChange={(v) => setForm((f) => ({ ...f, feedId: v as string }))}
+              placeholder="如 export/UzFfBgAA..."
             />
           </Field>
-          <Field label="封面" help={`选填。留空时用视频首帧；单独上传可换成更好看的图，不超过 ${MAX_COVER_MB}MB。`}>
+          <Field label="视频号 ID" help="sph 开头。只有一个视频号时可以留空，服务端会用全局默认值（env TUTORIAL_FINDER_USER_NAME）。">
+            <Input
+              value={form.finderUserName}
+              onChange={(v) => setForm((f) => ({ ...f, finderUserName: v as string }))}
+              placeholder="留空 = 用全局默认，如 sphy2kl2JBjm1Ax"
+            />
+          </Field>
+          <Field label="封面" help={`选填。列表里有封面就显示缩略图，不传则是纯文字条目（不影响点击观看）。不超过 ${MAX_COVER_MB}MB。`}>
             <AssetUploader
               endpoint="/tutorials/upload"
               kind="cover"

@@ -64,7 +64,7 @@ const MENU_GROUPS = [
       { label: '官网图片', icon: <ImageIcon />, path: '/web-site' },
       // 与「首页轮播图」同属「小程序上长什么样」这一类，所以同组相邻放
       { label: '联系我们', icon: <LogoWechatIcon />, path: '/contact' },
-      { label: '教学中心', icon: <VideoIcon />, path: '/tutorials' },
+      { label: '参考视频', icon: <VideoIcon />, path: '/tutorials' },
       // 演示账号是「限时发放的账号」，与系统设置同属配置类，放在这一组末尾
       { label: '演示账号', icon: <TimeIcon />, path: '/demo-account' },
       { label: '系统设置', icon: <SettingIcon />, path: '/settings' },

@@ -26,7 +26,8 @@ export default defineAppConfig({
     //    改动路径 = 平台登记立刻失效（提审会被驳回），所以要搬页就得同步去后台改。
     'pages/order/list',
     'pages/mine/index',
-    // 教学中心：分类课程页（?category=SHOOTING|EDITING|OPERATION|MANUAL）
+    // 参考视频：分类清单页（?category=SHOOTING|EDITING|OPERATION|MANUAL）。
+    // ⚠ 页内**没有播放器**，只跳转视频号播放 —— 原因见 pages/tutorial/index.tsx 顶部。
     'pages/tutorial/index',
     // 个人主页：换头像 + 改用户名（点头像/用户名进入）
     'pages/profile/index',

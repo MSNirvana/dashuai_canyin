@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { View, Text, Video } from '@tarojs/components'
+import { useEffect, useState } from 'react'
+import { View, Text, Image } from '@tarojs/components'
 import Taro, { useRouter } from '@tarojs/taro'
 import {
   TUTORIAL_CATEGORIES,
@@ -10,22 +10,20 @@ import {
 import { useAppShare } from '../../utils/app-share'
 import './index.scss'
 
-/** 播放器节点 id —— createVideoContext 靠它定位，改名要同步改播放/全屏两处 */
-const VIDEO_ID = 'tutorial-video'
-
-const videoCtx = () => Taro.createVideoContext(VIDEO_ID)
-
 /**
- * 教学中心 · 分类课程页（`/pages/tutorial/index?category=SHOOTING`）。
+ * 参考视频 · 分类清单页（`/pages/tutorial/index?category=SHOOTING`）。
  *
- * 布局照参考样式：顶部一块深色「舞台」放播放器（右下角一个全屏按钮），
- * 下面是白色圆角列表，点列表项**就地**切换播放，不做二次跳转。
+ * ── 这一页**没有播放器**，改过一次，别再改回去 ───────────────────────────
+ * 2026-10-22 之前这里是「顶部深色舞台放 `<Video>` + 下方点选切换」。腾讯审核按这一形态
+ * 判了「涉及提供播放、观看等服务，请补充选择：文娱-其他视频类目」（该类目要 6 选 1 资质）。
+ * 换组件没用 —— 它判的是**页面形态**；而换 `<channel-video>` 内嵌又走不通：
+ * 视频号是个人未认证（＝没有主体），与企业主体小程序属跨主体，进不了关联主体列表。
  *
- * ── 两个刻意的取舍 ───────────────────────────────────────────────────────
- * 1) 导航栏保持**白色**，只有视频区是深色。参考 App 是全站深色主题，深色导航在它那里
- *    是自然的；本工具全站是白底卡片风，单独一页换黑导航会突兀。
- * 2) 切课才自动播：`autoplay` 只在用户点过列表之后才为 true，
- *    否则一进页面就外放声音。首屏永远是「等用户按播放」。
+ * 现在这一页只是**外链目录**：列出标题，点一下用 `Taro.openChannelsActivity` 跳到视频号播放。
+ * ⚠ 三样东西要一起守住，少一样就可能又被判类目：
+ *   ① 页面里不出现 `<Video>` / `<channel-video>`（没有播放、观看能力）；
+ *   ② 文案不出现「课程 / 教程 / 教学 / 学习 / 技巧 / 知识 / 手册」；
+ *   ③ 计数用「条」不用「节」。
  */
 export default function TutorialPage() {
   const router = useRouter()
@@ -33,20 +31,17 @@ export default function TutorialPage() {
   const code = String(router.params.category ?? 'SHOOTING').toUpperCase()
   const meta = tutorialCategoryOf(code) ?? TUTORIAL_CATEGORIES[0]
 
-  // 分享：教学页和作品详情一样是**免登录可读**的，卡片可以直接指向对应分类
+  // 分享：本页免登录可读，卡片可以直接指向对应分类
   useAppShare({
     title: meta.pageTitle,
     path: `/pages/tutorial/index?category=${meta.code}`,
   })
 
   const [items, setItems] = useState<TutorialItem[]>([])
-  const [current, setCurrent] = useState<TutorialItem | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   /** 重试计数：改它就重跑下面的 effect（比在按钮里复制一遍请求干净） */
   const [reloadTick, setReloadTick] = useState(0)
-  /** 用户是否点过列表项。没点过就不 autoplay，避免一进页面就出声 */
-  const userPicked = useRef(false)
 
   useEffect(() => {
     let alive = true
@@ -54,9 +49,7 @@ export default function TutorialPage() {
     setLoadError('')
     listTutorials(meta.code)
       .then((r) => {
-        if (!alive) return
-        setItems(r.items)
-        setCurrent(r.items[0] ?? null)
+        if (alive) setItems(r.items)
       })
       .catch((e) => {
         if (alive) setLoadError((e as { message?: string })?.message ?? '加载失败，请重试')
@@ -72,74 +65,40 @@ export default function TutorialPage() {
   }, [meta.code, meta.pageTitle, reloadTick])
 
   /**
-   * 切到某一节课。
+   * 跳到视频号播放这一条。
    *
-   * ★ 为什么要 setTimeout：`setCurrent` 之后小程序才把新 src 下发给原生播放器，
-   *   同一 tick 里调 `play()` 操作的还是**上一个** src 的实例（表现是「点了没反应」）。
-   *   120ms 是给下发留的最小余量；即使这次没赶上也不影响可用性 ——
-   *   `autoplay` 已经为 true，用户还能自己按播放键。
+   * ★ 为什么不用「先 canIUse 再调」：`openChannelsActivity` 从基础库 2.19.2 起就有，
+   *   本项目 minimum 版本远高于它；真正会失败的只有「参数不对 / 视频被作者删了」，
+   *   那两种都只能走 fail 分支，预判没有意义。
+   * ★ 失败必须给提示：这个接口失败时**什么都不发生**（不像 navigateTo 会打日志），
+   *   不给 toast 的话用户只会觉得「点了没反应」。
    */
-  const playItem = (item: TutorialItem) => {
-    if (item.id === current?.id) return
-    userPicked.current = true
-    setCurrent(item)
-    setTimeout(() => {
-      try {
-        videoCtx().play()
-      } catch {
-        /* 播放器还没就绪就算了 */
-      }
-    }, 120)
-  }
-
-  const onFullscreen = () => {
-    try {
-      // direction: 0 = 正常竖向。教学视频是竖屏 9:16 的，转横屏只会更小
-      videoCtx().requestFullScreen({ direction: 0 })
-    } catch {
-      Taro.showToast({ title: '当前环境不支持全屏', icon: 'none' })
+  const openInChannels = (item: TutorialItem) => {
+    const finderUserName = item.finderUserName
+    if (!finderUserName || !item.feedId) {
+      Taro.showToast({ title: '这条还没配好，先看别的', icon: 'none' })
+      return
     }
+    // H5 / 低版本宿主上没有这个 API，直接调会 TypeError（不是 Promise rejection，catch 兜不住）
+    if (typeof Taro.openChannelsActivity !== 'function') {
+      Taro.showToast({ title: '请在微信小程序里观看', icon: 'none' })
+      return
+    }
+    Taro.openChannelsActivity({ finderUserName, feedId: item.feedId }).catch(() => {
+      Taro.showToast({ title: '打开视频号失败，请稍后再试', icon: 'none' })
+    })
   }
 
   return (
     <View className='tutorial'>
-      {/* ── 深色舞台：播放器 + 全屏 ── */}
-      <View className='tutorial__stage'>
-        {/* 单独一层定位容器：全屏按钮要相对**播放器**垂直居中，不是相对整个舞台
-            （舞台底部还有 48rpx 是留给白页签压上来的） */}
-        <View className='tutorial__videobox'>
-          {current?.videoUrl ? (
-            <Video
-              id={VIDEO_ID}
-              className='tutorial__video'
-              src={current.videoUrl}
-              poster={current.coverUrl ?? undefined}
-              controls
-              showCenterPlayBtn
-              autoplay={userPicked.current}
-              onError={() => Taro.showToast({ title: '视频加载失败，请稍后重试', icon: 'none' })}
-            />
-          ) : (
-            <View className='tutorial__placeholder'>
-              <t-icon name='film' size='64rpx' color='rgba(255, 255, 255, 0.42)' />
-              <Text className='tutorial__placeholder-text'>
-                {loading ? '加载中…' : '这节课还没有上传视频'}
-              </Text>
-            </View>
-          )}
-          <View className='tutorial__fullscreen' hoverClass='ds-hover' onClick={onFullscreen}>
-            <t-icon name='fullscreen' size='38rpx' color='#ffffff' />
-            <Text className='tutorial__fullscreen-text'>全屏</Text>
-          </View>
-        </View>
-      </View>
-
-      {/* ── 白色列表页签 ── */}
       <View className='tutorial__panel'>
         <View className='tutorial__panelhead'>
           <Text className='tutorial__paneltitle'>{meta.pageTitle}</Text>
-          {items.length > 0 && <Text className='tutorial__panelcount'>共 {items.length} 节</Text>}
+          {items.length > 0 && <Text className='tutorial__panelcount'>共 {items.length} 条</Text>}
         </View>
+
+        {/* 这句是**合规语义**的一半：明确告诉用户内容在视频号里，本页不提供播放 */}
+        <Text className='tutorial__hint'>视频都在微信视频号里，点一下过去看</Text>
 
         {loading && <View className='tutorial__tip'>加载中…</View>}
 
@@ -154,29 +113,40 @@ export default function TutorialPage() {
 
         {!loading && !loadError && items.length === 0 && (
           <View className='ds-empty'>
-            <Text className='ds-empty__text'>这个分类还没有课程，稍后再来看看</Text>
+            <Text className='ds-empty__text'>这里还没有内容，稍后再来看看</Text>
           </View>
         )}
 
         {!loading &&
           !loadError &&
-          items.map((item) => (
+          items.map((item, i) => (
             <View
               key={item.id}
-              className={`tutorial__row${item.id === current?.id ? ' is-active' : ''}`}
+              className='tutorial__row'
               hoverClass='ds-hover'
-              onClick={() => playItem(item)}
+              onClick={() => openInChannels(item)}
             >
-              <View className='tutorial__rowicon'>
-                <t-icon
-                  name={item.id === current?.id ? 'play-circle-filled' : 'play-circle'}
-                  size='36rpx'
-                  color={item.id === current?.id ? '#e1251b' : '#8e939a'}
-                />
+              <Text className='tutorial__rowindex'>{i + 1}</Text>
+              {/* 封面可有可无：有就显示缩略图（3:4 竖版），没有就整行纯文字 */}
+              {!!item.coverUrl && (
+                <Image className='tutorial__rowcover' src={item.coverUrl} mode='aspectFill' />
+              )}
+              <View className='tutorial__rowmain'>
+                <Text className='tutorial__rowtitle'>{item.title}</Text>
+                <Text className='tutorial__rowmeta'>
+                  {item.durationMs ? `${Math.round(item.durationMs / 1000)} 秒` : '微信视频号'}
+                </Text>
               </View>
-              <Text className='tutorial__rowtitle'>{item.title}</Text>
+              <View className='tutorial__rowgo'>
+                <Text className='tutorial__rowgotext'>观看</Text>
+                <t-icon name='chevron-right' size='28rpx' color='#8e939a' />
+              </View>
             </View>
           ))}
+
+        {!loading && !loadError && items.length > 0 && (
+          <Text className='tutorial__foot'>以上内容来自我们的微信视频号，更新以视频号为准</Text>
+        )}
       </View>
     </View>
   )

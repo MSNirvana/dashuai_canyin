@@ -1275,6 +1275,26 @@ const tutorialInput = z.object({
   title: z.string().min(1).max(128),
   videoKey: z.string().max(512).nullable().optional(),
   coverKey: z.string().max(512).nullable().optional(),
+  // 视频号视频标识：小程序端**唯一**的可见判据（空 ⇒ 不下发）。
+  // ★★ 真实格式是 `export/` + 一串 base64url（官方文档示例就写 `"feed_id": "export/abc"`），
+  //   所以**必须放行斜杠** —— 早期写成 `^[A-Za-z0-9_-]*$` 会把每一条真实 feedId 都判 400。
+  // 只做长度与字符集校验，不校验「这个 feedId 是否真实存在」—— 那需要调视频号接口，
+  // 而管理员本人就是从视频号助手复制来的，校验失败只会变成一道莫名其妙的保存失败。
+  feedId: z
+    .string()
+    .trim()
+    .max(128)
+    .regex(/^[A-Za-z0-9_/-]*$/, 'feedId 只应包含字母、数字、下划线、短横线与斜杠（形如 export/xxx）')
+    .nullable()
+    .optional(),
+  // 视频号 ID：必须 sph 开头（填错的话端上跳转会静默失败，用户只看到「没反应」）
+  finderUserName: z
+    .string()
+    .trim()
+    .max(64)
+    .regex(/^(sph[A-Za-z0-9_-]*)?$/, '视频号 ID 应以 sph 开头')
+    .nullable()
+    .optional(),
   durationMs: z.number().int().min(0).nullable().optional(),
   sort: z.number().int().optional(),
   enabled: z.boolean().optional(),

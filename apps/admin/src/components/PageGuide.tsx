@@ -196,12 +196,21 @@ const PAGE_GUIDES: Array<{ match: string; content: PageGuideContent }> = [
   {
     match: '/tutorials',
     content: {
-      title: '先看这里：教学中心',
-      intro: '这里发布给商家看的教程。建议标题直接写清楚“学什么、解决什么问题”。',
+      title: '先看这里：参考视频',
+      intro:
+        '这里维护小程序「我的 → 参考视频」里的条目。视频本身在微信视频号上，小程序只做「列出来 + 点一下跳过去看」，所以这里填的是 feedId，不是上传视频文件。',
       items: [
         { term: '已上架 / 已下架', description: '上架后用户才能在小程序里看到。' },
-        { term: '分类', description: '拍摄、剪辑、运营或使用手册，方便用户筛选。' },
-        { term: '封面和视频', description: '封面负责让人想点开，视频负责讲清楚。' },
+        { term: '分类', description: '怎么拍 / 怎么剪 / 怎么发 / 怎么用，对应小程序里的四个入口。' },
+        {
+          term: '视频号 feedId',
+          description:
+            '★ 必填，也是「这条露不露脸」的唯一判据。在视频号助手（channels.weixin.qq.com）→「动态管理」里复制，形如 export/xxxx。为空则小程序端不显示这一条。',
+        },
+        {
+          term: '视频号 ID',
+          description: 'sph 开头。只有一个视频号时留空，用全局默认值即可。',
+        },
       ],
     },
   },

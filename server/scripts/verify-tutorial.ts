@@ -172,6 +172,11 @@ async function main() {
   const schemaSrc = readSrc('../prisma/schema.prisma')
   check(/videoKey\s+String\?[^\n]*@map\("video_key"\)/.test(schemaSrc), 'schema：videoKey → video_key')
   check(/coverKey\s+String\?[^\n]*@map\("cover_key"\)/.test(schemaSrc), 'schema：coverKey → cover_key')
+  check(/feedId\s+String\?[^\n]*@map\("feed_id"\)/.test(schemaSrc), 'schema：feedId → feed_id（2026-10-22 新增）')
+  check(
+    /finderUserName\s+String\?[^\n]*@map\("finder_user_name"\)/.test(schemaSrc),
+    'schema：finderUserName → finder_user_name（2026-10-22 新增）',
+  )
   check(/@@map\("tutorial_video"\)/.test(schemaSrc), 'schema：表名 tutorial_video')
 
   // ─────────────── ⑤ 上传往返（真实写对象） ───────────────
@@ -208,6 +213,9 @@ async function main() {
       title: '【契约验证】临时课程',
       videoKey: up.videoKey,
       coverKey: cover.coverKey,
+      // ★ 2026-10-22 起「能不能给用户看」的判据是 feedId，不是 videoKey：
+      //   不填这一列，下面 `listByCategory` 根本不会返回这一行（这是刻意的，见服务里的注释）
+      feedId: '1verify00000000000000000',
       sort: 9999,
     })
     createdIds.push(row.id)
@@ -227,6 +235,29 @@ async function main() {
     check(!!mine?.videoUrl, '视频播放地址现签成功（非 null）')
     check(!!mine?.coverUrl, '封面地址现签成功（非 null）')
     check((mine?.videoUrl ?? '').includes('tutorials'), '签出来的地址指向 tutorials/ 对象')
+    check(mine?.feedId === '1verify00000000000000000', 'feedId 原样下发（端上靠它跳视频号）')
+
+    // ★ 2026-10-22 的核心口径：**没有 feedId 就不下发**。
+    //   症状是「点观看没反应」，不会报错，所以必须在这里钉住。
+    await prisma.tutorialVideo.update({ where: { id: row.id }, data: { feedId: null } })
+    const noFeed = await listByCategory(prisma, 'SHOOTING')
+    check(
+      !noFeed.some((i) => i.id === row.id.toString()),
+      '★ feedId 为空时不下发（端点不动，不是空列表）',
+    )
+    const statsNoFeed = await listCategoryStats(prisma)
+    const shootingNoFeed = statsNoFeed.find((s) => s.code === 'SHOOTING')?.count ?? -1
+    check(
+      shootingNoFeed === noFeed.filter((i) => i.category === 'SHOOTING').length,
+      '★ 计数与列表同一口径（feedId 为空后两边一起减）',
+      `计数 ${shootingNoFeed} / 列表 ${noFeed.filter((i) => i.category === 'SHOOTING').length}`,
+    )
+    await prisma.tutorialVideo.update({
+      where: { id: row.id },
+      data: { feedId: '1verify00000000000000000' },
+    })
+    const backAgain = await listByCategory(prisma, 'SHOOTING')
+    check(!!backAgain.find((i) => i.id === row.id.toString()), '补回 feedId 后又出现（闸门没把正常路径挡住）')
 
     const stats = await listCategoryStats(prisma)
     check(stats.length === 4, '分类概览返回 4 项')
@@ -286,6 +317,18 @@ async function main() {
     const adminSrc = readSrc('../src/routes/admin.ts')
     check(/fileSize: tutorialSvc\.MAX_TUTORIAL_VIDEO_BYTES/.test(adminSrc), 'multer 的 limits 用的是同一个常量（不是另写一个数字）')
     check(/id: 'file'|\.single\('file'\)/.test(adminSrc), '上传字段名固定为 file')
+    // ★ 真实 feedId 的格式是 `export/` + base64url（官方文档示例就写 `"feed_id": "export/abc"`）。
+    //   校验规则里少一个斜杠 ⇒ **每一条真实 feedId 都被判 400**，而这条链上其它断言全绿。
+    const feedIdRule = adminSrc.slice(
+      adminSrc.indexOf('feedId: z'),
+      adminSrc.indexOf('finderUserName: z'),
+    )
+    check(feedIdRule.length > 0, '能在 admin.ts 找到 feedId 的校验规则')
+    check(
+      /regex\(/.test(feedIdRule) && feedIdRule.includes('/'),
+      '★ feedId 校验放行斜杠（export/xxx）',
+      '写成纯字母数字会把每一条真实 feedId 判 400「参数错误」',
+    )
     // ★ 跨包断言：nginx 的 client_max_body_size 必须与「不限大小」一致。
     //   这是本次改动里**唯一本地测不出来**的一层（vite 直连 3000、不过 nginx）——
     //   漏掉它的症状是「代码与前端都放开了，上线仍然 413」，而本地全绿。

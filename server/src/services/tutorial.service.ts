@@ -76,9 +76,13 @@ export interface TutorialListItem {
   category: string
   title: string
   durationMs: number | null
-  /** 现签播放地址（本地模式与私有桶都只有 1h） */
+  /** 现签播放地址（本地模式与私有桶都只有 1h）。**小程序端已不再用它播放**，留给后台预览与回退 */
   videoUrl: string | null
   coverUrl: string | null
+  /** 视频号视频标识 —— 小程序端拿它调 `wx.openChannelsActivity` 跳转播放 */
+  feedId: string
+  /** 视频号 ID（`sph` 开头）。行上没填时已由服务端用 env 兜底；仍为 null ⇒ 客户端不给「观看」入口 */
+  finderUserName: string | null
 }
 
 export interface TutorialCategoryStat {
@@ -226,14 +230,42 @@ async function signTutorialUrl(key: string | null, baseUrl?: string): Promise<st
   }
 }
 
-/** 四个分类各自有多少节课（给「我的」页那个四宫格用） */
+/**
+ * 全局默认视频号 ID。
+ *
+ * 本项目只有一个（自己的）视频号，后台逐行填 `sph…` 是纯重复劳动；留空即用这个值。
+ * ★ 走 `process.env` 直读、不进 lib/config.ts —— 与项目里其它运营侧开关同一口径，
+ *   改值只需要改 `.env` 并重启，不涉及编译期常量。
+ */
+const DEFAULT_FINDER_USER_NAME = (process.env.TUTORIAL_FINDER_USER_NAME ?? '').trim()
+
+/** 这一行到底能不能给用户看：**feedId 非空**才算（空串/纯空白等同没有） */
+function hasPlayableVideo(row: { feedId: string | null }): boolean {
+  return !!row.feedId && !!row.feedId.trim()
+}
+
+/**
+ * 四个分类各自有多少条**可看的**内容（给「我的」页那个分组列表用）。
+ *
+ * ★★ 2026-10-21：只数**真的配了 feedId 的行**——
+ *   小程序按这个数决定「这个分类露不露脸」：数为 0 ⇒ 整个分类入口隐藏，
+ *   四个都为 0 ⇒ 「我的」页连分组标题一起隐藏。
+ * ★★ 2026-10-22：判据从 `videoKey` 换成 `feedId`（页面已改为跳转视频号播放，
+ *   上传的视频文件不再是小程序端的播放来源）。`videoKey` 在库里保留，
+ *   但**不再参与任何可见性判断** —— 别再把它加回来。
+ * ★ 仍然**四个分类全量返回**（count 可能是 0）：过滤交给客户端，
+ *   这样同一个接口既能驱动「隐藏」也能驱动「显示」，不需要第二个 "hasAny" 字段。
+ */
 export async function listCategoryStats(prisma: PrismaClient): Promise<TutorialCategoryStat[]> {
-  const grouped = await prisma.tutorialVideo.groupBy({
-    by: ['category'],
+  const rows = await prisma.tutorialVideo.findMany({
     where: { enabled: true },
-    _count: { _all: true },
+    select: { category: true, feedId: true },
   })
-  const countOf = new Map(grouped.map((g) => [g.category, g._count._all]))
+  const countOf = new Map<string, number>()
+  for (const row of rows) {
+    if (!hasPlayableVideo(row)) continue
+    countOf.set(row.category, (countOf.get(row.category) ?? 0) + 1)
+  }
   // 顺序与分类白名单一致，客户端拿到即可直接渲染
   return TUTORIAL_CATEGORY_CODES.map((code) => ({
     code,
@@ -242,28 +274,44 @@ export async function listCategoryStats(prisma: PrismaClient): Promise<TutorialC
   }))
 }
 
-/** 某个分类下的课程列表（sort 升序，同 sort 新→旧） */
+/** 某个分类下的内容列表（sort 升序，同 sort 新→旧） */
 export async function listByCategory(
   prisma: PrismaClient,
   category: string,
   baseUrl?: string,
 ): Promise<TutorialListItem[]> {
   const rows = await prisma.tutorialVideo.findMany({
-    where: { category, enabled: true },
+    // ★ 与 `listCategoryStats` **同一口径**：没配 feedId 的行不下发。
+    //   两处口径必须一致，否则会出现「入口写着 3 条、点进去 4 条其中 1 条点不动」。
+    where: { category, enabled: true, feedId: { not: null } },
     orderBy: [{ sort: 'asc' }, { id: 'desc' }],
-    // 分类页是「一次拉完 + 本地切换播放」的形态，不做分页；这里只加个防呆上限
     take: 200,
-    select: { id: true, category: true, title: true, durationMs: true, videoKey: true, coverKey: true },
+    select: {
+      id: true,
+      category: true,
+      title: true,
+      durationMs: true,
+      videoKey: true,
+      coverKey: true,
+      feedId: true,
+      finderUserName: true,
+    },
   })
   return Promise.all(
-    rows.map(async (r) => ({
-      id: r.id.toString(),
-      category: r.category,
-      title: r.title,
-      durationMs: r.durationMs,
-      videoUrl: await signTutorialUrl(r.videoKey, baseUrl),
-      coverUrl: await signTutorialUrl(r.coverKey, baseUrl),
-    })),
+    rows
+      // 空串（手改库的脏值）在 where 里挡不住，在这里补一刀 —— 计数那边也是这么判的
+      .filter(hasPlayableVideo)
+      .map(async (r) => ({
+        id: r.id.toString(),
+        category: r.category,
+        title: r.title,
+        durationMs: r.durationMs,
+        videoUrl: await signTutorialUrl(r.videoKey, baseUrl),
+        coverUrl: await signTutorialUrl(r.coverKey, baseUrl),
+        feedId: (r.feedId ?? '').trim(),
+        // 行上没填就吃 env 默认值；两边都空 ⇒ 客户端会隐藏「观看」按钮（不给出点不动的入口）
+        finderUserName: (r.finderUserName ?? '').trim() || DEFAULT_FINDER_USER_NAME || null,
+      })),
   )
 }
 
@@ -274,6 +322,10 @@ export interface TutorialInput {
   title: string
   videoKey?: string | null
   coverKey?: string | null
+  /** 视频号视频标识。**这是小程序端能不能看这条的唯一判据**（空 ⇒ 不下发） */
+  feedId?: string | null
+  /** 视频号 ID；留空表示用 env `TUTORIAL_FINDER_USER_NAME` */
+  finderUserName?: string | null
   durationMs?: number | null
   sort?: number
   enabled?: boolean
@@ -299,6 +351,8 @@ export async function adminListTutorials(
       title: true,
       videoKey: true,
       coverKey: true,
+      feedId: true,
+      finderUserName: true,
       durationMs: true,
       sort: true,
       enabled: true,
@@ -314,6 +368,9 @@ export async function adminUpsertTutorial(prisma: PrismaClient, id: bigint | und
     title: input.title,
     videoKey: input.videoKey ?? null,
     coverKey: input.coverKey ?? null,
+    // 空串归一成 null：判据是「trim 后非空」，存空串只会让两处判断各错一次
+    feedId: input.feedId?.trim() || null,
+    finderUserName: input.finderUserName?.trim() || null,
     durationMs: input.durationMs ?? null,
     sort: input.sort ?? 0,
     enabled: input.enabled ?? true,

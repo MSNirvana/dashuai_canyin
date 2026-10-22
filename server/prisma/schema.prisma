@@ -410,6 +410,16 @@ model TutorialVideo {
   title      String   @db.VarChar(128)
   videoKey   String?  @map("video_key") @db.VarChar(512)
   coverKey   String?  @map("cover_key") @db.VarChar(512)
+  // ── 视频号引用（2026-10-22 起小程序改为**跳转视频号播放**，不再内嵌 <Video>）──
+  // 为什么要跳转而不是内嵌：本项目视频号是**个人未认证**＝没有主体，与企业主体小程序属跨主体，
+  // `channel-video` 内嵌要求「绑定开放平台 + 同/关联主体 + 关联主体列表含视频号主体」，
+  // 个人视频号进不了企业关联主体列表 ⇒ 组件这条路在视频号侧就断了。
+  // `wx.openChannelsActivity` 官方口径是「无主体要求」，只有它走得通。
+  // ★ feedId 是**可见性判据**：这一列为空 ⇒ 这条内容不下发（不再是 videoKey）。
+  //   视频号后台「动态管理」里每条视频可以复制 feedId；自己名下的视频号不需要 feed-token。
+  feedId         String? @map("feed_id") @db.VarChar(128)
+  // 留空 ⇒ 服务端用 env `TUTORIAL_FINDER_USER_NAME` 兜底（只有一个视频号时不必逐行填）
+  finderUserName String? @map("finder_user_name") @db.VarChar(64)
   // 由客户端上报（管理员无法从文件里读到时长），只用于列表右侧的「03:12」展示
   durationMs Int?     @map("duration_ms") @db.UnsignedInt
   sort       Int      @default(0)

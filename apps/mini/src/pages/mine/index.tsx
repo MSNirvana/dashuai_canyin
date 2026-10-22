@@ -114,12 +114,19 @@ export default function Mine() {
     //   这一块必须是好的。同样是「单独发、单独吞错」，不并进页面的 Promise.all。
     //   （getContactInfo 自身失败即返回 null，这里的 catch 只是兜住「它意外抛了」）
     void getContactInfo().then(setContact).catch(() => undefined)
+    /**
+     * ★★ 2026-10-22：「条数」决定「参考视频」这一组露不露脸
+     *   （0 条的分类隐藏、四个都 0 则整块隐藏，见 `visibleTutorials`）。因此：
+     *   · 挪到 `if (currentToken)` **外面**：`/tutorials` 本来就是免登录可读
+     *     （放开它的理由见 server/src/routes/tutorials.ts 那段 ★ —— 按 401 处理会触发
+     *     「导航被 switchTab 顶掉」的连锁故障）。未登录时同样要判，否则未登录用户永远看不到。
+     *   · 仍然**单独发、单独吞错**：这个接口一慢，不该让整页「加载中…」跟着等。
+     *   · 失败时**保留上一次的数值**（catch 里不清空）⇒ 网络抖一下不会让整块忽隐忽现。
+     */
+    void listTutorialStats()
+      .then((r) => setTutorialCounts(Object.fromEntries(r.categories.map((c) => [c.code, c.count]))))
+      .catch(() => undefined)
     if (currentToken) {
-      // 学习中心的课程数是**锦上添花**：单独发、单独吞错，绝不并进下面的 Promise.all
-      // ——否则教学接口一慢，整页「加载中…」跟着一起等。
-      void listTutorialStats()
-        .then((r) => setTutorialCounts(Object.fromEntries(r.categories.map((c) => [c.code, c.count]))))
-        .catch(() => undefined)
       Promise.all([
         refreshMe(),
         // 昵称与头像不在 /orders/me 里，必须单独拉一次；失败不能连累整页（头像空着也能用）
@@ -424,6 +431,20 @@ export default function Mine() {
   const quotaNum = Number(storageQuota)
   const usedNum = Number(storageUsed)
   const pct = quotaNum > 0 ? Math.min(100, Math.round((usedNum / quotaNum) * 100)) : 0
+  /**
+   * 「参考视频」里**真正露脸**的分类：只有配了 feedId 的才留。
+   *
+   * ★★ 2026-10-21 用户口径：`如果后台对应的每个模块没有上传视频，则隐藏对应模块，
+   *   如果所有模块都没有上传视频，那把整个学习中心都隐藏`。
+   *   ⇒ 判据只有一个：这个分类有几条**能看的**内容（服务端只数 `feedId` 非空的行）。
+   * ★★ 2026-10-22 判据从「传了视频」换成「配了 feedId」——页面已改为跳转视频号播放，
+   *   上传的文件不再是小程序端的播放来源（详见 services/tutorial.ts 文件头）。
+   * ★ 数量拿不到（接口挂了 / 还没回来）时这里是空数组 ⇒ 整块不显示。
+   *   **fail-closed 是刻意的**：宁可这次不显示，也不要给一个点进去就「暂无课程」的入口 ——
+   *   后者更像"坏了"。下次进「我的」页（useDidShow）会重新拉一次。
+   * ★ 不缓存到 storage：视频一上架，下次进页面就该看见，不该等缓存过期。
+   */
+  const visibleTutorials = TUTORIAL_CATEGORIES.filter((c) => (tutorialCounts[c.code] ?? 0) > 0)
 
   return (
     <View className='mine'>
@@ -520,9 +541,6 @@ export default function Mine() {
         </View>
       </View>
 
-      {/* ── 学习中心：分组列表（原「我的资料」的 iOS 列表样式）──
-          图标与文案来自 services/tutorial.ts 的本地常量：教学接口挂了这一块也要照常显示；
-          节数拿不到时只是少一个小字，不影响进入。 */}
       {/* 交易分组：我的订单。
           这一行不只是「给用户看流水」—— 微信 2022-12-31 公告要求有「选购 → 下单 → 支付」
           闭环的小程序必须设置订单中心页（path = pages/order/list）；同时隐私政策里写着
@@ -537,24 +555,33 @@ export default function Mine() {
         </View>
       </View>
 
-      <View className='ds-label'>学习中心</View>
-      <View className='mine__menu'>
-        {TUTORIAL_CATEGORIES.map((c) => (
-          <View
-            key={c.code}
-            className='mine__item'
-            hoverClass='ds-hover'
-            onClick={() => go(`/pages/tutorial/index?category=${c.code}`)}
-          >
-            <View className='mine__item-icon'><t-icon name={c.icon} size='32rpx' /></View>
-            <View className='mine__item-copy'><Text className='mine__item-title'>{c.label}</Text></View>
-            {tutorialCounts[c.code] > 0 && (
-              <Text className='mine__learn-count'>{tutorialCounts[c.code]} 节</Text>
-            )}
-            <Text className='mine__arrow'>›</Text>
+      {/* ── 参考视频：分组列表 ──
+          ★ 2026-10-22 从「学习中心」改名 —— 那个词会把入口指向「课程」，审核侧容易被判
+            教育/在线视频课程类目（见 pages/tutorial/index.tsx 顶部）。
+          ★ 图标与文案来自 services/tutorial.ts 的本地常量（接口挂了也能渲染），
+            **但露不露脸完全由后台有没有配 feedId 决定**（见上面 visibleTutorials）：
+            · 某个分类 0 条 ⇒ 那一行不出现；
+            · 四个分类全都 0 条 ⇒ 连这个分组标题一起隐藏（用户看不到一个空分组）。 */}
+      {visibleTutorials.length > 0 && (
+        <>
+          <View className='ds-label'>参考视频</View>
+          <View className='mine__menu'>
+            {visibleTutorials.map((c) => (
+              <View
+                key={c.code}
+                className='mine__item'
+                hoverClass='ds-hover'
+                onClick={() => go(`/pages/tutorial/index?category=${c.code}`)}
+              >
+                <View className='mine__item-icon'><t-icon name={c.icon} size='32rpx' /></View>
+                <View className='mine__item-copy'><Text className='mine__item-title'>{c.label}</Text></View>
+                <Text className='mine__learn-count'>{tutorialCounts[c.code]} 条</Text>
+                <Text className='mine__arrow'>›</Text>
+              </View>
+            ))}
           </View>
-        ))}
-      </View>
+        </>
+      )}
       {/* ── 更多服务：分组列表里的「联系我们」一行（点一下原地展开）──
           ★ 2026-09-29 改版（需求原话：「联系我们文字改成其他，然后在下面放一行选项，
             跟上面学习中心一样，文字是联系我们，然后把现在这个联系我们这个模块放进去，不要放外面」）
