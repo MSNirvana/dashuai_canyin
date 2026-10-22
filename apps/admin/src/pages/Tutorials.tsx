@@ -29,7 +29,18 @@ const CATEGORIES = [
   { label: '怎么用', value: 'MANUAL' },
 ]
 
-const categoryLabel = (code: string) => CATEGORIES.find((c) => c.value === code)?.label ?? code
+/**
+ * 分类名：**后台可改**（2026-10-22），存在系统设置 `tutorial.category_titles`。
+ * 上面那张 CATEGORIES 只是兜底 —— 改名字以接口返回的 titles 为准，
+ * 所以表格与下拉都用 `labelOf`，别直接读 CATEGORIES。
+ */
+type TitleMap = Record<string, string>
+
+const labelOf = (titles: TitleMap, code: string) =>
+  titles[code] || CATEGORIES.find((c) => c.value === code)?.label || code
+
+/** 与 server 的 TUTORIAL_TITLE_BANNED_WORDS 同一批词 */
+const BANNED_TITLE_WORDS = ['课程', '教程', '教学', '学习', '技巧', '知识', '手册']
 
 /**
  * ⚠ 封面这两个数字必须同值，改一个就要改全部：
@@ -102,6 +113,60 @@ export default function TutorialsPage() {
   const [saving, setSaving] = useState(false)
   const [preview, setPreview] = useState<{ url: string; kind: 'image' | 'video' } | null>(null)
 
+  /**
+   * 四个分类的**显示名**（运营可改）。
+   * ★ 为什么要加这个：小程序「我的」页那四行、分类页的导航标题、分享卡片标题，
+   *   全部读这里。改名字不需要重新发版、也不需要重新提审。
+   * ★ 与列表分开发：列表可以按分类筛，名字是全量四份，不该跟着筛选条件反复拉。
+   */
+  // 初值用本地兜底填满 —— 接口没回来（或挂了）时输入框也是可读的四个默认名，
+  // 不会出现「一片空白 + 一保存就报不能留空」
+  const [titles, setTitles] = useState<TitleMap>(
+    Object.fromEntries(CATEGORIES.map((c) => [c.value, c.label])),
+  )
+  const [titlesSaving, setTitlesSaving] = useState(false)
+
+  const loadTitles = async () => {
+    try {
+      const r = await request<{ titles: TitleMap }>({ url: '/tutorials/categories' })
+      setTitles(r.titles)
+    } catch {
+      /* 已在 request 层 toast；名字拿不到就退回 CATEGORIES 兜底，不挡页面 */
+    }
+  }
+
+  const saveTitles = async () => {
+    // ★ 前端这道只是省一次往返；**真正的闸门在服务端**（routes/admin.ts 的 findBannedTitleWord），
+    //   因为直接调接口/粘贴进来的词，界面上拦不住。
+    for (const c of CATEGORIES) {
+      const v = (titles[c.value] ?? '').trim()
+      if (!v) {
+        message.error(`「${c.label}」不能留空`)
+        return
+      }
+      const hit = BANNED_TITLE_WORDS.find((w) => v.includes(w))
+      if (hit) {
+        message.error(`「${v}」里不能出现「${hit}」——这类词会把小程序指向「在线课程」类目`)
+        return
+      }
+    }
+    setTitlesSaving(true)
+    try {
+      const payload = Object.fromEntries(CATEGORIES.map((c) => [c.value, (titles[c.value] ?? '').trim()]))
+      const r = await request<{ titles: TitleMap }>({
+        url: '/tutorials/categories',
+        method: 'PUT',
+        data: { titles: payload },
+      })
+      setTitles(r.titles)
+      message.success('分类名称已保存，小程序下次进页面即生效')
+    } catch {
+      /* 已在 request 层 toast */
+    } finally {
+      setTitlesSaving(false)
+    }
+  }
+
   const load = async () => {
     setLoading(true)
     try {
@@ -123,6 +188,11 @@ export default function TutorialsPage() {
     void load()
     // 依赖筛选条件：改动即重新拉取
   }, [filterCategory, filterEnabled])
+
+  useEffect(() => {
+    void loadTitles()
+    // 只在进页面时拉一次：名字与筛选条件无关
+  }, [])
 
   const startCreate = () => {
     setEditing(null)
@@ -217,13 +287,59 @@ export default function TutorialsPage() {
         </Button>
       </div>
 
+      {/* ── 分类名称（运营可改）──────────────────────────────────────────
+          改这里 = 改小程序「我的 → 参考视频」那四行、分类页导航标题、分享卡片标题。
+          ★ 存服务端（系统设置），**不需要重新发版、也不需要重新提审**。
+          ★ 禁词的三处防线：这里只是提示；真正拦住的是服务端 400；
+            守护脚本 verify-tutorial-visibility 再钉一层（防止有人把服务端那道删了）。 */}
+      <div
+        style={{
+          border: '1px solid #e7e7e7',
+          borderRadius: 8,
+          padding: '12px 16px 14px',
+          marginBottom: 16,
+          background: '#fafafa',
+        }}
+      >
+        <div style={{ marginBottom: 10 }}>
+          <strong style={{ marginRight: 10 }}>分类名称</strong>
+          <span style={{ color: '#999', fontSize: 13 }}>
+            小程序「我的 → 参考视频」那四行、以及分类页标题都用这里的名字
+          </span>
+        </div>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          {CATEGORIES.map((c) => (
+            <div key={c.value} style={{ width: 168 }}>
+              <div style={{ fontSize: 13, color: '#666', marginBottom: 4 }}>
+                {c.label} <span style={{ color: '#bbb', fontSize: 12 }}>({c.value})</span>
+              </div>
+              <Input
+                value={titles[c.value] ?? ''}
+                maxlength={8}
+                placeholder={c.label}
+                onChange={(v) => setTitles({ ...titles, [c.value]: String(v) })}
+              />
+            </div>
+          ))}
+          <Button variant="outline" loading={titlesSaving} onClick={saveTitles}>
+            保存名称
+          </Button>
+        </div>
+        <div style={{ color: '#999', fontSize: 12, marginTop: 8 }}>
+          最多 8 个字；不能出现「课程／教程／教学／学习／技巧／知识／手册」——这几个词会把小程序指向「在线课程」类目。
+        </div>
+      </div>
+
       <div style={{ display: 'flex', gap: 12, marginBottom: 16, alignItems: 'center' }}>
         <span style={{ color: '#666', fontSize: 14 }}>筛选</span>
         <Select
           style={{ width: 160 }}
           value={filterCategory}
           onChange={(v) => setFilterCategory(v as string)}
-          options={[{ label: '全部分类', value: '' }, ...CATEGORIES]}
+          options={[
+            { label: '全部分类', value: '' },
+            ...CATEGORIES.map((c) => ({ label: labelOf(titles, c.value), value: c.value })),
+          ]}
         />
         <Select
           style={{ width: 140 }}
@@ -245,7 +361,7 @@ export default function TutorialsPage() {
         loading={loading}
         data={list}
         columns={[
-          { colKey: 'category', title: '分类', width: 110, render: ({ row }: any) => <Tag>{categoryLabel(row.category)}</Tag> },
+          { colKey: 'category', title: '分类', width: 110, render: ({ row }: any) => <Tag>{labelOf(titles, row.category)}</Tag> },
           { colKey: 'title', title: '课程标题', ellipsis: true },
           {
             colKey: 'feedId',
@@ -314,7 +430,7 @@ export default function TutorialsPage() {
             <Select
               value={form.category}
               onChange={(v) => setForm((f) => ({ ...f, category: v as string }))}
-              options={CATEGORIES}
+              options={CATEGORIES.map((c) => ({ label: labelOf(titles, c.value), value: c.value }))}
             />
           </Field>
           <Field label="标题" required>

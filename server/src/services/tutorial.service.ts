@@ -23,7 +23,12 @@ import {
 import { deleteObject, uploadFile } from '../lib/cos.js'
 import { detectVideoType, readFileHead } from '../lib/media-type.js'
 import { generateVideoCover } from '../lib/thumbnail.js'
-import { TUTORIAL_CATEGORY_CODES, type TutorialCategoryCode } from '../lib/tutorial-categories.js'
+import {
+  TUTORIAL_CATEGORY_CODES,
+  MAX_CATEGORY_TITLE_LEN,
+  type TutorialCategoryCode,
+} from '../lib/tutorial-categories.js'
+import { getString, invalidate } from '../lib/settings.js'
 import { getSharedPlayUrlByKey } from './media.service.js'
 import { detectImageType } from './profile.service.js'
 
@@ -64,18 +69,89 @@ export const MAX_TUTORIAL_VIDEO_BYTES = Number.POSITIVE_INFINITY
 export const MAX_TUTORIAL_COVER_BYTES = 5 * 1024 * 1024
 
 /**
- * 客户端的兜底文案：正常情况下客户端用自己的本地文案（离线也要能渲染），这里只在它没传时才用。
+ * 兜底文案：系统设置里没配（或配的脏了）时用这套。
  *
  * ★★ 2026-10-22 跟随改名：原来叫「拍摄技巧 / 剪辑教程 / 运营知识 / 使用手册」。
  *   这几个词（技巧/教程/知识/手册）正是把小程序往「教育服务·在线视频课程」上带的词，
  *   而 `/api/v1/tutorials` 是**免登录可读**的 —— 标题留在响应体里，改名的意义就打了折。
  *   注意只换**文案**，`code` 仍是 SHOOTING/EDITING/OPERATION/MANUAL（标识符不动）。
+ * ★★ 2026-10-22 起这套只是**兜底**：运营可以在后台改分类名（存在系统设置里），
+ *   读的地方一律走 getCategoryTitles()，不要直接引用这个常量。
  */
 const FALLBACK_TITLES: Record<TutorialCategoryCode, string> = {
   SHOOTING: '怎么拍',
   EDITING: '怎么剪',
   OPERATION: '怎么发',
   MANUAL: '怎么用',
+}
+
+/** 分类名存在系统设置的这条记录下（groupKey.settingKey） */
+export const TUTORIAL_SETTING_GROUP = 'tutorial'
+export const TUTORIAL_TITLE_KEY = 'category_titles'
+
+/**
+ * 四个分类的**当前名称**（自定义值 + 兜底合并后的完整结果）。
+ *
+ * ★ 为什么返回「完整四份」而不是「只返回改过的」：调用方到处都要 `titles[code]`，
+ *   让他自己兜底就等于把兜底逻辑复制到三处，迟早漂移。
+ * ★ 脏值（手改库、JSON 写坏、值类型不对）一律**退回兜底并继续**，绝不抛错 ——
+ *   这个接口是免登录的首页/我的页数据源，一个坏配置不该把整页打成 500。
+ */
+export async function getCategoryTitles(prisma: PrismaClient): Promise<Record<TutorialCategoryCode, string>> {
+  const merged: Record<TutorialCategoryCode, string> = { ...FALLBACK_TITLES }
+  const raw = await getString(prisma, TUTORIAL_SETTING_GROUP, TUTORIAL_TITLE_KEY, '')
+  if (!raw) return merged
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object') return merged
+    for (const code of TUTORIAL_CATEGORY_CODES) {
+      const v = (parsed as Record<string, unknown>)[code]
+      if (typeof v === 'string' && v.trim()) merged[code] = v.trim().slice(0, MAX_CATEGORY_TITLE_LEN)
+    }
+  } catch {
+    console.warn('[tutorials] 分类名称是脏 JSON，已退回兜底文案:', raw.slice(0, 120))
+  }
+  return merged
+}
+
+/**
+ * 保存分类名（后台用）。只写**改过的键**（与兜底相同的就不写），
+ * 这样以后调整兜底文案时，没被运营动过的分类会自动跟着变。
+ *
+ * ⚠ 禁词校验不在这里做：放在路由层（admin.ts），因为那是「请求参数合法性」的一部分，
+ *   而本函数是纯数据写入。两处都要改的时候，判据在 routes/admin.ts 的
+ *   `findBannedTitleWord` 调用点。
+ */
+export async function saveCategoryTitles(
+  prisma: PrismaClient,
+  input: Partial<Record<TutorialCategoryCode, string>>,
+): Promise<Record<TutorialCategoryCode, string>> {
+  const current = await getCategoryTitles(prisma)
+  const next: Record<string, string> = {}
+  for (const code of TUTORIAL_CATEGORY_CODES) {
+    const v = (input[code] ?? current[code]).trim()
+    // 与兜底一致的键不落库 —— 少一条记录就少一个「以后改兜底却改不动」的坑
+    if (v && v !== FALLBACK_TITLES[code]) next[code] = v
+  }
+  const payload = Object.keys(next).length ? JSON.stringify(next) : ''
+  await prisma.systemSetting.upsert({
+    where: { groupKey_settingKey: { groupKey: TUTORIAL_SETTING_GROUP, settingKey: TUTORIAL_TITLE_KEY } },
+    create: {
+      groupKey: TUTORIAL_SETTING_GROUP,
+      settingKey: TUTORIAL_TITLE_KEY,
+      settingVal: payload,
+      // displayName 是**必填**（后台「系统设置」列表要有个名字），别按可选字段写
+      displayName: '参考视频 · 分类名称',
+      description:
+        '四个分类的名称（JSON，形如 {"SHOOTING":"怎么拍"}）。与代码兜底一致的键不落库；' +
+        '名称里不许出现课程/教程/教学/学习/技巧/知识/手册。一般不用手改这里，去「参考视频」页顶部改。',
+      valueType: 'JSON',
+    },
+    update: { settingVal: payload },
+  })
+  // 本进程缓存必须立刻失效，否则后台改完、小程序 60s 内还看到旧名字
+  invalidate(TUTORIAL_SETTING_GROUP, TUTORIAL_TITLE_KEY)
+  return getCategoryTitles(prisma)
 }
 
 export interface TutorialListItem {
@@ -264,10 +340,14 @@ function hasPlayableVideo(row: { feedId: string | null }): boolean {
  *   这样同一个接口既能驱动「隐藏」也能驱动「显示」，不需要第二个 "hasAny" 字段。
  */
 export async function listCategoryStats(prisma: PrismaClient): Promise<TutorialCategoryStat[]> {
-  const rows = await prisma.tutorialVideo.findMany({
-    where: { enabled: true },
-    select: { category: true, feedId: true },
-  })
+  // 名称与计数**并发取**：两者互不依赖，串起来等于让首页多等一次设置表查询
+  const [rows, titles] = await Promise.all([
+    prisma.tutorialVideo.findMany({
+      where: { enabled: true },
+      select: { category: true, feedId: true },
+    }),
+    getCategoryTitles(prisma),
+  ])
   const countOf = new Map<string, number>()
   for (const row of rows) {
     if (!hasPlayableVideo(row)) continue
@@ -276,7 +356,7 @@ export async function listCategoryStats(prisma: PrismaClient): Promise<TutorialC
   // 顺序与分类白名单一致，客户端拿到即可直接渲染
   return TUTORIAL_CATEGORY_CODES.map((code) => ({
     code,
-    title: FALLBACK_TITLES[code],
+    title: titles[code],
     count: countOf.get(code) ?? 0,
   }))
 }

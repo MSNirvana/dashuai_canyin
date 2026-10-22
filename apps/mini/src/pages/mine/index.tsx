@@ -56,8 +56,15 @@ export default function Mine() {
   const [submitting, setSubmitting] = useState(false)
   const [devMode, setDevMode] = useState(false)
   const [reminders, setReminders] = useState<MembershipReminder[]>([])
-  /** 学习中心每个分类的课程数（code → 节数）。拿不到就是空对象，四宫格照常渲染 */
+  /** 参考视频每个分类的内容数（code → 条数）。拿不到就是空对象，整块隐藏 */
   const [tutorialCounts, setTutorialCounts] = useState<Record<string, number>>({})
+  /**
+   * 分类名（code → 后台配的名字）。
+   * ★ 2026-10-22：名称改由运营在后台改、接口下发；本地常量只在接口没回来时兜底
+   *   ⇒ 运营改个名字不需要重新发版，也不需要重新提审。
+   * ★ 与 tutorialCounts 同一次请求带回，不额外发请求。
+   */
+  const [tutorialTitles, setTutorialTitles] = useState<Record<string, string>>({})
   /**
    * 「联系我们」的二维码与客服电话（运营在后台配）。
    * ★ null = 不渲染整块（接口挂了 / 运营还没配 / 值不是合法 JSON 都归到这里）。
@@ -124,7 +131,15 @@ export default function Mine() {
      *   · 失败时**保留上一次的数值**（catch 里不清空）⇒ 网络抖一下不会让整块忽隐忽现。
      */
     void listTutorialStats()
-      .then((r) => setTutorialCounts(Object.fromEntries(r.categories.map((c) => [c.code, c.count]))))
+      .then((r) => {
+        setTutorialCounts(Object.fromEntries(r.categories.map((c) => [c.code, c.count])))
+        // 名称同一次带回（运营在后台改的那份）；空串/nil 留给本地兜底，别写进 state 覆盖掉
+        setTutorialTitles(
+          Object.fromEntries(
+            r.categories.filter((c) => !!c.title).map((c) => [c.code, c.title]),
+          ),
+        )
+      })
       .catch(() => undefined)
     if (currentToken) {
       Promise.all([
@@ -574,7 +589,7 @@ export default function Mine() {
                 onClick={() => go(`/pages/tutorial/index?category=${c.code}`)}
               >
                 <View className='mine__item-icon'><t-icon name={c.icon} size='32rpx' /></View>
-                <View className='mine__item-copy'><Text className='mine__item-title'>{c.label}</Text></View>
+                <View className='mine__item-copy'><Text className='mine__item-title'>{tutorialTitles[c.code] ?? c.label}</Text></View>
                 <Text className='mine__learn-count'>{tutorialCounts[c.code]} 条</Text>
                 <Text className='mine__arrow'>›</Text>
               </View>

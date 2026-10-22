@@ -50,8 +50,13 @@ router.get('/:category', async (req, res) => {
 
     // 本地模式下签名地址要指向**当前请求的 host**，否则真机拿到 127.0.0.1（见 works.ts 的同款做法）
     const mediaBase = `${req.protocol}://${req.get('host')}/api/v1/media`
-    const items = await tutorialSvc.listByCategory(prisma, parsed.data, mediaBase)
-    ok(res, { category: parsed.data, items })
+    // 名称跟着响应一起下发：页面导航标题要用它（运营在后台改的名字，客户端无从得知），
+    // 客户端本地常量只作离线兜底 —— 这样「改个名字」不需要重新发版。
+    const [items, titles] = await Promise.all([
+      tutorialSvc.listByCategory(prisma, parsed.data, mediaBase),
+      tutorialSvc.getCategoryTitles(prisma),
+    ])
+    ok(res, { category: parsed.data, title: titles[parsed.data], items })
   } catch (e) {
     console.error('[tutorials] 查询课程列表失败:', e)
     return fail(res, 500, '查询失败', 500)

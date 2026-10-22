@@ -34,6 +34,11 @@ export interface TutorialCategory {
  * ★★ 文案刻意**不用「教程 / 课程 / 技巧 / 知识 / 手册」**：
  *   这几个词会把页面指向「教育服务 / 在线视频课程」，那需要另一套资质（比视频类目更难）。
  *   用「怎么拍 / 怎么剪 …」这种口语，页面读起来是「同行经验目录」，不是课程表。
+ *
+ * ★★ 2026-10-22 起这套 label **只是离线兜底**：运营可以在后台改分类名
+ *   （存在系统设置 `tutorial.category_titles`，由 `/api/v1/tutorials` 下发）。
+ *   渲染时优先用接口返回的 title —— 这样改个名字不需要重新发版、也不需要重新提审。
+ *   ⚠ 别把这里的常量当成唯一来源：后台改了名而这里没改，是**预期**的。
  */
 export const TUTORIAL_CATEGORIES: TutorialCategory[] = [
   { code: 'SHOOTING', label: '怎么拍', pageTitle: '怎么拍', icon: 'camera' },
@@ -63,7 +68,7 @@ export interface TutorialItem {
 
 export interface TutorialCategoryStat {
   code: string
-  /** 服务端的兜底文案，正常不使用（用本地的 label） */
+  /** 当前分类名：后台自定义值，没改过就是代码兜底。**渲染优先用它** */
   title: string
   count: number
 }
@@ -73,6 +78,11 @@ export function listTutorialStats() {
   return http.get<{ categories: TutorialCategoryStat[] }>('/tutorials')
 }
 
+/**
+ * 某个分类下的内容清单。
+ * `title` 是运营在后台配的分类名 —— 分类页的导航标题与页内大标题都用它，
+ * 本地常量只在请求没回来/失败时兜底。
+ */
 export function listTutorials(category: string) {
-  return http.get<{ category: string; items: TutorialItem[] }>(`/tutorials/${category}`)
+  return http.get<{ category: string; title?: string; items: TutorialItem[] }>(`/tutorials/${category}`)
 }

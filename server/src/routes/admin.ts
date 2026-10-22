@@ -19,7 +19,12 @@ import {
   recordLoginFailure,
 } from '../lib/login-throttle.js'
 import { localStorageRoot, removeLocalFile } from '../lib/local-storage.js'
-import { tutorialCategoryEnum } from '../lib/tutorial-categories.js'
+import {
+  tutorialCategoryEnum,
+  TUTORIAL_CATEGORY_CODES,
+  MAX_CATEGORY_TITLE_LEN,
+  findBannedTitleWord,
+} from '../lib/tutorial-categories.js'
 import * as adminSvc from '../services/admin.service.js'
 import * as adminExtra from '../services/admin-extra.service.js'
 import * as adminAi from '../services/admin-ai.service.js'
@@ -1245,6 +1250,47 @@ const tutorialUpload = multer({
   dest: join(localStorageRoot(), '.incoming'),
   // 单文件上限，与 MAX_TUTORIAL_VIDEO_BYTES 同一个数字（超限的文件根本不落盘）
   limits: { fileSize: tutorialSvc.MAX_TUTORIAL_VIDEO_BYTES },
+})
+
+// ── 分类名称（2026-10-22 起运营可改）──────────────────────────────────────
+// ⚠ 这两个路由必须声明在 `/tutorials/:id` 之前：Express 按注册顺序匹配，
+//   放后面的话 `PUT /tutorials/categories` 会先撞上 `:id`，
+//   然后被 idParam 判成「参数错误」——表现为「保存分类名永远 400」。
+router.get('/tutorials/categories', async (_req, res) => {
+  try {
+    ok(res, { titles: await tutorialSvc.getCategoryTitles(prisma) })
+  } catch (e) {
+    console.error('[admin] 查询分类名称失败:', e)
+    fail(res, 500, '查询失败', 500)
+  }
+})
+
+const categoryTitlesInput = z.object({
+  titles: z.object({
+    SHOOTING: z.string().trim().min(1).max(MAX_CATEGORY_TITLE_LEN),
+    EDITING: z.string().trim().min(1).max(MAX_CATEGORY_TITLE_LEN),
+    OPERATION: z.string().trim().min(1).max(MAX_CATEGORY_TITLE_LEN),
+    MANUAL: z.string().trim().min(1).max(MAX_CATEGORY_TITLE_LEN),
+  }),
+})
+
+router.put('/tutorials/categories', async (req, res) => {
+  try {
+    const { titles } = categoryTitlesInput.parse(req.body)
+    // ★★ 禁词在**服务端**挡：后台界面上的提示只是体验，拦不住直接调接口/粘贴进来的词。
+    //   这几个词会把小程序指向「教育服务·在线视频课程」，那套资质比视频类目更难拿。
+    for (const code of TUTORIAL_CATEGORY_CODES) {
+      const hit = findBannedTitleWord(titles[code])
+      if (hit) {
+        return fail(res, 400, `分类名里不能出现「${hit}」——这类词会把页面指向「在线课程」类目`, 400)
+      }
+    }
+    ok(res, { titles: await tutorialSvc.saveCategoryTitles(prisma, titles) })
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, `分类名必填，最多 ${MAX_CATEGORY_TITLE_LEN} 个字`, 400)
+    console.error('[admin] 保存分类名称失败:', e)
+    fail(res, 500, '保存失败', 500)
+  }
 })
 
 router.get('/tutorials', async (req, res) => {

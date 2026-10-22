@@ -153,6 +153,56 @@ check('解析到后台 CATEGORIES 常量表', adminCatBlock.length > 0, '常量�
 const hitAdminCat = BANNED.filter((w) => adminCatBlock.includes(w))
 check('后台分类下拉文案无禁词', hitAdminCat.length === 0, hitAdminCat.length ? `命中：${hitAdminCat.join('、')}` : '')
 
+// ── [B4] 分类名称可自定义（2026-10-22）──────────────────────────────────────
+// 这条线最容易出的两个错：
+//   ① 名字改回硬编码 ⇒ 运营改不动，或者改了只变小程序不变后台；
+//   ② 后台保存接口声明在 `/tutorials/:id` 之后 ⇒ Express 先匹配 :id，
+//      `PUT /tutorials/categories` 永远 400「参数错误」（页面上表现为「保存没反应」）。
+console.log('\n[B4] 分类名称：可自定义 + 只换 label 不动 code')
+check(
+  '服务层从系统设置读名字（getCategoryTitles）',
+  /export async function getCategoryTitles/.test(src) && /getString\(/.test(src),
+  '名字若只读 FALLBACK_TITLES，运营在后台改完不生效',
+)
+check(
+  '计数用的是 titles[code] 而不是 FALLBACK_TITLES[code]',
+  /title: titles\[code\]/.test(src),
+  '两处各读各的 ⇒ 后台改名后列表变了、计数没变',
+)
+check(
+  '保存时把与兜底相同的键剔掉（少一条「改不动」的记录）',
+  /v !== FALLBACK_TITLES\[code\]/.test(src),
+)
+
+const adminRoutePath2 = join(here, '..', 'src', 'routes', 'admin.ts')
+const adminRoute = stripComments(await readFile(adminRoutePath2, 'utf8'))
+check(
+  '后台保存前做了禁词校验',
+  /findBannedTitleWord/.test(adminRoute),
+  '只靠前端提示 ⇒ 直接调接口/粘贴就绕过去了',
+)
+const iCategories = adminRoute.indexOf("'/tutorials/categories'")
+const iIdRoute = adminRoute.indexOf("'/tutorials/:id'")
+check(
+  '分类路由声明在 `/tutorials/:id` 之前',
+  iCategories > 0 && iIdRoute > 0 && iCategories < iIdRoute,
+  'Express 按注册顺序匹配：放后面会被 :id 吃掉，表现是「保存分类名永远 400」',
+)
+
+// 小程序端：优先用接口返回的名字，本地常量只兜底
+const mine2 = stripComments(await readFile(minePath, 'utf8'))
+check(
+  '「我的」页优先渲染接口给的名字',
+  /tutorialTitles\[c\.code\]\s*\?\?\s*c\.label/.test(mine2),
+  '只渲染本地 label ⇒ 后台改名对「我的」页无效',
+)
+const page2 = stripComments(await readFile(pagePath, 'utf8'))
+check(
+  '分类页把接口标题用上了（导航 + 页内标题）',
+  /setTitle\(r\.title/.test(page2) && /\{title\}/.test(page2),
+  '导航标题写死本地常量 ⇒ 改名后页面标题对不上',
+)
+
 console.log('')
 if (failures.length) {
   console.log(`✗ 参考视频守护：${failures.length} 项失败（通过 ${pass} 项）`)

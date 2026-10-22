@@ -31,13 +31,21 @@ export default function TutorialPage() {
   const code = String(router.params.category ?? 'SHOOTING').toUpperCase()
   const meta = tutorialCategoryOf(code) ?? TUTORIAL_CATEGORIES[0]
 
+  const [items, setItems] = useState<TutorialItem[]>([])
+  /**
+   * 分类名（导航标题 + 页内大标题）。
+   * ★ 2026-10-22：名称由运营在后台改、跟着列表接口一起下发，本地常量只是兜底
+   *   ⇒ 改名字不需要重新发版，也不需要重新提审。
+   */
+  const [title, setTitle] = useState(meta.pageTitle)
+
   // 分享：本页免登录可读，卡片可以直接指向对应分类
+  // ★ 标题用 state（后台改过的名字），不是本地常量 —— 分享出去的名字也得跟着变
   useAppShare({
-    title: meta.pageTitle,
+    title,
     path: `/pages/tutorial/index?category=${meta.code}`,
   })
 
-  const [items, setItems] = useState<TutorialItem[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState('')
   /** 重试计数：改它就重跑下面的 effect（比在按钮里复制一遍请求干净） */
@@ -49,7 +57,10 @@ export default function TutorialPage() {
     setLoadError('')
     listTutorials(meta.code)
       .then((r) => {
-        if (alive) setItems(r.items)
+        if (!alive) return
+        setItems(r.items)
+        // 后台配了名字就用它；没配/空串 ⇒ 保持本地兜底（不要把标题改成空）
+        if (r.title && r.title.trim()) setTitle(r.title.trim())
       })
       .catch((e) => {
         if (alive) setLoadError((e as { message?: string })?.message ?? '加载失败，请重试')
@@ -57,12 +68,17 @@ export default function TutorialPage() {
       .finally(() => {
         if (alive) setLoading(false)
       })
-    // 导航标题按分类走（页面配置里写的是通用兜底）；失败（如自定义导航栏）静默忽略
-    Taro.setNavigationBarTitle({ title: meta.pageTitle }).catch(() => undefined)
+    // ⚠ 这里**不设**导航标题：标题可能在响应回来后变（后台改过名），交给下面那个 effect。
+    //   如果在这里设、又把 title 加进依赖，就会「设标题 → 触发请求 → 再设标题」地循环。
     return () => {
       alive = false
     }
-  }, [meta.code, meta.pageTitle, reloadTick])
+  }, [meta.code, reloadTick])
+
+  // 导航标题跟着 name 走（页面配置里写的是通用兜底）；失败（如自定义导航栏）静默忽略
+  useEffect(() => {
+    Taro.setNavigationBarTitle({ title }).catch(() => undefined)
+  }, [title])
 
   /**
    * 跳到视频号播放这一条。
@@ -93,7 +109,7 @@ export default function TutorialPage() {
     <View className='tutorial'>
       <View className='tutorial__panel'>
         <View className='tutorial__panelhead'>
-          <Text className='tutorial__paneltitle'>{meta.pageTitle}</Text>
+          <Text className='tutorial__paneltitle'>{title}</Text>
           {items.length > 0 && <Text className='tutorial__panelcount'>共 {items.length} 条</Text>}
         </View>
 
