@@ -63,7 +63,7 @@ export const COPY_TRACK_OPTIONS: { value: CopyTrack; label: string; desc: string
   { value: 'PERSONA', label: '人设型', desc: '立场 / 经历 / 情绪' },
   { value: 'KNOWLEDGE', label: '知识型', desc: '怎么做 / 怎么挑' },
   { value: 'PRODUCT', label: '产品型', desc: '老板视角 / 真材实料' },
-  { value: 'RECOMMEND', label: '种草型', desc: '达人素人视角 / 推荐理由' },
+  { value: 'RECOMMEND', label: '种草型', desc: '素人视角 / 一句话把人喊住' },
 ]
 
 /**

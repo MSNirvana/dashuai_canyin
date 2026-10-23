@@ -64,7 +64,7 @@ export const COPY_TRACKS = {
   PERSONA: { label: '人设型', scene: SCENE.copy_persona, desc: '立场 / 经历 / 情绪' },
   KNOWLEDGE: { label: '知识型', scene: SCENE.copy_knowledge, desc: '怎么做 / 怎么挑' },
   PRODUCT: { label: '产品型', scene: SCENE.copy_product, desc: '老板视角 / 真材实料' },
-  RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '达人素人视角 / 推荐理由' },
+  RECOMMEND: { label: '种草型', scene: SCENE.copy_recommend, desc: '素人视角 / 一句话把人喊住' },
 } as const
 /**
  * ⚠⚠ 上表里的 `desc` 是**死字段**：全仓没有任何读取点，服务端只取 `.label`（下发
@@ -257,20 +257,50 @@ export const DEFAULT_COMPLEXITY: Complexity = 'COMPLEX'
  * ★ 只覆盖文案长度，**不动分镜数**：FINE 仍是 6~9 镜，每镜约 45 字刚好念完。
  * ★ 其它三款不改：它们本来就该短（产品型报完价就该结束）。
  */
+/**
+ * ★★★ 2026-10-23：人设型的字数**压到与通用表同档**（原来是 110/280/400，约通用的 2.4~3 倍）。
+ *
+ * 起因：用户实测「人设型出来的文字太多了，压到跟其他类型的同种分镜差不多」。
+ * 原来那套数字有它的道理（人设型要讲起因→经过→结果，三段装不下 90 字），
+ * 但结果是**同一档复杂度、不同款式，时长差三倍** —— 用户按「5~6 个分镜」选，
+ * 拿到一条 40 秒的口播，分镜根本切不出来，只能一条长口播拍到底。
+ *
+ * ⇒ 现在与 `COMPLEXITIES` 完全同值。代价是结构必须**压缩**，所以同时改了两处：
+ *   ① 模板里删掉「写不到下限就补三样（怎么想的/难在哪/怎么落地）」那一段 —— 它是拉长的元凶；
+ *      换成「缩结构，不是加字数：把起因→经过→结果压成『我怎么做 + 我为什么这么较真』」。
+ *   ② 范文池**不再喂**（见下方 `personaLimit` 那段）：池子里最短 140 字，
+ *      比新的上限还长 55%，留着它等于让模型照着一篇比上限还长的稿子写。
+ * 改数字时这三处要一起看，否则「规则说 90、范文 250、模板鼓励补细节」三方打架。
+ */
 const PERSONA_COPY_RULES: Record<Complexity, { rule: string; max: number }> = {
   SIMPLE: {
-    rule: '口播建议 60~100 字，约 13~22 秒；只讲一件事，不铺背景、不带第二个话题。',
-    max: 110,
+    rule: '口播建议 20~45 字，约 5~10 秒；只讲一个具体动作或一句立场，不铺背景。',
+    max: 45,
   },
   COMPLEX: {
-    rule: '口播建议 180~260 字，约 40~58 秒；把一件事讲完整：起因、当时怎么做、结果。',
-    max: 280,
+    rule: '口播建议 50~90 字，约 11~20 秒；一个具体动作 + 一句为什么，不铺起因经过结果。',
+    max: 90,
   },
   FINE: {
-    rule: '口播建议 280~380 字，约 62~84 秒；可以有两层（发生了什么 + 为什么这么坚持），但只能围绕一个人或一件事。',
-    max: 400,
+    rule: '口播建议 80~130 字，约 18~29 秒；可多一个细节或一层转折，仍只围绕一个人或一件事。',
+    max: 130,
   },
 }
+
+/**
+ * ★★★ 喂范文的**字数门槛**（2026-10-23 压字数时新增）。
+ *
+ * 判据：`src/lib/persona-samples.ts` 池里最短的一篇是 **140 字**，而压后的上限最高才 130
+ * （复杂版 90）。模板里写着「范文跟你这次要写的长度是同一档的，照着它的长短写就对了」⇒
+ * 喂一篇比自己上限还长 55% 的稿子，等于一边说 90 字、一边给个 250 字的样板。
+ *
+ * ⇒ 只要「本次上限 < 池里最短范文」，就**整段不喂**（模板对空串有兜底）。
+ * 将来往池子里补了 60~120 字的短稿，把这个数改小即可自动恢复。
+ *
+ * ★ 导出它是为了让探针 `probe-copy-hook-diversity.ts` 引用**同一个值** ——
+ *   探针若自己复制一份，改了这里忘了改那里，测出来的就不是线上的形状。
+ */
+export const PERSONA_SAMPLE_MIN_CHARS = 140
 
 /** 本次该用的长度规则（人设型走专用表，其余走通用表）。 */
 export function copyRuleFor(complexity: Complexity, track?: CopyTrack): string {
@@ -1244,8 +1274,21 @@ export async function buildVariables(
    *   放在这里而不是 inline，是因为需要一次 count 查询 —— 写在对象字面量里会变成
    *   「一个 await 藏在字面量中间」，读的人容易漏掉这里有一次 IO。
    */
+  /**
+   * ★★★ 2026-10-23：字数压到与通用表同档后，**范文不再喂**。
+   *
+   * 判据：`PERSONA_SAMPLES` 池里最短的一篇是 **140 字**，而新的上限最高才 130 字
+   *   （复杂版 90）。模板里写着「范文跟你这次要写的长度是同一档的，照着它的长短写就对了」——
+   *   喂一篇比自己上限还长 55% 的稿子，等于一边说 90 字、一边给个 250 字的样板。
+   *   这正是「模板自相矛盾」那一类缺陷：不报错，只是模型照着长的写。
+   *
+   * ⇒ 上限不足以容纳池里最短的范文时，直接不喂（模板对空串已有兜底：
+   *   「这段为空 = 这次没有范文，按后面的要求自己写」）。
+   *   将来若往池子里补了 60~120 字的短稿，把 `PERSONA_SAMPLE_MIN_CHARS` 改小即可自动恢复。
+   */
+  const personaLimit = copyLimitFor(complexity, 'PERSONA')
   const personaSampleText =
-    track === 'PERSONA' && !topic
+    track === 'PERSONA' && !topic && personaLimit >= PERSONA_SAMPLE_MIN_CHARS
       ? pickPersonaSample(
           c.merchantId,
           await prisma.creation.count({ where: { merchantId: c.merchantId } }),

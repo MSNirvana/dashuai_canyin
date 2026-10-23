@@ -17,14 +17,14 @@
  *   npx tsx scripts/probe-copy-hook-diversity.ts 6 5              # 6 条、门店 #5
  *   npx tsx scripts/probe-copy-hook-diversity.ts 6 12 persona     # 人设型 6 条（门店 #12）
  *
- * ★ 「人设型」这一档的变量按**生产的真实口径**拼：门店与菜品**全空**（关掉「菜品与套餐」＝
- *   一个字都不喂），`persona` 保留，长度规则用 `copyRuleFor(complexity,'PERSONA')`
- *   （110/280/400，而不是通用的 45/90/130）—— 三处写死一处，看到的就不是线上形状了。
+ * ★ 「人设型」这一档的变量按**生产的真实口径**拼：不传 `--dish` 时门店与菜品**全空**
+ *   （关掉「菜品与套餐」＝一个字都不喂）；传了 `--dish` 就是「人设型 + 选了东西」，
+ *   这时**门店也喂**（线上这一档就是这样）。长度规则一律用 `copyRuleFor(complexity,'PERSONA')`。
  *
- * ★★ 人设型还会抽一篇**范文**（`src/lib/persona-samples.ts`），抽法与生产逐字一致：
- *   同一套轮转 + 同一套长度分档。每轮会打印抽到哪一条，并做三种**泄漏检测**
- *   （8 字重合并句 / 照搬数字 / 照搬地名）—— 这是「随机抓一条做改写」最容易翻车的地方：
- *   模型最爱搬的不是句子，而是「8 小时」「在宜春」这类像真话的东西。
+ * ★★ 人设型原本还会抽一篇**范文**（`src/lib/persona-samples.ts`）。
+ *   2026-10-23 压字数后，池里最短 140 字 > 新上限 130 ⇒ 生产**停喂**，
+ *   探针走同一个门槛常量 `PERSONA_SAMPLE_MIN_CHARS`，与线上完全同源。
+ *   因此现在这条路径基本抽不到范文；若哪天池子里有了短稿，这里会自动恢复并打印泄漏检测。
  *
  * ⚠ 会真实调用上游 AI（每条几秒到几十秒）。花费约每条 ¥0.03，全部计入系统成本，不动用户积分。
  */
@@ -33,6 +33,7 @@ import { prisma, redis } from '../src/db.js'
 import { CircuitBreaker } from '../src/ai/circuit-breaker.js'
 import { AiGateway } from '../src/ai/gateway.js'
 import {
+  PERSONA_SAMPLE_MIN_CHARS,
   buildRecentCopyAvoidPrompt,
   copyCharCount,
   copyLimitFor,
@@ -49,10 +50,12 @@ import { personaBandOf, pickPersonaSample, sampleLeaks } from '../src/lib/person
 
 const rounds = Number(process.argv[2] ?? 6)
 const storeIdArg = process.argv[3] ? BigInt(process.argv[3]) : null
-const isPersona = (process.argv[4] ?? 'product') === 'persona'
+const trackArg = process.argv[4] ?? 'product'
+const isPersona = trackArg === 'persona'
+const isRecommend = trackArg === 'recommend'
 const complexity = 'COMPLEX' as const
-const track = isPersona ? ('PERSONA' as const) : ('PRODUCT' as const)
-const sceneCode = isPersona ? 'copy_persona' : 'copy_product'
+const track = isPersona ? ('PERSONA' as const) : isRecommend ? ('RECOMMEND' as const) : ('PRODUCT' as const)
+const sceneCode = isPersona ? 'copy_persona' : isRecommend ? 'copy_recommend' : 'copy_product'
 /**
  * ★ `--tags=…` / `--activity=…` 覆盖人设资料，**只在本进程内存里生效**，不写库。
  *
@@ -82,7 +85,17 @@ const gateway = new AiGateway(prisma, redis, new CircuitBreaker(redis))
     await prisma.$disconnect()
     process.exit(1)
   }
-  const dish = isPersona ? null : await prisma.dish.findFirst({ where: { storeId: store.id }, orderBy: { id: 'asc' } })
+  /**
+   * ★ `--dish=<id>`：指定菜品/套餐。人设型默认**不喂**菜品（`mode='STYLE'` 的真实口径），
+   *   但「人设型 + 套餐」是真实存在的组合（用户选了套餐却说「没体现出套餐」）——
+   *   要验这一档，必须能显式喂一份套餐进来，否则探针永远测不到那条路径。
+   */
+  const dishArg = argOf('dish')
+  const dish = dishArg
+    ? await prisma.dish.findUnique({ where: { id: BigInt(dishArg) } })
+    : isPersona
+      ? null
+      : await prisma.dish.findFirst({ where: { storeId: store.id }, orderBy: { id: 'asc' } })
   const persona = await prisma.persona.findUnique({ where: { storeId: store.id } })
   const loc = storeLocationOf(store) ?? ''
   console.log(
@@ -104,17 +117,28 @@ const gateway = new AiGateway(prisma, redis, new CircuitBreaker(redis))
      * ★ 范文按**生产的同一套轮转**取：cursor = 已经生成过几条（这里用 i-1 模拟）。
      *   用它而不是 `Math.random()`，是为了让探针看到的东西跟线上逐字一致 ——
      *   随机取会让「这轮抽到哪条」无法复现，泄漏检测就失去对照物。
+     *
+     * ★★★ 2026-10-23：生产侧给范文加了**门槛** —— 池里最短一篇 140 字，
+     *   而压字数后的上限最高才 130 字（复杂版 90）⇒ 上限装不下池里最短的范文时
+     *   生产**直接不喂**（`PERSONA_SAMPLE_MIN_CHARS`）。探针必须跟着走同一条判断，
+     *   否则测的是「带范文的旧形状」，字数必然比线上长，结论不可用。
      */
-    const sample = isPersona ? pickPersonaSample(store.merchantId, i - 1, personaBandOf(complexity)) : null
+    const personaSampleOn = isPersona && copyLimitFor(complexity, 'PERSONA') >= PERSONA_SAMPLE_MIN_CHARS
+    const sample = personaSampleOn ? pickPersonaSample(store.merchantId, i - 1, personaBandOf(complexity)) : null
     const variables: Record<string, string> = {
-      // ★ 人设型：门店与菜品一个字都不喂（`mode='STYLE'` 的真实口径）
-      storeName: isPersona ? '' : store.name,
-      storeIntro: isPersona ? '' : (store.intro ?? ''),
-      category: isPersona ? '' : (store.category ?? ''),
-      city: isPersona ? '' : loc,
-      storeEmptyNote: isPersona
-        ? '（空 = 这次不提供门店资料：正文里不要出现店名、招牌、品类、城市、地址，也不要拿别家店的常见做法冒充本店）'
-        : '',
+      /**
+       * ★ 人设型默认不喂门店（`mode='STYLE'` 的真实口径）。
+       *   但**传了 --dish 就是「人设型 + 选了东西」**——线上这一档照样喂门店，
+       *   （用户截图那条文案里直接写了「固安新中东街，宝德斜对面」），所以这里跟着喂。
+       */
+      storeName: isPersona && !dishArg ? '' : store.name,
+      storeIntro: isPersona && !dishArg ? '' : (store.intro ?? ''),
+      category: isPersona && !dishArg ? '' : (store.category ?? ''),
+      city: isPersona && !dishArg ? '' : loc,
+      storeEmptyNote:
+        isPersona && !dishArg
+          ? '（空 = 这次不提供门店资料：正文里不要出现店名、招牌、品类、城市、地址，也不要拿别家店的常见做法冒充本店）'
+          : '',
       dishName: dish?.name ?? '',
       dishIntro: dish?.intro ?? '',
       sellingPoints: dish?.sellingPoints ?? '',
