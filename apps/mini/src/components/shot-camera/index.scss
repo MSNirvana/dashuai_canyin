@@ -14,7 +14,8 @@
 //   `white-space: nowrap; line-height: 1.2; display: block`。落地到这份样式就是三条约束：
 //   a. **不吃 flex** ⇒ 所有子元素一律 `position: absolute` + `left/right` 或
 //      `left:50%` 配负 margin 做居中，不用 flex 居中、也不用 transform。
-//   b. **nowrap** ⇒ 长文案会被静默裁掉。字号按字数下台阶（见 index.tsx 的 lineSize），
+//   b. **nowrap** ⇒ 长文案会被静默裁掉。★ 2026-10-19 起**不再按字数缩字号**，
+//      改成由 index.tsx 的 `splitPromptLines()` 先切行、再逐行渲染（见下面 promptline 的 ★★），
 //      同时补一句 `white-space: normal` 当兜底（不支持时被忽略）。
 //   c. **CSS 变量不保证继承到覆盖层** ⇒ 这里的颜色/圆角写死，不用 var(--td-*)。写死的
 //      `#e1251b` 与 `src/styles/theme.scss` 的 `--td-brand-color` 同值，改主题要一起改。
@@ -132,17 +133,20 @@
   background: rgba(0, 0, 0, 0.5);
   border-radius: 18rpx;
 }
-/* ★ 字号按字数下台阶：cover-view 默认 nowrap，长句会被**静默裁掉**（不换行、不报错）。
-   750rpx 屏、prompt 左右各 16rpx + 内边距 16rpx ⇒ 可用约 686rpx；
-   中文按 1 字约等于 1 个字号宽估算 ⇒ 字号上限 = 686 / 字数（取整留一点余量）：
-     ≤11 字 ⇒ ≤62rpx（11×62=682）
-     ≤16 字 ⇒ ≤42rpx（16×42=672）
-     更长   ⇒ 32rpx（按 21 字算 672）
-   ★ 这三档比 2026-09 那版（56/40/30）各上调了一档；再往上就必须依赖
-     `white-space: normal` 真的换行 —— 那一条在真机上**不保证生效**，
-     一旦不生效就是整句被裁（静默、不报错），所以字号只敢加到「单行一定排得下」为止。 */
+/* ★★ 2026-10-19 只改了一件事：**字号不再随字数变小，长了就换行**。
+   原来这里是三档（62 / 42 / 32）：字数多就自动降一档字号 —— 用户的原话是
+   「有的文字一长，字体就又变小了，要直接分行」⇒ **三档全部删掉，只留 62rpx**。
+   ★ 为什么删档之后还必须自己切行：cover-view 默认 `white-space: nowrap`，
+     超出一行的部分会被**静默裁掉**（不换行、不报错）。所以由 `splitPromptLines()`
+     （见 index.tsx）先按「每行最多几个字」切成若干行、再逐行渲染，每行都一定排得下。
+   每行字数上限照可用宽度算：750rpx 屏、prompt 左右各 16rpx + 内边距 16rpx ⇒ 可用约 686rpx；
+   中文按「1 字 ≈ 1 个字号宽」估算 ⇒ 每行字数上限 = 686 / 字号：
+     口播 62rpx ⇒ **11 字**      画面 30rpx ⇒ **22 字**
+   ★★ 改这里的 font-size，**必须同步改 index.tsx 的 PROMPT_MAX_CHARS / VISUAL_MAX_CHARS**，
+      否则切出来的行会重新溢出、又被静默裁掉（不报错、也不换行）。 */
 .shotcam__promptline {
   text-align: center;
+  font-size: 62rpx;
   font-weight: 700;
   line-height: 1.35;
   color: #fff;
@@ -150,11 +154,13 @@
   white-space: normal;
   word-break: break-all;
 }
-.shotcam__promptline--s1 { font-size: 62rpx; }  /* ≤11 字 */
-.shotcam__promptline--s2 { font-size: 42rpx; }  /* ≤16 字 */
-.shotcam__promptline--s3 { font-size: 32rpx; }  /* 更长 */
+/* 画面文案：容器只负责与上面那条的间距，字号写在 row 上
+   ★ 不靠 font-size 从容器继承 —— cover-view 的继承不保证（同 CSS 变量那条，见文件头）。 */
 .shotcam__promptvisual {
   margin-top: 14rpx;
+  text-align: center;
+}
+.shotcam__promptvisual-row {
   text-align: center;
   font-size: 30rpx;
   line-height: 1.55;

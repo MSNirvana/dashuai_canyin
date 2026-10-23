@@ -234,6 +234,8 @@ if (!ttLeaks.length && !fallbackLeaks.length) {
 // ★ 别用**函数名**去验「代码进包了」：terser 会改名，必然假阴性
 //   （同一条教训见 scripts/check-dist-strings.py 文件头 ★★）。
 const SHOTCAM_CANARY = 'shotcam-black-recover' // 必须与 src/components/shot-camera/index.tsx 一致
+// ★ 2026-10-19 新增：停止失败那条分支（见下面 §8 的反向断言）
+const STOP_STATE_CANARY = 'shotcam-stop-state' // 必须与 src/components/shot-camera/index.tsx 一致
 const shotsPageJs = join(DIST, 'pages/creation/shots.js')
 const camSrcPath = 'src/components/shot-camera/index.tsx'
 console.log('\n[自检] 拍摄层相机黑屏自愈（2026-09-30）：')
@@ -244,8 +246,10 @@ if (!existsSync(shotsPageJs)) {
   const t = readFileSync(shotsPageJs, 'utf8')
   const hasInitHook = /\bonInitDone\b/.test(t)
   const hasCanary = t.includes(SHOTCAM_CANARY)
+  const hasStopCanary = t.includes(STOP_STATE_CANARY)
   console.log(`    ${hasInitHook ? '✓' : '✗'} 相机元素接了 onInitDone（黑屏时唯一能观测的「成功」信号）`)
   console.log(`    ${hasCanary ? '✓' : '✗'} 黑屏自愈链路在产物里（金丝雀 ${SHOTCAM_CANARY}）`)
+  console.log(`    ${hasStopCanary ? '✓' : '✗'} 停止失败的分档收口在产物里（金丝雀 ${STOP_STATE_CANARY}）`)
   if (!hasInitHook) {
     fail += 1
     console.log('      修法：<Camera> 必须接 onInitDone —— 黑屏没有任何错误回调，它是唯一的观测点')
@@ -253,6 +257,10 @@ if (!existsSync(shotsPageJs)) {
   if (!hasCanary) {
     fail += 1
     console.log('      修法：确认 recoverCamera 仍在（没出画 → 重建原生节点 → 预算用完转面板）')
+  }
+  if (!hasStopCanary) {
+    fail += 1
+    console.log('      修法：确认 onStopFail 仍在（is not recording → 宽限等文件 → 没来才 toast 回待拍）')
   }
 }
 // ★ 这一条读**源码**而不是产物：key 里的 `camGen` 压缩后就成了单字母变量，
@@ -297,6 +305,57 @@ if (existsSync(camSrcPath)) {
     fail += 1
     console.log('      修法：探针只以 showCamera/camGen 表示新节点；已 ready 直接 return，禁止因 camAuth/device/flash 清零')
   }
+
+  // ★★ 反向断言：停止失败**不许**再走「置 failMsg → 拆相机」那条老路（2026-10-19）。
+  //   改之前这里是一句 `give(\`停止录制失败：${errText(e)}\`)` ⇒ setFailMsg ⇒ showCamera=false，
+  //   于是「原生层没在录」（operateCamera:fail:is not recording）被报成**相机坏了**，
+  //   面板还给出「去设置里允许」这种与真实原因毫无关系的按钮，用户被踢出取景只能重来。
+  //   现在一律收敛到 onStopFail → 宽限等 timeoutCallback → 没来才 abandonTake（回待拍 + toast，相机不拆）。
+  //   ⇒ 这段字符串再出现，就说明有人把老路写回去了。
+  const stopFailsToPanel = camSrc.includes('停止录制失败')
+  console.log(`    ${stopFailsToPanel ? '✗' : '✓'} 停止失败不再弹「相机不可用」面板（改走 abandonTake，相机不拆）`)
+  if (stopFailsToPanel) {
+    fail += 1
+    console.log('      修法：停止失败一律走 onStopFail → 先等 STOP_FAIL_GRACE_MS → 没文件才 abandonTake')
+  }
+
+  // ★★ 提词字号与切行（2026-10-19 用户口径：**不许按长度缩字号，长了直接换行**）
+  //   ① 字号：口播 62rpx / 画面 30rpx，而且**只有这一档** —— 原来那三档
+  //      `promptline--s1/s2/s3`（62/42/32）就是「字一长就变小」的元凶。
+  //   ② 长了怎么办：由 `splitPromptLines()` 自己切行 + 逐行渲染。
+  //      不自己切的话，cover-view 的 `white-space: nowrap` 会把超出的部分**静默裁掉**。
+  //   ⇒ 三条判据任一失守，用户看到的就是「字又变小了」或「后半句没了」。
+  const camScssPath = 'src/components/shot-camera/index.scss'
+  if (existsSync(camScssPath)) {
+    const camScss = readFileSync(camScssPath, 'utf8')
+    const fontOk =
+      /\.shotcam__promptline\s*\{[^}]*font-size:\s*62rpx/.test(camScss) &&
+      /\.shotcam__promptvisual-row\s*\{[^}]*font-size:\s*30rpx/.test(camScss)
+    const shrinkGone = !/shotcam__promptline--s[123]/.test(camScss) && !/lineSize/.test(camSrc)
+    const splitOk =
+      /const PROMPT_MAX_CHARS = 11/.test(camSrc) &&
+      /const VISUAL_MAX_CHARS = 22/.test(camSrc) &&
+      /function splitPromptLines/.test(camSrc) &&
+      /lineRows\.map\(/.test(camSrc) &&
+      /visualRows\.map\(/.test(camSrc)
+    console.log(`    ${fontOk ? '✓' : '✗'} 提词字号只有一档、不按字数缩（口播 62rpx / 画面 30rpx）`)
+    if (!fontOk) {
+      fail += 1
+      console.log('      修法：.shotcam__promptline{font-size:62rpx} 与 .shotcam__promptvisual-row{font-size:30rpx}')
+    }
+    console.log(`    ${shrinkGone ? '✓' : '✗'} 按长度缩字号的档位已删除（无 promptline--s1/s2/s3、无 lineSize）`)
+    if (!shrinkGone) {
+      fail += 1
+      console.log('      修法：删掉三档字号与 lineSize 判断 —— 用户口径是「长了就分行，不许缩字号」')
+    }
+    console.log(`    ${splitOk ? '✓' : '✗'} 长文案走自行切行 + 逐行渲染（PROMPT/VISUAL_MAX_CHARS + lineRows.map）`)
+    if (!splitOk) {
+      fail += 1
+      console.log('      修法：splitPromptLines() 按 11/22 字切行，渲染改成 lineRows.map 逐行 <CoverView>')
+    }
+  } else {
+    console.log(`    ⚠ 找不到源码 ${camScssPath}（本条跳过）`)
+  }
 } else {
   console.log(`    ⚠ 找不到源码 ${camSrcPath}（从仓库根调用时属正常，本条跳过）`)
 }
@@ -331,5 +390,97 @@ if (!existsSync(comboPickerSrcPath) || !existsSync(comboPickerScssPath)) {
   }
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ★★ 合成页「生成字幕」开关（2026-10-19）
+//   用户口径：在「AI 生成」模块下面加一个字幕开关，**默认开**；关掉之后合成时取消字幕相关流程。
+//   这类开关最有欺骗性的失守方式是「开关会动、载荷没变」——页面上一切正常，
+//   出片照样带字幕，用户的关闭意愿被静默吞掉。所以判据落在**载荷**与**样式**上：
+//     ① 默认值必须是 true（不能顺手改成 false，那等于替所有老用户关字幕）；
+//     ② 关掉时 `subtitleMode` 真的发 `'OFF'`（服务端只认这个才能省掉 ASR）；
+//     ③ `subtitles` 跟着一起为 false（两个字段同时给，否则后来的人改一个就回退）；
+//     ④ 开关只有 AI 档渲染（精品是人工精剪，不经过字幕管线）；
+//     ⑤ scss 里开关的 on/knob 规则还在（删了就是「点了没反应」）。
+const composeSrcPath = 'src/pages/render/compose.tsx'
+const composeScssPath = 'src/pages/render/compose.scss'
+console.log('\n[自检] 合成页字幕开关（2026-10-19）：')
+if (!existsSync(composeSrcPath) || !existsSync(composeScssPath)) {
+  console.log(`    ⚠ 找不到源码 ${composeSrcPath} / ${composeScssPath}（从仓库根调用时属正常，本条跳过）`)
+} else {
+  const composeSrc = readFileSync(composeSrcPath, 'utf8')
+  const composeScss = readFileSync(composeScssPath, 'utf8')
+  const defaultOn = /const \[subtitleOn, setSubtitleOn\] = useState\(true\)/.test(composeSrc)
+  console.log(`    ${defaultOn ? '✓' : '✗'} 字幕开关默认开（useState(true)）`)
+  if (!defaultOn) {
+    fail += 1
+    console.log('      修法：const [subtitleOn, setSubtitleOn] = useState(true) —— 默认关等于替所有老用户关字幕')
+  }
+  const sendsOff = /subtitleMode:\s*subtitleOn\s*\?\s*chatcut\.subtitleMode\s*:\s*'OFF'/.test(composeSrc)
+  console.log(`    ${sendsOff ? '✓' : '✗'} 关掉时真的把 subtitleMode 发成 'OFF'（服务端靠它跳过 ASR）`)
+  if (!sendsOff) {
+    fail += 1
+    console.log("      修法：提交载荷里 subtitleMode: subtitleOn ? chatcut.subtitleMode : 'OFF'")
+  }
+  const sendsBool = /subtitles:\s*subtitleOn\s*&&\s*chatcut\.subtitleMode\s*!==\s*'OFF'/.test(composeSrc)
+  console.log(`    ${sendsBool ? '✓' : '✗'} subtitles 与开关同步（两个字段一起给，少一个就是"关不掉"）`)
+  if (!sendsBool) {
+    fail += 1
+    console.log("      修法：subtitles: subtitleOn && chatcut.subtitleMode !== 'OFF'")
+  }
+  const aiOnly = /grade === 'AI' && \(\s*\n\s*<View\s*\n\s*className='rcompose__optionrow'/.test(composeSrc)
+  console.log(`    ${aiOnly ? '✓' : '✗'} 开关只在「AI 生成」档渲染（精品是人工精剪，不经过字幕管线）`)
+  if (!aiOnly) {
+    fail += 1
+    console.log("      修法：把开关行包在 {grade === 'AI' && (…)} 里")
+  }
+  const switchStyle = /&__switch--on \{/.test(composeScss) && /&__switch-knob \{/.test(composeScss)
+  console.log(`    ${switchStyle ? '✓' : '✗'} 开关的 on/knob 样式还在（删了就是"点了没反应"）`)
+  if (!switchStyle) {
+    fail += 1
+    console.log('      修法：恢复 &__switch / &__switch--on / &__switch-knob 三条规则')
+  }
+  const noLateOverride = !/^\.rcompose__optionrow\s*\{/m.test(composeScss)
+  console.log(`    ${noLateOverride ? '✓' : '✗'} 末尾没有复写 .rcompose__optionrow（同选择器写在后面会一直赢）`)
+  if (!noLateOverride) {
+    fail += 1
+    console.log('      修法：规格只写在基础块 &__optionrow 里，删掉末尾那条覆写')
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ★★ 「我的」页 学习中心按有无视频隐藏（2026-10-21）
+//   用户口径：`如果后台对应的每个模块没有上传视频，则隐藏对应模块，
+//             如果所有模块都没有上传视频，那把整个学习中心都隐藏`。
+//   这类"按数据决定露不露脸"的逻辑，失守时**页面永远不报错**，只是多出一个点进去空空的入口：
+//     ① 忘了过滤，四个分类照旧全渲染；
+//     ② 过滤了但渲染还在用 `TUTORIAL_CATEGORIES.map`（等于没过滤）；
+//     ③ 只藏了列表行、没藏「学习中心」这个分组标题（页面上剩一个空标题）。
+const mineSrcPath = 'src/pages/mine/index.tsx'
+console.log('\n[自检] 我的页 · 参考视频按有无内容隐藏（2026-10-21，2026-10-22 改名）：')
+if (!existsSync(mineSrcPath)) {
+  console.log(`    ⚠ 找不到源码 ${mineSrcPath}（从仓库根调用时属正常，本条跳过）`)
+} else {
+  const mineSrc = readFileSync(mineSrcPath, 'utf8')
+  const filtered = /TUTORIAL_CATEGORIES\.filter\(\(c\)\s*=>\s*\(tutorialCounts\[c\.code\]\s*\?\?\s*0\)\s*>\s*0\)/.test(mineSrc)
+  console.log(`    ${filtered ? '✓' : '✗'} 只留「有视频」的分类（count > 0）`)
+  if (!filtered) {
+    fail += 1
+    console.log('      修法：const visibleTutorials = TUTORIAL_CATEGORIES.filter((c) => (tutorialCounts[c.code] ?? 0) > 0)')
+  }
+  const rendersVisible = /visibleTutorials\.map\(/.test(mineSrc)
+  const noRawMap = !/TUTORIAL_CATEGORIES\.map\(/.test(mineSrc)
+  console.log(`    ${rendersVisible && noRawMap ? '✓' : '✗'} 列表渲染用的是过滤后的集合（不是全量 TUTORIAL_CATEGORIES.map）`)
+  if (!(rendersVisible && noRawMap)) {
+    fail += 1
+    console.log('      修法：{visibleTutorials.map((c) => (…))} —— 用全量再渲染等于没过滤')
+  }
+  // 2026-10-22 分组标题从「学习中心」改名「参考视频」，断言跟着改（见 pages/mine 那条注释）
+  const hidesWholeBlock = /visibleTutorials\.length > 0 && \([\s\S]{0,200}ds-label'>参考视频/.test(mineSrc)
+  console.log(`    ${hidesWholeBlock ? '✓' : '✗'} 全空时连「参考视频」分组标题一起隐藏`)
+  if (!hidesWholeBlock) {
+    fail += 1
+    console.log("      修法：{visibleTutorials.length > 0 && (<> <View className='ds-label'>参考视频</View> … </>)}")
+  }
+}
 console.log(`\n${fail === 0 ? '★ 自检通过' : `★ 自检失败（${fail} 项）`}`)
 process.exit(fail === 0 ? 0 : 1)

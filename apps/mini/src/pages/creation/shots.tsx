@@ -13,7 +13,7 @@ import { listShotLibrary, type ShotLibraryItem } from '../../services/account'
 import { uploadVideoFile, UploadAbortedError, describeUploadError } from '../../services/upload'
 import { readRouteId } from '../../utils/route-id'
 import ProgressLine from '../../components/progress-line'
-import ShotCamera, { SHOOT_MAX_SECONDS, type ShotCameraResult } from '../../components/shot-camera'
+import ShotCamera, { NATIVE_PICK_MAX_SECONDS, type ShotCameraResult } from '../../components/shot-camera'
 import { useAppShare } from '../../utils/app-share'
 import './shots.scss'
 
@@ -235,7 +235,7 @@ export default function CreationShots() {
       count: 1,
       mediaType: ['video'],
       sourceType: ['album'],
-      maxDuration: SHOOT_MAX_SECONDS,
+      maxDuration: NATIVE_PICK_MAX_SECONDS,
     })) as unknown as {
       tempFiles: { tempFilePath: string; thumbTempFilePath?: string; duration?: number; size?: number }[]
     }
@@ -304,13 +304,17 @@ export default function CreationShots() {
    */
   const onShootUnavailable = (shot: ShotItem, reason: string) => {
     setCameraShot(null)
-    Taro.showToast({ title: reason, icon: 'none' })
+    // ★ 别把 reason 直接弹给用户：它是 `operateCamera:fail:...` / 「相机没能启动，画面一直是黑的」
+    //   这类原始串 —— 拍摄层已经统一显示「系统卡了一下～」，这里再弹一次等于把刚藏起来的
+    //   错误又露出来。原始串留在 console 里给排查用，界面只交代「接下来改用系统相机」。
+    console.warn('[shotcam-handoff] 改用系统相机，原因：', reason)
+    Taro.showToast({ title: '用系统相机继续这一条', icon: 'none' })
     void runShotTask(shot, async () => {
       const mediaRes = (await Taro.chooseMedia({
         count: 1,
         mediaType: ['video'],
         sourceType: ['album', 'camera'],
-        maxDuration: SHOOT_MAX_SECONDS,
+        maxDuration: NATIVE_PICK_MAX_SECONDS,
       })) as unknown as {
         tempFiles: { tempFilePath: string; thumbTempFilePath?: string; duration?: number; size?: number }[]
       }

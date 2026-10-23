@@ -70,11 +70,26 @@ import iconFlashOff from '../../assets/shotcam/flash-off.png'
 import './index.scss'
 
 /**
- * 录制上限（秒）。
- * 微信 startRecord 的 timeout 默认 30、官方上限 5 分钟；这里与原生选择器的
- * maxDuration 保持一致取 60 —— 分镜本来建议的都是十几秒，60 秒是上限而不是目标。
+ * **自建相机**的录制上限（秒）= 5 分钟，也就是微信 `startRecord.timeout` 的官方上限
+ * （原文：「录制时长上限，单位为秒，最长不能超过 5 分钟」，默认 30，最低库 2.22.0）。
+ *
+ * ★★ 2026-10-19 由 60 改成 300：原来取 60 是为了跟**原生选择器**的 `maxDuration` 对齐，
+ *   但产品上我们**只用自建相机**，没必要被原生那条路的上限拖着走。
+ * ★ 回落路径（相册 / 相机不可用时）仍受微信限制，它的上限是**另一个**常量
+ *   `NATIVE_PICK_MAX_SECONDS = 60`（官方 `chooseMedia.maxDuration` 只接受 3~60 秒）。
+ *   ⇒ 两个数**不要合并**：把 300 传给 `chooseMedia` 是越界的，行为未定义。
+ * ★ 时长是计价依据（`durationMs`），放宽之后单条素材会变长，计价与转码时长跟着变。
  */
-export const SHOOT_MAX_SECONDS = 60
+export const SHOOT_MAX_SECONDS = 300
+
+/**
+ * 微信**原生选择器**（`wx.chooseMedia`）的拍摄上限（秒）。
+ * 官方原文：「拍摄视频最长拍摄时间，单位秒。时间范围为 **3s 至 60s** 之间。不限制相册。」
+ * ★ 它跟 `SHOOT_MAX_SECONDS` 是两回事，别拿自建相机的 300 去填它。
+ * ★ 相册那条路本来不受 `maxDuration` 限制（官方「不限制相册」），这里写 60 只是给
+ *   「相机不可用 → 回落原生相机」那一档兜个底。
+ */
+export const NATIVE_PICK_MAX_SECONDS = 60
 
 /**
  * 等 stopRecord 把文件交回来的上限（毫秒）。
@@ -82,6 +97,33 @@ export const SHOOT_MAX_SECONDS = 60
  * stopRecord 也可能一个回调都不来（平台已知问题），没有上限用户就永远停在「正在保存…」。
  */
 const STOP_ACK_TIMEOUT_MS = 8000
+
+/**
+ * `stopRecord` 报 fail 之后，还要再等多久给 `timeoutCallback` 一个机会（毫秒）。
+ *
+ * ★★ `operateCamera:fail:is not recording` 的字面意思是「调停止时原生层没在录」。
+ *   它**不是相机故障**，最常见的原因是**微信已经自己把录像结束了** —— 到录制上限、
+ *   页面 onHide、被系统抢占都会这样，而结束后的文件是由 `timeoutCallback` 送回来的。
+ *   那条回调比 `stopRecord` 的 fail **晚到是常态**（平台已知的不保证回调）。
+ *   ⇒ 判到这个错不能立刻判死：把看门狗缩到这一档，等文件；
+ *     文件来了就正常进确认页（这一段救回来了），没来才回待拍并 toast。
+ */
+const STOP_FAIL_GRACE_MS = 1500
+
+/**
+ * 短于这个时长（毫秒）就认为「这一条基本没录上」。
+ * 它同时是 A 类故障的现场特征：快门点得太快 —— `startRecord` 是异步的，
+ * 而本组件是**乐观进态**（不等 success 就进录制态，见 doStart ★★），
+ * 于是 t+0 发出 start、t+200ms 就点了停止 ⇒ 原生还没进录制态 ⇒ `is not recording`。
+ */
+const MIN_MEANINGFUL_TAKE_MS = 1200
+
+/**
+ * 「录制状态对不上」的金丝雀串（纯 ASCII，防压缩器当死代码删掉）。
+ * ★ 这个故障在真机上只能靠控制台分辨是 A（按太快）还是 B（微信自己结束了）：
+ *   日志里同时打出 `acked`（startRecord 有没有被确认过）与 `elapsed`（点了多久）。
+ */
+const STOP_STATE_CANARY = 'shotcam-stop-state'
 
 /**
  * 「相机尚未初始化」的重试间隔（毫秒）。
@@ -209,6 +251,82 @@ function fmtClock(ms: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
+/**
+ * 每一行最多几个字 —— **必须与 index.scss 里对应的 font-size 成对修改**。
+ * 依据：prompt 可用宽度约 686rpx，中文按「1 字 ≈ 1 个字号宽」⇒ 686 / font-size。
+ *   口播文案 62rpx ⇒ 11 字；画面文案 30rpx ⇒ 22 字
+ */
+const PROMPT_MAX_CHARS = 11
+const VISUAL_MAX_CHARS = 22
+
+/** 不许出现在**行首**的标点（落在这上面就把切点右移一位，让标点收在上一行行尾） */
+const LEAD_PUNCT_RE = /[，、。！？；：,.!?;:）》」』】]/
+
+/**
+ * 把一条文案切成若干行，**保证每一行都排得下**。
+ *
+ * ★★ 为什么必须自己切：这两条文案画在 `<cover-view>` 里，而 cover-view 的默认样式是
+ *   `white-space: nowrap` —— 超过一行的部分会被**静默裁掉**（不换行、不报错）。
+ *   `white-space: normal` 在真机上并不可靠，所以这里按「每行最多几个字」硬切 ——
+ *   切完每行都一定排得下。
+ *
+ * ★ 2026-10-19 用户口径：**不许按长度缩字号**（「文字一长，字体就又变小了，要直接分行」）。
+ *   所以原来那三档字号（62 / 42 / 32）已全部取消，字号固定 62rpx，
+ *   长了的唯一表现就是**多占一行**。
+ *
+ * ★★ 切法＝**均分**，不是「按标点切」。按标点切会把
+ *   `我们家的牛肉，每天早上现切` 切成 `我们家的牛` / `肉，` —— 两字孤行比硬切更难看。
+ *   均分（11 字 ⇒ 4+4+3）不会留孤字，且每行长度差不超过 1 个字。
+ * ★ 原文自带换行时**先按换行拆段、每段各自均分** —— 那正是「按句子分行」的行为。
+ * ★ 均分之外只做一处微调：切点正好落在标点前时，先试着把标点**收进上一行行尾**；
+ *   上一行已经占满就**退一格**让它落进行中。两条都不成立（会造出孤字行或超宽行）
+ *   时才允许标点落在行首 —— 平衡与不超宽优先于标点位置。
+ * ★ 每段至少 2 个字（`Math.max(2, maxChars)`）：避免 `maxChars < 2` 时死循环。
+ * ★ 行数 = ceil(n / lim)，逐行取 `base` 或 `base+1` ⇒ 拼回去与原文逐字相同。
+ */
+function splitPromptLines(text: string, maxChars: number): string[] {
+  const lim = Math.max(2, maxChars)
+  const paras = text
+    .split(/\n+/)
+    .map((p) => p.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  const out: string[] = []
+  for (const para of paras) {
+    const n = para.length
+    if (n <= lim) {
+      out.push(para)
+      continue
+    }
+    const lines = Math.ceil(n / lim)
+    const base = Math.floor(n / lines)
+    const extra = n % lines
+    const cuts: number[] = [0]
+    let pos = 0
+    for (let i = 0; i < lines - 1; i++) {
+      pos += base + (i < extra ? 1 : 0)
+      cuts.push(pos)
+    }
+    cuts.push(n)
+    for (let i = 1; i < cuts.length - 1; i++) {
+      const c = cuts[i]!
+      if (!LEAD_PUNCT_RE.test(para[c] ?? '')) continue
+      const prev = cuts[i - 1]!
+      const next = cuts[i + 1]!
+      // ① 首选：把标点收进上一行行尾（上一行放得下、且本行还剩 ≥3 字）
+      if (c - prev + 1 <= lim && next - (c + 1) >= 3) {
+        cuts[i] = c + 1
+        continue
+      }
+      // ② 次选：退一格，让本行从标点前一个字开始，标点落进行中
+      if (c - 1 - prev >= 3 && next - (c - 1) <= lim) cuts[i] = c - 1
+    }
+    for (let i = 0; i < cuts.length - 1; i++) {
+      out.push(para.slice(cuts[i], cuts[i + 1]))
+    }
+  }
+  return out
+}
+
 /** 微信的错误对象有时是 {errMsg}、有时是 Error（Taro 包了一层），两种都取 */
 function errText(e: unknown): string {
   const o = e as { errMsg?: string; message?: string } | null | undefined
@@ -310,6 +428,16 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
   /** 本次打开浮层已经自动重建过几次（成功起来一次就还清，见 onInitDone） */
   const camRecoverRef = useRef(0)
 
+  /**
+   * `startRecord` 有没有真的被微信确认过（只有它的 `success` 会置真）。
+   *
+   * ★★ 它**不能**用来判断「到底在不在录」：那个 `success` 在真机上经常一个都不回调
+   *   （见 doStart ★★），拿 false 当「没录上」的证据会误伤正常录制。
+   *   它只用于两件事：① 真机日志里区分「按太快」与「微信自己结束了」；
+   *   ② 日志之外的提示文案分档。生死判断一律交给「文件有没有回来」这个事实。
+   */
+  const startAckedRef = useRef(false)
+
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   /** stopRecord 的看门狗：它不回调时靠它把界面放出来（见 doStop） */
   const stopWatchRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -368,6 +496,7 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     finalizedRef.current = false
     recordingRef.current = false
     savingRef.current = false
+    startAckedRef.current = false
     // ★ 相机自愈的预算也还回去：重拍 / 重新打开时，黑屏又有两次重建机会（而不是一进就失败）
     camRecoverRef.current = 0
     camReadyRef.current = false
@@ -500,6 +629,7 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     finalizedRef.current = true
     recordingRef.current = false
     savingRef.current = false
+    startAckedRef.current = false
     clearTimer()
     if (stopWatchRef.current) { clearTimeout(stopWatchRef.current); stopWatchRef.current = null }
     setSaving(false)
@@ -523,54 +653,105 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     onRecordedRef.current?.(recorded)
   }, [clearTimer])
 
+  /**
+   * 这一条彻底放弃：回到待拍，**相机继续挂着**。
+   *
+   * ★★ 为什么不沿用 `setFailMsg(...)`：那个状态会让 `showCamera` 变 false（见 showCamera），
+   *   整台相机被拆掉，用户只剩「去设置里允许」—— 可「没在录」跟权限毫无关系，
+   *   那是**录制状态**对不上，相机本身是好的。拆掉它 = 让用户白重来一遍取景。
+   * ★ 走之前必须把代次 +1：否则在飞的 startRecord / stopRecord 回调还对得上号，
+   *   迟到的文件会填进**下一条**正在录的里（表现为「重拍之后跳出来一个旧视频」）。
+   */
+  const abandonTake = useCallback((toast: string) => {
+    finalizedRef.current = true   // ← 迟到的回调一律丢弃，别把这一条又当成成功
+    recordingRef.current = false
+    savingRef.current = false
+    startAckedRef.current = false
+    if (stopWatchRef.current) { clearTimeout(stopWatchRef.current); stopWatchRef.current = null }
+    clearTimer()
+    epochRef.current += 1
+    endedElapsedRef.current = null
+    elapsedRef.current = 0
+    setSaving(false)
+    setElapsed(0)
+    setPhase('idle')
+    Taro.showToast({ title: toast, icon: 'none' })
+  }, [clearTimer])
+
   const doStop = useCallback(() => {
     if (!recordingRef.current || finalizedRef.current) return
     // ★ 记下「这一轮」的代次：下面两个回调迟回来时若对不上，说明用户已经重拍 / 关掉了，
     //   那个文件不能再算作刚拍好的这一段（见 epochRef ★★）。
     const ep = epochRef.current
+    /**
+     * startRecord 有没有被微信确认过。
+     * ★ 只用来给日志与提示分档，**不用它做生死判断** —— 那个 success 在真机上经常不回调，
+     *   拿 false 当「没录上」的证据会误伤正常录制。生死只看「文件有没有回来」。
+     */
+    const acked = startAckedRef.current
     recordingRef.current = false
     endedElapsedRef.current = endedElapsedRef.current ?? Math.max(0, Date.now() - startedAtRef.current)
+    const endedMs = endedElapsedRef.current ?? 0
     clearTimer()
     // 立刻离开「录制中」并进入「正在保存」：点停要有即时反馈，也顺手挡住重复点击
     setPhase('idle')
     savingRef.current = true
     setSaving(true)
-    /** 只收一次口：看门狗与真回调都可能到，谁先到谁生效 */
-    const give = (msg: string) => {
-      if (epochRef.current !== ep || finalizedRef.current || !savingRef.current) return
-      savingRef.current = false
-      setSaving(false)
-      setFailMsg(msg)
+    /**
+     * 收口：放弃这一条。
+     * ★ 它**不**弹「相机不可用」面板 —— 那个面板是给权限 / 没有摄像头用的，会拆掉整台相机；
+     *   「没在录」只是这一段没成，相机还是好的，用户应当能就地把快门再按一次。
+     */
+    const armWatch = (ms: number) => {
+      if (stopWatchRef.current) { clearTimeout(stopWatchRef.current); stopWatchRef.current = null }
+      stopWatchRef.current = setTimeout(() => {
+        stopWatchRef.current = null
+        if (epochRef.current !== ep || finalizedRef.current || !savingRef.current) return
+        abandonTake(endedMs < MIN_MEANINGFUL_TAKE_MS
+          ? '这一条没录上，请再拍一次'
+          : '这段录像没保存成功，请再拍一次')
+      }, ms)
     }
     /* ★★ 看门狗：stopRecord 也会「success、fail 一个都不回调」（平台已知问题）。
-       没有它，用户就永远停在「正在保存…」—— 那就是「点不了停止」。
-       等到这个上限还没消息，就自己收手并给一句能行动的提示。 */
-    stopWatchRef.current = setTimeout(
-      () => give('这段录像没保存成功，请再拍一次'),
-      STOP_ACK_TIMEOUT_MS,
-    )
+       没有它，用户就永远停在「正在保存…」—— 那就是「点不了停止」。 */
+    armWatch(STOP_ACK_TIMEOUT_MS)
+    /**
+     * 停止失败。
+     * ★★ `operateCamera:fail:is not recording` 的语义是「调停止时原生层没在录」，
+     *   最常见的原因是**微信已经自己结束了录像**（到上限 / 页面 onHide / 被系统抢占），
+     *   文件正由 `timeoutCallback` 送回来 —— 它比 stopRecord 的 fail 晚到是常态。
+     *   ⇒ 不能立刻判死、更不能弹相机不可用面板：把看门狗缩到 STOP_FAIL_GRACE_MS，
+     *     等文件；来了就正常进确认页（这一段救回来），没来才回待拍并 toast。
+     * ★ 打一行金丝雀日志：真机上这是唯一能分辨「按太快（A）」与「微信自己结束了（B）」的痕迹。
+     */
+    const onStopFail = (e: unknown) => {
+      if (epochRef.current !== ep || finalizedRef.current || !savingRef.current) return
+      const msg = errText(e)
+      console.warn(`[${STOP_STATE_CANARY}] stopRecord 失败：${msg || '(空)'}｜acked=${acked}｜elapsed=${endedMs}ms｜等 ${STOP_FAIL_GRACE_MS}ms 看 timeoutCallback 会不会把文件送回来`)
+      armWatch(STOP_FAIL_GRACE_MS)
+    }
     try {
       cameraCtx().stopRecord({
         success: (r) => { if (epochRef.current !== ep) return; void finalize(r) },
-        fail: (e) => {
-          // 停不下来最常见的原因是微信**已经**替我们结束了（刚好到上限）：
-          // 那种情况 timeoutCallback 会带文件回来，这里不能抢先把状态清掉。
-          if (epochRef.current !== ep || finalizedRef.current) return
-          give(`停止录制失败：${errText(e) || '请再试一次'}`)
-        },
+        fail: onStopFail,
       })
     } catch (e) {
-      // cameraCtx() 本身也可能抛（上下文拿不到）：同样要收口，绝不能把界面留死
-      give(`停止录制失败：${errText(e) || '请再试一次'}`)
+      // cameraCtx() 本身也可能抛（上下文拿不到）：同样按「停止失败」处理 ——
+      // 不因为一次调用异常就把一台好相机拆掉。
+      onStopFail(e)
     }
-  }, [clearTimer, finalize])
+  }, [abandonTake, clearTimer, finalize])
 
   const doStart = useCallback(() => {
     if (recordingRef.current || savingRef.current) return
-    // ★ 这一轮的代次（见 epochRef ★★）：startRecord 的回调也要认它，否则「已经重拍的
-    //   上一轮」迟回来的 timeoutCallback 会把文件填进来，把这一轮正在录的顶掉。
+    // ★★ 每开一条新的录制就换一代（见 epochRef ★★）：startRecord / stopRecord 的回调都认它。
+    //   resetRun 只在重拍 / 关浮层 / 交棒时 +1，
+    //   挡不住「录到一半被 onStop 打断、用户立刻重录」那条路：那种情况下上一条
+    //   迟到的 timeoutCallback 代次还对得上，会把旧文件 finalize 掉、把这一条顶成确认页。
+    epochRef.current += 1
     const ep = epochRef.current
     recordingRef.current = true
+    startAckedRef.current = false
     startedAtRef.current = Date.now()
     elapsedRef.current = 0
     endedElapsedRef.current = null
@@ -599,6 +780,7 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
     const abort = (e: unknown) => {
       if (epochRef.current !== ep || !recordingRef.current) return
       recordingRef.current = false
+      startAckedRef.current = false
       clearTimer()
       setPhase('idle')
       setFailMsg(`无法开始录制：${errText(e) || '请检查相机权限'}`)
@@ -614,6 +796,9 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
             //   时长是计价依据，不能把 startRecord 的调用/相机初始化延迟算进去。
             //   ★ 只做重锚，**不靠它进录制态** —— 它在真机上根本不回调（见上面 ★★）。
             if (epochRef.current !== ep) return
+            // ★ 记下「微信确认过在录」这个事实。★ 它只给日志与提示文案分档用（见 startAckedRef），
+            //   绝不用来判断「到底在不在录」—— 这个 success 在真机上经常不回调。
+            startAckedRef.current = true
             startedAtRef.current = Date.now()
             elapsedRef.current = 0
           },
@@ -621,8 +806,12 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
             if (epochRef.current !== ep) return
             // 安卓的相机渲染是异步的，偶发「camera has not been initalized」（官方社区）。
             // 这是瞬时竞态：隔一拍重试一次就过，别直接弹面板把用户挡回去。
-            if (!retried && /init|initaliz|初始化/i.test(errText(e))) {
-              setTimeout(() => { if (recordingRef.current) fire(true) }, START_RETRY_DELAY_MS)
+            // ★ 任何失败都先隔一拍**重试一次**，不再只认 init 那一类：一次 fail 就 abort
+            //   会直接弹「相机不可用」面板把用户挡回去，而这条 API 的失败文案并不稳定
+            //   （安卓常见 `camera has not been initalized`，别的机型还有别的写法）。
+            //   重试也只给一次 —— 两次都失败才认为真的起不来。
+            if (!retried) {
+              setTimeout(() => { if (recordingRef.current && epochRef.current === ep) fire(true) }, START_RETRY_DELAY_MS)
               return
             }
             abort(e)
@@ -725,13 +914,11 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
   const recording = phase === 'recording'
   const line = (shot?.line ?? '').trim()
   const visual = (shot?.visualReq ?? '').trim()
-  // cover-view 的默认样式是 white-space: nowrap，长台词会被**静默裁掉**（不换行、不报错）。
-  // 所以字号必须跟着字数下台阶，保证整句排得进一行 —— 这是「排得下」的硬要求，不是美观。
-  const lineSize = !line
-    ? ''
-    : line.length <= 11 ? 'shotcam__promptline--s1'
-      : line.length <= 16 ? 'shotcam__promptline--s2'
-        : 'shotcam__promptline--s3'
+  // ★★ 不再按长度缩字号（用户口径：「有的文字一长，字体就又变小了，要直接分行」）。
+  //   现在只有**一个**字号，长了就多占一行 —— 切行交给 splitPromptLines，
+  //   它保证每一行都排得下（cover-view 默认 nowrap，溢出的部分会被静默裁掉）。
+  const lineRows = splitPromptLines(line, PROMPT_MAX_CHARS)
+  const visualRows = splitPromptLines(visual, VISUAL_MAX_CHARS)
 
   return (
     <View className='shotcam' catchMove>
@@ -825,8 +1012,16 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
           {/* ★ 这两条文案直接**浮在取景画面上**：「分镜 N · 类型」「建议 N 秒」
               「点一下开始 / 点一下停止」「补光 开 / 关」全部撤掉。 */}
           <CoverView className='shotcam__prompt'>
-            {!!line && <CoverView className={`shotcam__promptline ${lineSize}`}>{line}</CoverView>}
-            {!!visual && <CoverView className='shotcam__promptvisual'>{visual}</CoverView>}
+            {lineRows.map((row, i) => (
+              <CoverView key={`l${i}`} className='shotcam__promptline'>{row}</CoverView>
+            ))}
+            {visualRows.length > 0 && (
+              <CoverView className='shotcam__promptvisual'>
+                {visualRows.map((row, i) => (
+                  <CoverView key={`v${i}`} className='shotcam__promptvisual-row'>{row}</CoverView>
+                ))}
+              </CoverView>
+            )}
           </CoverView>
 
           {/* 录制计时：**居中大字**。读的是 startedAtRef 的真时间差（由 200ms 的 interval 推），
@@ -865,7 +1060,10 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
       {/* ── 拍完确认：把封面和时长摆出来，让用户决定用不用 ──
           ★ 这一块用**普通 View**：走到这里 camera 已经卸载（showCamera=false），
             没有原生组件要盖，普通 View 反而好写（能吃 flex、能换行）。 */}
-      {phase === 'review' && !!take && (
+      {/* ★ `!failMsg` 是防御性的：两块面板都是 `.shotcam__panel`（同一个定位层），
+          同时为真就会叠在一起。正常情况下走不到 —— 但「录制失败」与「文件迟到」
+          曾经能凑出这个组合，加一条前置比赌它不发生便宜。 */}
+      {!failMsg && phase === 'review' && !!take && (
         <View className='shotcam__panel'>
           {take.thumbPath
             ? <Image className='shotcam__reviewthumb' mode='aspectFill' src={take.thumbPath} />
@@ -881,21 +1079,28 @@ export default function ShotCamera({ visible, shot, onCancel, onDone, onUnavaila
         </View>
       )}
 
-      {/* ── 相机用不了：两个出口（去设置 / 回落系统相机），不能把用户困在这一层 ── */}
+      {/* ★★ 2026-10-19 用户要求改的两点（别再改回去）：
+          ① **不显示原始错误串**。`failMsg` 里装的是 `operateCamera:fail:is not recording`
+             这类东西 —— 用户看不懂、看着像崩了。版面上统一换成人话「系统卡了一下～」；
+             原始串**没有丢**：它仍经 `onUnavailable(failMsg)` 交给调用方，也仍在 console 里。
+          ② **「再试一次」与「用系统相机」对调**：把「再试一次」提成主按钮（红底，右侧），
+             把「用系统相机」降成下面那行小字。「去设置里允许」保持在左侧当次按钮。
+             目的很明确 —— **尽量让用户先就地重试**，别一上来就落回微信原生的长按拍摄
+             （那条路一走，这次「点击录制」的改造就白做了）。 */}
       {!!failMsg && (
         <View className='shotcam__panel'>
-          <Text className='shotcam__paneltitle'>{failMsg}</Text>
+          <Text className='shotcam__paneltitle'>系统卡了一下～</Text>
           <Text className='shotcam__panelsub'>也可以先用系统相机/相册继续这一条</Text>
           <View className='shotcam__panelacts'>
             <Text className='shotcam__btn' onClick={() => void goSetting()}>去设置里允许</Text>
             <Text
               className='shotcam__btn shotcam__btn--main'
-              onClick={handoff}
+              onClick={retake}
             >
-              用系统相机
+              再试一次
             </Text>
           </View>
-          <Text className='shotcam__retry' onClick={retake}>再试一次</Text>
+          <Text className='shotcam__retry' onClick={handoff}>用系统相机</Text>
         </View>
       )}
     </View>
