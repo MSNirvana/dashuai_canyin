@@ -466,6 +466,13 @@
     justify-content: center;
     flex: none;
   }
+  // 云图标：本地 PNG（不用字体图标，见 edit.tsx 里那段注释）。
+  // ★ 必须显式给宽高：`<Image>` 的默认尺寸是 320×240，只写 flex 撑不出方形。
+  &__topic-icon-img {
+    width: 38rpx;
+    height: 38rpx;
+    display: block;
+  }
   // 「新」角标：流量型刚并入款式网格，给一个视觉动因说明它跟另外四款不是一回事
   &__topic-new {
     font-size: 19rpx;
@@ -597,11 +604,21 @@
     white-space: nowrap;
   }
   // 右箭头：只作「这里点得开」的可供性提示，颜色比正文浅一档
+  // ★★★ 纯 CSS 画的（两条边 + 旋转 45°），**不用 `<t-icon>`** —— 2026-10-23 实测：
+  //   TDesign 图标的字形来自 `@font-face` 的远程 woff（`tdesign.gtimg.com`，`icon.wxss` 里
+  //   没有任何 base64），而**小程序不允许从 CDN 加载字体**（ERR_CACHE_MISS）⇒ 真机上
+  //   字形是空的：元素在、占位也在，就是看不见。开发者工具不受这条限制，所以
+  //   「本机/工具里好好的、真机上没有」——用户报的正是这个。
+  //   ★ 别再把它换回 `<t-icon name='chevron-right'>`，除非先把字体本地化。
   &__picker-arrow {
     flex: none;
-    display: flex;
-    align-items: center;
-    color: var(--td-text-color-placeholder);
+    width: 16rpx;
+    height: 16rpx;
+    // ★ 旋转后视觉重心偏左下，右侧补一点，让它与容器右边距对齐
+    margin-right: 6rpx;
+    border-right: 3rpx solid var(--td-text-color-placeholder);
+    border-bottom: 3rpx solid var(--td-text-color-placeholder);
+    transform: rotate(-45deg);
   }
   // 没得选 / 加载失败时这一行是「去别处办事」的入口 ⇒ 下划线 + 品牌色（沿用原写法）
   &__picker--action {

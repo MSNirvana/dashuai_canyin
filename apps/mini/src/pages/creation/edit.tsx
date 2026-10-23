@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { View, Text, Button, Input, Textarea, Picker } from '@tarojs/components'
+import { View, Text, Button, Input, Textarea, Picker, Image } from '@tarojs/components'
 import Taro from '@tarojs/taro'
+// 「流量型」图标块用的云图标（本地 PNG，不走字体）
+import topicCloudIcon from '../../assets/icons/topic-cloud.png'
 import {
   createCreation,
   getCreation,
@@ -49,20 +51,17 @@ const SHOT_SIZES = ['远景', '全景', '中景', '近景', '特写', '大特写
 const STEP_LABELS = ['创作', '素材', '成片']
 
 /**
- * 「这次不指定菜品」在界面上的文案 —— **只此一份**。
+ * 「这次不指定菜品」在界面上的文案 —— **只此一份**，就是「无」。
  *
  * ★★ 两处在用它：滚轮的第一项（`DISH_HEAD_OPTIONS`）和「已经没选菜」时那一行显示
  *   （`dishPickerText` 的最后一档）。以前那两处各写了一个字面量 `'无'`，
  *   改一处就会「滚轮里叫 A、选中后显示 B」—— 这类不一致不报错，只是让人以为选错了。
  *
- * ★★★ 为什么从「无」改成句子（2026-10-23）：一个「无」字只说了「这里空着」，
- *   没告诉老板「空着会怎样」，于是有人停在它上面就点了生成，拿到一条没有菜名的稿子。
- *   现在它说的是这一档**实际会发生什么**：不指定菜品，照样能出稿。
- *   ⚠ 刻意**不写「只讲门店」**：人设型/知识型在没选菜时讲的是「人」和「这行的知识」，
- *     写「只讲门店」在那两款下是错的 —— 一句要通用的话，只能说清「不指定菜品」本身。
- * ★ 长度上限：这一行是单行 + 省略号（`&__picker-value`），超过 8 个字端上会被截成「…」。
+ * ★ 2026-10-23 曾经改成过「不指定菜品」，当天按用户要求**改回「无」**：
+ *   这一行是单行 + 省略号，长文案在端上会被截断；而且「无」字短、扫一眼就懂。
+ *   别再来改这一句，除非同时确认端上的宽度够。
  */
-const NO_DISH_LABEL = '不指定菜品'
+const NO_DISH_LABEL = '无'
 
 /**
  * 菜品选择器**头部**的固定项（排在具体菜品之前）：只有「不指定菜品」一项。
@@ -180,10 +179,14 @@ function TrackPicker({
             onClick={() => { if (!on) onChange(o.value) }}
           >
             {/* 图标块与「新」角标只有流量型那一行有：它们是原来那张入口卡的样式，
-                四款菜品文案本来就是普通选项，套上反而是给两件事长同一张脸 */}
+                四款菜品文案本来就是普通选项，套上反而是给两件事长同一张脸。
+                ★ 2026-10-23：这里原来是 `<t-icon name='cloud' />`（TDesign 字体图标），
+                  用户报「流量型那行的图没了」—— 字体图标靠远程字体渲染，那个环节没到位
+                  就是一个**空的粉色方块**，而且不报错。改成**本地 PNG**后不依赖字体、
+                  也不依赖 t-icon 组件的注入，怎么都能显示。 */}
             {o.lead && (
               <View className='cedit__topic-icon'>
-                <t-icon name='cloud' size='38rpx' />
+                <Image className='cedit__topic-icon-img' src={topicCloudIcon} mode='aspectFit' />
               </View>
             )}
             <View className='cedit__track-main'>
@@ -1259,12 +1262,15 @@ export default function CreationEdit() {
                 }}
               >
                 {/* ★ 右箭头必须在 `Picker` **里面**：放到外面的话点箭头不弹选择器，
-                    热区就被切成两块，用户会觉得「这一行时灵时不灵」。 */}
+                    热区就被切成两块，用户会觉得「这一行时灵时不灵」。
+                    ★★★ 箭头是**纯 CSS 画的**（空 View + 两条边框旋转），不是 `<t-icon>`：
+                    TDesign 图标的字形来自 `@font-face` 的**远程** woff（tdesign.gtimg.com），
+                    而小程序不允许从 CDN 加载字体 ⇒ 真机上字形是空的：元素在、占位也在，
+                    就是看不见（开发者工具能加载，所以本机/工具里一切正常，只在真机消失）。
+                    两条边 + rotate 不依赖任何字体，任何端都在。样式见 `&__picker-arrow`。 */}
                 <View className='cedit__picker cedit__picker--select'>
                   <Text className='cedit__picker-value'>{dishPickerText}</Text>
-                  <View className='cedit__picker-arrow'>
-                    <t-icon name='chevron-right' size='32rpx' />
-                  </View>
+                  <View className='cedit__picker-arrow' />
                 </View>
               </Picker>
             ) : (
