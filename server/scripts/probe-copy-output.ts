@@ -149,9 +149,15 @@ async function pickStore() {
       console.log(`★ 自家店/菜泄漏：${leak.length ? leak.join('、') + '  ← 没选菜的知识型不许出现' : '无'}`)
     }
   } else if (sceneArg === 'copy_persona') {
-    // 人设型卖人不卖货：不该荐菜、不该报价
+    // 人设型仍不许卖货，但**选了菜就得报出这道菜**（2026-10-23 起铁律 1 改为条件式）：
+    // 报菜名此时不是「推荐」，而是这一型要讲的那件事的支点。没选菜则一个字都不该出现。
+    const hasDish = Boolean((variables.dishName ?? '').trim())
     const leak = [dishName].filter(has)
-    console.log(`★ 菜名泄漏：${leak.length ? leak.join('、') + '  ← 人设型不荐菜' : '无'}`)
+    if (hasDish) {
+      console.log(`菜名是否报出：${leak.length ? '是（选了菜 ⇒ 人设型也要讲这道菜）' : '否  ← 选了菜却没报菜名'}`)
+    } else {
+      console.log(`★ 菜名泄漏：${leak.length ? leak.join('、') + '  ← 没选菜的人设型不许出现菜名' : '无'}`)
+    }
     console.log(`★ 报价类词：${priceRe.test(text) ? '有  ← 人设型不报价' : '无'}`)
   } else if (sceneArg === 'copy_product') {
     // 产品型是店家视角：报菜是对的；但**套餐信息为空时一个数字价格都不许出现**

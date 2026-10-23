@@ -55,11 +55,18 @@ export function dishEmptyNoteFor(dishName: string): string {
  *   生产创作 #169（选「起泡豆干」+ 知识型）就是这么整篇改讲门店里的大虾火锅的。
  *   现在模板改成条件式（有菜名 ⇒ 讲这道菜、必须报出来；没菜名 ⇒ 讲通用知识），
  *   名单跟着补上：**没选菜时 `dishName` 为空 ⇒ 本判据自动 NOT_APPLICABLE，不会误重试**。
+ * ★ `copy_persona`（人设型）是 2026-10-23 才进来的，理由和知识型那次**一模一样**：
+ *   它的模板原来写着「不推荐具体菜品」，于是不在名单里；而它照样在讲菜 ——
+ *   只是讲的是【门店介绍】里随便哪道菜（生产创作 #384 选「招牌嫩牛肉」+ 人设型，
+ *   `ai_call_log id=902`：菜名在提示词第 452 字节处，返回稿里 `INSTR` 为 **0**，
+ *   正文整篇在讲虾）。约束没达成目的，只把用户选的那道菜排除在外。
+ *   现在模板改成条件式（有菜名 ⇒ 讲这道菜、必须报出来；没菜名 ⇒ 一个字都不提菜），
+ *   名单跟着补上：**没选菜时 `dishName` 为空 ⇒ 本判据自动 NOT_APPLICABLE，不会误重试**。
  * ★ 仍然**故意不含**这两个：
- *   · `copy_persona`（人设型）—— 它的定义就是卖人不卖货、不荐菜不报价，
- *     要求它报菜名等于让它们违反自己的边界；
  *   · `copy_generate`（通用兜底）—— 它的模板里没有这条约束，代码却去强制它，
- *     会变成「反复重试必然失败」的白花钱。
+ *     会变成「反复重试必然失败」的白花钱；
+ *   · `copy_traffic`（流量款/话题）—— 话题稿手里根本没有菜品资料（`dishId` 恒为空），
+ *     模板里也没有这条约束，挂上去只会在「万一有天传了菜名」时白花一次调用。
  * ★ 名单与模板的一致性由 `scripts/verify-dish-mention.ts` 钉死（正反两个方向都断言），
  *   以后加场景/加约束忘了同步会当场变红。
  */
@@ -67,6 +74,7 @@ export const DISH_MENTION_SCENES: ReadonlySet<string> = new Set<string>([
   SCENE.copy_product,
   SCENE.copy_recommend,
   SCENE.copy_knowledge,
+  SCENE.copy_persona,
 ])
 
 /**

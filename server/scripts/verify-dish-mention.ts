@@ -105,9 +105,9 @@ for (const code of DISH_MENTION_SCENES) {
 for (const code of withConstraint) {
   check(DISH_MENTION_SCENES.has(code), `含该约束的 ${code} 已登记进名单（否则兜底漏接线）`)
 }
-// 反向：人设型的定义就是不荐菜，绝不能要求它报菜名
-for (const code of ['copy_persona', 'copy_traffic']) {
-  check(!DISH_MENTION_SCENES.has(code), `${code} 不在名单里（这一型不荐菜/不报货）`)
+// 反向：话题稿手里没有菜品资料，绝不能要求它报菜名
+for (const code of ['copy_traffic']) {
+  check(!DISH_MENTION_SCENES.has(code), `${code} 不在名单里（这一型没有菜品资料）`)
 }
 // ★★ 知识型（copy_knowledge）在这条线上**是特例，必须单独钉住两半**：
 //   它的模板是**条件式**的（有菜名 ⇒ 讲这道菜且必须报出来；没菜名 ⇒ 讲通用知识），
@@ -123,6 +123,28 @@ for (const code of ['copy_persona', 'copy_traffic']) {
   check(
     t.tpl.includes('【菜品】**为空**') && t.tpl.includes('通用知识'),
     '★ 知识型的「没选菜 ⇒ 讲通用知识」那条分支还在（否则空值路径会要求它报一个不存在的菜名）',
+  )
+}
+// ★★★ 人设型（copy_persona）2026-10-23 起走**同一套两半**（病灶与知识型完全相同）：
+//   原来模板写「不推荐具体菜品」，模型于是把【菜品】整段丢掉、改去改写【门店介绍】
+//   （生产 #384：选了招牌嫩牛肉，正文整篇讲虾，菜名 INSTR=0）。现在改成条件式。
+//   这一型有三样东西必须同时成立，少一样就退回旧病：
+//     ① 在名单里（生成后的兜底要接上）；
+//     ② 模板含 MUST_MENTION（有菜名就必须报出来）；
+//     ③ 模板含「没选菜 ⇒ 一个字都不许出现菜名」与「不许拿门店介绍里别的菜顶替」两条禁令。
+{
+  const t = TPLS.find((x) => x.code === 'copy_persona')!
+  check(
+    DISH_MENTION_SCENES.has('copy_persona') && t.tpl.includes(MUST_MENTION),
+    '★ 人设型：既在名单里、模板里也有「必须报出菜名」约束（2026-10-23 起，条件式）',
+  )
+  check(
+    t.tpl.includes('【菜品】为空') && t.tpl.includes('一个字都不许出现菜名'),
+    '★ 人设型的「没选菜 ⇒ 一个字都不许出现菜名」分支还在（否则空值路径会逼它编一道菜）',
+  )
+  check(
+    t.tpl.includes('不许拿【门店介绍】里提到的别的菜来顶替它'),
+    '★★ 人设型仍禁止「拿门店介绍里别的菜顶替选中的菜」（#384 就是这条失守：选牛肉、讲虾）',
   )
 }
 
@@ -215,10 +237,15 @@ check(
   guard({ sceneCode: 'copy_knowledge' }) === 'RETRY',
   '★ 知识型选了菜、正文没报菜名 ⇒ 同样 RETRY（2026-10-14 起，它的硬约束改为条件式）',
 )
-// ★ 反向：这三类场景**绝不能**触发重试 —— 人设型的定义就是不荐菜，通用兜底与话题稿
-//   手里根本没有菜品资料（或模板里没有这条约束）。写反了的后果是「每次都判不合格 ⇒
-//   每次白花一次调用」，而且不报错。
-for (const code of ['copy_persona', 'copy_generate', 'copy_traffic', 'storyboard_generate']) {
+// ★ 2026-10-23：人设型**选了菜**时也要兜底（它的铁律 1 已从「不推荐具体菜品」
+//   改成条件式）。#384「选招牌嫩牛肉、正文讲虾」就是这条没接上的直接后果。
+check(
+  guard({ sceneCode: 'copy_persona' }) === 'RETRY',
+  '★ 人设型选了菜、正文没报菜名 ⇒ 同样 RETRY（2026-10-23 起，铁律 1 改为条件式）',
+)
+// ★ 反向：这三类场景**绝不能**触发重试 —— 通用兜底与话题稿手里根本没有菜品资料
+//   （或模板里没有这条约束），写反了的后果是「每次都判不合格 ⇒ 每次白花一次调用」，而且不报错。
+for (const code of ['copy_generate', 'copy_traffic', 'storyboard_generate']) {
   check(guard({ sceneCode: code }) === 'NOT_APPLICABLE', `${code} 不触发重试（这一型不要求报菜名）`)
 }
 check(guard({ dishName: '' }) === 'NOT_APPLICABLE', '没选菜 ⇒ NOT_APPLICABLE（不适用，不是「没命中」）')
