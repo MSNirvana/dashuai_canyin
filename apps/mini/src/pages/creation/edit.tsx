@@ -1208,6 +1208,23 @@ export default function CreationEdit() {
               <Picker
                 mode='selector'
                 range={dishRange}
+                /**
+                 * ★★★ **必须传 `value`，否则滚轮每次都停在第一项**（微信 `<picker>` 的
+                 *   `value` 默认 0 = 「无」）。这不只是「看着别扭」——它是**静默改值**：
+                 *   用户想「打开看一眼现在选的是哪道菜」，滚轮却从「无」开始，他若直接点
+                 *   确定，这一提交就变成**没选菜品**；若他凭记忆往下滚 N 格去够上次那道菜，
+                 *   而列表顺序正好变过（新菜按 `createdAt desc` 插在前面，见 dish.service.ts），
+                 *   就会**差一格落到它旁边那道菜上** —— 界面显示一道菜、提交的是另一道。
+                 *   2026-10-23 实测事故：385/386 都是「超值6-8人餐」（下标 4），387 变成
+                 *   紧挨着它上一行的「起泡豆干」（下标 3），用户以为选的是套餐。
+                 * ★ 取值要**按 range 的下标**算（`dishes[i]` 在 `range[i + 头部项数]`），
+                 *   并且越界要退回 0：`dishes` 可被整片换掉，旧下标可能已经没有对应项。
+                 */
+                value={
+                  typeof dishPick === 'number' && dishes[dishPick]
+                    ? dishPick + DISH_HEAD_OPTIONS.length
+                    : 0
+                }
                 /** ★★ 下标换算是这里唯一容易出错的地方：`dishes[i]` 对应 `range[i + 头部项数]`。
                     头部项现在**恒为 1**（`DISH_HEAD_OPTIONS`），但偏移量仍从它的 `length` 现取。
                     旧实现写死 `- 1`，而那时头部项数随款式变化（1 或 2）⇒ 在人设型/知识型下
@@ -1611,6 +1628,9 @@ export default function CreationEdit() {
                   <Picker
                     mode='selector'
                     range={SHOT_TYPES}
+                    /** ★ 同上（见菜品选择器那处）：不传 `value` ⇒ 滚轮恒从「开场」开始，
+                        而这行是在**编辑一条已有分镜**，他看一眼就点确定会把它静默改成「开场」。 */
+                    value={Math.max(0, SHOT_TYPES.indexOf(shotDraft.shotType))}
                     onChange={(e: { detail: { value: string | number } }) =>
                       setShotDraft((d) => ({ ...d, shotType: SHOT_TYPES[Number(e.detail.value)] ?? '' }))
                     }
@@ -1623,6 +1643,8 @@ export default function CreationEdit() {
                   <Picker
                     mode='selector'
                     range={SHOT_SIZES}
+                    /** ★ 同上：不传 `value` ⇒ 恒从「远景」开始，看一眼点确定就把景别改成远景。 */
+                    value={Math.max(0, SHOT_SIZES.indexOf(shotDraft.shotSize))}
                     onChange={(e: { detail: { value: string | number } }) =>
                       setShotDraft((d) => ({ ...d, shotSize: SHOT_SIZES[Number(e.detail.value)] ?? '' }))
                     }
