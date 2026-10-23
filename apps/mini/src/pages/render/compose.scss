@@ -289,12 +289,53 @@
   &__customvoice { margin-top: 16rpx; padding: 16rpx; border: 1rpx dashed var(--td-component-stroke); border-radius: var(--td-radius-default); }
   &__voiceactions { display: flex; gap: 14rpx; margin-top: 14rpx; }
   &__customvoiceline { display: flex; align-items: center; justify-content: space-between; gap: 16rpx; margin-top: 12rpx; }
-  &__optionrow { display: flex; align-items: center; justify-content: space-between; gap: 20rpx; padding: 18rpx 0; border-top: 1rpx solid var(--td-component-border); }
-  &__optiontitle, &__optiondesc { display: block; }
-  /* 开关行的行标题：比 `&__fieldlabel` 高一档 —— 它是一件「可以开关的事」，
-     而 fieldlabel 只是给下面那组选项起个名字。同一行里还有 `Switch`，所以它要够醒目。 */
-  &__optiontitle { font-size: 26rpx; font-weight: 600; color: var(--td-text-color-primary); }
-  &__optiondesc { margin-top: 6rpx; font-size: 20rpx; color: var(--td-text-color-placeholder); }
+  /* ── 开关行（2026-10-19：字幕开关来接住这组类）──
+     ★ 这几个 `&__option*` 原来是「AI 自动剪辑」面板上的（面板 2026-09-28 删掉后一直是死类名）。
+       字幕开关正好是同一形态（左边标题+说明、右边一个开关），所以**接回来**而不是另造一套
+       —— 少一套类就少一处"改了一边忘另一边"。
+     ★ 上边线当分隔：它紧跟在两格档位下面，没有这条线会被读成"第三格档位"。 */
+  &__optionrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20rpx;
+    margin-top: 24rpx;
+    padding-top: 22rpx;
+    border-top: 1rpx solid var(--td-component-border);
+  }
+  /* 左半边必须能被压缩：不留 `min-width: 0` 时，长文本会把右侧开关挤出卡片。
+     （2026-10-21 那行说明小字删掉之后，这里只剩标题，但这一条仍然要留 ——
+       标题将来换成更长的文案时，同样的挤压还会发生。） */
+  &__optiontext { flex: 1; min-width: 0; }
+  /* 行标题比 `&__fieldlabel` 高一档：它是一件「可以开关的事」，不是一个字段名。
+     ★ 2026-10-21：`&__optiondesc`（标题下那行 20rpx 说明）**按用户要求删除** ——
+       「生成字幕」+ 一个开关已经说完了，多一行小字只是把这一块撑高。
+       ⚠ 别再往回加；要解释就去 toast（开关时已经给了「字幕已关闭，本次成片不带字幕」）。 */
+  &__optiontitle { display: block; font-size: 26rpx; font-weight: 600; color: var(--td-text-color-primary); }
+  /* ★★ 自绘开关，**不用**原生 `switch`：原生开关高度固定（≈64rpx），在这一行里会把行高顶起来。
+     尺寸与位移算法跟「文案编辑页」那个开关同源：68 − 4×2 − 32 = 28。
+     ★ 开/关两态靠**底色**（灰 → 品牌红），不靠滑块位移 —— 轨道只有 68rpx 宽时，
+       28rpx 的位移几乎看不出来，底色变化才是可读信号。 */
+  &__switch {
+    flex: none;
+    width: 68rpx;
+    height: 40rpx;
+    padding: 4rpx;
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: var(--td-text-color-disabled);
+    transition: background-color 0.18s ease;
+  }
+  &__switch--on { background: var(--td-brand-color); }
+  &__switch-knob {
+    width: 32rpx;
+    height: 32rpx;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 2rpx 6rpx rgba(17, 17, 20, 0.18);
+    transition: transform 0.18s ease;
+  }
+  &__switch--on &__switch-knob { transform: translateX(28rpx); }
   &__choices { display: flex; flex-wrap: wrap; gap: 12rpx; }
   &__choiceitem { padding: 10rpx 18rpx; border: 1rpx solid var(--td-component-stroke); border-radius: 6rpx; font-size: 22rpx; color: var(--td-text-color-secondary); }
   &__choiceitem--on { color: var(--td-brand-color); border-color: var(--td-brand-color); background: var(--td-brand-color-soft); }
@@ -1049,9 +1090,15 @@
   align-items: center;
 }
 
-.rcompose__optionrow { padding: 16rpx 0; }
-.rcompose__optiontitle { font-size: 26rpx; font-weight: 600; }
-.rcompose__optiondesc { font-size: 21rpx; line-height: 1.55; }
+/* ★★ 2026-10-19：这里原来还有 `.rcompose__optionrow / __optiontitle / __optiondesc` 三条覆写
+   （`padding: 16rpx 0` / `26rpx 600` / `21rpx 1.55`），**已删除**。
+   它们是为已下线的「AI 自动剪辑」面板写的，同选择器、写在后面 ⇒ 一直赢：
+   字幕开关（同在用这三个类）的 `padding-top: 22rpx` 会被那条 box 简写打回 16rpx，
+   说明文字的行高也照样被 1.55 压掉 —— 又是本文件反复出现的「改基础块没反应」。
+   ⚠ 规格**只写在基础块里**（见上面 `&__optionrow` 那一段），别再往这里加。
+   ★ 2026-10-21：`__optiondesc` 这个类已随「标题下那行说明小字」一起删除（见基础块的说明），
+     所以上面那句「这三个类」现在实际只剩两个：`__optionrow` / `__optiontitle`。 */
+
 /* 字段名与开关行标题收在 2rpx 的差里，层级靠**颜色**分（secondary / primary）——
    23 vs 25 这种 2rpx 字号差在手机上读不出来，只会显得「没对齐」。 */
 .rcompose__fieldlabel { margin: 22rpx 0 10rpx; font-size: 24rpx; font-weight: 600; }

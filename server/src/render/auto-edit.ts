@@ -207,12 +207,24 @@ export function resolveAutoChatcutOptions(
   profile: AutoEditProfile,
   clips: RenderClip[],
 ): ChatCutOptions {
+  /**
+   * ★★ 字幕开关（2026-10-19）：合成页新增的「生成字幕」开关，**默认开**，用户可以关。
+   *   这里是 AUTO 裁决里唯一必须**让步**的一项 —— 其余参数照旧由服务端按素材画像定
+   *   （`voiceId`/`pacing`/`transitions`/`bgm` 仍不看前端），只有字幕是**用户的显式选择**。
+   *
+   * ★★★ 原来这里无条件写死 `subtitles: true` + `subtitleMode: 'SOURCE_AUDIO'`：
+   *   前端就算传了 OFF 也会被悄悄改回来，表现为「开关点了没用」——而且**更糟**：
+   *   ASR 照跑（那是整条链上最贵的一步），用户以为省了、实际一分没省。
+   * ★ 判据取**两个字段任一为关**：老客户端只传 `subtitleMode`、也有只传 `subtitles` 的，
+   *   认一个漏一个就会在某一版客户端上重新变成「关不掉」。
+   */
+  const subtitlesOff = options.subtitles === false || options.subtitleMode === 'OFF'
   return {
     ...options,
     editMode: 'ADVANCED',
     voiceId: 'none',
-    subtitles: true,
-    subtitleMode: 'SOURCE_AUDIO',
+    subtitles: !subtitlesOff,
+    subtitleMode: subtitlesOff ? 'OFF' : 'SOURCE_AUDIO',
     subtitleStyle: 'CLEAN',
     // 默认模式以完整表达优先：不按比例压缩镜头，也不让交叉转场吞掉句尾。
     pacing: 'NATURAL',

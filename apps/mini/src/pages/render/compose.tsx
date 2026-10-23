@@ -270,6 +270,18 @@ export default function RenderCompose() {
    *    `none` 的语义，后者既是 `voiceId` 的类型来源、也是后端 `CHATCUT_VOICE_OFF` 的契约值。）
    */
   const chatcut: ChatCutOptions = DEFAULT_CHATCUT
+  /**
+   * 字幕开关（2026-10-19 用户要求：放在「生成方式」下面，默认开）。
+   *
+   * ★ 默认**开** = 与改动前完全一致（原来是写死开，用户没有选择权）。
+   * ★ 关掉 ⇒ 提交 `subtitleMode: 'OFF'`，服务端整条字幕链路都不跑：
+   *   原声 ASR、AI 分行、烧字幕三步一起跳（`server/src/render/synthesis.ts` 的 OFF 分支）。
+   *   这是这次改动的**实质** —— 不是"关掉显示"，是把识别那一步省掉。
+   * ★ 只对「AI 生成」有效：精品走剪辑师人工精剪，不经过本地字幕管线 ⇒ 那一档不渲染这个开关。
+   * ★ 不持久化：这是**这一条片子**的选择，不是账号偏好。下次进来回到「开」，
+   *   比「上次关过、这次莫名没字幕」好解释。
+   */
+  const [subtitleOn, setSubtitleOn] = useState(true)
   const [renders, setRenders] = useState<RenderTask[]>([])
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [selectedResult, setSelectedResult] = useState<RenderTask | null>(null)
@@ -1005,7 +1017,9 @@ export default function RenderCompose() {
       }
       const confirmed = await Taro.showModal({
         title: '确认生成',
-        content: '确定生成？',
+        // ★ 字幕关掉时在确认框里再说一次：成片交付后没有字幕是**不可逆**的
+        //   （要补字幕只能重出一遍，等于再扣一次积分），所以值得在提交前显式确认。
+        content: grade === 'AI' && !subtitleOn ? '确定生成？本次不带字幕' : '确定生成？',
         confirmText: '确认提交',
       })
       if (!confirmed.confirm) return
@@ -1020,7 +1034,12 @@ export default function RenderCompose() {
         chatcut: grade === 'AI'
           ? {
               ...chatcut,
-              subtitles: chatcut.subtitleMode !== 'OFF',
+              // ★★ 字幕开关（2026-10-19）：关掉就把整条字幕链路一起关掉。
+              //   ★ 两个字段**一起**给：服务端两条判据都认（`subtitles === false` 或
+              //     `subtitleMode === 'OFF'`），只改一个、另一个还写着 SOURCE_AUDIO，
+              //     后来的人读代码会以为字幕还在，改起来极易回退成"关不掉"。
+              subtitleMode: subtitleOn ? chatcut.subtitleMode : 'OFF',
+              subtitles: subtitleOn && chatcut.subtitleMode !== 'OFF',
               ...(bgmEnabled ? {} : { bgm: 'NONE' as const }),
             }
           : undefined,
@@ -1373,6 +1392,37 @@ export default function RenderCompose() {
         </View>
         {!!gradeIssues[grade] && (
           <View className='ds-notice ds-notice--warn rcompose__premiumtip'>{gradeIssues[grade]}</View>
+        )}
+
+        {/* ── 字幕开关（2026-10-19）──
+            ★ 只挂在「AI 生成」这一档：精品是剪辑师人工精剪，不经过本地字幕管线，
+              那一档摆个开关只会让人以为"关了就没有人工字幕"，说的是假话。
+            ★ 默认开 ⇒ 与改动前完全一致（原来是写死开）。关掉之后服务端连**原声 ASR**
+              都不跑（见 doRender 载荷里的 `subtitleMode: 'OFF'`）。
+            ★ 整行可点，不要求戳中那个小滑块 —— 40rpx 高的轨道本身不是个友好的点击目标。
+            ★ 2026-10-21 按用户要求**删掉标题下面那行说明小字**（「按真人原声识别，自动断句后
+              烧进画面」）。一行标题 + 一个开关就够了；那行字把 132rpx 的档位行下面又撑高一块，
+              而它说的两件事（识别、烧进画面）开关本身已经表达完整。**别再往回加。** */}
+        {grade === 'AI' && (
+          <View
+            className='rcompose__optionrow'
+            hoverClass='ds-hover'
+            onClick={() => {
+              const next = !subtitleOn
+              setSubtitleOn(next)
+              Taro.showToast({
+                title: next ? '字幕已开启' : '字幕已关闭，本次成片不带字幕',
+                icon: 'none',
+              })
+            }}
+          >
+            <View className='rcompose__optiontext'>
+              <Text className='rcompose__optiontitle'>生成字幕</Text>
+            </View>
+            <View className={`rcompose__switch${subtitleOn ? ' rcompose__switch--on' : ''}`}>
+              <View className='rcompose__switch-knob' />
+            </View>
+          </View>
         )}
       </View>
 

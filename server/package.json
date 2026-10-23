@@ -63,6 +63,7 @@
     "render-multitask:verify": "tsx scripts/verify-render-multitask.ts",
     "render-lease:verify": "tsx scripts/verify-render-lease-fencing.ts",
     "render-errors:fix-paths": "tsx scripts/fix-legacy-error-paths.ts",
+    "subtitle-toggle:verify": "tsx scripts/verify-subtitle-toggle.ts",
     "tutorial-visibility:verify": "tsx scripts/verify-tutorial-visibility.ts",
     "render-leak:fix": "tsx scripts/fix-failed-reservation-leak.ts",
     "tutorial:verify": "tsx scripts/verify-tutorial.ts",
