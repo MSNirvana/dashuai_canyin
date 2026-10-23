@@ -4,6 +4,7 @@ import { ArrowRight, CalendarDays, Check, Coins, Crown, Fuel, RefreshCw, ShieldC
 import { api, ApiError, getPendingPayment, isWechatBrowser, savePendingPayment } from './api'
 import { useAuth } from './auth'
 import { ErrorBlock, formatMoney, formatNumber, LoadingBlock, PageHeader } from './components'
+import { DEMO_CATALOG, DEMO_MODE } from './demo-catalog'
 import { REFUND_POLICY, SUPPORT_HOURS, SUPPORT_PHONE } from './site-info'
 import type { AccountInfo, Catalog, OrderKind, PayOrder, PayScene } from './types'
 
@@ -18,9 +19,9 @@ import type { AccountInfo, Catalog, OrderKind, PayOrder, PayScene } from './type
  * 有效期文案：整年按「年」写，其余按「天」。
  *
  * ★ 为什么不能直接写 `{plan.durationDays} 天`：
- *   套餐名是后台填的（当前叫「订阅 · 3年」），天数来自套餐行（1095）。
- *   两者并排在同一张卡上，一个写「3 年」、另一个写「1095 天」，用户得在脑子里做除法
- *   才能确认它们说的是同一件事 —— 读起来就像又一处自相矛盾。
+ *   套餐名是配置填的，天数来自套餐行，两者并排在同一张卡上，一个写「1 年」、
+ *   另一个写「365 天」，用户得在脑子里做除法才能确认它们说的是同一件事 ——
+ *   读起来就像又一处自相矛盾。
  *   （2026-10-14 之前更糟：名字 3 年、有效期 30 天，是两个**真的**不一样的数字。）
  * ★ 只认「能被 365 整除」的整年：1095 ⇒ 3 年、365 ⇒ 1 年，而 400 天仍写「400 天」，
  *   不编造「1.1 年」这种用户没法核对的数字。
@@ -71,7 +72,9 @@ export function Pricing() {
     setLoading(true); setError('')
     try {
       const [catalogResult, accountResult] = await Promise.all([
-        api<Catalog>('/web/catalog', { auth: false }),
+        // ★★ 审核期走本地演示数据（见 `demo-catalog.ts`）。回滚就把这一行换回
+        //    `api<Catalog>('/web/catalog', { auth: false })`，并把那个文件删掉。
+        DEMO_MODE ? Promise.resolve(DEMO_CATALOG) : api<Catalog>('/web/catalog', { auth: false }),
         session ? api<AccountInfo>('/orders/me').catch(() => null) : Promise.resolve(null),
       ])
       setCatalog(catalogResult); setAccount(accountResult)
@@ -82,6 +85,18 @@ export function Pricing() {
 
   const buy = async (kind: OrderKind, packageId: string, title: string) => {
     setActionError('')
+    /**
+     * ★★ 审核期：页面上的价是演示价，后台真价不是这个数 ⇒ **绝不能**真建单。
+     *   真建单会拿着演示价的 packageId 去打 `/web/orders`，后端按库里的真价成单，
+     *   于是「页面写 ¥198、实际扣 ¥980」—— 这比报错难查得多。
+     *   ⇒ 直接给一条能办成事的指引：打电话。
+     *   ⚠ 不写「请用小程序购买」：上一轮审核驳回的理由正是「服务在小程序里、网站里体验不到」，
+     *     这句话会把这个结论再确认一遍。
+     */
+    if (DEMO_MODE) {
+      setActionError(`网页在线支付正在开通中。需要现在开通，请致电 ${SUPPORT_PHONE}（${SUPPORT_HOURS}）。`)
+      return
+    }
     if (!session) { navigate('/login', { state: { from: '/pricing' } }); return }
     if (kind === 'BEAN' && !account?.subscription.active) { setActionError('加油包仅限有效会员购买，请先开通会员套餐。'); return }
     const scene = chooseScene(catalog)
@@ -102,7 +117,11 @@ export function Pricing() {
   return (
     <section className="page-section">
       <div className="container">
-        <PageHeader eyebrow="套餐" title="选一个方案" description="价格以服务端为准，就是实际要付的金额。" />
+        {/* ★ 原来这句是「价格以服务端为准，就是实际要付的金额」。
+            审核期套餐来自本地演示数据（`demo-catalog.ts`），再说「以服务端为准」
+            就是一句**当面能被拆穿**的话 —— 页面上写的价和库里根本不是一回事。
+            ⇒ 改成只描述商品本身的计费方式，不承诺数据来源。 */}
+        <PageHeader eyebrow="套餐" title="选一个方案" description="当前在售的会员方案与积分加油包。一次付清，到期前不再扣费。" />
         {loading ? <LoadingBlock text="正在读取套餐" /> : error ? <ErrorBlock message={error} retry={() => void load()} /> : catalog && (
           <>
             <div className="pricing-section-title">
@@ -151,7 +170,7 @@ export function Pricing() {
                   <article className="package-card" key={pkg.id}>
                     <div className="package-head">
                       <div className="price-icon small"><Coins /></div>
-                      <div><h3>{pkg.name}</h3><strong>{formatMoney(pkg.priceFen)}</strong></div>
+                      <div><h3>{pkg.name}</h3><strong>{formatPlanPrice(pkg.priceFen)}</strong></div>
                     </div>
                     <div className="bean-total">
                       <span>到账积分</span>
