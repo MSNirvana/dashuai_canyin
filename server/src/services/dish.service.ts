@@ -170,6 +170,24 @@ function normalizeDish(d: any) {
   }
 }
 
+/**
+ * ★★★ 这个次序是**小程序「创作 → 菜品」滚轮的唯一依据**，改之前先读完这段。
+ *
+ * `sort` 的取值有三段语义（`int`，允许负数；`createDish` 的默认值恒为 **0**）：
+ * · **负数** —— 「常推菜」置顶段。给最常被选来出稿的几道菜，越小越前。
+ * · **0**     —— 没指定过。这一段内部按 `createdAt desc`，即**新建的菜排在本段最前**。
+ * · **正数** —— 暂未使用，留作「人工下沉」（把某道菜压到 0 段之后）。
+ *
+ * ★★ 为什么不给新菜一个正数默认值（那看起来更"正规"）：新菜的 `sort` 只要**大于 0**
+ *   就会排到负数段之后、全部老菜之前，等于每次新建都把常推菜的位置整体推后一行 ——
+ *   而这正是 2026-10-23 那次事故的机理：滚轮靠"滚几格"选菜，位置一漂就差一格，
+ *   界面显示一道菜、提交的是另一道（创作 385/386 都推「超值6-8人餐」，387 变成紧挨着
+ *   它上一行的「起泡豆干」，白扣一次积分）。所以新菜必须留在 0 段，**不许有正数默认值**。
+ * ★ 别再往这里加 `id asc` 之类的 tie-breaker 来"稳定"顺序：0 段内「新的在前」是有意的，
+ *   老板刚建完一道菜就要立刻用它出稿，翻到列表末尾去找才是真正的退化。
+ * ★ `updateDish` 用的是 `input.sort ?? existing.sort`，改菜名/换图不会把负数冲回 0；
+ *   若哪天有人把它改成 `?? 0`，置顶段会在用户随手编辑一次之后静默失效。
+ */
 export async function listDishes(prisma: PrismaClient, merchantId: bigint, storeId: bigint) {
   await ensureStoreOwned(prisma, merchantId, storeId)
   const rows = await prisma.dish.findMany({ where: { storeId, deletedAt: null }, orderBy: [{ sort: 'asc' }, { createdAt: 'desc' }], include: dishInclude() })
