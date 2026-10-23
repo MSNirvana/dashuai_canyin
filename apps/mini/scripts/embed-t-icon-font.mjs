@@ -115,7 +115,9 @@ function main() {
     console.error(`✗ ${relative(MINI_ROOT, DIST_WXSS)} 里没有 @font-face —— TDesign 版本变了，需重新核对`)
     process.exit(1)
   }
-  const patched = `@font-face{font-family:t;src:url(data:font/woff;charset=utf-8;base64,${base64}) format('woff');font-weight:400;font-style:normal;}`
+  // ★ data URI 里不要加 `;charset=utf-8`：这是二进制 woff，带上 charset 只会让
+  //   某些 WebView 按文本解码，反而多一个可能失败的环节。
+  const patched = `@font-face{font-family:t;src:url(data:font/woff;base64,${base64}) format('woff');font-weight:400;font-style:normal;}`
   const next = css.replace(face[0], patched)
 
   // ── 守护 2：改完不许再有远程字体地址 ──────────────────────────
