@@ -14,6 +14,7 @@ import DataTable from '../lib/table'
 import Field, { FieldGroup } from '../components/Field'
 import AssetUploader from '../components/AssetUploader'
 import { confirmDialog } from '../lib/confirm'
+import { fmtMinute } from '../lib/datetime'
 import { request } from '../lib/http'
 
 /**
@@ -75,6 +76,8 @@ interface ImportableTask {
   durationMs: number | null
   grade: string
   createdAt: string
+  /** 合成完成时间；历史任务可能为 null ⇒ 显示时回退 createdAt */
+  finishAt: string | null
   title: string | null
   storeName: string | null
   storeCategory: string | null
@@ -879,7 +882,28 @@ export default function WorksPage() {
                       </span>
                     )}
                   </span>
-                  <Tag variant="light">{t.storeCategory || '未分类'}</Tag>
+                  <div
+                    style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-end',
+                      gap: 4,
+                      flex: '0 0 auto',
+                    }}
+                  >
+                    <Tag variant="light">{t.storeCategory || '未分类'}</Tag>
+                    {/* 成片日期：合成完成时间优先，历史任务没有就回退任务创建时间 */}
+                    <span
+                      style={{
+                        color: '#999',
+                        fontSize: 12,
+                        whiteSpace: 'nowrap',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {fmtMinute(t.finishAt ?? t.createdAt)}
+                    </span>
+                  </div>
                 </div>
               )
             })}
