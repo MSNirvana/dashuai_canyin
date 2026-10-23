@@ -62,7 +62,11 @@ export function Login() {
       <div className="container auth-grid">
         <div className="auth-copy">
           <h1>登录后就能用</h1>
-          <p>手机号登录，和小程序是同一个账号。</p>
+          {/* ★ 原句是「手机号登录，和小程序是同一个账号。」
+              —— 微信 H5 支付审核的驳回理由正是「网站中体验不到服务内容」，
+              凡是把服务指向别处的话都不能留（官方反例第 2 类就是「小程序推广页」）。
+              现在只说「这个账号在网页上能干什么」。 */}
+          <p>手机号登录，订单、积分和生成记录都记在这个账号下。</p>
         </div>
         <div className="auth-card">
           <div className="auth-card-title">
