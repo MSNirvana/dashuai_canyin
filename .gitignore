@@ -56,3 +56,8 @@ docker-compose.*.override.yml
 server/assets/bgm/*
 # 目录说明本身要入库：运维 SSH 上去看到三首 mp3 时，得知道「别手删」和「怎么重生成」
 !server/assets/bgm/README.md
+
+# ───────────── 一次性排查 / 取数脚本（不入库） ─────────────
+# `.tmp-tools/` 是抓库、灌模板、生成小图这类一次性动作的工作台；
+# 结论要留就写进 scripts/ 或 memory，别把半成品堆进 git 历史。
+.tmp-tools/
