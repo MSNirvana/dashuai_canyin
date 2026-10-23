@@ -1,5 +1,7 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Check } from 'lucide-react'
+import { ArrowRight, Check, Copy, LoaderCircle, Sparkles } from 'lucide-react'
+import { api, ApiError } from './api'
 import { useSiteImages } from './site-images'
 
 /**
@@ -126,9 +128,13 @@ export function Home() {
               ))}
             </ul>
             <div className="hero-actions">
-              <Link className="button" to="/pricing">开始使用 <ArrowRight size={18} /></Link>
+              {/* ★ 2026-10-23：首屏主行动由「开始使用（→套餐）」改成「免费试一条」。
+                  原因是微信支付 H5 审核驳回：「网站中体验不到服务内容」。
+                  让人**当场用一次**，比让他先看价格更能证明「网站里有服务」。
+                  套餐仍在顶栏与页尾，没有丢入口。 */}
+              <a className="button" href="#try">免费试一条 <ArrowRight size={18} /></a>
             </div>
-            <p className="hero-note"><Check size={17} />和小程序是同一个账号</p>
+            <p className="hero-note"><Check size={17} />不用登录，30 秒出一条</p>
           </div>
           <div className="hero-media">
             <div className="media-frame">
@@ -141,6 +147,9 @@ export function Home() {
           </div>
         </div>
       </section>
+
+      {/* 试用区紧贴首屏：审核员/新访客往下滑一格就能用到，这是「网站里有服务」的实证 */}
+      <TrySection />
 
       <section className="section" id="how">
         <div className="container">
@@ -187,26 +196,121 @@ export function Home() {
       <section className="cta-section">
         <div className="container cta-card">
           <div>
-            {/* ★ 2026-10-14（用户要求）：原来是「手机上就能开始」，改成明确写出
-                在哪开始 —— 「微信小程序【大帅餐饮助手】」。老板看完这一页要的是
-                「我去哪找你」，而不是一句形容方便的形容词。
-                ⚠ 「微信小程序」是官方通用叫法（不是第三方商标标识），小程序端也用同一说法；
-                  但**不要**在这里贴微信 logo（品牌视觉规范）。
-                ★★ `nowrap-name` 是**必需的**，不是修饰：320 档实测标题会折行，而
-                   「微信小程序【大帅餐饮助手】」在 22px 下会自动断成
-                   「微信小程序【大帅餐饮助」/「手】」—— 把**品牌名劈开**，还掉一个孤字。
-                   套上 nowrap 后断点被钉在「微信小程序」与名称之间，两行都完整。 */}
-            <h2>微信小程序<span className="nowrap-name">【大帅餐饮助手】</span></h2>
-            {/* ★ 顺手去掉了重复：原来写的是「用手机号登录，和小程序是同一个账号」。
-                上面那行已经点明「微信 小程序」了，这句再说「和小程序是同一个账号」就
-                没有指代对象了（谁和谁同一个账号？）；而且首屏 `.hero-note` 已经说过
-                「和小程序是同一个账号」——「同一句话全站只出现一次」是本站的既定规矩。
-                现在改成回答 h2 新引出的那个问题：**去哪儿找**。 */}
-            <p>微信里搜索就能找到，用手机号登录。</p>
+            {/* ★ 2026-10-23 改写：原来的标题是「微信小程序【大帅餐饮助手】」+「微信里搜索就能找到」，
+                等于当面告诉审核员「服务在微信里，不在这个网站」——
+                而 H5 支付审核驳回理由正是「网站中体验不到服务内容」（官方反例第 2 类：
+                「APP/小程序推广页，附带少量商品或服务」）。
+                现在改成讲**这个网站能干什么**：试用、下单、查订单，账号与小程序通用。 */}
+            <h2>网页上先试，觉得行再开通</h2>
+            <p>开通后用同一手机号登录，网页与小程序权益通用，订单和积分在账户中心随时可查。</p>
           </div>
           <Link className="button" to="/pricing">查看套餐 <ArrowRight size={18} /></Link>
         </div>
       </section>
     </>
+  )
+}
+
+/**
+ * 「免费试一条」—— 官网里唯一一个**不登录就能用**的服务入口。
+ *
+ * ★ 为什么必须有（2026-10-23）：微信支付 H5 支付权限被驳回，理由是
+ *   「网站中体验不到服务内容」。官方《商户申请H5支付权限注意事项》第 1 条要求
+ *   「能清晰的看到网站售卖的商品以及**网站内体验到服务的具体内容**」，
+ *   反例第 4 类就是「网页只有介绍，要线下/别处才能体验」—— 我们原来正是这一类。
+ *
+ * ★ 服务端：`POST /api/v1/web/demo/copy`（免登录、单 IP 每日 3 条、全站每日 200 条）。
+ *   场景 `copy_demo` 的 `beanPrice` 是 0 ⇒ 试用不扣任何人的积分，但**AI 是花钱的**，
+ *   所以限流是功能的一部分，不是防刷装饰。
+ *
+ * ★ 失败时**不假装成功**：AI 挂了就如实说「暂时忙不过来」。页面上不允许出现
+ *   「假样例」—— 审核员一旦发现是写死的文案，比没有更糟。
+ */
+function TrySection() {
+  const [dish, setDish] = useState('')
+  const [point, setPoint] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [text, setText] = useState('')
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  const run = async () => {
+    const name = dish.trim()
+    if (name.length < 2) {
+      setError('先填一个菜名，两个字以上')
+      return
+    }
+    setBusy(true)
+    setError('')
+    setCopied(false)
+    try {
+      const r = await api<{ text: string }>('/web/demo/copy', {
+        method: 'POST',
+        auth: false,
+        body: { dish: name, sellingPoint: point.trim() ? point.trim() : undefined },
+      })
+      setText(r.text)
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : '网络不通，稍后再试')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+    } catch {
+      // 剪贴板在非 https / 旧浏览器上会拒绝，这里不提示「复制失败」——
+      // 文案就在页面上，用户可以自己长按选。静默即可。
+      setCopied(false)
+    }
+  }
+
+  return (
+    <section className="section" id="try">
+      <div className="container">
+        <div className="try-card">
+          <h2 className="section-title">先试一条，不用登录</h2>
+          <p className="try-lead">填一个菜名，看看我们能写出什么样的口播。真的现场生成，不是写好的样例。</p>
+          <div className="try-form">
+            <label className="input-wrap">
+              <input
+                value={dish}
+                onChange={(e) => setDish(e.target.value)}
+                maxLength={20}
+                placeholder="菜名，例：干锅鸭头"
+                aria-label="菜名"
+              />
+            </label>
+            <label className="input-wrap">
+              <input
+                value={point}
+                onChange={(e) => setPoint(e.target.value)}
+                maxLength={60}
+                placeholder="卖点（可不填），例：每天现卤，辣度可调"
+                aria-label="卖点"
+              />
+            </label>
+            <button className="button" onClick={() => void run()} disabled={busy}>
+              {busy ? <><LoaderCircle className="spin" size={18} />正在生成</> : <><Sparkles size={18} />生成一条</>}
+            </button>
+          </div>
+          {error && <div className="form-notice error" role="alert">{error}</div>}
+          {text && (
+            <div className="try-result">
+              <p>{text}</p>
+              <button className="text-button" onClick={() => void copy()}>
+                {copied ? <><Check size={16} />已复制</> : <><Copy size={16} />复制这段</>}
+              </button>
+            </div>
+          )}
+          <p className="try-note">
+            每位每天可试 3 条。要用完整流程（分镜、拍摄提词、字幕配音、成片导出）需要开通会员。
+          </p>
+        </div>
+      </div>
+    </section>
   )
 }

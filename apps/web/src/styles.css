@@ -818,3 +818,63 @@ main { flex: 1; }
   .pay-page { padding: 40px 0 80px; }
   .pay-card { border-radius: var(--r-xl); padding: 32px; box-shadow: var(--sh-2); }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   官网「免费试一条」（2026-10-23）
+   背景：微信支付 H5 权限被驳回「网站中体验不到服务内容」。这一块是
+   网站上唯一**不登录就能用**的服务入口，所以它必须一屏之内点得到。
+   ★ 视觉沿用现有 token，不新增颜色；红只用在主按钮上（规范铁律 2）。
+   ═══════════════════════════════════════════════════════════════ */
+.spin { animation: spin 900ms linear infinite; }
+
+.try-card {
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-xl);
+  padding: 26px 20px;
+  box-shadow: var(--sh-1);
+}
+.try-lead {
+  margin: 0 0 18px;
+  font-size: 16px;
+  line-height: 1.7;
+  color: var(--ink-2);
+  text-wrap: pretty;
+}
+.try-form { display: grid; gap: 12px; }
+.try-form .button { width: 100%; justify-content: center; }
+.try-result {
+  margin-top: 16px;
+  padding: 16px 18px;
+  background: var(--brand-soft);
+  border: 1px solid var(--brand-light);
+  border-radius: var(--r-lg);
+}
+/* 生成结果用正文字号而不是标题字号：它是让人「念一遍」的，念得清比排版好看重要 */
+.try-result p {
+  margin: 0 0 10px;
+  font-size: 17px;
+  line-height: 1.8;
+  color: var(--ink);
+}
+.try-note {
+  margin: 14px 0 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink-3);
+}
+
+/* 规则页/隐私页的「经营者信息」清单：审核员会逐条核对，行高给足 */
+.legal-info {
+  margin: 6px 0 0;
+  padding-left: 20px;
+  font-size: 16px;
+  line-height: 1.95;
+  color: var(--ink-2);
+}
+
+@media (min-width: 768px) {
+  .try-card { padding: 34px 32px; }
+  .try-form { grid-template-columns: 1fr 1.5fr auto; align-items: center; }
+  .try-form .button { width: auto; }
+}

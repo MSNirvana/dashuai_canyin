@@ -1,10 +1,12 @@
 import type { Request, Response } from 'express'
+import { randomUUID } from 'node:crypto'
 import { isIP } from 'node:net'
 import { z } from 'zod'
 import { prisma, redis } from '../db.js'
+import { aiGateway } from '../ai/gateway-instance.js'
 import { createRouter } from '../lib/async-router.js'
 import { idParam, InvalidIdParamError } from '../lib/params.js'
-import { requiredText } from '../lib/validators.js'
+import { requiredText, optionalText } from '../lib/validators.js'
 import { ok, fail } from '../lib/result.js'
 import { WebPayProviderError } from '../lib/wxpay.js'
 import { auth } from '../middleware/auth.js'
@@ -142,6 +144,77 @@ router.get('/site', async (_req, res) => {
       return { image: pickUrl(c.image), title: pickText(c.title, 20), alt: pickText(c.alt, 120) }
     }),
   })
+})
+
+/**
+ * ───────── 官网「免费试一条」（免登录） ─────────
+ *
+ * 为什么要有它：微信支付 H5 权限 2026-10-20 被驳回，理由是「网站中体验不到服务内容」。
+ * 官方《商户申请H5支付权限注意事项》第 1 条要求「能清晰的看到网站售卖的商品以及
+ * **网站内体验到服务的具体内容**」，反例第 4 类就是「网页只有课程介绍，要线下才能体验」——
+ * 我们正是这一类：工具在小程序里，网页只有介绍 + 套餐。
+ * ⇒ 网页上必须有一个**不登录就能用**的最小服务，让人当场看到成品的形状。
+ *
+ * ★ 这**不是**业务链路：`copy_demo` 场景 `beanPrice: 0`（不扣积分），只接受菜名与卖点。
+ * ★ 成本敞口靠两层限流卡住（AI 是真花钱的）：
+ *   ① 单 IP 每 24 小时 3 条；② 全站每 24 小时 200 条。
+ *   计数用 Redis 滚动窗口（首次 INCR 时挂 TTL），不依赖服务器时区。
+ */
+const demoInput = z.object({
+  dish: requiredText(20),
+  sellingPoint: optionalText(60),
+})
+const DEMO_PER_IP_DAILY = 3
+const DEMO_TOTAL_DAILY = 200
+
+/** 返回 'ok' 表示放行；否则是拒绝原因（已经扣掉一次配额）。 */
+async function takeDemoQuota(ip: string): Promise<'ok' | 'ip' | 'total'> {
+  const incr = async (key: string) =>
+    Number(
+      await redis.eval(
+        `local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], 86400) end
+return n`,
+        1,
+        key,
+      ),
+    )
+  // 先扣 IP 配额：被 IP 限住的人不应该再占用全站额度
+  if ((await incr(`web:demo:ip:${ip}`)) > DEMO_PER_IP_DAILY) return 'ip'
+  if ((await incr('web:demo:total')) > DEMO_TOTAL_DAILY) return 'total'
+  return 'ok'
+}
+
+router.post('/demo/copy', async (req, res) => {
+  const parsed = demoInput.safeParse(req.body)
+  if (!parsed.success) return fail(res, 4000, '请填一个菜名（2~20 字）', 400)
+  const { dish, sellingPoint } = parsed.data
+
+  const ip = webPayerClientIp(req)
+  if (!ip) return fail(res, 4000, '无法识别请求来源，请稍后再试', 400)
+
+  const quota = await takeDemoQuota(ip)
+  if (quota === 'ip') {
+    res.setHeader('Retry-After', '3600')
+    return fail(res, 4290, '今天的免费体验已经用完了，明天再来；想看更多就直接开通', 429)
+  }
+  if (quota === 'total') {
+    res.setHeader('Retry-After', '3600')
+    return fail(res, 4291, '今天体验的人有点多，稍后再试或直接开通', 429)
+  }
+
+  const r = await aiGateway.runScene({
+    sceneCode: 'copy_demo',
+    requestId: `demo-${randomUUID()}`,
+    variables: { dishName: dish, sellingPoints: sellingPoint ?? '' },
+  })
+  if (!r.ok) {
+    // 失败要出声：这条路径没有用户账号，日志是唯一能查到「为什么没人试成」的地方
+    console.error('[web] 试用文案生成失败:', r.reason, r.message)
+    return fail(res, 5000, '体验服务暂时忙不过来，请稍后再试', 503)
+  }
+
+  ok(res, { text: r.text.trim().replace(/^["'「『]+|["'」』]+$/g, '') })
 })
 
 router.use(auth)

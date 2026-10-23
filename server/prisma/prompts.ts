@@ -798,6 +798,33 @@ export const COPY_KNOWLEDGE_FALLBACK = `做菜前先把食材和调料备齐，�
 export const COPY_PRODUCT_FALLBACK = `{{storeName}}的菜，具体价格和包含内容以门店当前菜单为准。`
 // ★ 种草型兜底：同上，不引用 {{dishName}}。
 export const COPY_RECOMMEND_FALLBACK = `{{storeName}}的菜，具体做法和口味以门店介绍为准。`
+
+/**
+ * 官网「免费试一条」用的场景（2026-10-23 新增）。
+ *
+ * ★ 为什么单独一个场景，而不是复用 `copy_recommend`：
+ *   ① 试用只拿到「菜名 + 卖点」两个输入，没有门店/城市/人设/套餐 ⇒ 四款的模板全都不适配，
+ *      空变量会被模型当成「资料漏了」自己编一个补上（见 dish-mention.ts 的空值注解那一类）。
+ *   ② 长度不同：试用要的是 40~70 字的一条，业务款是 45~130 字的一整套。
+ *   ③ 计费不同：试用不扣积分（`beanPrice: 0`），业务款要扣。
+ *
+ * ★★ 这条场景的**唯一调用方**是 `routes/web.ts` 的 `POST /web/demo/copy`（免登录、按 IP 限流）。
+ *   不要把它挂到创作链路上 —— `beanPrice: 0` 意味着走那条路等于免费生成。
+ */
+export const COPY_DEMO_PROMPT = `你是餐饮门店的短视频口播文案写手。这次只写**一条最短的样例**，让人在网页上先看到成品长什么样。
+
+【这道菜】{{dishName}}
+【卖点】{{sellingPoints}}
+
+要求：
+1. **40~70 字**，两到三句，口语，一口气能念完。
+2. 第一句要让人停下来：**不许**用「推荐」「强烈推荐」「值得一试」「必须安利」起手。
+3. 只讲这道菜本身：口感、做法、吃法、什么时候想吃。不报价、不列套餐、不催单。
+4. 不编造产地、招牌历史、获奖。**不许**出现「最好吃」「第一」「绝对」「全网」这类绝对化用语。
+5. 【卖点】为空时就只凭菜名写，**不要**自己补一个卖点出来。
+6. 只输出文案正文：不要标题、不要解释、不要分点、不要引号、不要 emoji。`
+/** 兜底：菜名必填（路由会挡空值），所以可以引用；渲染成「这道菜…」也不成病句。 */
+export const COPY_DEMO_FALLBACK = `{{dishName}}就在店里现做，做法和口味以店里为准。`
 /**
  * ★ 分镜兜底与文案兜底不同：它的 line 也必须**能念**。
  *
@@ -836,6 +863,12 @@ export const CREATION_SCENE_PROMPTS = [
   { code: 'copy_knowledge', name: '文案 · 知识型（讲这行的知识：选了菜就讲这道菜怎么做/怎么挑，没选菜讲通用知识；都不报价）', prompt: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK, temperature: 0.8, beanPrice: 80 },
   { code: 'copy_product', name: '文案 · 产品型（店家视角：有什么/多少钱/值不值）', prompt: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK, temperature: 0.8, beanPrice: 80 },
   { code: 'copy_recommend', name: '文案 · 种草型（素人视角：一句话把人喊住，再说清好在哪儿）', prompt: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK, temperature: 0.92, beanPrice: 60 },
+  /**
+   * ★ beanPrice 0 = 试用免费（`charged = min(wantCharge, 0) = 0`）。
+   *   这条只许被 `POST /web/demo/copy` 调用，**不要**接进创作链路（否则等于免费生成）。
+   *   timeoutMs 给 30s：试用页有人在等，宁可早失败让他重试，也不要挂 45s。
+   */
+  { code: 'copy_demo', name: '官网试用 · 一条口播样例（免登录，仅菜名与卖点）', prompt: COPY_DEMO_PROMPT, fallback: COPY_DEMO_FALLBACK, temperature: 0.85, beanPrice: 0, timeoutMs: 30000, maxOutputTokens: 400 },
 ] as const
 
 /** 分镜场景的模板（复杂度/镜头数与文案场景不同，单独配置） */

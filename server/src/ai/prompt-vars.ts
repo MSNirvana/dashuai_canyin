@@ -223,6 +223,9 @@ export const SCENE_VARIABLES: Record<string, readonly string[]> = {
   copy_knowledge: COPY_VARS,
   copy_product: COPY_VARS,
   copy_recommend: COPY_VARS,
+  // ★ 官网免登录试用（2026-10-23）：只喂「菜名 + 卖点」，所以只用 COPY_VARS 里的两个变量。
+  //   仍登记为 COPY_VARS：将来试用扩成多变量时不必再动这张表。
+  copy_demo: COPY_VARS,
   storyboard_generate: STORYBOARD_VARS,
   script_polish: SYNTH_VARS,
   review_guard: SYNTH_VARS,

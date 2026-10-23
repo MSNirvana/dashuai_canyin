@@ -2,6 +2,7 @@ import { type ReactNode } from 'react'
 import { Link, NavLink, useNavigate } from 'react-router-dom'
 import { UserRound, LogOut, ArrowRight } from 'lucide-react'
 import { useAuth } from './auth'
+import { ICP_LICENSE, SUPPORT_HOURS, SUPPORT_PHONE } from './site-info'
 
 /**
  * 品牌标：红「碗 + 筷子 + 播放键」。
@@ -110,8 +111,13 @@ export function Layout({ children }: { children: ReactNode }) {
             <Link to="/privacy">隐私协议</Link>
             {/* ★ 备案号必须逐字保持并链接工信部首页：管局要求「网站首页底部悬挂」，
                 换成 SPA 后极易被漏掉（旧静态页的存在意义就是这个）。改这里前先读
-                deploy/site/index.html 顶部注释。 */}
-            <a className="beian" href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">冀ICP备2023045927号-2</a>
+                deploy/site/index.html 顶部注释。
+                ★ 2026-10-23：值改为从 `site-info.ts` 取（与规则页、后台「联系我们」同一份），
+                  免得改主体时只改了页脚、页内还是旧号。 */}
+            <a className="beian" href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">{ICP_LICENSE}</a>
+            {/* ★ 客服电话放页脚：微信支付 H5 审核要求「有对应的售后服务、客诉解决的说明」，
+                页脚是审核员一定会滚到的地方。tel: 链接让手机上能直接拨。 */}
+            <a className="beian" href={`tel:${SUPPORT_PHONE}`}>客服 {SUPPORT_PHONE}（{SUPPORT_HOURS}）</a>
           </div>
         </div>
       </footer>
