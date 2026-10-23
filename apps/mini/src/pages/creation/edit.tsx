@@ -196,7 +196,10 @@ function TrackPicker({
               </View>
               <Text className='cedit__track-desc'>{o.desc}</Text>
             </View>
-            {o.lead && <t-icon name='chevron-right' size='36rpx' />}
+            {/* ★★★ 右箭头同样是**纯 CSS** 画的，理由与上面那段一模一样：`<t-icon>` 的字形
+                来自远程 woff，真机上是个空元素 ⇒ 这一行看起来「没有箭头、不知道点得开」。
+                样式见 `&__track-arrow`。 */}
+            {o.lead && <View className='cedit__track-arrow' />}
           </View>
         )
       })}

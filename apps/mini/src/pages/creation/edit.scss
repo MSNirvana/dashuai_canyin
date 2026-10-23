@@ -473,6 +473,20 @@
     height: 38rpx;
     display: block;
   }
+  // 流量型那一行的右箭头：**纯 CSS 画的**（两条边 + 旋转 45°），不是 `<t-icon>`。
+  // ★★★ 原因同 `&__picker-arrow`：TDesign 图标的字形来自 `@font-face` 的远程 woff，
+  //   小程序不允许从 CDN 加载字体 ⇒ 真机上元素在、占位也在，就是看不见；
+  //   开发者工具能加载，所以「工具里正常、真机没有」。
+  // ★ 尺寸 36rpx 沿用原来 `<t-icon size='36rpx'>` 的占位，避免这一行高度变化。
+  &__track-arrow {
+    flex: none;
+    width: 16rpx;
+    height: 16rpx;
+    margin: 0 6rpx 0 4rpx;
+    border-right: 3rpx solid var(--td-text-color-placeholder);
+    border-bottom: 3rpx solid var(--td-text-color-placeholder);
+    transform: rotate(-45deg);
+  }
   // 「新」角标：流量型刚并入款式网格，给一个视觉动因说明它跟另外四款不是一回事
   &__topic-new {
     font-size: 19rpx;
