@@ -46,6 +46,13 @@ fi
 npx taro build --type weapp
 
 echo ""
+echo "==> 内嵌图标字体（base64）"
+# TDesign 的 icon.wxss 里 @font-face 只有远程地址，小程序端加载不到 ⇒ 真机上
+# t-icon 全是空白（元素在、占位在、字形空、不报错）。这一步把子集字体塞进去，
+# 顺带核对「源码用到的图标名都在子集里」，漏一个就报错退出。
+node scripts/embed-t-icon-font.mjs
+
+echo ""
 echo "==> 产物自检（组件引用可解析 / 主包体积 / 联调地址）"
 # 按需拷贝 tdesign 组件后，闭包一旦算漏隐藏依赖，构建仍会成功、只在真机白屏，
 # 所以这里强制做一次机械核对；不通过直接退出（set -e 生效）。

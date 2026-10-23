@@ -1,0 +1,22 @@
+{
+  "_comment": "TDesign 图标（MIT）子集：只含本项目用到的字形。生成脚本见 scripts/build-t-icon-subset.py；码位来自 node_modules/.../icon/icon.wxss，与字体同版本 0.4.3。",
+  "glyphs": {
+    "book": 57547,
+    "call": 57639,
+    "camera": 57651,
+    "check": 57788,
+    "chevron-right": 57816,
+    "cloud": 57896,
+    "delete": 58047,
+    "film": 58246,
+    "movie-clapper": 58881,
+    "order-list": 58957,
+    "rice": 59108,
+    "root-list": 59122,
+    "service": 59183,
+    "shop": 59209,
+    "user-vip": 59590,
+    "wallet": 59650
+  },
+  "version": "0.4.3"
+}
