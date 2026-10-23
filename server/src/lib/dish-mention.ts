@@ -78,17 +78,58 @@ export const DISH_MENTION_SCENES: ReadonlySet<string> = new Set<string>([
 ])
 
 /**
+ * 菜名前面常挂的修饰词。★ 模型会**自然把它们省掉**：让它讲「招牌嫩牛肉」，
+ * 它写出来的是「我这店里的嫩牛肉，筋膜剔不干净就不上桌」—— 逻辑完全对，只是没带「招牌」。
+ *
+ * ★★★ 2026-10-23 实测（`probe-copy-output.ts copy_persona 30 64`，零计费直调）：
+ *   正是上面这句。判据要求全名 ⇒ 判「没报菜名」⇒ 触发一次重试（白花一次上游调用），
+ *   重试也只会写成「嫩牛肉」⇒ 再判不合格 ⇒ **每条带修饰词的菜都白花一次**。
+ *   所以这里按「剥掉已知修饰词后的核心名」再比一次；这**不是模糊匹配**：
+ *   剥的是固定的修饰词表、只剥**开头**、剥完不足 2 字就不剥，可枚举、可断言。
+ */
+const DISH_PREFIXES: readonly string[] = [
+  '招牌', '秘制', '特色', '本店', '独家', '经典', '传统', '农家', '私房', '手工',
+  '古法', '自制', '现做', '正宗', '金牌', '镇店', '主打', '精品', '特制', '拿手',
+]
+
+/**
+ * 菜名的「核心名」（剥掉开头的修饰词）。
+ * 没剥掉任何东西、或剥完只剩 1 个字 ⇒ 返回空串，表示**不放宽**。
+ * ★ 1 字的约束是刻意的：`招牌鱼` → `鱼`，而「鱼」在餐饮文案里遍地都是，
+ *   放行它会变成「随便什么都算报过这道菜」，比多花一次调用糟得多。
+ */
+export function dishCoreName(dishName: string): string {
+  const full = normalize(dishName)
+  let core = full
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const p of DISH_PREFIXES) {
+      if (core.startsWith(p) && core.length - p.length >= 2) {
+        core = core.slice(p.length)
+        changed = true
+      }
+    }
+  }
+  return core === full ? '' : core
+}
+
+/**
  * 正文里报出这道菜了吗？
  *
  * ★ 归一化必须**宽松**：模型常写成 `**锅巴土豆**`、或在名字中间夹个空格。
  *   判太严的代价是「正常的稿子被判不合格 ⇒ 白花一次调用」。
- * ★ 但**不做同义词/模糊匹配**：代价不对称 ——
- *   多花一次调用约 ¥0.03，而漏报一次就是用户这次的投诉。
+ * ★ 先认全名，再认核心名（见 `dishCoreName` 的解释与实测）。
+ * ★ 但**不做同义词/近义改写**：`锅巴土豆` 写成「土豆」仍判未命中 ——
+ *   那已经不是同一个菜名了，代价不对称（多花一次约 ¥0.03，漏报一次就是用户这次的投诉）。
  */
 export function mentionsDish(text: string, dishName: string): boolean {
   const want = normalize(dishName)
   if (!want) return true
-  return normalize(text).includes(want)
+  const t = normalize(text)
+  if (t.includes(want)) return true
+  const core = dishCoreName(dishName)
+  return core ? t.includes(core) : false
 }
 
 /** 去掉空白与各类包裹/装饰字符（加粗、引号、括号、书名号…），只留字面内容 */
