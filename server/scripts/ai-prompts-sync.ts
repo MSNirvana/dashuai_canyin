@@ -16,7 +16,7 @@
 //
 // 用法：npm run ai-prompts:sync
 import { PrismaClient } from '@prisma/client'
-import { BGM_SELECT_SCENE, CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, STORYBOARD_SCENE, PUBLISH_SCENES, SUBTITLE_SPLIT_SCENE } from '../prisma/prompts.js'
+import { BGM_SELECT_SCENE, COPY_DEMO_SCENE, CREATION_SCENE_PROMPTS, EDIT_PLAN_SCENE, STORYBOARD_SCENE, PUBLISH_SCENES, SUBTITLE_SPLIT_SCENE } from '../prisma/prompts.js'
 import { validateTemplate } from '../src/ai/prompt-vars.js'
 
 const prisma = new PrismaClient()
@@ -42,6 +42,11 @@ interface SceneSpec {
 const scenes: SceneSpec[] = [
   ...CREATION_SCENE_PROMPTS.map((s) => ({ ...s, kind: 'TEXT' as SceneKind })),
   { ...STORYBOARD_SCENE, kind: 'TEXT' as SceneKind },
+  // 官网试用（`POST /web/demo/copy` 专用）。
+  // ★ 它**不**在 CREATION_SCENE_PROMPTS 里 —— 那个数组是「小程序可选的文案款式」，
+  //   长度被守护钉死为 6。塞进去会让 seed / setup-ai-channels 把它当成第 7 款。
+  //   详见 `prisma/prompts.ts::COPY_DEMO_SCENE` 上面的说明。
+  { ...COPY_DEMO_SCENE, kind: 'TEXT' as SceneKind },
   ...PUBLISH_SCENES.map((s) => ({ ...s, kind: s.kind as SceneKind })),
   // AI 剪辑决策（2026-09-22）—— 本项目第一个「模型直接出剪辑参数」的场景。
   // ★ 它自带 kind，但仍显式覆盖成 'TEXT'：与 STORYBOARD_SCENE 同一种写法，

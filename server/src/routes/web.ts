@@ -185,6 +185,73 @@ return n`,
   return 'ok'
 }
 
+/**
+ * 把模型输出拆成「文案 / 分镜 / 标题」三段。
+ *
+ * ★★ 为什么不用 JSON：这条提示词要模型一次产出三种结构，JSON 是最容易「看起来对」的格式，
+ *   但也是**最容易静默坏**的：前后缀 ```json、尾逗号、字段名被改写成 shots/videoShots……
+ *   一旦解析失败，模型其实是**生成成功**了的，我们却只能整条丢掉或整条拒掉。
+ *   三段标记行是纯文本切分：缺一段就少渲染一块，其余照常可用 —— 降级是渐进的。
+ *
+ * ★★ 标记一个都没认出来（模型完全没照格式写）时**不报错**：整段当文案返回。
+ *   理由同上 —— 内容是好的，坏的只是包装，这时把好内容扔掉最亏。
+ *   这条规则由 `parseDemoPack` 末尾那个 `if (!copy)` 分支兜住。
+ *
+ * ★ 分隔符只认全角竖线｜是幻觉：模型经常顺手写半角 `|`，两种都收。
+ */
+interface DemoShot {
+  no: number
+  time: string
+  scene: string
+  line: string
+}
+
+const DEMO_MARKERS = /(【\s*文案\s*】|【\s*分镜\s*】|【\s*标题\s*】)/
+
+function parseDemoPack(raw: string): { text: string; shots: DemoShot[]; title: string } {
+  // `**` 是模型最爱加的装饰，剥掉不影响任何内容，但留在画面上就是一堆星号
+  const source = raw.replace(/\r\n/g, '\n').replace(/\*\*/g, '').trim()
+
+  const seg: Record<'copy' | 'story' | 'title', string> = { copy: '', story: '', title: '' }
+  const parts = source.split(DEMO_MARKERS)
+  // split 带捕获组 ⇒ 奇数位是标记、偶数位是内容：['', '【文案】', '正文', '【分镜】', '…']
+  for (let i = 1; i < parts.length; i += 2) {
+    const marker = parts[i] ?? ''
+    const body = (parts[i + 1] ?? '').trim()
+    if (marker.includes('文案')) seg.copy = body
+    else if (marker.includes('分镜')) seg.story = body
+    else if (marker.includes('标题')) seg.title = body
+  }
+
+  const shots: DemoShot[] = []
+  for (const [index, line] of seg.story.split('\n').map((s) => s.trim()).filter(Boolean).entries()) {
+    if (index >= 5) break // 分镜正常 3 条；多出来的当模型跑偏，不展示
+    // 解构给默认值，而不是 `cells[0]` 取值：本项目开了 `noUncheckedIndexedAccess`，
+    // `cells[0]` 的类型是 `string | undefined`，直接塞进 `DemoShot` 编不过。
+    const [first = '', second = '', third = '', ...rest] = line.split(/[｜|]/).map((c) => c.trim())
+    if (rest.length > 0) {
+      // 四格及以上：镜号｜时间段｜画面｜说什么（多出来的格并回「说什么」，不丢内容）
+      shots.push({
+        no: Number(first.replace(/\D/g, '')) || index + 1,
+        time: second,
+        scene: third,
+        line: rest.join('｜'),
+      })
+    } else if (third) {
+      // 只有三格：模型省了镜号 ⇒ 按出现顺序补，比丢掉这一镜强
+      shots.push({ no: index + 1, time: first, scene: second, line: third })
+    }
+  }
+  // 分镜整段认不出四格、但确实有字 ⇒ 至少让这段话能读，不要显示成空白卡
+  if (!shots.length && seg.story) shots.push({ no: 1, time: '', scene: '', line: seg.story })
+
+  return {
+    text: seg.copy || (seg.story || seg.title ? '' : source),
+    shots,
+    title: seg.title,
+  }
+}
+
 router.post('/demo/copy', async (req, res) => {
   const parsed = demoInput.safeParse(req.body)
   if (!parsed.success) return fail(res, 4000, '请填一个菜名（2~20 字）', 400)
@@ -210,11 +277,18 @@ router.post('/demo/copy', async (req, res) => {
   })
   if (!r.ok) {
     // 失败要出声：这条路径没有用户账号，日志是唯一能查到「为什么没人试成」的地方
-    console.error('[web] 试用文案生成失败:', r.reason, r.message)
+    console.error('[web] 试用样例生成失败:', r.reason, r.message)
     return fail(res, 5000, '体验服务暂时忙不过来，请稍后再试', 503)
   }
 
-  ok(res, { text: r.text.trim().replace(/^["'「『]+|["'」』]+$/g, '') })
+  const pack = parseDemoPack(r.text)
+  if (!pack.text && !pack.shots.length && !pack.title) {
+    console.error('[web] 试用样例解析后为空:', JSON.stringify(r.text.slice(0, 200)))
+    return fail(res, 5000, '体验服务暂时忙不过来，请稍后再试', 503)
+  }
+  // ★ 字段名保持 `text` 不变：老前端（浏览器里缓存的旧 bundle）只认它，
+  //   多给两个字段不会让它报错，页面还能正常显示文案。
+  ok(res, { ...pack, dish })
 })
 
 router.use(auth)

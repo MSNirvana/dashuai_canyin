@@ -834,6 +834,23 @@ main { flex: 1; }
   padding: 26px 20px;
   box-shadow: var(--sh-1);
 }
+/* 试用区的抬头：先给一个「这是免费、不用登录」的小标签，再给标题。
+   ★ 标签存在的理由是**降低第一步的心理成本** —— 老板最怕的是「点一下就要注册」。
+   红只用在主按钮上（规范铁律 2），所以标签走 `--brand-soft` 底 + `--brand-active` 字。 */
+.try-head { margin-bottom: 18px; }
+.try-badge {
+  display: inline-block;
+  padding: 4px 11px;
+  border-radius: var(--r-pill);
+  background: var(--brand-soft);
+  color: var(--brand-active);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+/* 标题紧跟在标签下面，所以把 `.section-title` 自带的下边距收掉、
+   改由 `.try-lead` 的 `margin-bottom` 控制与表单的距离。 */
+.try-head .section-title { margin: 10px 0 8px; }
 .try-lead {
   margin: 0 0 18px;
   font-size: 16px;
@@ -843,20 +860,85 @@ main { flex: 1; }
 }
 .try-form { display: grid; gap: 12px; }
 .try-form .button { width: 100%; justify-content: center; }
-.try-result {
-  margin-top: 16px;
-  padding: 16px 18px;
+/* ── 生成结果 = 一张「工作单」 ────────────────────────────────
+   ★ 为什么做成带抬头的卡片、而不是原来一块粉色结果区：
+     这一块要给审核员看到的是「**一份交付物**」—— 有抬头（这道菜）、
+     有三块分好的内容、有每块的一句话说明。原来那块只有一段话，
+     看起来像"生成了一句文案"的小玩具。
+   ★ 三段之间用 1px 分隔线而不是各自的边框：它们是一份东西的三节，不是三张卡。
+     三张独立的卡会让人以为是三个功能，而实际是**一次生成**的结果。 */
+.try-sheet {
+  margin-top: 18px;
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  overflow: hidden;
+}
+.try-sheet-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
   background: var(--brand-soft);
-  border: 1px solid var(--brand-light);
+  border-bottom: 1px solid var(--brand-light);
+}
+.try-sheet-head strong { display: block; font-size: 16px; color: var(--ink); }
+.try-sheet-head span { display: block; margin-top: 2px; font-size: 13px; color: var(--ink-3); }
+/* 复制按钮在 `--brand-soft` 底上：`--brand` 只有 4.10:1，压这条底色不达标 ⇒ 用 `--brand-active` */
+.try-sheet-head .text-button { min-height: 40px; font-size: 15px; color: var(--brand-active); }
+
+.try-block { padding: 16px; border-top: 1px solid var(--stroke); }
+.try-sheet-head + .try-block { border-top: 0; }
+.try-block h3 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 8px;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--ink-2);
+}
+.try-block h3 svg { flex: none; color: var(--brand); }
+/* 正文用 17px：它是让人「念一遍」的，念得清比排版好看重要 */
+.try-copy { margin: 0; font-size: 17px; line-height: 1.8; color: var(--ink); }
+.try-hint { display: block; margin-top: 8px; font-size: 13px; color: var(--ink-3); }
+
+.try-shots { list-style: none; display: grid; gap: 10px; margin: 0; padding: 0; }
+.try-shots li { display: flex; gap: 10px; }
+.try-shot-no {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand-active);
+  font-size: 13px;
+  font-weight: 700;
+}
+.try-shots b { font-size: 13px; font-weight: 600; color: var(--ink-3); }
+.try-shot-scene { margin: 2px 0 0; font-size: 15px; line-height: 1.65; color: var(--ink); }
+/* 口播那一行降一档灰度：它是「这一镜说什么」，是画面的附属，不该和画面抢 */
+.try-shot-line { margin: 3px 0 0; font-size: 15px; line-height: 1.65; color: var(--ink-2); }
+
+/* 没生成过时的空态：只说「会出什么」，**不带任何假内容**（理由见 Home.tsx 的注释）。
+   用虚线框而不是实线卡片 —— 虚线读作「这里是位置，东西还没放进来」。 */
+.try-preview {
+  margin-top: 18px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px dashed var(--stroke);
   border-radius: var(--r-lg);
 }
-/* 生成结果用正文字号而不是标题字号：它是让人「念一遍」的，念得清比排版好看重要 */
-.try-result p {
-  margin: 0 0 10px;
-  font-size: 17px;
-  line-height: 1.8;
-  color: var(--ink);
-}
+.try-preview-item { display: flex; align-items: flex-start; gap: 10px; }
+.try-preview-item svg { flex: none; margin-top: 2px; color: var(--brand); }
+.try-preview-item strong { display: block; font-size: 15px; font-weight: 650; color: var(--ink-2); }
+.try-preview-item span { font-size: 14px; line-height: 1.6; color: var(--ink-3); }
 .try-note {
   margin: 14px 0 0;
   font-size: 14px;
@@ -877,4 +959,62 @@ main { flex: 1; }
   .try-card { padding: 34px 32px; }
   .try-form { grid-template-columns: 1fr 1.5fr auto; align-items: center; }
   .try-form .button { width: auto; }
+  /* 桌面端空态三格并排：手机上是竖排清单，宽屏上才铺开成「一张产线的三段」 */
+  .try-preview { grid-template-columns: repeat(3, 1fr); gap: 18px; }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   套餐页：单档也要有厚度（2026-10-24 调价后）
+   背景：价格从 ¥980/3年 调到 ¥198/1年，在售只剩**一档**。
+   原来的 `.price-card` 是按「2~3 档并排」设计的，一档时会被
+   768/1024 断点的 `repeat(2|3, 1fr)` 拉成一块横板，页面看着像没做完。
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ★ 为什么写在这里（文件最末尾）而不是改上面两个断点：
+   那些 `repeat(2|3, 1fr)` 是 `.plan-grid/.package-grid/.stat-grid/.account-actions`
+   **共用**的一条规则，改它会连带改掉账户中心与加油包的版式。
+   同优先级下后写的胜 ⇒ 只在这里覆盖 `.plan-grid` 一条，其余照旧。
+   档位数以后变成 2、3 档也不用再改断点：auto-fit 会自己排。 */
+.plan-grid {
+  grid-template-columns: repeat(auto-fit, minmax(280px, 340px));
+  justify-content: center;
+}
+
+/* 「折合每天 0.54 元」：跟着价格排在同一行，字号降一档，不和 34px 的价钱抢 */
+.price-meta { font-size: 15px; color: var(--ink-3); }
+
+/* 退款与售后：审核规则第 1 条点名要求的「售后服务、客诉解决说明」。
+   用实线卡片、不用提示条 —— 它是**条款**，不是一次性提醒。 */
+.refund-band {
+  margin-top: 28px;
+  padding: 18px 20px;
+  background: var(--card);
+  border: 1px solid var(--stroke);
+  border-radius: var(--r-lg);
+}
+.refund-head { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 650; }
+.refund-head svg { width: 20px; color: var(--brand); flex: none; }
+.refund-band ul {
+  display: grid; gap: 8px;
+  margin: 12px 0 10px; padding-left: 20px;
+  font-size: 15px; line-height: 1.75; color: var(--ink-2);
+}
+.refund-band p { margin: 0; font-size: 15px; line-height: 1.7; color: var(--ink-3); }
+.refund-band a { color: var(--brand); font-weight: 650; }
+
+/* ★★ 只有一档套餐时（`:has()` 判据），把卡片从 340px 放宽到 720px、权益改两列：
+   340px 的卡放在 1280 的屏幕上居中，左右各空 470px，整页看着像没做完 ——
+   而「在售只有一档」在调价后是**常态**，不是临时状态。
+   ⚠ 用 `:has()` 而不是无条件放宽：以后上架 2~3 档时这条规则自动不生效，
+     回到上面 `repeat(auto-fit, …)` 的并排版式，不用再改代码。
+     不支持 `:has()` 的浏览器只是退回 340px，不会排版错乱（渐进增强）。 */
+@media (min-width: 900px) {
+  .plan-grid:has(> .price-card:only-child) { grid-template-columns: minmax(0, 720px); }
+  .plan-grid:has(> .price-card:only-child) .price-card { padding: 28px 34px; }
+  .plan-grid:has(> .price-card:only-child) .price-card ul {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 14px 30px;
+  }
+  .plan-grid:has(> .price-card:only-child) .price-card li { flex: 0 1 300px; }
 }

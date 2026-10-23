@@ -4,6 +4,7 @@ import { ArrowRight, CalendarDays, Check, Coins, Crown, Fuel, RefreshCw, ShieldC
 import { api, ApiError, getPendingPayment, isWechatBrowser, savePendingPayment } from './api'
 import { useAuth } from './auth'
 import { ErrorBlock, formatMoney, formatNumber, LoadingBlock, PageHeader } from './components'
+import { REFUND_POLICY, SUPPORT_HOURS, SUPPORT_PHONE } from './site-info'
 import type { AccountInfo, Catalog, OrderKind, PayOrder, PayScene } from './types'
 
 /**
@@ -26,6 +27,34 @@ import type { AccountInfo, Catalog, OrderKind, PayOrder, PayScene } from './type
  */
 function formatDuration(days: number): string {
   return days >= 365 && days % 365 === 0 ? `${days / 365} 年` : `${days} 天`
+}
+
+/**
+ * 「折合每天多少」—— 只在整年套餐、且单价大于 0 时给。
+ *
+ * ★ 为什么要给这一行：¥198 一次付清，对「一个月能不能多接两桌客人」的老板来说
+ *   是个要犹豫的数字；拆到每天 0.54 元，他才能拿它跟一瓶水比。
+ *   **不编造对比对象**（不写「一天不到一瓶水钱」那种话），只把除法结果摆出来。
+ * ★ 小于 1 元时保留两位、大于等于 1 元时保留一位 —— 0.5 元会丢掉「0.54」这个更小的数，
+ *   而 1.5 再多给一位就是假精度（价格本身是整数元）。
+ */
+function formatPerDay(priceFen: number, days: number): string {
+  if (!days || priceFen <= 0) return ''
+  const yuan = priceFen / 100 / days
+  const text = yuan >= 1 ? (Math.round(yuan * 10) / 10).toFixed(1) : (Math.round(yuan * 100) / 100).toFixed(2)
+  return `折合每天 ${text} 元`
+}
+
+/**
+ * 套餐卡上的大价格：**整元不写小数**。
+ *
+ * ★ 为什么不直接用 `formatMoney`：那是**账单口径** —— 订单页、支付页必须能对到「分」，
+ *   一成不变地写两位小数是对的。但 pricing 卡上那 34px 的大字写成「¥198.00」，
+ *   两个零是纯噪声，老板关心的只是「两百块」这个量级。
+ * ★ 只省**整元**的小数：¥198.50 这类非整元仍走 `formatMoney`，不会把零头写丢。
+ */
+function formatPlanPrice(priceFen: number): string {
+  return priceFen % 100 === 0 ? `¥${priceFen / 100}` : formatMoney(priceFen)
 }
 
 export function Pricing() {
@@ -87,10 +116,21 @@ export function Pricing() {
                     {index === 0 && <span className="recommended">推荐</span>}
                     <div className="price-icon"><Crown /></div>
                     <h3>{plan.name}</h3>
-                    <div className="price"><strong>{formatMoney(plan.priceFen)}</strong></div>
+                    <div className="price">
+                      <strong>{formatPlanPrice(plan.priceFen)}</strong>
+                      {formatPerDay(plan.priceFen, plan.durationDays) && (
+                        <span className="price-meta">{formatPerDay(plan.priceFen, plan.durationDays)}</span>
+                      )}
+                    </div>
                     <ul>
-                      <li><CalendarDays /><span>有效期 <b>{formatDuration(plan.durationDays)}</b></span></li>
-                      <li><Coins /><span>赠送 <b>{formatNumber(plan.grantBeans)} 积分</b></span></li>
+                      <li><CalendarDays /><span>有效期 <b>{formatDuration(plan.durationDays)}</b>，到期前一直能用</span></li>
+                      <li><Coins /><span>赠送 <b>{formatNumber(plan.grantBeans)} 积分</b>，生成时按次扣</span></li>
+                      {/* ★ 这一行长度是算过的：桌面端权益两列、每列 300px，
+                          可用宽度 ≈274px ÷ 16px ≈ 17 字。原来写「文案、分镜、拍摄提词、
+                          字幕配音、成片导出都能用」（22 字）会折成两行，而且断点落在
+                          「成|片」中间 —— 中文没有词边界，浏览器就在那儿切了。
+                          现在 16 字，一行放得下。**加字之前先算一遍**。 */}
+                      <li><Check /><span>文案、分镜、提词、字幕、成片全包</span></li>
                       <li><Check /><span>可以购买积分加油包</span></li>
                     </ul>
                     <button className="button full" disabled={!!creating} onClick={() => void buy('MEMBER', plan.id, plan.name)}>
@@ -125,6 +165,20 @@ export function Pricing() {
                 ))}
               </div>
             ) : <CatalogEmpty text="暂无可售积分加油包" />}
+
+            {/* ★★ 退款与售后写在这一页，而不是只放在 /rules 里：
+                微信支付 H5 审核规则第 1 条要求商品页「带有价格、有对应的**售后服务、
+                客诉解决的说明**」—— 审核员看的是**价格那一页**，让他再去别处找，
+                中间任何一次跳转都可能被记成「没有说明」。
+                正文来自 `site-info.ts::REFUND_POLICY`，与《基础服务规则》同一份口径。 */}
+            <div className="refund-band">
+              <div className="refund-head"><ShieldCheck /><strong>退款与售后</strong></div>
+              <ul>{REFUND_POLICY.map((text) => <li key={text}>{text}</li>)}</ul>
+              <p>
+                客服电话 <a href={`tel:${SUPPORT_PHONE}`}>{SUPPORT_PHONE}</a>（{SUPPORT_HOURS}）
+                · 完整条款见 <Link to="/rules">基础服务规则</Link>
+              </p>
+            </div>
 
             {actionError && <div className="action-error"><ShieldCheck /><span>{actionError}</span></div>}
             <div className="payment-note">

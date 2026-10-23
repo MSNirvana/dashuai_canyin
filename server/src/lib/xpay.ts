@@ -190,7 +190,26 @@ export function beanProductId(beans: bigint | number | string): string {
  * 所以约定为：**MP 后台的道具 ID 与价格，必须与本函数的产物逐字一致**。
  */
 export const VP_PRODUCT_CONTRACT = [
-  { productId: 'SUBSCRIPTION', goodsPriceFen: 98000, 说明: '订阅 · 3年（member_package.code）' },
+  /**
+   * ★★★ 这一行记录的是**微信 MP 后台真实建的那个道具**，不是「我们希望卖多少钱」。
+   *
+   * 2026-10-24 官网调价 ¥980/3年 ⇒ ¥198/1年（`member_package.price_fen` 改成 19800），
+   * 但**本行先保持 98000** —— 因为 MP 后台的道具价此刻还是 98000，我们没有任何接口能改它、
+   * 也读不到它。于是出现「本地 19800 / 后台 98000」这段真实的不一致期，闸门会**如实报出来**：
+   *
+   *   微信道具价格不一致：SUBSCRIPTION 本地 19800 分、契约登记 98000 分（微信会回 -15013）。
+   *   改本地套餐价 ⇒ 必须同步改 MP 后台的道具价，并更新 VP_PRODUCT_CONTRACT。
+   *
+   * 这正是想要的：小程序一旦想按新价卖，就在**构建参数那一刻**带着「去后台改哪个道具、
+   * 改成多少」失败，而不是发出去等微信回一个只有「支付失败」四个字的 `-15013`。
+   *
+   * ⇒ 操作顺序只能是：① 去【MP 后台 → 虚拟支付 → 基本配置 → 道具管理】把 `SUBSCRIPTION`
+   *   价格改成 198；② 再把本行改成 19800。**两步反过来做，闸门就失去了意义。**
+   * ⇒ 若 MP 后台的道具价不可改：只能新建道具，但 productId 与 `member_package.code`
+   *   是同一个值（见 `memberProductId`）⇒ 得连 `code` 一起换，那时 `order.service.ts`
+   *   里写死的 `code: 'SUBSCRIPTION'`（后台手动开通）也要跟着改。
+   */
+  { productId: 'SUBSCRIPTION', goodsPriceFen: 98000, 说明: '订阅 · 3年（member_package.code）· MP 后台待改成 198' },
   { productId: 'BEAN_10000', goodsPriceFen: 10000, 说明: '100元 · 10000积分' },
   { productId: 'BEAN_30000', goodsPriceFen: 30000, 说明: '300元 · 32000积分' },
   { productId: 'BEAN_50000', goodsPriceFen: 50000, 说明: '500元 · 50000积分' },

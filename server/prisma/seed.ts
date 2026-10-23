@@ -6,6 +6,7 @@ import { createCipheriv, randomBytes } from 'node:crypto'
 import { PrismaClient } from '@prisma/client'
 import { hashPassword } from '../src/lib/password.js'
 import {
+  COPY_DEMO_SCENE,
   CREATION_SCENE_PROMPTS,
   STORY_PROMPT, STORY_FALLBACK,
   PUBLISH_SCENES,
@@ -275,6 +276,34 @@ async function seedAi() {
     where: { code: 'storyboard_generate' },
     create: { code: 'storyboard_generate', ...storyData },
     update: storyData,
+  })
+
+  /**
+   * 官网试用场景（`POST /web/demo/copy`）。
+   *
+   * ★★ 为什么单独建、而不是走上面那个 `CREATION_SCENE_PROMPTS` 循环：
+   *   那个循环会写死 `timeoutMs: 30000 / maxOutputTokens: 800`，而试用场景要 40s/900
+   *   （输出是「口播+3镜分镜+标题」三段，800 会在分镜中间截断）。
+   *   更要紧的是它不属于「小程序可选的文案款式」，混进去会让款式的数量断言变红。
+   * ★ 不建这一行的话，新起的库上官网试用会 500（场景不存在），而**不会**报「少了种子数据」。
+   */
+  const demoData = {
+    name: COPY_DEMO_SCENE.name,
+    promptTemplate: COPY_DEMO_SCENE.prompt,
+    fallbackTemplate: COPY_DEMO_SCENE.fallback,
+    defaultModelId,
+    fallbackModelIds,
+    beanPrice: BigInt(COPY_DEMO_SCENE.beanPrice),
+    timeoutMs: COPY_DEMO_SCENE.timeoutMs,
+    maxRetries: 1,
+    temperature: COPY_DEMO_SCENE.temperature,
+    maxOutputTokens: COPY_DEMO_SCENE.maxOutputTokens,
+    enabled: true,
+  }
+  await prisma.aiScene.upsert({
+    where: { code: COPY_DEMO_SCENE.code },
+    create: { code: COPY_DEMO_SCENE.code, ...demoData },
+    update: demoData,
   })
 
   // 合成增强 Skill：场景已就位（后台可编辑提示词），worker 侧按 docs/09 顺序逐步接入调用

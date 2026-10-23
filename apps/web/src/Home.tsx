@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Check, Copy, LoaderCircle, Sparkles } from 'lucide-react'
+import { ArrowRight, Check, ClipboardList, Copy, LoaderCircle, MessageSquare, Sparkles } from 'lucide-react'
 import { api, ApiError } from './api'
 import { useSiteImages } from './site-images'
 
@@ -132,7 +132,7 @@ export function Home() {
                   原因是微信支付 H5 审核驳回：「网站中体验不到服务内容」。
                   让人**当场用一次**，比让他先看价格更能证明「网站里有服务」。
                   套餐仍在顶栏与页尾，没有丢入口。 */}
-              <a className="button" href="#try">免费试一条 <ArrowRight size={18} /></a>
+              <a className="button" href="#try">免费试做一条 <ArrowRight size={18} /></a>
             </div>
             <p className="hero-note"><Check size={17} />不用登录，30 秒出一条</p>
           </div>
@@ -212,12 +212,17 @@ export function Home() {
 }
 
 /**
- * 「免费试一条」—— 官网里唯一一个**不登录就能用**的服务入口。
+ * 「免费试做一条」—— 官网里唯一一个**不登录就能用**的服务入口。
  *
  * ★ 为什么必须有（2026-10-23）：微信支付 H5 支付权限被驳回，理由是
  *   「网站中体验不到服务内容」。官方《商户申请H5支付权限注意事项》第 1 条要求
  *   「能清晰的看到网站售卖的商品以及**网站内体验到服务的具体内容**」，
  *   反例第 4 类就是「网页只有介绍，要线下/别处才能体验」—— 我们原来正是这一类。
+ *
+ * ★★★ 2026-10-24 从「一条口播」扩成「一条完整样例」（口播 + 3 镜分镜 + 标题）：
+ *   用户原话「做的更正式一点，现在就一个功能太单一了」。
+ *   只给一句话，看着像个小玩具；给一份**三件套**，才是「开通后每条视频的起点」的实物。
+ *   这三样也是同一条产线真实的顺序：先有文案 → 再拆成照着拍的分镜 → 最后配发布标题。
  *
  * ★ 服务端：`POST /api/v1/web/demo/copy`（免登录、单 IP 每日 3 条、全站每日 200 条）。
  *   场景 `copy_demo` 的 `beanPrice` 是 0 ⇒ 试用不扣任何人的积分，但**AI 是花钱的**，
@@ -225,12 +230,54 @@ export function Home() {
  *
  * ★ 失败时**不假装成功**：AI 挂了就如实说「暂时忙不过来」。页面上不允许出现
  *   「假样例」—— 审核员一旦发现是写死的文案，比没有更糟。
+ *   同理，**没生成过的时候也不摆一条示例**（`DEMO_BLOCKS` 只说这里会出什么，
+ *   不带任何假内容）。
  */
+interface DemoShot {
+  no: number
+  time: string
+  scene: string
+  line: string
+}
+interface DemoPack {
+  dish: string
+  text: string
+  shots: DemoShot[]
+  title: string
+}
+
+/**
+ * 空态那三格：只说「会出什么」，**不写假内容**。
+ * 图标只用本仓已经在用的那几个（`Sparkles` / `ClipboardList` / `MessageSquare`），
+ * 免得为一个装饰性图标引入未经构建验证的名字。
+ */
+const DEMO_BLOCKS = [
+  { icon: <Sparkles size={18} />, title: '口播文案', text: '40~70 字，照着念一遍' },
+  { icon: <ClipboardList size={18} />, title: '分镜脚本', text: '3 镜，每镜拍什么、说什么' },
+  { icon: <MessageSquare size={18} />, title: '发布标题', text: '发布时直接填标题栏' },
+]
+
+/**
+ * 复制出去的是一份**能直接贴给店员**的纯文本：三块带小标题、分镜一行一镜。
+ *
+ * ★ 不复制 JSON：拿到这段文字的人是店里拍视频的人，不是程序。
+ */
+function buildPlainText(pack: DemoPack | null): string {
+  if (!pack) return ''
+  const out: string[] = []
+  if (pack.text) out.push('【口播文案】', pack.text)
+  if (pack.shots.length) {
+    out.push('', '【分镜脚本】', ...pack.shots.map((s) => [s.no, s.time, s.scene, s.line].filter(Boolean).join('｜')))
+  }
+  if (pack.title) out.push('', '【发布标题】', pack.title)
+  return out.join('\n')
+}
+
 function TrySection() {
   const [dish, setDish] = useState('')
   const [point, setPoint] = useState('')
   const [busy, setBusy] = useState(false)
-  const [text, setText] = useState('')
+  const [pack, setPack] = useState<DemoPack | null>(null)
   const [error, setError] = useState('')
   const [copied, setCopied] = useState(false)
 
@@ -244,12 +291,12 @@ function TrySection() {
     setError('')
     setCopied(false)
     try {
-      const r = await api<{ text: string }>('/web/demo/copy', {
+      const r = await api<DemoPack>('/web/demo/copy', {
         method: 'POST',
         auth: false,
         body: { dish: name, sellingPoint: point.trim() ? point.trim() : undefined },
       })
-      setText(r.text)
+      setPack(r)
     } catch (e) {
       setError(e instanceof ApiError ? e.message : '网络不通，稍后再试')
     } finally {
@@ -259,11 +306,11 @@ function TrySection() {
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(text)
+      await navigator.clipboard.writeText(buildPlainText(pack))
       setCopied(true)
     } catch {
       // 剪贴板在非 https / 旧浏览器上会拒绝，这里不提示「复制失败」——
-      // 文案就在页面上，用户可以自己长按选。静默即可。
+      // 内容就在页面上，用户可以自己长按选。静默即可。
       setCopied(false)
     }
   }
@@ -272,9 +319,24 @@ function TrySection() {
     <section className="section" id="try">
       <div className="container">
         <div className="try-card">
-          <h2 className="section-title">先试一条，不用登录</h2>
-          <p className="try-lead">填一个菜名，看看我们能写出什么样的口播。真的现场生成，不是写好的样例。</p>
-          <div className="try-form">
+          <header className="try-head">
+            <span className="try-badge">免费试用 · 不用登录</span>
+            <h2 className="section-title">填个菜名，出一条完整样例</h2>
+            <p className="try-lead">
+              口播文案、分镜脚本、发布标题，一次给全 —— 这就是开通后每条视频的起点。
+              现场生成，不是写好的样板。
+            </p>
+          </header>
+
+          {/* 用 <form> 而不是 div + onClick：手机上按「回车/前往」也要能提交，
+              这是一张真的表单，不是一块装饰。 */}
+          <form
+            className="try-form"
+            onSubmit={(e) => {
+              e.preventDefault()
+              void run()
+            }}
+          >
             <label className="input-wrap">
               <input
                 value={dish}
@@ -289,25 +351,82 @@ function TrySection() {
                 value={point}
                 onChange={(e) => setPoint(e.target.value)}
                 maxLength={60}
-                placeholder="卖点（可不填），例：每天现卤，辣度可调"
+                placeholder="卖点（可不填），例：每天现卤"
                 aria-label="卖点"
               />
             </label>
-            <button className="button" onClick={() => void run()} disabled={busy}>
+            <button className="button" type="submit" disabled={busy}>
               {busy ? <><LoaderCircle className="spin" size={18} />正在生成</> : <><Sparkles size={18} />生成一条</>}
             </button>
-          </div>
+          </form>
+
           {error && <div className="form-notice error" role="alert">{error}</div>}
-          {text && (
-            <div className="try-result">
-              <p>{text}</p>
-              <button className="text-button" onClick={() => void copy()}>
-                {copied ? <><Check size={16} />已复制</> : <><Copy size={16} />复制这段</>}
-              </button>
+
+          {pack ? (
+            <div className="try-sheet">
+              <div className="try-sheet-head">
+                <div>
+                  <strong>{pack.dish}</strong>
+                  <span>样例 · 现场生成</span>
+                </div>
+                <button className="text-button" onClick={() => void copy()}>
+                  {copied ? <><Check size={16} />已复制</> : <><Copy size={16} />复制全部</>}
+                </button>
+              </div>
+
+              {/* 三段各自可能缺席（模型没写全 / 解析没认出来）。
+                  缺席的那块**不占位**：宁可少一块，也不摆一个空标题。 */}
+              {pack.text && (
+                <article className="try-block">
+                  <h3><Sparkles size={16} />口播文案</h3>
+                  <p className="try-copy">{pack.text}</p>
+                  <span className="try-hint">照着念一遍，40~70 字</span>
+                </article>
+              )}
+
+              {pack.shots.length > 0 && (
+                <article className="try-block">
+                  <h3><ClipboardList size={16} />分镜脚本</h3>
+                  <ol className="try-shots">
+                    {pack.shots.map((shot) => (
+                      <li key={shot.no}>
+                        <span className="try-shot-no">{shot.no}</span>
+                        <div>
+                          {shot.time && <b>{shot.time}</b>}
+                          {shot.scene && <p className="try-shot-scene">{shot.scene}</p>}
+                          {shot.line && <p className="try-shot-line">「{shot.line}」</p>}
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                  <span className="try-hint">按这个顺序拍完，剪起来就是一条</span>
+                </article>
+              )}
+
+              {pack.title && (
+                <article className="try-block">
+                  <h3><MessageSquare size={16} />发布标题</h3>
+                  <p className="try-copy">{pack.title}</p>
+                  <span className="try-hint">发布时填在标题栏</span>
+                </article>
+              )}
+            </div>
+          ) : (
+            <div className="try-preview">
+              {DEMO_BLOCKS.map(({ icon, title, text }) => (
+                <div className="try-preview-item" key={title}>
+                  {icon}
+                  <div>
+                    <strong>{title}</strong>
+                    <span>{text}</span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
+
           <p className="try-note">
-            每位每天可试 3 条。要用完整流程（分镜、拍摄提词、字幕配音、成片导出）需要开通会员。
+            每位每天可试 3 条。开通后按你门店的信息生成，还会自动配音、加字幕、出竖版成片。
           </p>
         </div>
       </div>
