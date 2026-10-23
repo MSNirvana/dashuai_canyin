@@ -126,6 +126,17 @@ export default function HomePage() {
    */
   const workReqRef = useRef(0)
 
+  /**
+   * 「优秀作品这一块**此刻在不在页面上**」的快照（真值见下面 `hasWorks`）。
+   *
+   * ★ 给 `loadWorks` 的 catch 用：这一块根本没显示时，它的加载失败**不该冒到顶部** ——
+   *   否则用户会看到「优秀作品加载失败，点此重试」，可页面上压根没有「优秀作品」这一块
+   *   （线上作品数为 0 时整块隐藏，这是 2026-09-28 定的行为），自相矛盾。
+   * ★ 为什么用 ref 而不是直接读 state：catch 是异步回调，闭包里那两份
+   *   `workCats / workTotal` 是**请求发起时**的旧值（切分类、触底翻页都会改），拿它判断会失准。
+   */
+  const hasWorksRef = useRef(false)
+
   /** 拉作品列表：reset=true 拉第一页并替换，否则追加下一页 */
   const loadWorks = async (opts: { reset?: boolean; category?: string } = {}) => {
     const category = opts.category ?? workCategory
@@ -147,6 +158,11 @@ export default function HomePage() {
       clearError('works')
     } catch {
       if (my !== workReqRef.current) return
+      // ★ 这一块此刻根本没显示（没有任何已上架作品）⇒ **静默**，不上报。
+      //   否则用户会看到「优秀作品加载失败」，但页面上根本没有这一块。
+      //   ★ `workLoadedRef` 刻意留 false：下次回首页（useDidShow）会自动重试，
+      //     等真的拉到作品、区块出现之后，再失败才值得提示。
+      if (!hasWorksRef.current) return
       // 作品区失败不遮挡积分与门店，仅提示
       showError('works', '优秀作品加载失败，点此重试')
     } finally {
@@ -387,6 +403,10 @@ export default function HomePage() {
    *   免得某一条请求偶发失败就把整块误藏。
    */
   const hasWorks = workCats.length > 0 || workTotal > 0
+
+  // 把「这一块在不在页面上」同步进 ref —— `loadWorks` 的 catch 用它决定要不要上报失败
+  // （见 hasWorksRef 的注释：区块没显示时，它的加载失败不该冒到顶部）
+  useEffect(() => { hasWorksRef.current = hasWorks }, [hasWorks])
 
   return <View className='home'>
     {/* ── 口号图整块下线（2026-09-24 按需求，2026-09-29 连数据线一并清完）──
