@@ -157,15 +157,23 @@ router.get('/site', async (_req, res) => {
  *
  * ★ 这**不是**业务链路：`copy_demo` 场景 `beanPrice: 0`（不扣积分），只接受菜名与卖点。
  * ★ 成本敞口靠两层限流卡住（AI 是真花钱的）：
- *   ① 单 IP 每 24 小时 3 条；② 全站每 24 小时 200 条。
+ *   ① 单 IP 每 24 小时 **20** 条（2026-10-24 由 3 条上调，见下）；
+ *   ② 全站每 24 小时 **800** 条。
  *   计数用 Redis 滚动窗口（首次 INCR 时挂 TTL），不依赖服务器时区。
+ *
+ * ★★ 两个数必须**一起放大**：全站上限的作用是「单 IP 额度 × 预期人数」的兜底，
+ *   单 IP 提到 20 而全站还是 200 ⇒ 只够 10 个人用满，第 11 个人开始被
+ *   「今天体验的人有点多」挡住 —— 那比额度小更难受（连自己都没法多试两次）。
+ *   800 = 20 × 40，按「一天来 40 个试用者、人均用满」估的上限。
+ *   ⚠ 成本口径：单次约 750 输出 token，按现价一天打满 800 次也远低于任何投放预算；
+ *     真要收紧就调这两个常数，**不要**去改 Redis 里的计数键（那是当天已用量，不是配置）。
  */
 const demoInput = z.object({
   dish: requiredText(20),
   sellingPoint: optionalText(60),
 })
-const DEMO_PER_IP_DAILY = 3
-const DEMO_TOTAL_DAILY = 200
+const DEMO_PER_IP_DAILY = 20
+const DEMO_TOTAL_DAILY = 800
 
 /** 返回 'ok' 表示放行；否则是拒绝原因（已经扣掉一次配额）。 */
 async function takeDemoQuota(ip: string): Promise<'ok' | 'ip' | 'total'> {
