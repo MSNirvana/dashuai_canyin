@@ -892,12 +892,12 @@ export const STORY_FALLBACK = `[{"shotType":"口播","shotSize":"近景","durati
  *   （那张表已改成从这里取值），要改价请改这里，改完重跑 `ai-channels:setup` 复核。
  */
 export const CREATION_SCENE_PROMPTS = [
-  { code: 'copy_generate', name: '短视频文案生成（通用·兼容旧客户端）', prompt: COPY_PROMPT, fallback: COPY_FALLBACK, temperature: 0.8, beanPrice: 70 },
-  { code: 'copy_traffic', name: '文案 · 流量款（话题驱动：节气节日/时令/生活共识，无门店无菜品）', prompt: COPY_TRAFFIC_PROMPT, fallback: COPY_TRAFFIC_FALLBACK, temperature: 0.9, beanPrice: 80 },
-  { code: 'copy_persona', name: '文案 · 人设型（老板真实做事方式与立场，不补编经历）', prompt: COPY_PERSONA_PROMPT, fallback: COPY_PERSONA_FALLBACK, temperature: 0.85, beanPrice: 80 },
-  { code: 'copy_knowledge', name: '文案 · 知识型（讲这行的知识：选了菜就讲这道菜怎么做/怎么挑，没选菜讲通用知识；都不报价）', prompt: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK, temperature: 0.8, beanPrice: 80 },
-  { code: 'copy_product', name: '文案 · 产品型（店家视角：有什么/多少钱/值不值）', prompt: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK, temperature: 0.8, beanPrice: 80 },
-  { code: 'copy_recommend', name: '文案 · 种草型（素人视角：一句话把人喊住，再说清好在哪儿）', prompt: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK, temperature: 0.92, beanPrice: 60 },
+  { code: 'copy_generate', name: '短视频文案生成（通用·兼容旧客户端）', prompt: COPY_PROMPT, fallback: COPY_FALLBACK, temperature: 0.8, beanPrice: 20 },
+  { code: 'copy_traffic', name: '文案 · 流量款（话题驱动：节气节日/时令/生活共识，无门店无菜品）', prompt: COPY_TRAFFIC_PROMPT, fallback: COPY_TRAFFIC_FALLBACK, temperature: 0.9, beanPrice: 30 },
+  { code: 'copy_persona', name: '文案 · 人设型（老板真实做事方式与立场，不补编经历）', prompt: COPY_PERSONA_PROMPT, fallback: COPY_PERSONA_FALLBACK, temperature: 0.85, beanPrice: 30 },
+  { code: 'copy_knowledge', name: '文案 · 知识型（讲这行的知识：选了菜就讲这道菜怎么做/怎么挑，没选菜讲通用知识；都不报价）', prompt: COPY_KNOWLEDGE_PROMPT, fallback: COPY_KNOWLEDGE_FALLBACK, temperature: 0.8, beanPrice: 30 },
+  { code: 'copy_product', name: '文案 · 产品型（店家视角：有什么/多少钱/值不值）', prompt: COPY_PRODUCT_PROMPT, fallback: COPY_PRODUCT_FALLBACK, temperature: 0.8, beanPrice: 30 },
+  { code: 'copy_recommend', name: '文案 · 种草型（素人视角：一句话把人喊住，再说清好在哪儿）', prompt: COPY_RECOMMEND_PROMPT, fallback: COPY_RECOMMEND_FALLBACK, temperature: 0.92, beanPrice: 20 },
 ] as const
 
 /**
@@ -1199,7 +1199,7 @@ export const PUBLISH_SCENES = [
      * ⚠ 上限同时是**预冻结额**。180 会让「账户可用积分不足」的门槛抬高到 180
      *   （封面那条是 300，两步是先后发生的，峰值按 300 算而不是 480）。
      */
-    beanPrice: 180,
+    beanPrice: 50,
     timeoutMs: 30000,
     maxRetries: 1,
     maxOutputTokens: 4000,
@@ -1215,28 +1215,39 @@ export const PUBLISH_SCENES = [
      * ★★ 出图场景的 beanPrice 是初始预留额度，不是最终扣费。
      *    图像场景没有 token 用量，最终扣费读取 AiModel.unitPriceMicroFen 的实际单张成本。
      *
-     * 定价依据（2026-09-21 实测，可原样复核）：
-     *   ① 上游单价：tokenbox 计费表 `gpt-image-2` 的 `model_price = 0.10`（USD/张）。
-     *      ★ 这个 0.10 是**真的量出来的**，不是抄价目表：
-     *        `GET /dashboard/billing/usage` 的 `total_usage`（美分）在生成一张前后
-     *        从 84 → 94，即 $0.10。注意出图 route 里 `resolution_tier` 报的是 `1k`，
-     *        但计费跟的是**请求的模型名**而不是这一档（所以别指望按 1k 的价付钱）。
-     *   ② 美元 → 人民币：0.10 × 7.2 = ¥0.72 = **72 分**
-     *   ③ 分 → 积分：与文本同一把尺子
-     *      `ceil(costFen × points_per_yuan × cost_multiplier / 100)` = 72 × 100 × 4 / 100 = **288**
-     *   ④ 取 **300**：向上取整到 10，且不会因汇率小幅波动而低于成本。
+     * 定价依据（2026-10-24 **重新实测并更正**，可原样复核）：
      *
-     * ⚠ 换模型 / 换尺寸都要重算（`TB_IMAGE_MODEL` / `AI_IMAGE_SIZE`）：
-     *     gpt-image-2       @1024x1365  → 实测 $0.10 → 288 → **300**（当前）
-     *     gpt-image-2-1k    @768x1024   → 价目 $0.06 → 172 → 180
+     * ★★★ 旧版这里写的是「$0.10 × 7.2 = ¥0.72 ⇒ 288 积分」，两处都错，已作废。
+     *
+     *   ① 上游标价：`GET /api/pricing` 里 `gpt-image-2` 的 `model_price = 0.10`，
+     *      `quota_type = 1` 即**按张**计费（与 token 无关，换尺寸不改价）。
+     *   ② **必须再乘分组倍率**：该模型只挂在「image高质量(1-4k)」组，`group_ratio = 0.6`
+     *      ⇒ 实付 = 0.1 × 0.6 = **0.06 个站内单位**。
+     *      按次计费的式子是 `quota/次 = model_price × group_ratio × 500000`。
+     *   ③ **币种是人民币不是美元**：`/api/status` 的 `price = 1`
+     *      ⇒ 1 站内单位 = ¥1 ⇒ 单张 = **¥0.06 = 6 分**。
+     *   ④ 分 → 积分：`ceil(costFen × points_per_yuan × cost_multiplier / 100)`
+     *      = 6 × 100 × 4 / 100 = **24 积分**。
+     *   ⑤ 取 **50**：实测 24 × 2 后向上取整到 10（沿用「实测 × 2」的既有规则）。
+     *
+     *   ★ 0.06 是**量出来的**，不是抄价目表：
+     *     `GET /v1/dashboard/billing/usage` 的 `total_usage` 在生成一张前后
+     *     从 1320 → 1326，增量 **6.0000**；按 price=1 换算正好 ¥0.06。
+     *     （旧注释把「+10」先当美元、再当美分，两次都错。真正的量纲是
+     *       total_usage = quota/5000，而 quota = 0.1 × 0.6 × 500000 = 30000
+     *       ⇒ 30000/5000 = 6。旧注释的 +10 是**没乘倍率**的旧分组留下的数。）
+     *
+     * ⚠ 换模型也要重算：
+     *     gpt-image-2       @1024x1365  → 0.1 × 0.6 = ¥0.06 → 24 积分 → **50**（当前）
+     *     gpt-image-2-1k    @768x1024   → 0.06 × 0.6 = ¥0.036 → 15 → 30
      *       （★ 该变体**拒绝** 1024x1365：`exceeds channel resolution limit 1k`，
-     *        而且它返回的是 b64 而不是 URL，比裸码慢一倍：实测 91s vs 45s。
-     *        想省钱就把 TB_IMAGE_MODEL / AI_IMAGE_SIZE 一起换成这两个值，
-     *        并把这里的 beanPrice 改成 180 —— 三者必须同时改，只改一个就会对不上账。）
-     * ⚠ 汇率变了（TB_USD_TO_CNY）也要重算。固定报价不随成本浮动，
+     *        而且它返回 b64 而非 URL，比裸码慢一倍：实测 91s vs 45s。
+     *        想换就把 TB_IMAGE_MODEL / AI_IMAGE_SIZE / AiModel.unitPriceMicroFen
+     *        和这里的 beanPrice 一起改 —— 少改一处就对不上账。）
+     * ⚠ 上游改价（model_price 或 group_ratio）也要重算。固定报价不随成本浮动，
      *   上游涨价时差额由平台承担 —— 这是选「固定价」的代价，不是 bug。
      */
-    beanPrice: 300,
+    beanPrice: 50,
     // 实测单张 22~45s（含排队），给 90s 留一倍余量
     timeoutMs: 90000,
     // 出图按张付费，重试 = 重复付钱；且失败多是上游硬故障，立刻重试不会好
@@ -1255,15 +1266,20 @@ export const PUBLISH_SCENES = [
     /**
      * 单次上限（文本场景按 token 成本结算，这里既是安全网也是**预冻结额**）。
      *
-     * ★ 实测数据（2026-09-24，tokenbox/gpt-5.5，两次真实调用）：
-     *   · 4 张真实菜品帧 → in=6381 out=135，**5.6s**，costFen=21 ⇒ 实扣 **83 积分**
-     *   · 6 张候选帧（本场景上限）→ in=9991 out=42，**19.5s**，costFen=30 ⇒ 实扣 **118 积分**
+     * ★ 实测数据（token 用量 2026-09-24 量，计价 2026-10-24 更正）：
+     *   · 4 张真实菜品帧 → in=6381 out=135，**5.6s**
+     *   · 6 张候选帧（本场景上限）→ in=9991 out=42，**19.5s**
      *   ⇒ 单张图的固定开销 ≈ 1.3k prompt token（与图大小关系不大，是中转站侧的开销）。
-     *   ★ 结论：它比「纯文本场景」贵一个量级，但远没有贵到最初估算的 548 积分。
      *
-     * ★ 取值 **300**：实测最坏值 118 的 2.5 倍，留足 prompt 变长 / 帧数打满的余量，
-     *   并与同组的 `publish_cover` 取齐（两者都是「一次几毛钱」的量级）。
-     *   （2026-09-24 从 600 下调到 300：600 是没实测时的拍脑袋估算。）
+     * ★★★ 旧版把上面两次记成 costFen = 21 / 30（实扣 83 / 118 积分），那是按
+     *   「美元 × 7.2」算的，**虚高 7.2 倍**。2026-10-24 实测标定：6420 输入 token
+     *   上游实扣 ¥0.0258，而账面记成 ¥0.1855，正好 7.20 倍（见 setup-ai-channels
+     *   的 USD_TO_CNY 注释）。按真实币种换算：
+     *   · 4 张 → ¥0.029 ⇒ **12 积分**
+     *   · 6 张 → ¥0.042 ⇒ **17 积分**
+     *
+     * ★ 取值 **50**：实测最坏 17 积分的约 3 倍，留足 prompt 变长 / 帧数打满的余量，
+     *   并与同组的 `publish_cover`（也是 50）取齐。
      *
      * ⚠ `beanPrice` 只是**预冻结上限**，**不是用户实付金额** —— 结算走
      *   `settleAiCharge` 按实际成本算，超出预留会自动补充冻结差额（ai.service.ts 的
@@ -1273,7 +1289,7 @@ export const PUBLISH_SCENES = [
      * ⚠ 本场景失败**不致命**：兜底模板会选第 0 张，用户照样拿到封面（只是可能不是最好的那张）。
      *   所以这里保守一点比激进一点好 —— 但绝不能因为「反正有兜底」就不校准。
      */
-    beanPrice: 300,
+    beanPrice: 50,
     /**
      * ★ 实测耗时**高度不稳定**：正常 5.6 ~ 19.5s，但 2026-09-24 有一次真实调用**超过 90s**
      *   （同一时段的图像生成也从 36s 涨到 85s ⇒ 那是中转站整体变慢，不是本场景本身的问题）。
@@ -1365,8 +1381,8 @@ export const EDIT_PLAN_SCENE = {
    * ★ 输出预算抬到 4000 之后，理论最坏（思考与正文吃满）约 73 分 ⇒ 292 积分；
    *   超出本上限的部分由平台承担 —— 这正是「安全网」的语义，与其它文本场景一致。
    */
-  beanPrice: 150,
-  /**
+    beanPrice: 50,
+    /**
    * ★★ `timeoutMs` / `maxRetries` / `maxOutputTokens` 与
    *   `scripts/setup-ai-channels.ts` 的 `SCENE_OVERRIDES.edit_plan` **必须同值**。
    *
@@ -1458,7 +1474,7 @@ export const BGM_SELECT_SCENE = {
    */
   temperature: 0.3,
   /** 与线上既有行一致（`ai_scene.bgm_select.bean_price = 60`）。★ 同步脚本只在**建行**时用它。 */
-  beanPrice: 60,
+  beanPrice: 20,
   /**
    * ★★ 这两个值在**出片链路里**是有代价的，所以刻意收得比别的场景紧：
    *   · `timeoutMs: 30_000` —— 与线上既有行一致。单次调用只输出十几 token，
@@ -1645,7 +1661,7 @@ export const SUBTITLE_SPLIT_SCENE = {
    */
   temperature: 0.2,
   /** 与线上既有行一致（`ai_scene` 的建行默认）。★ 同步脚本只在**建行**时用它。 */
-  beanPrice: 60,
+  beanPrice: 20,
   /**
    * ★★ 2026-10-14 晚终态，与线上 `ai_scene.subtitle_split` 读回一致
    *   （`setup-ai-channels.ts` 里的 `subtitle_split` 一节是同源的第二份声明）：

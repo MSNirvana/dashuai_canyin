@@ -265,7 +265,10 @@ async function seedAi() {
     fallbackTemplate: STORY_FALLBACK,
     defaultModelId,
     fallbackModelIds,
-    beanPrice: 10n,
+    // ★ 2026-10-24 由 10 上调到 50：按真实币种重算，2500 输出 token 的实扣约 24 积分
+    //   （旧口径虚高 7.2 倍时它是 172，而 10 的冻结额从来就不够，一直靠 increaseReservation
+    //   补差额）。新值沿用「实测 × 2 取整到 10」的规则。
+    beanPrice: 50n,
     timeoutMs: 40000,
     maxRetries: 1,
     temperature: 0.7,

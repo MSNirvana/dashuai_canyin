@@ -60,7 +60,7 @@
 //   TB_SET_PRICES=1           把真实单价写库（否则单价 0 ⇒ 扣 0 积分）
 //   TB_SET_CAPS=1             把场景预冻结额写库（用于减少结算时的补充冻结，不改变实际成本计费）
 //   TB_REGISTER_GRANT=n       注册赠积分（未设 = 不改；`0` = 关掉注册赠积分，当前策略）
-//   TB_USD_TO_CNY             汇率，默认 7.2
+//   TB_USD_TO_CNY             站内计价单位→人民币系数，默认 1（tokenbox 是人民币站，price=1）
 //
 // ══ 备用是怎么工作的（代码已在 src/ai/ 里实现，本脚本只配数据）══
 //   AiGateway.runScene 按 [defaultModelId, ...fallbackModelIds] 依次尝试：
@@ -133,7 +133,7 @@
 //   等于把「平台补贴多少」这个商业决策变成默认生效。确认后 TB_SET_PRICES=1。
 //   ⚠ 写了单价**还不够**：`charged = min(应付, 场景单次上限)`，
 //     上限不一起抬，扣费仍是封顶值（见 [4/6]）。所以两个开关要成对使用。
-//   汇率默认 7.2，可用 TB_USD_TO_CNY 覆盖。
+//   站内单位→人民币系数默认 1（tokenbox 的 price=1，见 USD_TO_CNY 注释），可用 TB_USD_TO_CNY 覆盖。
 //
 // ══ ★ 2026-09-15 实测：单次成本能差 15 倍，变量是「思考 token」不是文案长度 ══
 //   同一个 copy_intro 提示词、同一个 claude-sonnet-5，连打 3 次：
@@ -193,14 +193,37 @@ const MIN_OUTPUT_TOKENS = Number(process.env.SCENE_MIN_OUTPUT_TOKENS ?? 4000)
 
 /** 是否把真实单价写库。默认 false —— 会改变商户扣费，属商业决策，见文件头。 */
 const SET_PRICES = process.env.TB_SET_PRICES === '1'
-/** USD → CNY 汇率（tokenbox 按美元计费，本仓库按人民币「分」记账） */
-const USD_TO_CNY = Number(process.env.TB_USD_TO_CNY ?? 7.2)
+/**
+ * 站内计价单位 → 人民币的换算系数。
+ *
+ * ★★★ 2026-10-24 更正：这里**不是 7.2**。
+ *
+ *   tokenbox 的 `GET /api/status` 里 `price = 1`，含义是「¥1 买 1 站内美元额度」——
+ *   它的「美元」只是个标签，**与人民币 1:1**。（`usd_exchange_rate` 写着 6.8，
+ *   但那是充值页的参考汇率，真正决定额度的是 `price`。）
+ *
+ *   按 7.2 记账的后果（2026-10-24 实测，两次真实调用）：
+ *     · 文本 claude-sonnet-5、6420 输入 token：上游实扣 ¥0.0258，
+ *       账面记成 ¥0.1855 ⇒ **正好 7.20 倍**。
+ *     · 图像 gpt-image-2 每张：上游实扣 ¥0.06，账面记成 ¥0.72 ⇒ **12 倍**
+ *       （12 = 7.2 的汇率错 × 漏乘分组倍率 0.6，见下面 PRICES 与 prompts.ts）。
+ *
+ *   ⚠ 换成真按美元结算的站（直连 OpenAI / 腾讯 TokenHub）时，才需要改回当期汇率。
+ */
+const USD_TO_CNY = Number(process.env.TB_USD_TO_CNY ?? 1)
 
 /**
  * tokenbox 真实计费（2026-09-15 取自 GET https://tokenbox.you/api/pricing）
  *
  * 该中转站是 NewAPI 系，计费口径：
- *   美元成本 = tokens × 系数 × group_ratio ÷ 500000      ← NewAPI 约定 500000 quota = $1
+ *   站内成本 = tokens × 系数 × group_ratio ÷ 500000   ← NewAPI 约定 500000 quota = 1 站内「美元」
+ *   ⚠ 这个「美元」**不是真美元**：本站 price=1 ⇒ 1 站内单位 = ¥1（见 USD_TO_CNY 的注释）。
+ *   ⚠ 按次计费的模型（`quota_type=1`，如 gpt-image-2）走另一条式子：
+ *       quota/次 = model_price × group_ratio × 500000
+ *       即 人民币/次 = model_price × group_ratio        （因为 price=1）
+ *     实测：gpt-image-2 的 model_price=0.1、分组「image高质量(1-4k)」ratio=0.6
+ *           ⇒ 0.1 × 0.6 = **¥0.06/张**；上游 total_usage 增量 6（= ¥0.06）完全吻合。
+ *           ★ 只抄 model_price 不乘 group_ratio 会贵出 1/0.6 ≈ 1.67 倍。
  *   · usage 里没有 `cost` 字段，只能靠 /api/pricing 的 billing_expr 反推
  *   · billing_expr 形如 `p * 5 + c * 30`（p=输入 token，c=输出 token，cr=缓存命中）
  *   · group_ratio 是分组倍率：这里 GPT 走「Gpt pro号池」×0.4、
@@ -707,7 +730,8 @@ const SCENE_CAPS: Record<string, number> = {
    *   （出图场景走固定价结算，beanPrice=0 等于每次出图白送且不报错）。
    *   既然 prompts.ts 已经有了权威值，这里只把它**接进同一张复核表**，
    *   免得「脚本里写 180、建行时是 300」这种对不上账的经典错配。
-   *   ⇒ 定价依据（$0.10/张 → 72 分 → ×4 = 288 → 取 300）写在 prompts.ts 的
+   *   ⇒ 定价依据（model_price 0.1 × 分组倍率 0.6 = **¥0.06/张** → 24 积分 → 取 50）
+   *     写在 prompts.ts 的
    *     PUBLISH_SCENES.publish_cover 上，要改价去那里改。
    */
   ...Object.fromEntries(PUBLISH_SCENES.map((s) => [s.code as string, s.beanPrice as number])),

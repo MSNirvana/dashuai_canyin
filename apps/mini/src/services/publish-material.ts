@@ -5,7 +5,7 @@
 //
 // ★ 计费是**两笔独立**的（服务端口径）：
 //   · 标题/文案（文本场景）：按 token 成本结算，实际扣费 ≤ `estimate.textBeanCap`
-//   · 封面（图像场景）：**固定价** `estimate.coverBeans`（当前 300 积分/张）
+//   · 封面（图像场景）：**固定价** `estimate.coverBeans`（随场景 beanPrice，当前 50 积分/张）
 //   所以「封面失败」不代表整次失败：标题与文案照常返回，封面单独重试即可，
 //   重试**不会**再扣一次文本那笔钱。
 import { http } from './request'
