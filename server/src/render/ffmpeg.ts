@@ -86,7 +86,27 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n))
 }
 
-/** 四参数调色 → ffmpeg 滤镜串（全 0 时返回 null，不挂滤镜省 CPU） */
+/**
+ * 磨皮 → `bilateral`（双边滤波）参数串。0 或未设置时返回 null（不挂滤镜、不耗 CPU）。
+ *
+ * 映射（0~100 → 滤镜参数）：
+ *   sigmaS（空间，像素）：2 → 10。邻域影响半径约 3σ，1080 宽下仍是局部而非全屏糊。
+ *   sigmaR（值域，0~1）：0.02 → 0.30。只平滑「亮度差小于该值」的像素。
+ *   ⇒ 小档只压毛孔/细纹这类低对比细节，轮廓与菜品纹理靠 sigmaR 的下限保住。
+ *
+ * ★ 不直接把 n/100 塞进 sigmaS：100 档给到 20 以上，1080p 会糊成一片，耗时还翻倍
+ *   （实测 5 秒 1080×1920：sigmaS=3 约 2.0s，现有 eq+unsharp 约 1.2s）。
+ * ★ 它是**全局**滤镜，不认皮肤。所以上限虽给到 100，映射要保守 ——
+ *   磨过头时最先出问题的不是人脸，是菜。
+ */
+export function buildBeautyFilter(c: ColorGrade): string | null {
+  const n = clamp(c.smooth ?? 0, 0, 100)
+  if (n <= 0) return null
+  const t = n / 100
+  return `bilateral=sigmaS=${(2 + t * 8).toFixed(2)}:sigmaR=${(0.02 + t * 0.28).toFixed(3)}`
+}
+
+/** 调色 + 美颜 → ffmpeg 滤镜串（全 0 时返回 null，不挂滤镜省 CPU） */
 export function buildColorFilter(c: ColorGrade): string | null {
   const eq: string[] = []
   if (c.brightness) eq.push(`brightness=${clamp(c.brightness / 100, -1, 1).toFixed(3)}`)
@@ -94,6 +114,9 @@ export function buildColorFilter(c: ColorGrade): string | null {
   if (c.saturation) eq.push(`saturation=${clamp(1 + c.saturation / 100, 0, 3).toFixed(3)}`)
   const parts: string[] = []
   if (eq.length) parts.push(`eq=${eq.join(':')}`)
+  // ★ 磨皮必须排在锐化**之前**：先抹平再回锐，否则 unsharp 会把刚压掉的毛孔又拉回来
+  const beauty = buildBeautyFilter(c)
+  if (beauty) parts.push(beauty)
   // 只给 luma 三个参数：继续往下传会被解析为 chroma/alpha 尺寸，传 0 会报 "Result too large"
   if (c.sharpen) parts.push(`unsharp=5:5:${clamp(c.sharpen / 100, -2, 5).toFixed(3)}`)
   return parts.length ? parts.join(',') : null

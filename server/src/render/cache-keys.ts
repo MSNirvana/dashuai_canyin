@@ -172,7 +172,8 @@ export function colorPreviewHash(
   const clipPart = clips
     .map((c) => intermediateKey(c, c.trimStartMs ?? 0, c.trimEndMs ?? 0, output))
     .join(',')
-  const colorPart = [color.brightness, color.contrast, color.saturation, color.sharpen].join(':')
+  // ★ smooth 必须进哈希：磨皮强度变了却命中旧预览，运营会以为"设了没反应"
+  const colorPart = [color.brightness, color.contrast, color.saturation, color.sharpen, color.smooth ?? 0].join(':')
   const raw = `colorpreview:${COLOR_PREVIEW_VERSION}:${output.width}x${output.height}:${colorPart}:${clipPart}`
   return createHash('sha1').update(raw).digest('hex')
 }
@@ -194,4 +195,6 @@ export interface ColorGradeLike {
   contrast: number
   saturation: number
   sharpen: number
+  /** 磨皮 0~100；缺省当 0（历史任务没有这一项） */
+  smooth?: number
 }

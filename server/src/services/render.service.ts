@@ -141,9 +141,17 @@ export interface ColorGrade {
   contrast: number
   saturation: number
   sharpen: number
+  /**
+   * 磨皮强度 0 ~ 100，默认 0（= 不挂滤镜）。
+   *
+   * ★ 可选而不是必填：任务 JSON 里的旧 color 字段（BASIC / RECOLOR 历史链路）没有这一项，
+   *   而 AI 合成只从后台「基本美颜设置」读。写成必填会让所有存量任务构造点编译失败，
+   *   收益为零 —— 缺省当 0 正是我们要的语义。
+   */
+  smooth?: number
 }
 
-export const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0 }
+export const DEFAULT_COLOR: ColorGrade = { brightness: 0, contrast: 0, saturation: 0, sharpen: 0, smooth: 0 }
 
 export interface RenderClip {
   shotId: string

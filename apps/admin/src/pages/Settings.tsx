@@ -25,12 +25,20 @@ const COLOR_SETTINGS = [
   { key: 'color_sharpen', label: '锐化' },
 ] as const
 
+/**
+ * 基本美颜。与调色同页面、但**独立成卡片**：区间只有非负 0~100。
+ * ★ 服务端校验也按 0~100 单独一条（validateRenderBeautySetting），
+ *   填负数会被拒，报错文案与调色不同。
+ */
+const BEAUTY_SETTINGS = [{ key: 'beauty_smooth', label: '磨皮' }] as const
+
 export default function SettingsPage() {
   const [list, setList] = useState<Setting[]>([])
   const [group, setGroup] = useState<string | undefined>('bean')
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Setting | null>(null)
   const [colorDraft, setColorDraft] = useState<Record<string, number>>({})
+  const [beautyDraft, setBeautyDraft] = useState<Record<string, number>>({})
   const [form, setForm] = useState({
     groupKey: 'bean', settingKey: '', settingVal: '', valueType: 'STRING' as Setting['valueType'],
     displayName: '', description: '', sort: 0, isPublic: false,
@@ -46,6 +54,10 @@ export default function SettingsPage() {
 
   const filtered = list.filter((s) => group ? s.groupKey === group : true)
   const colorSettings = COLOR_SETTINGS.map((item) => ({
+    ...item,
+    setting: list.find((s) => s.groupKey === 'render' && s.settingKey === item.key),
+  }))
+  const beautySettings = BEAUTY_SETTINGS.map((item) => ({
     ...item,
     setting: list.find((s) => s.groupKey === 'render' && s.settingKey === item.key),
   }))
@@ -65,6 +77,24 @@ export default function SettingsPage() {
       })
       setList((current) => current.map((item) => item.id === setting.id ? { ...item, settingVal: String(value) } : item))
       message.success('调色参数已保存，最迟 60 秒内用于新开始的 AI 合成')
+    } catch {}
+  }
+
+  const updateBeautySetting = async (setting: Setting) => {
+    const value = beautyDraft[setting.settingKey] ?? Number(setting.settingVal)
+    if (!Number.isInteger(value) || value < 0 || value > 100) {
+      message.warning('磨皮强度请输入 0 到 100 之间的整数')
+      return
+    }
+    if (String(value) === setting.settingVal) return
+    try {
+      await request({
+        url: `/settings/${setting.id}`,
+        method: 'PUT',
+        data: { ...setting, settingVal: String(value) },
+      })
+      setList((current) => current.map((item) => item.id === setting.id ? { ...item, settingVal: String(value) } : item))
+      message.success('美颜参数已保存，最迟 60 秒内用于新开始的 AI 合成')
     } catch {}
   }
 
@@ -130,6 +160,33 @@ export default function SettingsPage() {
                   step={1}
                   onChange={(value) => setColorDraft((current) => ({ ...current, [key]: Number(value) }))}
                   onBlur={() => void updateColorSetting(setting)}
+                  style={{ width: 220 }}
+                />
+              ) : (
+                <span style={{ color: 'var(--td-error-color)' }}>配置未初始化，请先运行调色配置初始化脚本</span>
+              )}
+            </Field>
+          ))}
+        </FieldGroup>
+      </div>
+
+      <div className="form-card" style={{ marginBottom: 20 }}>
+        <h3 style={{ marginTop: 0, marginBottom: 8 }}>基本美颜设置</h3>
+        <p style={{ marginTop: 0, color: 'var(--td-text-color-secondary)' }}>
+          统一作用于新开始的 AI 合成。范围 0～100；保持 0 时不添加磨皮滤镜，也不会增加额外处理。
+          磨皮是全画面的双边滤波，不区分皮肤与背景，调得过高会连菜品纹理一起抹平。
+        </p>
+        <FieldGroup labelWidth={120}>
+          {beautySettings.map(({ key, label, setting }) => (
+            <Field key={key} label={label}>
+              {setting ? (
+                <InputNumber
+                  value={beautyDraft[key] ?? Number(setting.settingVal)}
+                  min={0}
+                  max={100}
+                  step={1}
+                  onChange={(value) => setBeautyDraft((current) => ({ ...current, [key]: Number(value) }))}
+                  onBlur={() => void updateBeautySetting(setting)}
                   style={{ width: 220 }}
                 />
               ) : (

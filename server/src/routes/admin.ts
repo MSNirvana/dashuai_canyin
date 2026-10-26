@@ -43,7 +43,7 @@ import * as opsAlert from '../services/ops-alert.service.js'
 import * as premium from '../render/premium.js'
 import * as premiumDeliverSvc from '../services/premium-delivery.service.js'
 import { invalidate } from '../lib/settings.js'
-import { validateRenderColorSetting } from '../render/color-settings.js'
+import { validateRenderBeautySetting, validateRenderColorSetting } from '../render/color-settings.js'
 import { UnsafeOutboundUrlError } from '../lib/outbound-url.js'
 import type { Prisma } from '@prisma/client'
 
@@ -1186,6 +1186,14 @@ const settingInput = z.object({
       code: z.ZodIssueCode.custom,
       path: ['settingVal'],
       message: 'AI 成片调色参数必须是 -100 到 100 之间的整数，类型必须为 INT',
+    })
+  }
+  // 美颜是**只有非负**的另一套区间，所以单独一条：合在调色那条里会放行 -50 的磨皮
+  if (!validateRenderBeautySetting(input)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['settingVal'],
+      message: '基本美颜参数必须是 0 到 100 之间的整数，类型必须为 INT',
     })
   }
 })
