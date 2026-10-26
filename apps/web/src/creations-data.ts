@@ -50,7 +50,15 @@ export interface Shot {
   libraryShot: { code: string; name: string; category: string; tips: string | null } | null
 }
 
-export interface CreationDetail extends Omit<CreationItem, 'coverUrl'> {
+/**
+ * 详情接口（`GET /creations/:id`）**不返回** `shotsTotal` / `shotsReady` ——
+ * 那两个是列表接口为了「不下发 shots 数组」而在服务端算好塞进去的汇总。
+ * 详情里给的是 `shots` 明细，进度由 `progressOf` 现算。
+ * ★ 所以这里必须把这两个字段从 `CreationItem` 里摘掉：留着它们，类型会声称
+ *   `shotsTotal: number`，而运行时是 `undefined` —— 详情页进度条就永远是一个固定值
+ *   （实测传完 5 段素材仍显示 30%）。
+ */
+export interface CreationDetail extends Omit<CreationItem, 'coverUrl' | 'shotsTotal' | 'shotsReady'> {
   shots: Shot[]
   dish: { id: string; name: string } | null
   store: { id: string; name: string } | null
@@ -217,10 +225,39 @@ export function renderStatusLabel(status: string | null): string {
   }
 }
 
-export function progressOf(c: Pick<CreationItem, 'copyText' | 'shotsTotal' | 'shotsReady' | 'renderStatus'>): Progress {
-  const total = c.shotsTotal
-  // 已上传数不可能超过总数，但服务端字段一旦漂移就会算出 >100% 的进度条
-  const done = Math.max(0, Math.min(c.shotsReady, total))
+/**
+ * `progressOf` 的入参：**列表**（有汇总字段、没有 shots）与**详情**（有 shots、没有汇总字段）
+ * 都要能算。写成 `Pick<CreationItem, ...>` 时详情对象在类型上「合法」、运行时字段却是空的，
+ * 详见 `CreationDetail` 上的注释。
+ */
+export interface ProgressInput {
+  copyText: string | null
+  renderStatus: string | null
+  shotsTotal?: number
+  shotsReady?: number
+  shots?: Pick<Shot, 'assetId' | 'skipped'>[]
+}
+
+/**
+ * 「几段 / 几段就绪」的统一口径。
+ * ★★ `done` 的算法与**服务端**逐字一致（`creation.service.ts::shotsReady`）：
+ *   有素材 **或** 用户标了「这段不拍」都算就绪。只数 `assetId` 会让标了跳过的分镜
+ *   永远算缺素材，进度条卡在「4/5」不往前走。
+ */
+function shotNumbers(c: ProgressInput): { total: number; done: number } {
+  if (c.shots) {
+    return {
+      total: c.shots.length,
+      done: c.shots.filter((s) => s.assetId !== null || s.skipped).length,
+    }
+  }
+  return { total: c.shotsTotal ?? 0, done: c.shotsReady ?? 0 }
+}
+
+export function progressOf(c: ProgressInput): Progress {
+  const { total, done: rawDone } = shotNumbers(c)
+  // 已就绪数不可能超过总数，但服务端字段一旦漂移就会算出 >100% 的进度条
+  const done = Math.max(0, Math.min(rawDone, total))
   let pct = 0
   if (c.copyText) pct += W_COPY
   // total = 0 时不做除法：0/0 是 NaN，会把进度条整个打回 0

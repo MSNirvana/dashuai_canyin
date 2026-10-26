@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { WsPage } from './workspace-ui'
 import { uploadVideo } from './media-upload'
+import { listRenders } from './render-data'
 import {
   archiveCreation,
   deleteCreation,
@@ -37,13 +38,24 @@ export function CreationDetailPage() {
   const [busy, setBusy] = useState<'copy' | 'shots' | 'save' | 'archive' | 'delete' | null>(null)
   const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null)
   const [editingShot, setEditingShot] = useState<string | null>(null)
+  /**
+   * 合成状态：详情接口**不带** `renderStatus`（它是列表接口的汇总字段），
+   * 少这一段进度条就永远差最后一格 —— 列表里已 100% 的创作，点进来看是 90%。
+   * 单独拉一次合成记录，顺带让「3 · 出成片」能说清「已经出过片」。
+   */
+  const [renderStatus, setRenderStatus] = useState<string | null>(null)
 
   const load = useCallback(async (target: string) => {
     setLoading(true)
     setError(null)
     try {
-      const detail = await getCreation(target)
+      const [detail, renders] = await Promise.all([
+        getCreation(target),
+        // 合成记录拉不到不该让整页打不开：它只影响进度条最后一格
+        listRenders(target).catch(() => []),
+      ])
       setData(detail)
+      setRenderStatus(renders[0]?.status ?? null)
       setCopyText(detail.copyText ?? '')
     } catch (e) {
       setError(e instanceof Error ? e.message : '创作加载失败')
@@ -155,7 +167,7 @@ export function CreationDetailPage() {
     )
   }
 
-  const { pct, label } = progressOf(data)
+  const { pct, label } = progressOf({ ...data, renderStatus })
   // 「已传素材」口径与合成一致：有 assetId 的才算（跳过的不补位、也不参与合成）
   const readyShots = data.shots.filter((shot) => shot.assetId).length
 
