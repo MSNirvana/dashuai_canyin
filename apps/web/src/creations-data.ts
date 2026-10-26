@@ -155,11 +155,23 @@ export const generateStoryboard = (id: string, body: { complexity?: Complexity }
     body: { ...body, requestId: crypto.randomUUID() },
   })
 
-export const updateShot = (
-  creationId: string,
-  shotId: string,
-  body: { shotType?: string | null; shotSize?: string | null; durationSuggest?: number | null; line?: string | null; visualReq?: string | null },
-) => api<Shot>(`/creations/${creationId}/shots/${shotId}`, { method: 'PUT', body })
+export interface ShotPatch {
+  shotType?: string | null
+  shotSize?: string | null
+  durationSuggest?: number | null
+  line?: string | null
+  visualReq?: string | null
+  /** 绑定的素材 id；服务端会校验素材属于本创作的门店 */
+  assetId?: string
+  /**
+   * 「这一段不拍」。★ 与 assetId **互斥**（服务端 `updateShotAsset` 维持这条不变量：
+   * 置 true 会清掉 assetId）。所以传 true 时不要同时传 assetId。
+   */
+  skipped?: boolean
+}
+
+export const updateShot = (creationId: string, shotId: string, body: ShotPatch) =>
+  api<Shot>(`/creations/${creationId}/shots/${shotId}`, { method: 'PUT', body })
 
 /**
  * 创作进度。

@@ -1314,6 +1314,30 @@ select.ws-input { padding-right: 38px; }
 /* 「已上传素材」用绿：它是状态，但不抢红（红只给主按钮 / 进度 / 选中态） */
 .ws-tag.ok { background: var(--success-soft); color: var(--success-ink); }
 
+/* ── 分镜的素材区 ──
+   网页端没有「拍摄」，所以每个分镜下面必须有一个明确的「上传视频」——
+   这也是用户判断「还差哪几段」的唯一入口。 */
+.ws-shot-asset { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.ws-upload { display: flex; align-items: center; gap: 10px; width: 100%; }
+.ws-upload .ws-progressbar { flex: 1; }
+.ws-upload-text { color: var(--ink-2); font-size: 15px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* 灰底按钮：用于「这一屏不该抢主行动」的保存类操作。
+   不用 `.ghost`（`--stroke` 描边压白卡片只有 1.1:1，看不出是按钮），
+   也不用 `.secondary`（浅红底 —— 同屏第三、四个红色会把主按钮淹掉）。 */
+.button.quiet { background: var(--field); color: var(--ink); box-shadow: none; }
+.button.quiet:hover { background: #e8eaed; }
+.button.quiet:disabled { background: var(--field); color: var(--ink-4); }
+
+/* ── 成片 ── */
+.ws-result { display: grid; gap: 12px; margin-top: 14px; }
+/* 竖版成片：宽度跟容器走、高度按 9:16 由 aspect-ratio 定，
+   不写死 height（写死会在窄屏留两条黑边，宽屏又会被裁） */
+.ws-video {
+  width: 100%; max-width: 380px; aspect-ratio: 9 / 16;
+  background: #000; border-radius: var(--r-md); display: block;
+}
+
 @media (min-width: 560px) {
   .ws-actions { flex-direction: row; }
   .ws-actions .button { width: auto; min-width: 180px; }

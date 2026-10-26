@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { WsPage } from './workspace-ui'
+import { uploadVideo } from './media-upload'
 import {
   archiveCreation,
   deleteCreation,
@@ -155,6 +156,8 @@ export function CreationDetailPage() {
   }
 
   const { pct, label } = progressOf(data)
+  // 「已传素材」口径与合成一致：有 assetId 的才算（跳过的不补位、也不参与合成）
+  const readyShots = data.shots.filter((shot) => shot.assetId).length
 
   return (
     <WsPage title={data.title || '未命名创作'} lead={`${formatCreationTime(data.createdAt)}创建 · ${label}`}>
@@ -201,7 +204,7 @@ export function CreationDetailPage() {
         </p>
         <div className="ws-actions ws-actions-inline">
           <button
-            className="button small"
+            className="button small quiet"
             type="button"
             onClick={() => void saveCopy()}
             disabled={busy !== null || copyText === (data.copyText ?? '')}
@@ -232,6 +235,7 @@ export function CreationDetailPage() {
               <ShotRow
                 key={shot.id}
                 shot={shot}
+                storeId={data.storeId}
                 editing={editingShot === shot.id}
                 onEdit={() => setEditingShot(editingShot === shot.id ? null : shot.id)}
                 onSaved={(text) => {
@@ -244,6 +248,28 @@ export function CreationDetailPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* ── 第三步：出成片 ──
+          这一屏的**唯一红实心按钮**放在这里：整条链路的目标就是出片，
+          所以「保存文案」降级成灰底（`.button.quiet`），不跟它抢。 */}
+      <section className="ws-panel">
+        <div className="ws-panel-head"><h2>3 · 出成片</h2></div>
+        <p className="ws-hint" style={{ marginTop: 0 }}>
+          {readyShots === 0
+            ? '还没有一段素材。先把拍好的视频传到对应分镜上，再合成。'
+            : `已传 ${readyShots}/${data.shots.length} 段${readyShots < data.shots.length ? '，剩下的要么补传，要么标成「这段不拍」。' : '，可以合成了。'}`}
+        </p>
+        <div className="ws-actions ws-actions-inline" style={{ marginTop: 14 }}>
+          {/* ★ 没素材时给**真的 disabled 按钮**，不是给 <Link> 加 `pointer-events:none`：
+              后者挡不住键盘 Enter 与脚本点击，用户照样能进到一个「什么都不能做」的合成页 ——
+              而服务端那边会以 4003「请先为分镜上传素材」把提交打回来。 */}
+          {readyShots === 0 ? (
+            <button className="button small" type="button" disabled>去合成成片</button>
+          ) : (
+            <Link className="button small" to={`/app/creations/${data.id}/render`}>去合成成片</Link>
+          )}
+        </div>
       </section>
 
       {/* ── 其他操作 ── */}
@@ -268,12 +294,14 @@ export function CreationDetailPage() {
 /** 单个分镜：默认只读，点「改台词」才展开两个输入框（列表里全是输入框会没法扫读） */
 function ShotRow({
   shot,
+  storeId,
   editing,
   onEdit,
   onSaved,
   creationId,
 }: {
   shot: Shot
+  storeId: string
   editing: boolean
   onEdit: () => void
   onSaved: (text: string) => void
@@ -283,6 +311,8 @@ function ShotRow({
   const [visualReq, setVisualReq] = useState(shot.visualReq ?? '')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [uploadPercent, setUploadPercent] = useState<number | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   // 外部数据变了（重新生成分镜）要跟着回填，否则输入框里还是旧台词
   useEffect(() => {
@@ -303,6 +333,48 @@ function ShotRow({
     }
   }
 
+  /**
+   * 选文件 → 上传 → 绑到这个分镜。
+   *
+   * ★ 三步都可能失败，且失败后**不能**把 assetId 绑上去（文件没传成却绑了 id，
+   *   会让这个分镜永远停在「已上传」，合成时找不到对象直接失败）。
+   * ★ 上传成功但绑定失败时，素材已经在库里了 —— 提示里说清「文件已传到云端，
+   *   重新点一次上传会再传一遍」，让用户知道重试的代价（不能悄悄重复占配额）。
+   */
+  const pickFile = async (file: File) => {
+    setError(null)
+    setUploadPercent(0)
+    try {
+      const { asset } = await uploadVideo(file, {
+        storeId,
+        onProgress: (p) => setUploadPercent(p.percent),
+      })
+      await updateShot(creationId, shot.id, { assetId: asset.id })
+      onSaved(`第 ${shot.seq} 镜的素材已上传`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '上传失败')
+    } finally {
+      setUploadPercent(null)
+      // 清掉 input 的选中值：不清的话「选同一个文件」不会再触发 change
+      if (fileRef.current) fileRef.current.value = ''
+    }
+  }
+
+  const toggleSkip = async () => {
+    setError(null)
+    setSaving(true)
+    try {
+      await updateShot(creationId, shot.id, { skipped: !shot.skipped })
+      onSaved(shot.skipped ? `第 ${shot.seq} 镜已恢复` : `第 ${shot.seq} 镜标为不拍`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '操作失败')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const uploading = uploadPercent !== null
+
   return (
     <li className="ws-shot">
       <div className="ws-shot-head">
@@ -311,8 +383,8 @@ function ShotRow({
           {shot.shotType && <span className="ws-tag">{shot.shotType}</span>}
           {shot.shotSize && <span className="ws-tag">{shot.shotSize}</span>}
           {shot.durationSuggest ? <span className="ws-tag">{shot.durationSuggest}s</span> : null}
-          {shot.assetId ? <span className="ws-tag ok">已上传素材</span> : null}
-          {shot.skipped ? <span className="ws-tag">已跳过</span> : null}
+          {shot.assetId ? <span className="ws-tag ok">已传素材</span> : null}
+          {shot.skipped ? <span className="ws-tag">这段不拍</span> : null}
         </span>
         <button className="icon-text-button" type="button" onClick={onEdit}>
           {editing ? '收起' : '改台词'}
@@ -322,6 +394,36 @@ function ShotRow({
       {shot.line && !editing && <p className="ws-shot-line">「{shot.line}」</p>}
       {shot.visualReq && !editing && <p className="ws-shot-visual">画面：{shot.visualReq}</p>}
 
+      {/* 素材：网页端没有「拍摄」，只有选文件。这也正是「哪一段还没拍」最需要被看见的地方 */}
+      <div className="ws-shot-asset">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="video/*"
+          hidden
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) void pickFile(file)
+          }}
+        />
+        {uploading ? (
+          <div className="ws-upload">
+            <div className="ws-progressbar"><span style={{ width: `${uploadPercent}%` }} /></div>
+            <span className="ws-upload-text">上传中 {uploadPercent}%</span>
+          </div>
+        ) : (
+          <>
+            <button className="button small ghost" type="button" onClick={() => fileRef.current?.click()} disabled={saving}>
+              {shot.assetId ? '换一个视频' : '上传视频'}
+            </button>
+            <button className="icon-text-button" type="button" onClick={() => void toggleSkip()} disabled={saving}>
+              {shot.skipped ? '恢复这段' : '这段不拍'}
+            </button>
+          </>
+        )}
+      </div>
+
+      {error && <p className="action-error">{error}</p>}
       {editing && (
         <div className="ws-shot-edit">
           <label className="ws-field">

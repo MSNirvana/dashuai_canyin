@@ -14,6 +14,7 @@ import { PersonaPage } from './PersonaPage'
 import { CreationsPage } from './CreationsPage'
 import { CreationNewPage } from './CreationNewPage'
 import { CreationDetailPage } from './CreationDetailPage'
+import { RenderPage } from './RenderPage'
 import { useAuth } from './auth'
 
 export function App() {
@@ -35,6 +36,7 @@ export function App() {
         <Route path="/app/creations" element={<Protected><CreationsPage /></Protected>} />
         <Route path="/app/creations/new" element={<Protected><CreationNewPage /></Protected>} />
         <Route path="/app/creations/:id" element={<Protected><CreationDetailPage /></Protected>} />
+        <Route path="/app/creations/:id/render" element={<Protected><RenderPage /></Protected>} />
         <Route path="/pay/return" element={<PayReturn />} />
         <Route path="/pay/:orderNo" element={<Protected><Pay /></Protected>} />
         <Route path="/rules" element={<Rules />} />

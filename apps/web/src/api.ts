@@ -1,6 +1,9 @@
 import type { LoginResult, PendingPayment } from './types'
 
-const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || '/api/v1'
+// ★ 导出给需要**不经过 JSON 封装**的调用方（目前只有 multipart 上传）：
+//   它们要自己拼 URL 与 header，若各自写死一份 '/api/v1'，一旦改了
+//   VITE_API_BASE_URL 就会出现「普通接口走新地址、上传还在老地址」的分叉。
+export const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '') || '/api/v1'
 const SESSION_KEY = 'dashuai-web-session'
 const PENDING_KEY = 'dashuai-web-pending-payment'
 
