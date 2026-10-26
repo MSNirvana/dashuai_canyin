@@ -8,6 +8,7 @@ import {
   getRenderGrades,
   getRenderTask,
   isRenderActive,
+  isSelectableGrade,
   listRenders,
   renderTaskLabel,
   submitRender,
@@ -118,7 +119,9 @@ export function RenderPage() {
   }, [task])
 
   const readyAssets = creation?.shots.filter((shot) => shot.assetId).length ?? 0
-  const selected = grades.find((g) => g.key === grade)
+  // ★ 只列「能选的」两档：接口会把已下线的基础档也返回来（历史记录要用），见 render-data.ts
+  const options = grades.filter((g) => isSelectableGrade(g.key))
+  const selected = options.find((g) => g.key === grade)
   const busy = Boolean(task && isRenderActive(task.status))
 
   const submit = async () => {
@@ -165,7 +168,7 @@ export function RenderPage() {
       <section className="ws-panel">
         <div className="ws-panel-head"><h2>选一个档位</h2></div>
         <div className="ws-chips">
-          {grades.map((item) => (
+          {options.map((item) => (
             <button
               key={item.key}
               type="button"

@@ -113,3 +113,18 @@ export const GRADE_LABELS: Record<RenderGrade, { title: string; desc: string }> 
   AI: { title: 'AI 档', desc: '自动加字幕、配音、调色，多数情况选这档' },
   PREMIUM: { title: '精修档', desc: '提交后排人工剪辑，适合要发重要节点的时候' },
 }
+
+/**
+ * 能**选**的档位（不含已下线的「基础档」）。
+ *
+ * ★★★ `/render/capabilities` 会返回三档、且 BASIC 的 `available` 也是 `true` ——
+ *   因为它同时服务于「历史成片记录里还有这一档」的展示，服务端类型也刻意保留了 `BASIC`。
+ *   真正决定「用户能选哪几档」的是客户端：小程序 `pages/render/compose.tsx::GRADE_OPTIONS`
+ *   自 2026-09-28 起只有 AI / PREMIUM。
+ * ★★ 所以这里**必须**过滤。照着接口原样渲染，网页端就会多出小程序没有的「基础档」，
+ *   而且它的后台价与 AI 档同为 500 积分 —— 用户会看到两个同价选项，
+ *   选便宜的那个反而拿到没有字幕配音的片子。
+ */
+export const SELECTABLE_GRADES: RenderGrade[] = ['AI', 'PREMIUM']
+export const isSelectableGrade = (key: string): key is RenderGrade =>
+  SELECTABLE_GRADES.includes(key as RenderGrade)
