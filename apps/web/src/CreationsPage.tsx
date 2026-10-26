@@ -10,6 +10,15 @@ import {
 
 type Filter = 'ALL' | 'DOING' | 'READY' | 'ARCHIVED'
 
+/**
+ * 一屏先给这么多条，剩下的用「再显示」按钮放出来。
+ * ★★ 列表接口**没有分页**（`listCreations` 一次返回该账号全部创作，按时间倒序），
+ *   线上真实账号已有 72 条 ⇒ 一次渲染 72 张卡片、页面高到六七屏，翻起来全是重复信息。
+ * ★ 所以这里是**纯前端截断**，不引服务端分页：卡片数据本来就一次性拿到了，
+ *   点「再显示」不该再发一次请求，也不该让顺序在两批之间变化。
+ */
+const PAGE_SIZE = 20
+
 const FILTERS: { value: Filter; label: string }[] = [
   { value: 'ALL', label: '全部' },
   { value: 'DOING', label: '进行中' },
@@ -30,6 +39,7 @@ export function CreationsPage() {
   const [items, setItems] = useState<CreationItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [limit, setLimit] = useState(PAGE_SIZE)
 
   const load = useCallback(async (next: Filter) => {
     setLoading(true)
@@ -44,17 +54,22 @@ export function CreationsPage() {
   }, [])
 
   useEffect(() => {
+    // 换分类要把「已显示多少条」重置回第一屏：否则在「全部」里点了三次再显示（60 条），
+    // 切到「进行中」会一口气铺满 60 条，看着像筛选没生效。
+    setLimit(PAGE_SIZE)
     void load(filter)
   }, [filter, load])
 
   // 归档分类只显示已归档的；其余分类里「已归档」由服务端排除，这里再按进度分一次
-  const shown = items.filter((item) => {
+  const matched = items.filter((item) => {
     if (filter === 'ARCHIVED') return true
     const { renderReady } = progressOf(item)
     if (filter === 'READY') return renderReady
     if (filter === 'DOING') return !renderReady
     return true
   })
+  const visible = matched.slice(0, limit)
+  const remaining = matched.length - visible.length
 
   return (
     <WsPage
@@ -87,7 +102,7 @@ export function CreationsPage() {
       {error && <p className="action-error">{error}</p>}
       {loading && <p className="loading-block">正在读取创作…</p>}
 
-      {!loading && !error && shown.length === 0 && (
+      {!loading && !error && matched.length === 0 && (
         <div className="empty-state">
           <div className="empty-icon">
             <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -100,9 +115,9 @@ export function CreationsPage() {
         </div>
       )}
 
-      {shown.length > 0 && (
+      {visible.length > 0 && (
         <ul className="ws-list">
-          {shown.map((item) => {
+          {visible.map((item) => {
             const { pct, label } = progressOf(item)
             return (
               <li className="ws-list-item" key={item.id}>
@@ -133,6 +148,19 @@ export function CreationsPage() {
             )
           })}
         </ul>
+      )}
+
+      {/* 「再显示」用灰底（`.quiet`）不是红实心：这一页唯一的红实心是上面的「新建创作」，
+          往下翻的时候它已经滚出屏幕了，如果这里再来一个红按钮，用户会以为这才是主行动。 */}
+      {remaining > 0 && (
+        <div className="ws-actions" style={{ marginTop: 16 }}>
+          <button className="button small quiet" type="button" onClick={() => setLimit((n) => n + PAGE_SIZE)}>
+            再显示 {Math.min(PAGE_SIZE, remaining)} 条（还有 {remaining} 条）
+          </button>
+        </div>
+      )}
+      {remaining === 0 && matched.length > PAGE_SIZE && (
+        <p className="ws-hint" style={{ marginTop: 16 }}>已经到底了，一共 {matched.length} 条。</p>
       )}
     </WsPage>
   )
