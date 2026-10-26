@@ -102,11 +102,16 @@ export function Workspace() {
           </div>
 
           <section className="ws-note">
-            <h3>这三样凑齐之后</h3>
+            <h3>{readyCount === 3 ? '三样都齐了，去写第一条' : '这三样凑齐之后'}</h3>
             <p>
-              就可以让 AI 按你选的菜和款式写口播文案、拆分镜脚本，再把拍好的素材合成成片。
-              创作部分正在接到这个工作台上，先把你店里的资料填准 —— 那是后面所有生成的地基。
+              {readyCount === 3
+                ? '选一道招牌菜，AI 会按你上面填的门店、菜品和口气写文案，再拆成能照着拍的分镜。'
+                : '就可以让 AI 按你选的菜和款式写口播文案、拆分镜脚本。缺哪一样，写出来的话就少一层依据。'}
             </p>
+            {/* 只给一个去向：下面那排标签里已经有「创作」，再放一条「看我的创作」是同一个目的地的两个入口 */}
+            <div className="ws-actions ws-actions-inline" style={{ marginTop: 14 }}>
+              <Link className="button small" to="/app/creations/new">写第一条文案</Link>
+            </div>
           </section>
         </>
       )}
