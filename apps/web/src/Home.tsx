@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Check, ClipboardList, Copy, LoaderCircle, MessageSquare, Sparkles } from 'lucide-react'
+import { ArrowRight, Check, ClipboardList, Copy, LayoutGrid, LoaderCircle, MessageSquare, Sparkles } from 'lucide-react'
 import { api, ApiError } from './api'
+import { useAuth } from './auth'
 import { useSiteImages } from './site-images'
 
 /**
@@ -101,6 +102,7 @@ export function Home() {
   // 先用内置默认图渲染，接口返回后台配置后再替换（接口不可用就一直是内置图）。
   // 不是「等接口回来再渲染」—— 那会让首屏空白几百毫秒，接口挂了还会永久空白。
   const images = useSiteImages()
+  const { session } = useAuth()
   return (
     <>
       <section className="hero">
@@ -135,6 +137,20 @@ export function Home() {
               <a className="button" href="#try">免费试做一条 <ArrowRight size={18} /></a>
             </div>
             <p className="hero-note"><Check size={17} />不用登录，30 秒出一条</p>
+            {/* ★ 已登录才显示，而且**是一个文字链、不是第二颗按钮**：
+                 - 首屏只放一个主按钮（免费试做一条），再加一颗红实心就把主行动劈成两半；
+                 - `.nav-links` 在 <768px 是 `display: none`，手机端顶栏只有 logo 和账户状态，
+                   没有这个入口的话，手机上根本进不去工作台。
+                 ⇒ 措辞带「你的」，让老板知道点进去是**自己的**门店资料。 */}
+            {session && (
+              <p className="hero-account-link">
+                <Link to="/app">
+                  <LayoutGrid size={17} />
+                  进入工作台，管理你的门店与菜品
+                  <ArrowRight size={16} />
+                </Link>
+              </p>
+            )}
           </div>
           <div className="hero-media">
             <div className="media-frame">

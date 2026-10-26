@@ -75,6 +75,8 @@ export function Layout({ children }: { children: ReactNode }) {
           {/* 桌面端导航；手机端由 CSS 隐藏（见 styles.css 的 .nav-links） */}
           <nav className="nav-links" aria-label="主导航">
             <NavLink to="/">首页</NavLink>
+            {/* ★ 不加 `end`：在 /app/store 这类子页里「工作台」保持高亮，一眼能看出自己在哪个区域 */}
+            {session && <NavLink to="/app">工作台</NavLink>}
             <NavLink to="/pricing">套餐与积分</NavLink>
             {session && <NavLink to="/account">账户中心</NavLink>}
             {session && <NavLink to="/orders">订单</NavLink>}
