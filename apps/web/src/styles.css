@@ -1113,6 +1113,10 @@ main { flex: 1; }
 /* 主 + 次：手机上竖排且通栏（拇指向下够得着），≥560px 才并排 */
 .ws-actions { display: flex; flex-direction: column; gap: 10px; }
 .ws-actions .button { width: 100%; }
+/* 表单之外的操作行（归档 / 删除）：**不占满整行**。
+   通栏大按钮会让人以为「这是这一页的主行动」，而这两个都是低频、且删除是不可逆的。 */
+.ws-actions.ws-actions-inline { flex-direction: row; flex-wrap: wrap; align-items: center; }
+.ws-actions.ws-actions-inline .button { width: auto; min-width: 0; }
 
 /* 保存成功＝状态，走绿（配 --success-ink 才达到 4.80:1）。
    失败沿用 `.action-error`，不另造一套红色提示。 */
@@ -1212,6 +1216,103 @@ main { flex: 1; }
 }
 .ws-note h3 { margin: 0 0 8px; font-size: 17px; font-weight: 650; }
 .ws-note p { margin: 0; color: var(--ink-2); font-size: 15px; line-height: 1.75; }
+
+/* ── 分段按钮（模式 / 款式 / 长度 / 分类）───────────────
+   用 `.ws-chip` 而不是原生 <select>：这几组各只有 3~4 个选项，摊开比下拉少一次点击，
+   而且「当前选的是哪个」必须一眼看见 —— 30-50 岁的用户不习惯靠下拉框里的字判断。
+   ★ 选中态是浅红底 + 红字（`--brand-ink` 压浅红底 5.31:1），**不是红实心**：
+     一屏的主行动是下面那颗「创建」，选中的按钮不该跟它抢（铁律 2）。 */
+.ws-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.ws-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 44px; padding: 0 14px;
+  border: 1px solid var(--stroke); border-radius: var(--r-pill);
+  background: var(--card); color: var(--ink-2);
+  font-size: 16px; font-weight: 600;
+}
+.ws-chip:hover { border-color: var(--ink-4); color: var(--ink); }
+.ws-chip.active { background: var(--brand-light); border-color: var(--brand-light); color: var(--brand-ink); }
+.ws-chip span { font-size: 13px; font-weight: 700; opacity: 0.75; }
+/* 分类下面那颗「新建创作」：与分类之间留出 14px，与下面列表留 18px，别贴着 */
+.ws-create-action { margin: 14px 0 18px; }
+
+/* 详情页的返回链：**中性灰**而不是品牌红。
+   红条（进度条）就紧跟在它下面，两处都红的话那条 6px 的条会被读成「链接的下划线」。
+   行高 44px 是触控下限 —— 手机上仍然要一次点中。 */
+.ws-back {
+  display: inline-flex; align-items: center;
+  min-height: 44px; color: var(--ink-2);
+  font-size: 16px; font-weight: 600;
+}
+.ws-back:hover { color: var(--ink); }
+
+/* 进度条 + 百分数同一行：条占满剩余宽度，数字右对齐且等宽 */
+.ws-progress-row { display: flex; align-items: center; gap: 12px; }
+.ws-progress-row .ws-progressbar { flex: 1; }
+.ws-progress-row .ws-progress-num { font-size: 17px; line-height: 1; }
+
+/* 原生下拉：高度圆角跟输入框一致，只补右内边距，别让箭头压到文字。
+   ★ 保留原生箭头（不画自定义的）：它自带平台语义与无障碍支持，画一个假的只会更差。 */
+select.ws-input { padding-right: 38px; }
+
+/* 行内整段提示（如话题稿说明）：不套卡片边框，靠灰底降级 */
+.ws-note-inline {
+  margin: 0; padding: 12px 14px;
+  background: var(--field); border-radius: var(--r-sm);
+  color: var(--ink-2); font-size: 15px; line-height: 1.7;
+}
+
+/* ── 进度条 ──
+   ★ 只有一条 6px 的红条：进度是规范允许用红的三处之一。
+   ★ 轨道 `--stroke`、填充 `--brand`；走到哪一步由下面那行文字说清，不靠颜色辨义。 */
+.ws-progressbar { height: 6px; border-radius: var(--r-pill); background: var(--stroke); overflow: hidden; }
+.ws-progressbar > span {
+  display: block; height: 100%; background: var(--brand);
+  border-radius: var(--r-pill); transition: width 300ms ease-out;
+}
+.ws-creation-step { display: flex; align-items: baseline; gap: 8px; margin: 6px 0 0; color: var(--ink-2); font-size: 15px; }
+.ws-creation-step b { color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* ── 创作卡片 ──
+   缩略图固定 56px 见方：列表一屏要能看五六条，等比大图会把列表变成相册。 */
+.ws-creation { display: flex; gap: 14px; align-items: flex-start; min-width: 0; flex: 1; color: var(--ink); }
+.ws-thumb {
+  width: 56px; height: 56px; flex: 0 0 auto; overflow: hidden;
+  border-radius: var(--r-md); background: var(--field);
+  display: grid; place-items: center;
+}
+.ws-thumb img { width: 100%; height: 100%; object-fit: cover; }
+.ws-thumb-fallback { color: var(--ink-3); font-size: 20px; font-weight: 700; }
+.ws-creation-main { min-width: 0; flex: 1; }
+.ws-creation-main h3 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.02em; }
+.ws-creation-main .ws-list-meta { margin: 6px 0 10px; }
+.ws-creation-time { color: var(--ink-3); font-size: 14px; }
+
+/* ── 详情页分区（文案 / 分镜 / 其他操作）── */
+.ws-panel {
+  padding: 18px; margin-bottom: 16px;
+  background: var(--card); border: 1px solid var(--stroke); border-radius: var(--r-lg);
+}
+.ws-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.ws-panel-head h2 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
+.ws-panel .ws-textarea { margin-bottom: 10px; }
+.ws-meta-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0 14px; }
+
+/* 分镜：每条浅灰底卡片，不再加边框（外层卡片已经有一层） */
+.ws-shots { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.ws-shot { padding: 14px; background: var(--field); border-radius: var(--r-md); }
+.ws-shot-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ws-shot-head b { font-size: 16px; }
+/* 标签占满中间、按钮自动靠右：换行时按钮跟着走，不会浮在半空 */
+.ws-shot-head .ws-list-meta { margin: 0; flex: 1; }
+.ws-shot-head .icon-text-button { margin-left: auto; }
+.ws-shot-line { margin: 10px 0 0; font-size: 16px; line-height: 1.75; color: var(--ink); }
+.ws-shot-visual { margin: 6px 0 0; font-size: 15px; line-height: 1.7; color: var(--ink-2); }
+.ws-shot-edit { margin-top: 12px; display: grid; gap: 12px; }
+/* 展开编辑时输入框改成白底：灰底上再放灰输入框，边界就糊在一起了 */
+.ws-shot-edit .ws-input, .ws-shot-edit .ws-textarea { background: var(--card); }
+/* 「已上传素材」用绿：它是状态，但不抢红（红只给主按钮 / 进度 / 选中态） */
+.ws-tag.ok { background: var(--success-soft); color: var(--success-ink); }
 
 @media (min-width: 560px) {
   .ws-actions { flex-direction: row; }

@@ -11,6 +11,9 @@ import { Workspace } from './Workspace'
 import { StorePage } from './StorePage'
 import { DishesPage } from './DishesPage'
 import { PersonaPage } from './PersonaPage'
+import { CreationsPage } from './CreationsPage'
+import { CreationNewPage } from './CreationNewPage'
+import { CreationDetailPage } from './CreationDetailPage'
 import { useAuth } from './auth'
 
 export function App() {
@@ -27,6 +30,11 @@ export function App() {
         <Route path="/app/store" element={<Protected><StorePage /></Protected>} />
         <Route path="/app/dishes" element={<Protected><DishesPage /></Protected>} />
         <Route path="/app/persona" element={<Protected><PersonaPage /></Protected>} />
+        {/* 创作链路：列表 → 新建 → 详情（文案 + 分镜）。
+            ⚠ 顺序不影响匹配（v6 按 rank 选），但把 `new` 写在 `:id` 前面更好读。 */}
+        <Route path="/app/creations" element={<Protected><CreationsPage /></Protected>} />
+        <Route path="/app/creations/new" element={<Protected><CreationNewPage /></Protected>} />
+        <Route path="/app/creations/:id" element={<Protected><CreationDetailPage /></Protected>} />
         <Route path="/pay/return" element={<PayReturn />} />
         <Route path="/pay/:orderNo" element={<Protected><Pay /></Protected>} />
         <Route path="/rules" element={<Rules />} />

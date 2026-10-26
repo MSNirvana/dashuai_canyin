@@ -31,6 +31,7 @@ function WsTabs() {
       <NavLink to="/app/store">门店</NavLink>
       <NavLink to="/app/dishes">菜品</NavLink>
       <NavLink to="/app/persona">人设</NavLink>
+      <NavLink to="/app/creations">创作</NavLink>
     </nav>
   )
 }
