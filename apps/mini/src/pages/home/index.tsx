@@ -7,7 +7,7 @@ import { guideLogin } from '../../utils/login-guide'
 import { GuideDialogHost, useGuideDialogVisible } from '../../components/guide-dialog'
 import { useAppShare } from '../../utils/app-share'
 import { listCreations, type CreationItem } from '../../services/creation'
-import { getWork, listWorks, listWorkCategories, markWorkClone, type WorkCategory, type WorkItem } from '../../services/work'
+import { getWork, listWorks, listWorkCategories, markWorkView, type WorkCategory, type WorkItem } from '../../services/work'
 import {
   FALLBACK_SLIDE,
   getHomeLayout,
@@ -41,11 +41,30 @@ const WORK_COVER_FALLBACKS: Record<string, string> = {
 /** 优秀作品每页条数（两列，即 3 行） */
 const WORK_PAGE_SIZE = 6
 /**
+ * ★ 2026-10-26：**不显示给顾客**的作品标签。
+ *
+ * 「成片入库」是后台「从成片入库」时自动打上的**内部来源标记**
+ * （`server/src/services/work.service.ts` 里 `tags: ['成片入库']`），
+ * 它回答的是「运营这条作品怎么来的」，对看视频的顾客零信息量，
+ * 压在封面上还挡内容 —— 用户要求删掉它。
+ * ★ 只在前端过滤、不动库里的数据：后台仍靠这个标签区分来源。
+ */
+const HIDDEN_WORK_TAGS = ['成片入库']
+/**
  * 已取到的作品播放地址的复用窗口。
  * 详情接口签出来的地址 1 小时后失效，这里按 45 分钟保守复用 —— 复用窗口若超过签名有效期，
  * 就会变成「点了播放却播不了」这种最难查的静默失败。
  */
 const WORK_PLAY_URL_TTL_MS = 45 * 60 * 1000
+/**
+ * 全屏播放器那颗 `<Video>` 的 id。
+ * ★ 必须与 JSX 里的 `id={...}` 一致：`Taro.createVideoContext(id)` 靠它找节点。
+ * ★ 为什么非要这个 id：**`autoplay` 属性不可靠** —— 开发工具 / 部分基础库下
+ *   「节点刚挂上 + 地址刚塞进去」这一帧它不一定肯自己播，表现出来就是**纯黑、没有控制条**
+ *   （这正是 2026-10-26 用户报的「点开还是黑屏」）。成片页（pages/render/compose.tsx）
+ *   早就踩过同一条：那里也是 `autoplay` + 显式 `play()` 双保险，照抄它。
+ */
+const HOME_PLAYER_VIDEO_ID = 'home-work-player'
 /** 分类横滑的「全部」选项：接口只返回有作品的分类 */
 const WORK_CATEGORY_ALL = ''
 
@@ -101,6 +120,24 @@ export default function HomePage() {
    * 又白费流量，而且 Video 是原生组件、层级最高，多开几个会把整块网格的点击搞得很难预测。
    */
   const [playing, setPlaying] = useState<{ id: string; url: string } | null>(null)
+  /**
+   * 全屏播放器**是否真的开始出画面**了（由 `<Video onPlay>` 置真）。
+   * 用途只有一个：决定「加载中…」那行提示还要不要盖在黑底上。
+   * ★ 没有它的话，`autoplay` 一旦不生效，用户看到的就是**一块什么都没有的纯黑**
+   *   （播放键也被 `showCenterPlayBtn={false}` 关掉了）—— 分不清是坏了还是在加载。
+   */
+  const [playerStarted, setPlayerStarted] = useState(false)
+  /**
+   * 播放器**元数据已就绪**（`onLoadedMetadata` 置真）。
+   * ★ 它和 `playerStarted` 是两件事，缺一不可：
+   *   · 元数据到了 ⇒ 说明地址和容器都没问题，**「加载中」这行字就该收掉**，
+   *     否则它是一层盖在视频上的 cover-view，会把「居中播放键」和视频的点击全挡住；
+   *   · 真的在播 ⇒ 才说明 `autoplay` / `play()` 成功了。
+   *   ⇒ 两个信号分开记，「自动播失败但能手动点播」这种中间态才有人接得住。
+   */
+  const [playerLoaded, setPlayerLoaded] = useState(false)
+  /** 播放器报错时的原文（weapp 的 `onError` 会带 detail.errMsg），显示出来便于对症 */
+  const [playerError, setPlayerError] = useState('')
   /** 正在取播放地址的作品 id：取地址要发一次请求，期间让按钮有反馈 */
   const [playPending, setPlayPending] = useState<string | null>(null)
   const playUrlRef = useRef<Record<string, { url: string; at: number }>>({})
@@ -268,6 +305,36 @@ export default function HomePage() {
   // 回来还会看到一张「播完停在最后一帧」的卡片。
   useDidHide(() => { setPlaying(null) })
 
+  /**
+   * 全屏播放器的**起播兜底**。
+   *
+   * ★★★ 为什么光有 `autoplay` 不够（2026-10-26 用户报「点开还是黑屏」的真正原因）：
+   *   `autoplay` 是**属性**，只在节点初次挂载那一刻被消费一次；而这条路径是
+   *   「点了之后才 setState 挂出一个新 Video、并且地址是同时塞进去的」，
+   *   开发工具和部分基础库下这一帧不一定肯自己播 —— 于是没有任何报错，
+   *   只剩一块黑底（播放键又被 `showCenterPlayBtn={false}` 关掉了）。
+   *   ⇒ 与 `pages/render/compose.tsx` 同一个结论、同一个写法：地址就绪后**显式 `play()` 一次**。
+   *     已经在播时它是幂等空操作。
+   * ★ 300ms 不是玄学：原生 video 节点由 Taro 在本次渲染后才创建，取 context 需要它已经在场
+   *   （与 compose 页同值）。
+   */
+  useEffect(() => {
+    if (!playing) {
+      setPlayerStarted(false)
+      setPlayerLoaded(false)
+      setPlayerError('')
+      return
+    }
+    const timer = setTimeout(() => {
+      try {
+        Taro.createVideoContext(HOME_PLAYER_VIDEO_ID).play()
+      } catch {
+        // 取不到 context（节点还没挂上）：不补救，`autoplay` 仍是第一道
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [playing])
+
   // ★ 2026-10-15：全局说明弹窗（自绘）一打开，先把播放中的视频收掉。
   //   自绘弹窗靠**同层渲染**盖住原生组件（官方口径见 components/guide-dialog/index.tsx
   //   文件头 ★），而同层渲染在 iOS 页面节点树不稳定时**存在失败率**（官方原文）。
@@ -313,28 +380,53 @@ export default function HomePage() {
     //   原句已删。注意这个框的 title 仍是「登录后可用」、确认键仍是「去登录」，所以
     //   「为什么要点去登录」这层意思还在，只是重心从「解释」挪到了「给一条别的路」。
     //   ⚠ 正文与底部小字（note）现在是同一件事的两种写法，形近重复 —— 见日志 2026-10-16。
-    //   （另两处 guideLogin 没动：它们是「生成同款 / 套用配方」，用户已经在看具体作品了。）
+    //   （另两处 guideLogin 已在 2026-10-26 随之删除：作品卡片上的「生成同款」和详情页的
+    //     「套用配方」都不存在了 —— 本页只剩这一处登录引导。）
     if (!isLoggedIn) { guideLogin({ reason: '可添加客服领取试用', note: '联系客服领取试用' }); return }
     if (!currentStoreId) { goNewStore(); return }
     Taro.navigateTo({ url: '/pages/creation/edit' })
   }
   const openCreation = (id: string) => Taro.navigateTo({ url: `/pages/creation/edit?id=${id}` })
-  // 点卡片进详情（看视频 + 配方说明）；点「生成同款」直接带着配方进创作流
-  const openWork = (work: WorkItem) => Taro.navigateTo({ url: `/pages/work/detail?id=${work.id}` })
-  const goCloneWork = (work: WorkItem) => {
-    // 未登录先给一句解释，别把用户丢去门店页吃一个 401、再被请求层弹到「我的」（见 utils/login-guide.ts）
-    if (!isLoggedIn) { guideLogin({ reason: '生成同款需要先登录' }); return }
-    if (!currentStoreId) { goNewStore(); return }
-    void markWorkClone(work.id).catch(() => undefined)
-    Taro.navigateTo({ url: `/pages/creation/edit?workId=${work.id}` })
-  }
 
   const stopPlay = () => setPlaying(null)
 
   /**
-   * 点卡片**正中间那个播放按钮**：不跳页，就地换成 video 播放。
-   * 卡片其他地方仍然是「进详情」—— 两者的区别只由 `stopPropagation` 决定，
-   * 与下面「生成同款」按钮用的是同一套写法（本项目已验证可用）。
+   * 滚到「优秀作品」这一块的顶部。
+   * ★ 只有一个用处：轮播里配了某条作品（`CarouselLink` 的 `WORK`），而那条作品**不在**
+   *   当前这一页列表里 —— 详情页已经删了，没有单独的落地页可跳，只能把人带到作品区。
+   * ★ 写法照抄 `pages/render/compose.tsx::scrollToPlayer`（同样是先量位置再滚，项目里已验证）：
+   *   直接 `pageScrollTo({selector})` 在部分基础库上不生效，量出绝对 scrollTop 才稳。
+   */
+  const scrollToWorks = () => {
+    const query = Taro.createSelectorQuery()
+    query.select('.home__works').boundingClientRect()
+    query.selectViewport().scrollOffset()
+    query.exec((res) => {
+      const rect = res?.[0] as { top?: number } | null
+      const offset = res?.[1] as { scrollTop?: number } | null
+      if (!rect || typeof rect.top !== 'number' || !offset || typeof offset.scrollTop !== 'number') return
+      // 留 24rpx 呼吸空间，别让卡片贴着屏幕上沿
+      void Taro.pageScrollTo({ scrollTop: Math.max(0, offset.scrollTop + rect.top - 24), duration: 300 })
+    })
+  }
+
+  /**
+   * 播放一条作品：**不跳页**，点一下就在**全屏播放器**里自动播放。
+   *
+   * ★ 2026-10-26 用户要求（三步演进，别往回改）：
+   *   ① 「优秀作品详情页删掉，用户直接点击优秀作品直接播放就可以了，不需要额外一个页面」
+   *   ② 「点击了之后应该自动放大播放」
+   *   ③ 「点击之后自动播放，不需要闪过封面，然后右上角需要有关闭按钮」
+   *
+   * ★★★ 为什么最后是自己搭全屏播放器、而不是 `Taro.previewMedia`：
+   *   原生预览器**不接受 autoplay 之外的组合** —— 它一定会先把 `poster` 铺出来再起播
+   *   （就是用户说的「闪过封面」），而且它的关闭方式是「点一下屏幕」，
+   *   没有右上角那颗按钮。两条要求它都满足不了，所以只能自己盖一层全屏 `<Video>`。
+   *
+   * ★★★ 也别退回去用卡片内的 `<Video>` 就地播（更早一版的做法，实测**整块黑屏**）：
+   *   `.home__work` 有 `overflow: hidden` + 圆角，原生 `<video>` 装在这种父级里，
+   *   iOS 上会渲染成黑底不出帧。全屏播放器是 `position: fixed` 的独立层，绕过这个坑。
+   *   ⇒ 所以：卡片**永远只显示封面**，播放态是一个盖在最上面的全屏层。
    *
    * 为什么这里要请求一次详情拿地址：列表接口**刻意只签封面**（见后端 routes/works.ts 的说明），
    * 不带 videoUrl。若为了「列表能直接播」而让列表把每条作品的视频都签一遍，等于每次翻页
@@ -343,16 +435,24 @@ export default function HomePage() {
    */
   const playWork = async (work: WorkItem) => {
     if (playPending) return
-    // 重复点正在播的那条 = 收起。播放中按钮已被 Video 盖住，这一步主要挡快速连点
-    if (playing?.id === work.id) { setPlaying(null); return }
     setPlayPending(work.id)
     try {
       const cached = playUrlRef.current[work.id]
-      const url = cached && Date.now() - cached.at < WORK_PLAY_URL_TTL_MS
-        ? cached.url
-        : (await getWork(work.id)).videoUrl
+      // 缓存命中就复用；没命中（或过了 45 分钟）才去取一次新签名的地址
+      // ★ 类型要写成 `string | null`：`getWork().videoUrl` 就是可能为 null（未上传成片），
+      //   收窄成 string 会在下面那条赋值处报 TS2322。
+      let url: string | null = cached && Date.now() - cached.at < WORK_PLAY_URL_TTL_MS ? cached.url : ''
+      const needFetch = !url
+      if (!url) url = (await getWork(work.id)).videoUrl
       if (!url) throw new Error('这条作品还没有可播放的成片')
       playUrlRef.current[work.id] = { url, at: Date.now() }
+      /**
+       * ★ 浏览计数挂到「真的播了一次」上。
+       *   原来它只在详情页 `onLoad` 里计一次；详情页删掉后如果不换落点，这个统计就永久停在
+       *   2026-10-26 之前的数据上（后台看到的「浏览数」会以为没人看）。
+       *   只在**需要重新取地址**时计一次 ⇒ 同一条反复点播不刷数；失败也不影响播放。
+       */
+      if (needFetch) void markWorkView(work.id).catch(() => undefined)
       setPlaying({ id: work.id, url })
     } catch (error) {
       // 拿不到地址就把缓存清掉：留着一个坏地址，用户下次点还是同一条死路
@@ -362,6 +462,18 @@ export default function HomePage() {
     } finally {
       setPlayPending(null)
     }
+  }
+
+  /**
+   * 轮播里配的「某条作品」该怎么落地。
+   * ★ 详情页删掉之后没有单条作品的落地页了 ——
+   *   那条作品若已在当前列表里 ⇒ 直接就地播；不在（可能在后几页、或已被下架）
+   *   ⇒ 把人带到「优秀作品」这一块，别留下一颗点了没反应的轮播。
+   */
+  const openWorkById = (id: string) => {
+    const hit = works.find((w) => w.id === id)
+    if (hit) { void playWork(hit); return }
+    scrollToWorks()
   }
 
   /**
@@ -376,8 +488,8 @@ export default function HomePage() {
       case 'STORES': goStoreEntry(); break
       case 'MEMBER': void Taro.navigateTo({ url: '/pages/recharge/index' }); break
       case 'WORK':
-        // 没填作品 id 时当作纯展示，别跳一个必然不存在的详情页
-        if (s.workId) void Taro.navigateTo({ url: `/pages/work/detail?id=${s.workId}` })
+        // 没填作品 id 时当作纯展示（详情页已删除，不能再去跳一个不存在的页面）
+        if (s.workId) openWorkById(s.workId)
         break
       default: break
     }
@@ -615,43 +727,26 @@ export default function HomePage() {
             const cover = w.coverUrl || WORK_COVER_FALLBACKS[w.category]
             const hasCover = !!cover
             const hasVideo = !!w.videoKey
-            const playingUrl = playing?.id === w.id ? playing.url : null
-            /**
-             * 播放态**单独一个分支 return**，不去改常态那棵 DOM 树。
-             * 原因：Video 是原生组件、层级最高，会把标签 / 标题 / 播放按钮统统盖住 ——
-             * 与其再加一套 display:none 去藏（小程序 wxss 的选择器支持面本来就窄），
-             * 不如播放时根本不渲染它们。顺带也保证了「点其他地方进详情」在播放时不会误触发。
-             */
-            if (playingUrl) {
-              return (
-                <View className='home__work home__work--playing' key={w.id}>
-                  <Video
-                    className='home__work-video'
-                    src={playingUrl}
-                    autoplay
-                    controls
-                    objectFit='cover'
-                    onEnded={stopPlay}
-                    onError={() => {
-                      stopPlay()
-                      void Taro.showToast({ title: '播放失败，请稍后重试', icon: 'none', duration: 2500 })
-                    }}
-                  >
-                    {/* cover-view 是唯一能覆盖在原生组件之上的元素，所以退出播放的入口只能是它 */}
-                    <CoverView className='home__work-stop' onClick={stopPlay}>收起</CoverView>
-                  </Video>
-                </View>
-              )
-            }
+            /* ★ 2026-10-26：卡片**永远只显示封面**，点下去由页面顶层的全屏播放器接管
+               （见 playWork 与 bottom 那个 `home__player` 层）。
+               原来这里有一个「播放态换成 Video」的分支 —— 已删除：
+               原生 video 装在 `overflow:hidden` + 圆角的卡片里会整块黑屏（实测）。 */
             return (
               <View
                 className={`home__work ${hasCover ? '' : 'home__work--empty'}`}
                 key={w.id}
                 hoverClass='ds-hover--press'
-                onClick={() => openWork(w)}
+                /* ★ 2026-10-26：整张卡片就是播放命中区（详情页已删除，见 playWork 的说明）。
+                   没有成片时也会走到这里 ⇒ playWork 里抛「这条作品还没有可播放的成片」并 toast，
+                   不给用户一个点了全然没反应的卡片。 */
+                onClick={() => { void playWork(w) }}
               >
                 {hasCover ? (
-                  <Image className='home__work-cover' src={cover} mode='aspectFill' />
+                  /* ★ 2026-10-26 用户要求「封面要显示完全」：
+                     `aspectFill` 会按容器比例裁掉溢出部分（竖版封面被切掉上下/左右），
+                     改成 `aspectFit` 让整张封面都在。比例不一致时留下的空白由卡片黑底吃掉
+                     （见 index.scss 的 `&__work` background）。 */
+                  <Image className='home__work-cover' src={cover} mode='aspectFit' />
                 ) : (
                   <View className='home__work-ph'>
                     <Text className='home__work-ph-cat'>{w.category}</Text>
@@ -662,15 +757,20 @@ export default function HomePage() {
 
                 <View className='home__work-top'>
                   <View className='home__work-tags'>
-                    {(w.tags ?? []).slice(0, 2).map((t) => (
-                      <Text className='home__work-tag' key={t}>{t}</Text>
-                    ))}
+                    {(w.tags ?? [])
+                      .filter((t) => !HIDDEN_WORK_TAGS.includes(t))
+                      .slice(0, 2)
+                      .map((t) => (
+                        <Text className='home__work-tag' key={t}>{t}</Text>
+                      ))}
                   </View>
                 </View>
 
                 {hasVideo && (
-                  /* 播放按钮是**独立命中区**：它吃掉这次点击（stopPropagation），
-                     其余区域留给卡片自己的「进详情」—— 与下面「生成同款」是同一套写法。 */
+                  /* 播放按钮只是**视觉提示**（告诉用户这张能播），点了和点卡片效果一样。
+                     `stopPropagation` 仍要留着：卡片自己也挂着 playWork，两次一起触发会
+                     并发发两个详情请求（`playPending` 是异步 setState，同一次事件里挡不住）。
+                     ★ 它同时是 `playPending` 的加载态载体：取地址期间那个三角会淡掉。 */
                   <View
                     className={`home__work-play ${playPending === w.id ? 'home__work-play--pending' : ''}`}
                     hoverClass='ds-hover--press'
@@ -683,10 +783,9 @@ export default function HomePage() {
                 )}
 
                 <View className='home__work-bottom'>
+                  {/* ★ 2026-10-26 用户要求：删掉压在封面上的「生成同款」按钮。
+                      封面现在是用来**看**的，不再兼任入口 —— 整张卡片点了就播（详情页已删除）。 */}
                   <Text className='home__work-title'>{w.title}</Text>
-                  <View className='home__work-cta' onClick={(e) => { e.stopPropagation(); goCloneWork(w); }}>
-                    <Text>生成同款</Text>
-                  </View>
                 </View>
               </View>
             )
@@ -709,10 +808,62 @@ export default function HomePage() {
       </>}
     </View>
 
+    {/* ── 全屏播放器（点优秀作品卡片后盖上来的那一层）──
+        ★ 2026-10-26 用户要求：「点击之后自动播放，不需要闪过封面，然后右上角需要有关闭按钮」。
+        三个要求对应的写法：
+          ① **自动播放** = `autoplay`，且**不传 `poster`** —— 传了就会先铺封面（就是「闪过封面」）；
+          ② **不闪封面** ⇒ 外层直接铺黑底 + `objectFit='contain'`，视频起帧即可见；
+          ③ **右上角关闭** ⇒ `<CoverView>`。原生 `<Video>` 是最高层级，普通 `<View>` 盖不住它，
+             全项目里只有 cover-view 能可靠压在 video 之上（沿用原来「收起」那套结论）。
+        ★ 为什么 `top` 是 140rpx 而不是 16rpx：屏幕右上角那块是**微信胶囊按钮**（原生、
+          盖不掉），关闭按钮放太低会被它压住点不到 ⇒ 往下让出一颗胶囊的高度。
+        ★ `catchMove`：全屏层铺满屏幕，不拦一下手势的话，手指在视频上滑动会把**下面的列表**
+          一起滚走，关掉播放器回来位置全变了。 */}
+    {playing && (
+      <View className='home__player' catchMove>
+        <Video
+          /* ★ id 是给上面那个 effect 的 `createVideoContext(id).play()` 用的，别删 */
+          id={HOME_PLAYER_VIDEO_ID}
+          className='home__player-video'
+          src={playing.url}
+          autoplay
+          controls
+          /* ⚠ 不要写 `showCenterPlayBtn={false}`：`autoplay` 一旦没生效，那块黑屏上
+             就**一个可点的东西都没有**（2026-10-26 踩过这个坑）。留默认的居中播放键，
+             自动播失败时它还能救一次。 */
+          objectFit='contain'
+          /* 真正出画面的信号：到了才算「在播」 */
+          onPlay={() => setPlayerStarted(true)}
+          /* 元数据到了 ⇒ 地址和容器都没问题，把「加载中」那行收掉（它在挡点击）
+             ⚠ Taro 这个属性的名字是 `onLoadedMetaData`（大写 D），不是 W3C 的 onLoadedMetadata */
+          onLoadedMetaData={() => setPlayerLoaded(true)}
+          /* ★ 播完**不自动关**：用户要的是「右上角有关闭按钮」= 退出由他掌握。
+             播完后原生控制条会停最后一帧并给出重播键，比把人弹回列表更自然。 */
+          onError={(e) => {
+            /* 不直接关掉：把原生 errMsg 亮出来（这块黑屏到底病在哪，看这行字最快），
+               用户想退出随时按右上角 ×。 */
+            const detail = (e as unknown as { detail?: { errMsg?: string } }).detail
+            setPlayerError(detail?.errMsg || '视频加载失败')
+            void Taro.showToast({ title: '播放失败，请稍后重试', icon: 'none', duration: 2500 })
+          }}
+        >
+          {/* ★ 提示条只在「还没就绪、也没报错」时出现，且**只占底部一条**（不做满屏）：
+              满屏的 cover-view 会把居中播放键和视频点击全挡住。 */}
+          {playerError ? (
+            <CoverView className='home__player-tip home__player-tip--error'>{playerError}</CoverView>
+          ) : (!playerLoaded && !playerStarted) ? (
+            <CoverView className='home__player-tip'>加载中…</CoverView>
+          ) : null}
+          <CoverView className='home__player-close' onClick={stopPlay}>×</CoverView>
+        </Video>
+      </View>
+    )}
+
     {/* ★ 自绘说明弹窗的宿主（login-guide 那层「登录后可用」）。
         必须挂在**页面里** —— 挂 app.tsx 小程序端不渲染（依据见
         components/guide-dialog/index.tsx 文件头 ★ 挂载点与 app.tsx 的注释）。
-        关闭时它渲染 null，不占位、不影响布局。 */}
+        关闭时它渲染 null，不占位、不影响布局。
+        ★ 放在播放器**之后**：两者都要压在原生组件之上，后渲染的那层在上面。 */}
     <GuideDialogHost />
   </View>
 }

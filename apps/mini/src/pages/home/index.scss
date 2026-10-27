@@ -394,6 +394,9 @@
     border-radius: var(--td-radius-default);
     overflow: hidden;
     color: #fff;
+    /* ★ 2026-10-26：封面改用 `aspectFit` 后，封面比例与卡片比例不一致时会留出空白，
+       这层黑底就是给那些空白用的（不让它露出页面灰）—— 观感与视频播放器的黑边一致。 */
+    background: #000;
     box-shadow: var(--ds-shadow-card);
   }
   // 无封面时：中性占位，不假装成真封面
@@ -506,29 +509,9 @@
     opacity: 0.55;
   }
 
-  // 播放态：整张卡片里只有 Video 一个元素（原生组件，此时其它内容都不渲染）
-  &__work-video {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-  }
-  /**
-   * 「收起」是 cover-view —— 唯一能覆盖在原生组件之上的元素。
-   * 它能用的样式很有限（不吃 CSS 变量、不吃简写属性），所以这里一律写字面值：
-   * 写成 var(--td-radius-pill) 或 background 简写都可能静默不生效，而它又是播放态唯一的出口。
-   */
-  &__work-stop {
-    position: absolute;
-    right: 16rpx;
-    top: 16rpx;
-    padding: 6rpx 18rpx;
-    background-color: rgba(0, 0, 0, 0.55);
-    color: #ffffff;
-    font-size: 22rpx;
-    border-radius: 999rpx;
-  }
+  /* ★ 2026-10-26：卡片里**没有**播放态了 —— 点下去是页面顶层的全屏播放器接手
+     （见 index.tsx 的 `home__player`）。原来的 `&__work--playing` / `&__work-video` /
+     `&__work-stop` 三块已删除：原生 video 装在 `overflow:hidden` + 圆角的卡片里会整块黑屏。 */
 
   &__work-bottom {
     position: absolute;
@@ -545,26 +528,15 @@
     letter-spacing: -0.01em;
     color: #fff;
     text-shadow: 0 2rpx 6rpx rgba(0, 0, 0, 0.45);
-    margin-bottom: 18rpx;
     // 最多两行省略
     display: -webkit-box;
     -webkit-line-clamp: 2;
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-  &__work-cta {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    height: 52rpx;
-    padding: 0 22rpx;
-    background: var(--td-brand-color);
-    color: #fff;
-    font-size: 22rpx;
-    font-weight: 600;
-    border-radius: var(--td-radius-pill);
-    box-shadow: var(--ds-glow-red);
-  }
+  /* ★ 2026-10-26：`&__work-cta`（封面上的「生成同款」按钮）已按用户要求删除。
+     它去掉之后标题成了这里唯一的内容，原来给按钮让位的 margin-bottom 也一并去掉 ——
+     留着会在标题下多出一截空白，看起来像图片没铺满。 */
   &__work-empty {
     display: flex;
     align-items: center;
@@ -783,12 +755,79 @@
 .home__works-tabs { margin-top: 2rpx; }
 .home__work-tab { padding: 10rpx 20rpx; margin-right: 10rpx; font-size: 22rpx; }
 .home__works { margin-top: 16rpx; }
-.home__work { height: 500rpx; margin-bottom: 14rpx; border-radius: var(--td-radius-large); box-shadow: none; }
+/* ★★ 2026-10-26（用户报「封面要显示完全」）：高度 500rpx 是**被裁的直接原因**。
+   卡片宽 48.5% × 内容区 686rpx ≈ 333rpx，500rpx ⇒ 比例 0.666；
+   而线上封面实测清一色 **9:16 = 0.5625**（见上面那段的实测记录）——
+   盒子比封面「胖」，`aspectFill` 只能按宽度铺满，上下各切掉约 8%。
+   592 = 333 × 16/9 ⇒ 盒子比例与封面一致，铺满且不裁、也不留边。
+   ★ 改宽度 / 两列间距 / 页面内距时，这个高度必须跟着重算。 */
+.home__work { height: 592rpx; margin-bottom: 14rpx; border-radius: var(--td-radius-large); box-shadow: none; }
 .home__work-top { top: 16rpx; left: 16rpx; right: 16rpx; }
 .home__work-bottom { left: 16rpx; right: 16rpx; bottom: 16rpx; }
-.home__work-title { margin-bottom: 12rpx; font-size: 24rpx; }
-.home__work-cta { height: 48rpx; padding: 0 18rpx; border-radius: var(--td-radius-default); box-shadow: none; }
+/* ★ 2026-10-26：封面上的「生成同款」按钮已删除 ⇒
+   ① 标题下方那条 `margin-bottom`（原本是给按钮让位的）一起去掉，否则标题下多出一截空白；
+   ② `.home__work-cta` 这条覆盖整行删掉（类名已无引用）。 */
+.home__work-title { font-size: 24rpx; }
 .home__work-play-icon { width: 68rpx; height: 68rpx; }
+
+/* ───────────────── 全屏播放器（点优秀作品卡片后盖上来的那一层）─────────────────
+   ★★★ 2026-10-26：`position: fixed` 是**故意的** —— 原生 `<video>` 装在
+   `overflow: hidden` + 圆角的卡片里，iOS 上会整块渲染成黑底不出帧（实测）。
+   独立一个铺满屏幕的固定层，就没有那个父级约束了。
+   ★ 用 `100vh` 而不用 `100dvh`：小程序的 wxss 对 dvh 支持面窄，vh 已经够（页面本身不长）。
+   ★ `z-index` 给到 9999：这层要盖住页面里所有东西；原生组件之间的层级由渲染顺序决定，
+     所以它在 JSX 里排在列表之后、GuideDialogHost 之前。 */
+.home__player {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 100vw;
+  height: 100vh;
+  background: #000000;
+  z-index: 9999;
+}
+.home__player-video { width: 100%; height: 100%; }
+/* 起播前的「加载中…」：**只占底部一条**，不做满屏 ——
+   满屏的 cover-view 会把居中播放键和视频的点击全吃掉（cover-view 盖在原生层之上）。
+   居中用 flex（cover-view 只保证支持 flex 那几个属性，不敢用 text-align/line-height/transform）。
+   `onLoadedMetadata` 一到就收，所以它停留的时间很短。 */
+.home__player-tip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 220rpx;
+  height: 60rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 26rpx;
+}
+/* 报错时把原生 errMsg 亮在这儿（比一句「播放失败」有用得多） */
+.home__player-tip--error {
+  color: #ffb4ae;
+  font-size: 24rpx;
+}
+/* ★ 关闭按钮只能是 cover-view（唯一能压在原生 video 之上的元素），
+   而 cover-view 只吃**有限的样式子集**（不吃 CSS 变量、不吃简写、不吃 transform），
+   所以这里全写字面值，居中用 flex（flex 是它明确支持的），不用 line-height/text-align。
+   ★ `top: 140rpx` 不是随手写的：屏幕右上角被**微信胶囊按钮**（原生、盖不掉）占着，
+   放 16rpx 会被它压住点不到 —— 140rpx 正好让出一颗胶囊的高度。 */
+.home__player-close {
+  position: absolute;
+  top: 140rpx;
+  right: 24rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 76rpx;
+  height: 76rpx;
+  border-radius: 38rpx;
+  background-color: rgba(0, 0, 0, 0.45);
+  color: #ffffff;
+  font-size: 44rpx;
+  z-index: 10000;
+}
 .home__guest { margin: 28rpx 0; padding: 32rpx 24rpx; border-radius: var(--td-radius-large); }
 .home__guest-title { font-size: 28rpx; }
 .home__guest-desc { font-size: 23rpx; }

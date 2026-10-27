@@ -1,6 +1,8 @@
 // 首页「优秀作品」服务
 // 作品是运营内容：与商家数据解耦，支持分类筛选 / 分页 / 排序 / 上下架
-// 核心是 recipeJson（同款配方）——「生成同款」把它预填进创作流
+// ★ 2026-10-26：小程序的作品详情页已删除，首页卡片点一下就地全屏播放（不再有「生成同款」）。
+//   `recipeJson`（同款配方）因此**没有任何消费方**了 —— 列还留着、历史数据不动，
+//   但后台不再读写它（见 routes/admin.ts 的 workRecipeInput 与 apps/admin/src/pages/Works.tsx）。
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type { PrismaClient, Prisma } from '@prisma/client'

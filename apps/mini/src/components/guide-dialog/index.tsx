@@ -19,7 +19,8 @@
  *   ★ 没挂 Host 的页面不会静默失效：`openGuideDialog` 会降级回原生 `Taro.showModal`
  *     （代价只是那一行小字没了），见下面的 hostCount。
  *
- * ★ 现有挂载点：`pages/home/index.tsx`、`pages/work/detail.tsx`（即当前 3 个 guideLogin 调用点）。
+ * ★ 现有挂载点：`pages/home/index.tsx`（全站**唯一**一处 guideLogin 调用点 ——
+ *   `pages/work/detail.tsx` 已在 2026-10-26 随该页一起删除）。
  *   新页面要弹这层，把 `<GuideDialogHost />` 加进页面根节点即可。
  *
  * ★ 层级：这里用的是**普通 View**，靠**同层渲染**盖住 `video` 等原生组件。

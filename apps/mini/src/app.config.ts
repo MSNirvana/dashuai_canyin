@@ -18,7 +18,10 @@ export default defineAppConfig({
     'pages/render/compose',
     // 成片记录详情（?id=创作编号&task=成片任务编号）：视频 + 封面 + 标题 + 文案，视频可存相册
     'pages/render/result',
-    'pages/work/detail',
+    // ★ 2026-10-26：`pages/work/detail`（优秀作品详情页）已删除 —— 用户要求
+    //   「用户直接点击优秀作品直接播放就可以了，不需要额外一个页面」。
+    //   首页卡片点下去就地换成视频（见 pages/home/index.tsx::playWork）。
+    //   ⚠ 别再把它加回来：已经没有页面文件了，注册一条不存在的路径会让 app.json 校验报错。
     'pages/recharge/index',
     // 订单中心：展示本账号下**全部**资金交易订单（会员订阅 / 积分加油包）。
     // ★★ 这个 path 是**对外登记的**：微信后台「订单中心 path」填的就是 `pages/order/list`，

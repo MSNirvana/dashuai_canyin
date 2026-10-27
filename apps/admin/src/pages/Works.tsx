@@ -7,7 +7,6 @@ import {
   InputNumber,
   Select,
   Switch,
-  Textarea,
   message,
 } from 'tdesign-react'
 import DataTable from '../lib/table'
@@ -21,44 +20,36 @@ import { request } from '../lib/http'
  * 首页「优秀作品」运营页
  *
  * 与商家数据解耦：作品是运营内容，商家删创作 / 清素材都不会让作品消失。
- * 核心字段是 recipeJson（同款配方）——小程序端「生成同款」把它预填进创作流，
- * 「AI 直接生成」则按它自动跑文案 + 分镜。
+ *
+ * ★★★ 2026-10-26 按「现在的小程序」大幅收口。小程序那边已经变成：
+ *   首页卡片 → 点一下在全屏播放器里播（`pages/home/index.tsx::playWork`），
+ *   **没有详情页、没有「生成同款」、没有「套用配方」**。于是这一页里
+ *   「只服务于那三个入口」的东西全部删掉了，别再加回来：
+ *
+ *   · **同款配方整块**（文案款式 / 镜头复杂度 / 标题建议 / 推荐音色 / 运营点评 / 分镜骨架）
+ *     —— 它唯一的去向就是详情页展示 + 「生成同款」预填。`recipeJson` 列仍留在库里
+ *     （历史数据不动），但后台不再读写：`PUT` 不带这个字段时服务端是**跳过**的
+ *     （`work.service.ts::updateWork` 的 `input.recipeJson === undefined ? {} : …`），
+ *     所以存量配方不会被清掉。
+ *   · **子分类** —— 小程序首页的分类横滑是按 `category` 聚合的（`listCategories` 只 groupBy
+ *     category），详情页没了之后 `subCategory` 一个展示位都没有。
+ *   · **时长(秒)** —— 小程序不显示作品时长；从成片入库时服务端会自己写这个值。
+ *   · **「同款」计数** —— `markWorkClone` 在小程序里已无调用点，这个数永远停在 2026-10-26，
+ *     摆在列表里只会让人误以为「没人用」。
  */
-
-interface ShotSkeleton {
-  shotType?: string
-  shotSize?: string
-  durationSuggest?: number
-  line?: string
-  visualReq?: string
-}
-
-interface RecipeJson {
-  track?: string
-  complexity?: string
-  titleHint?: string
-  voiceId?: string
-  shotSkeleton?: ShotSkeleton[]
-  notes?: string
-}
 
 interface Work {
   id: string
   title: string
   category: string
-  subCategory: string | null
   tags: string[] | null
   coverKey: string | null
   videoKey: string | null
-  durationMs: number | null
   sort: number
   enabled: boolean
   sourceType: string
-  sourceTaskId: string | null
   viewCount: number
-  cloneCount: number
   publishedAt: string | null
-  recipeJson: RecipeJson | null
 }
 
 interface WorkListResult {
@@ -91,39 +82,6 @@ const CATEGORY_OPTIONS = ['餐饮', '教培', '美业', '生活服务', '休闲�
   value: c,
 }))
 
-const TRACK_OPTIONS = [
-  { label: '流量型', value: 'TRAFFIC' },
-  { label: '人设型', value: 'PERSONA' },
-  { label: '知识型', value: 'KNOWLEDGE' },
-  { label: '产品型', value: 'PRODUCT' },
-  { label: '种草型', value: 'RECOMMEND' },
-]
-
-/**
- * ★ 存量配方的 track 老值 → 新款（2026-09-21 四款改型）。
- * 与小程序 `services/creation.ts` 的 `LEGACY_TRACK_ALIASES`、服务端
- * `creation.service.ts` 的同名常量必须**保持一致的三条映射**。
- * ★ 不映射的后果是这一栏显示成空白 / 「待补全」——后台会以为这条配方坏了，
- *   其实是款式改过名（看起来像数据缺失，而不是像版本问题）。
- */
-const LEGACY_TRACK_LABELS: Record<string, string> = {
-  INTRO: '产品型',
-  QUALITY: '人设型',
-  NORMAL: '产品型',
-}
-
-/** 取配方的款式中文名：先查新款，再查老值映射，都不中才返回 undefined */
-function trackLabelOf(v: unknown): string | undefined {
-  if (typeof v !== 'string') return undefined
-  return TRACK_OPTIONS.find((o) => o.value === v)?.label ?? LEGACY_TRACK_LABELS[v]
-}
-
-const COMPLEXITY_OPTIONS = [
-  { label: '简单（2~3 镜）', value: 'SIMPLE' },
-  { label: '复杂（4~6 镜）', value: 'COMPLEX' },
-  { label: '精细（7~9 镜）', value: 'FINE' },
-]
-
 /**
  * 作品视频 / 封面的上传上限。
  *
@@ -136,49 +94,24 @@ const COMPLEXITY_OPTIONS = [
 const MAX_WORK_VIDEO_MB = 100
 const MAX_WORK_COVER_MB = 5
 
-interface ShotDraft {
-  shotType: string
-  shotSize: string
-  durationSuggest: number | null
-  visualReq: string
-}
-
 interface FormState {
   title: string
   category: string
-  subCategory: string
   tagsText: string
   coverKey: string
   videoKey: string
-  durationSec: number | null
   sort: number
   enabled: boolean
-  track: string
-  complexity: string
-  titleHint: string
-  voiceId: string
-  notes: string
-  shots: ShotDraft[]
 }
-
-const EMPTY_SHOT: ShotDraft = { shotType: '', shotSize: '', durationSuggest: null, visualReq: '' }
 
 const EMPTY_FORM: FormState = {
   title: '',
   category: '餐饮',
-  subCategory: '',
   tagsText: '',
   coverKey: '',
   videoKey: '',
-  durationSec: null,
   sort: 0,
   enabled: false,
-  track: '',
-  complexity: '',
-  titleHint: '',
-  voiceId: '',
-  notes: '',
-  shots: [],
 }
 
 /** 逗号 / 顿号 / 空格都能当分隔符，运营从表格里粘贴也能用 */
@@ -188,26 +121,6 @@ function parseTags(text: string) {
     .map((t) => t.trim())
     .filter(Boolean)
     .slice(0, 10)
-}
-
-function recipeToForm(recipe: RecipeJson | null): Pick<
-  FormState,
-  'track' | 'complexity' | 'titleHint' | 'voiceId' | 'notes' | 'shots'
-> {
-  const r = recipe ?? {}
-  return {
-    track: r.track ?? '',
-    complexity: r.complexity ?? '',
-    titleHint: r.titleHint ?? '',
-    voiceId: r.voiceId ?? '',
-    notes: r.notes ?? '',
-    shots: (r.shotSkeleton ?? []).map((s) => ({
-      shotType: s.shotType ?? '',
-      shotSize: s.shotSize ?? '',
-      durationSuggest: s.durationSuggest ?? null,
-      visualReq: s.visualReq ?? '',
-    })),
-  }
 }
 
 export default function WorksPage() {
@@ -264,14 +177,11 @@ export default function WorksPage() {
     setForm({
       title: w.title,
       category: w.category,
-      subCategory: w.subCategory ?? '',
       tagsText: (w.tags ?? []).join('、'),
       coverKey: w.coverKey ?? '',
       videoKey: w.videoKey ?? '',
-      durationSec: w.durationMs ? Math.round(w.durationMs / 1000) : null,
       sort: w.sort,
       enabled: w.enabled,
-      ...recipeToForm(w.recipeJson),
     })
     setOpen(true)
   }
@@ -279,55 +189,24 @@ export default function WorksPage() {
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }))
 
-  const addShot = () => setForm((f) => ({ ...f, shots: [...f.shots, { ...EMPTY_SHOT }] }))
-  const removeShot = (i: number) =>
-    setForm((f) => ({ ...f, shots: f.shots.filter((_, idx) => idx !== i) }))
-  const patchShot = (i: number, patch: Partial<ShotDraft>) =>
-    setForm((f) => ({ ...f, shots: f.shots.map((s, idx) => (idx === i ? { ...s, ...patch } : s)) }))
-
-  /** 组装 payload：空串一律转 null，避免把「清空」写成了空字符串 */
-  const buildPayload = () => {
-    const shots: ShotSkeleton[] = form.shots
-      .map((s) => {
-        const o: ShotSkeleton = {}
-        if (s.shotType.trim()) o.shotType = s.shotType.trim()
-        if (s.shotSize.trim()) o.shotSize = s.shotSize.trim()
-        if (s.durationSuggest) o.durationSuggest = s.durationSuggest
-        if (s.visualReq.trim()) o.visualReq = s.visualReq.trim()
-        return o
-      })
-      .filter((s) => Object.keys(s).length > 0)
-
-    const recipe: RecipeJson = {}
-    if (form.track) recipe.track = form.track
-    if (form.complexity) recipe.complexity = form.complexity
-    if (form.titleHint.trim()) recipe.titleHint = form.titleHint.trim()
-    if (form.voiceId.trim()) recipe.voiceId = form.voiceId.trim()
-    if (form.notes.trim()) recipe.notes = form.notes.trim()
-    if (shots.length) recipe.shotSkeleton = shots
-
-    return {
-      title: form.title.trim(),
-      category: form.category.trim(),
-      subCategory: form.subCategory.trim() || null,
-      tags: parseTags(form.tagsText),
-      coverKey: form.coverKey.trim() || null,
-      videoKey: form.videoKey.trim() || null,
-      durationMs: form.durationSec ? Math.round(form.durationSec * 1000) : null,
-      sort: form.sort ?? 0,
-      enabled: form.enabled,
-      recipeJson: recipe,
-    }
-  }
+  /**
+   * 组装 payload：空串一律转 null，避免把「清空」写成了空字符串。
+   * ★ 只发这一页还管得着的字段 —— `subCategory` / `durationMs` / `recipeJson` 一律不发，
+   *   服务端对 `undefined` 是跳过（保留原值），所以存量数据不会被这次改版擦掉。
+   */
+  const buildPayload = () => ({
+    title: form.title.trim(),
+    category: form.category.trim(),
+    tags: parseTags(form.tagsText),
+    coverKey: form.coverKey.trim() || null,
+    videoKey: form.videoKey.trim() || null,
+    sort: form.sort ?? 0,
+    enabled: form.enabled,
+  })
 
   const submit = async () => {
     if (!form.title.trim()) return message.warning('请填写标题')
     if (!form.category.trim()) return message.warning('请填写分类')
-    if (form.shots.length > 20) return message.warning('分镜骨架最多 20 条')
-    const badShot = form.shots.find(
-      (s) => s.durationSuggest !== null && (s.durationSuggest < 1 || s.durationSuggest > 60),
-    )
-    if (badShot) return message.warning('单个镜头时长需在 1~60 秒之间')
 
     setSaving(true)
     try {
@@ -392,7 +271,7 @@ export default function WorksPage() {
         method: 'POST',
         data: { taskId },
       })
-      message.success(`已入库草稿「${w.title}」，补全配方后再上架`)
+      message.success(`已入库草稿「${w.title}」，补齐标题、分类与封面后再上架`)
       setImportOpen(false)
       setImportTaskId('')
       await load()
@@ -475,17 +354,7 @@ export default function WorksPage() {
         data={list}
         columns={[
           { colKey: 'title', title: '标题', ellipsis: true },
-          {
-            colKey: 'category',
-            title: '分类',
-            width: 150,
-            render: ({ row }: any) => (
-              <span>
-                {row.category}
-                {row.subCategory ? ` / ${row.subCategory}` : ''}
-              </span>
-            ),
-          },
+          { colKey: 'category', title: '分类', width: 120 },
           {
             colKey: 'tags',
             title: '标签',
@@ -533,36 +402,8 @@ export default function WorksPage() {
               </span>
             ),
           },
-          {
-            colKey: 'recipe',
-            title: '配方',
-            width: 170,
-            render: ({ row }: any) => {
-              const r = (row.recipeJson ?? {}) as RecipeJson
-              const track = trackLabelOf(r.track)
-              const cx = COMPLEXITY_OPTIONS.find((o) => o.value === r.complexity)?.label
-              if (!track && !cx && !(r.shotSkeleton ?? []).length) {
-                return <span style={{ color: '#d54941' }}>待补全</span>
-              }
-              return (
-                <span style={{ fontSize: 13 }}>
-                  {track ?? '未设款式'} · {cx ? cx.replace(/（.*）/, '') : '未设复杂度'}
-                  {r.shotSkeleton?.length ? ` · ${r.shotSkeleton.length} 镜` : ''}
-                </span>
-              )
-            },
-          },
           { colKey: 'sort', title: '排序', width: 70 },
-          {
-            colKey: 'stat',
-            title: '浏览/同款',
-            width: 110,
-            render: ({ row }: any) => (
-              <span style={{ fontSize: 13 }}>
-                {row.viewCount} / {row.cloneCount}
-              </span>
-            ),
-          },
+          { colKey: 'viewCount', title: '浏览', width: 80 },
           {
             colKey: 'enabled',
             title: '上架',
@@ -607,7 +448,7 @@ export default function WorksPage() {
         onClose={() => setOpen(false)}
         onConfirm={submit}
         confirmBtn={{ content: '保存', loading: saving }}
-        width={720}
+        width={640}
       >
         <FieldGroup labelWidth={110}>
           <Field label="标题" required>
@@ -617,7 +458,7 @@ export default function WorksPage() {
               placeholder="如 麻婆豆腐爆款短视频"
             />
           </Field>
-          <Field label="分类" required help="小程序首页按分类横滑，运营自定">
+          <Field label="分类" required help="小程序首页的「优秀作品」按分类横滑，运营自定">
             <Select
               value={form.category}
               onChange={(v) => set('category', v as string)}
@@ -627,15 +468,12 @@ export default function WorksPage() {
               placeholder="选择或输入新分类"
             />
           </Field>
-          <Field label="子分类">
-            <Input value={form.subCategory} onChange={(v) => set('subCategory', v as string)} placeholder="选填" />
-          </Field>
           <Field label="标签" help="最多 10 个，逗号 / 顿号 / 空格分隔；首页卡片只展示前 2 个">
             <Input value={form.tagsText} onChange={(v) => set('tagsText', v as string)} placeholder="如 高翻台、出餐快" />
           </Field>
           <Field
             label="封面 Key"
-            help="COS 对象键，与合成成片同一存储；填好后点列表「封面」可预览。也可以直接在下面选一张图上传（≤5MB），上传后键会填进这一栏。"
+            help="COS 对象键，与合成成片同一存储；填好后点列表「封面」可预览。也可以直接在下面选一张图上传（≤5MB），上传后键会填进这一栏。首页卡片会完整显示整张封面，建议竖版 9:16。"
           >
             <Input value={form.coverKey} onChange={(v) => set('coverKey', v as string)} placeholder="选填" />
             <div style={{ marginTop: 8 }}>
@@ -653,7 +491,7 @@ export default function WorksPage() {
           </Field>
           <Field
             label="视频 Key"
-            help="私有桶，播放地址每次访问重新签名（1 小时有效）。也可以直接在下面选本地视频上传（≤100MB，MP4 / MOV / WebM / AVI），上传后会自动抽一帧当封面。"
+            help="私有桶，播放地址每次访问重新签名（1 小时有效）。也可以直接在下面选本地视频上传（≤100MB，MP4 / MOV / WebM / AVI），上传后会自动抽一帧当封面。没有视频的作品，小程序里点卡片只会提示「还没有可播放的成片」。"
           >
             <Input value={form.videoKey} onChange={(v) => set('videoKey', v as string)} placeholder="选填" />
             <div style={{ marginTop: 8 }}>
@@ -676,115 +514,11 @@ export default function WorksPage() {
               />
             </div>
           </Field>
-          <Field label="时长(秒)">
-            <InputNumber
-              value={form.durationSec ?? undefined}
-              onChange={(v) => set('durationSec', (v as number) ?? null)}
-              placeholder="选填"
-            />
-          </Field>
           <Field label="排序" help="数字越小越靠前">
             <InputNumber value={form.sort} onChange={(v) => set('sort', (v as number) ?? 0)} />
           </Field>
           <Field label="立即上架" help="未上架的作品只存在于后台，小程序首页看不到">
             <Switch value={form.enabled} onChange={(v) => set('enabled', v as boolean)} />
-          </Field>
-        </FieldGroup>
-
-        <div style={{ margin: '20px 0 8px', fontWeight: 600 }}>同款配方</div>
-        <div style={{ color: '#999', fontSize: 12, marginBottom: 12 }}>
-          小程序端「生成同款」会把这些值预填进创作页。填了分镜骨架的话，创作会直接按它预置好分镜
-          （不再走 AI 分镜、也不扣那笔积分），用户可以在拍摄页逐条改，或用「重新生成」换成 AI 版。
-          文案款式 / 复杂度 / 标题建议一律只是预填，用户在创作页仍可改。
-        </div>
-        <FieldGroup labelWidth={110}>
-          <Field label="文案款式">
-            <Select
-              value={form.track}
-              onChange={(v) => set('track', v as string)}
-              options={[{ label: '不指定', value: '' }, ...TRACK_OPTIONS]}
-            />
-          </Field>
-          <Field label="镜头复杂度">
-            <Select
-              value={form.complexity}
-              onChange={(v) => set('complexity', v as string)}
-              options={[{ label: '不指定', value: '' }, ...COMPLEXITY_OPTIONS]}
-            />
-          </Field>
-          <Field label="标题建议">
-            <Input
-              value={form.titleHint}
-              onChange={(v) => set('titleHint', v as string)}
-              placeholder="套用同款时预填的创作标题"
-            />
-          </Field>
-          {/* ★ 2026-09-29：原 help 写「填 TTS 供应商的 voiceId」—— 后台「TTS 供应商」页
-              已随该模块下线，这句指路现在已经是个死链接。改成本地描述：
-              运营要填的是系统里已配置的那家语音服务的音色 ID（现取自 tts_provider.voice_id，
-              后台已无查询入口，需要时找技术同事要）。 */}
-          <Field label="推荐音色" help="填配音音色 ID（voiceId），选填">
-            <Input value={form.voiceId} onChange={(v) => set('voiceId', v as string)} placeholder="选填" />
-          </Field>
-          <Field label="运营点评" help="展示在作品详情页的「这条作品好在哪」">
-            <Textarea
-              value={form.notes}
-              onChange={(v) => set('notes', v as string)}
-              autosize={{ minRows: 2, maxRows: 4 }}
-              placeholder="如 前 3 秒直接上出锅镜头，钩子够快"
-            />
-          </Field>
-          <Field
-            label="分镜骨架"
-            help="最多 20 条。详情页用它展示镜头结构；小程序「生成同款」会把它直接预置成创作的分镜（省掉一次 AI 分镜扣费），用户可逐条改或重新生成。"
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {form.shots.map((s, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <div style={{ flex: '0 0 110px' }}>
-                    <Input
-                      value={s.shotType}
-                      onChange={(v) => patchShot(i, { shotType: v as string })}
-                      placeholder="镜头"
-                    />
-                  </div>
-                  <div style={{ flex: '0 0 90px' }}>
-                    <Input
-                      value={s.shotSize}
-                      onChange={(v) => patchShot(i, { shotSize: v as string })}
-                      placeholder="景别"
-                    />
-                  </div>
-                  <div style={{ flex: '0 0 80px' }}>
-                    <InputNumber
-                      value={s.durationSuggest ?? undefined}
-                      onChange={(v) => patchShot(i, { durationSuggest: (v as number) ?? null })}
-                      placeholder="秒"
-                    />
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <Input
-                      value={s.visualReq}
-                      onChange={(v) => patchShot(i, { visualReq: v as string })}
-                      placeholder="画面要求"
-                    />
-                  </div>
-                  <Button size="small" variant="text" theme="danger" onClick={() => removeShot(i)}>
-                    删除
-                  </Button>
-                </div>
-              ))}
-              <div>
-                <Button
-                  size="small"
-                  variant="outline"
-                  disabled={form.shots.length >= 20}
-                  onClick={addShot}
-                >
-                  添加镜头
-                </Button>
-              </div>
-            </div>
           </Field>
         </FieldGroup>
       </Dialog>
@@ -816,7 +550,7 @@ export default function WorksPage() {
         width={640}
       >
         <div style={{ color: '#666', fontSize: 13, marginBottom: 12 }}>
-          挑一条商家已合成成功的成片，入库后是<b>未上架草稿</b>，补齐分类与配方再上架。
+          挑一条商家已合成成功的成片，入库后是<b>未上架草稿</b>，补齐标题、分类与封面再上架。
           已入库过的成片不会重复出现在下面。
         </div>
 

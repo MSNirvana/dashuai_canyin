@@ -92,6 +92,8 @@ const LINK_OPTIONS: Array<{ label: string; value: LinkCode }> = [
   //   小程序侧现在按「有没有门店」分流：有 → 门店详情，没有 → 创建门店。
   { label: '门店（门店信息 / 去创建）', value: 'STORES' },
   { label: '订阅与积分', value: 'MEMBER' },
+  // ★ 2026-10-26：作品详情页已删除，这一项不再「跳到某个页面」，而是
+  //   在首页就地播放那条作品（不在当前页列表里时滚到「优秀作品」区块）。
   { label: '指定优秀作品（需填作品 ID）', value: 'WORK' },
 ]
 
@@ -536,7 +538,11 @@ export default function HomeCarouselPage() {
             <Select value={form.link} onChange={(v) => setForm((f) => ({ ...f, link: v as LinkCode }))} options={LINK_OPTIONS} />
           </Field>
           {form.link === 'WORK' && (
-            <Field label="作品 ID" required help="「优秀作品」列表里的 ID">
+            <Field
+              label="作品 ID"
+              required
+              help="「首页优秀作品」列表里的 ID。★ 2026-10-26 起作品详情页已删除：小程序里点了会在首页**就地全屏播放**这条作品；那条恰好不在当前这一页列表里时，会滚到「优秀作品」这一块，不会跳空页。"
+            >
               <Input value={form.workId} onChange={(v) => setForm((f) => ({ ...f, workId: v as string }))} placeholder="例如 12" />
             </Field>
           )}

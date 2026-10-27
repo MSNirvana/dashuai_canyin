@@ -80,12 +80,20 @@ export function getWork(id: string) {
   return http.get<WorkDetail>(`/works/${id}`)
 }
 
-/** 打开详情计一次浏览；失败不影响页面 */
+/**
+ * 播放计一次浏览；失败不影响播放。
+ * ★ 2026-10-26：原来是详情页 `onLoad` 调它，详情页删除后改由首页卡片点播时调
+ *   （见 pages/home/index.tsx::playWork，只在需要重新取播放地址时才计，避免反复点播刷数）。
+ */
 export function markWorkView(id: string) {
   return http.post<{ counted: boolean }>(`/works/${id}/view`, {})
 }
 
-/** 点「生成同款」时调用，用于统计哪条作品最带货 */
+/**
+ * 统计「哪条作品最带货」。
+ * ⚠ 2026-10-26 起**没有任何调用点**：「生成同款」按钮已随详情页/首页卡片一起删除。
+ *   后端接口还在（`POST /works/:id/clone`），留着这个封装是为了恢复入口时不用重写。
+ */
 export function markWorkClone(id: string) {
   return http.post<{ counted: boolean }>(`/works/${id}/clone`, {})
 }
