@@ -1,5 +1,5 @@
-import { Suspense, useState } from 'react'
-import { Layout, Menu, Button, Badge, Dialog, Input, message } from 'tdesign-react'
+import { Suspense, useEffect, useState } from 'react'
+import { Layout, Menu, Button, Badge, Dialog, Drawer, Input, message } from 'tdesign-react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   DashboardIcon,
@@ -16,6 +16,7 @@ import {
   AssignmentUserIcon,
   ErrorCircleFilledIcon,
   LogoWechatIcon,
+  ViewListIcon,
 } from 'tdesign-icons-react'
 import { useAuth } from '../context/AuthContext'
 import RouteFallback from '../components/RouteFallback'
@@ -76,6 +77,29 @@ const MENU_GROUPS = [
 
 const MENU = MENU_GROUPS.flatMap((group) => group.items)
 
+/**
+ * ≤820px 视为「抽屉形态」。★ 不能只靠 CSS：TDesign 的 Layout.Aside 渲染时会写
+ * inline style（width/max-width/min-width/flex 全 232px），inline 优先级高于
+ * 任何 class 规则（含 !important），media query 改不动它 ⇒ 从这里开始整个不渲染
+ * 侧栏，换成顶栏汉堡按钮 + 抽屉菜单。
+ * ★ 断点取 820 而不是 640：styles.css 在 820 有个「图标模式」（--ds-sidebar:72px
+ *   ＋隐藏菜单文字），它同样被 inline 宽度压掉 ⇒ 641~820px 会出现「232px 宽、
+ *   只有图标没有文字」的空壳侧栏。抽屉从 820 起接管，那个模式就没有登场机会。
+ */
+const MOBILE_MQ = '(max-width: 820px)'
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia(MOBILE_MQ).matches,
+  )
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_MQ)
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+  return isMobile
+}
+
 /** 修改密码弹窗的初始表单 */
 const emptyPw = () => ({ oldPassword: '', newPassword: '', confirmPassword: '' })
 
@@ -133,48 +157,103 @@ export default function AppLayout() {
   const { open: openAlerts, critical: criticalAlerts } = useOpsAlertSummary()
   const showAlertBanner = openAlerts > 0 && !active(ALERTS_PATH)
 
+  // ── 手机形态（≤640px）：侧栏不渲染，菜单收进抽屉 ─────────────
+  const isMobile = useIsMobile()
+  const [navOpen, setNavOpen] = useState(false)
+
+  /** 菜单组渲染：桌面侧栏与手机抽屉共用同一份，保证两处菜单永远不会写岔 */
+  const renderMenuGroups = () => (
+    <>
+      {MENU_GROUPS.map((group) => (
+        <div className="nav-group" key={group.label}>
+          <div className="nav-group__label">{group.label}</div>
+          <Menu
+            theme="light"
+            value={loc.pathname}
+            onChange={(v) => {
+              nav(v as string)
+              setNavOpen(false)
+            }}
+          >
+            {group.items.map((m) => (
+              <Menu.MenuItem key={m.path} value={m.path} icon={m.icon}>
+                {m.path === ALERTS_PATH && openAlerts > 0 ? (
+                  <span className="menu-label-with-badge">
+                    {m.label}
+                    <Badge count={openAlerts} maxCount={99} size="small" />
+                  </span>
+                ) : (
+                  m.label
+                )}
+              </Menu.MenuItem>
+            ))}
+          </Menu>
+        </div>
+      ))}
+    </>
+  )
+
+  /** 抽屉里的底部操作：手机上顶栏按钮被隐藏（放不下），改密码/退出登录挪到这里 */
+  const drawerActions = (
+    <div className="nav-drawer__actions">
+      <Button
+        block
+        variant="outline"
+        onClick={() => {
+          setNavOpen(false)
+          setPw(emptyPw())
+          setPwOpen(true)
+        }}
+      >
+        修改密码
+      </Button>
+      <Button
+        block
+        variant="outline"
+        onClick={() => {
+          logout()
+          nav('/login', { replace: true })
+        }}
+      >
+        退出登录
+      </Button>
+    </div>
+  )
+
   return (
     <Layout className="app-layout">
-      <Layout.Aside className="app-layout__sider">
-        <div className="logo">
-          <img className="logo__image" src="/logo-transparent.png" alt="大帅餐饮" />
-          <span className="logo__text"><strong>大帅餐饮</strong><small>运营管理后台</small></span>
-        </div>
-        <nav className="app-layout__nav" aria-label="后台导航">
-          {MENU_GROUPS.map((group) => (
-            <div className="nav-group" key={group.label}>
-              <div className="nav-group__label">{group.label}</div>
-              <Menu
-                theme="light"
-                value={loc.pathname}
-                onChange={(v) => nav(v as string)}
-              >
-                {group.items.map((m) => (
-                  <Menu.MenuItem key={m.path} value={m.path} icon={m.icon}>
-                    {m.path === ALERTS_PATH && openAlerts > 0 ? (
-                      <span className="menu-label-with-badge">
-                        {m.label}
-                        <Badge count={openAlerts} maxCount={99} size="small" />
-                      </span>
-                    ) : (
-                      m.label
-                    )}
-                  </Menu.MenuItem>
-                ))}
-              </Menu>
-            </div>
-          ))}
-        </nav>
-        <div className="sider-footer">
-          <div className="sider-footer__avatar">{(admin?.username ?? '管').slice(0, 1).toUpperCase()}</div>
-          <div className="sider-footer__meta">
-            <strong>{admin?.username ?? '管理员'}</strong>
-            <span>当前已登录</span>
+      {!isMobile && (
+        <Layout.Aside className="app-layout__sider">
+          <div className="logo">
+            <img className="logo__image" src="/logo-transparent.png" alt="大帅餐饮" />
+            <span className="logo__text"><strong>大帅餐饮</strong><small>运营管理后台</small></span>
           </div>
-        </div>
-      </Layout.Aside>
+          <nav className="app-layout__nav" aria-label="后台导航">
+            {renderMenuGroups()}
+          </nav>
+          <div className="sider-footer">
+            <div className="sider-footer__avatar">{(admin?.username ?? '管').slice(0, 1).toUpperCase()}</div>
+            <div className="sider-footer__meta">
+              <strong>{admin?.username ?? '管理员'}</strong>
+              <span>当前已登录</span>
+            </div>
+          </div>
+        </Layout.Aside>
+      )}
       <Layout.Content>
         <div className="app-layout__header">
+          {isMobile && (
+            <Button
+              className="header-burger"
+              shape="square"
+              variant="text"
+              size="large"
+              aria-label="打开菜单"
+              onClick={() => setNavOpen(true)}
+            >
+              <ViewListIcon />
+            </Button>
+          )}
           <div className="app-layout__header-title">
             <span className="header-kicker">大帅餐饮</span>
             <span className="header-divider">/</span>
@@ -233,6 +312,38 @@ export default function AppLayout() {
           </Suspense>
         </div>
       </Layout.Content>
+
+      {/* 手机导航抽屉：内容结构与桌面侧栏一致（logo + 菜单 + 底部操作），
+          复用 app-layout__sider 的样式类 ⇒ 菜单项的配色/悬停/选中态不用另写一套 */}
+      <Drawer
+        visible={navOpen}
+        placement="left"
+        size="290px"
+        header={false}
+        footer={false}
+        className="nav-drawer"
+        onClose={() => setNavOpen(false)}
+      >
+        <div className="app-layout__sider nav-drawer__inner">
+          <div className="logo">
+            <img className="logo__image" src="/logo-transparent.png" alt="大帅餐饮" />
+            <span className="logo__text"><strong>大帅餐饮</strong><small>运营管理后台</small></span>
+          </div>
+          <nav className="app-layout__nav" aria-label="后台导航">
+            {renderMenuGroups()}
+          </nav>
+          <div className="nav-drawer__footer">
+            <div className="sider-footer">
+              <div className="sider-footer__avatar">{(admin?.username ?? '管').slice(0, 1).toUpperCase()}</div>
+              <div className="sider-footer__meta">
+                <strong>{admin?.username ?? '管理员'}</strong>
+                <span>当前已登录</span>
+              </div>
+            </div>
+            {drawerActions}
+          </div>
+        </div>
+      </Drawer>
 
       <Dialog
         header="修改密码"

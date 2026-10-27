@@ -416,12 +416,44 @@ button, input, textarea { font-family: inherit; }
 .t-dialog__header { color: var(--ds-ink); font-weight: 700; }
 .t-pagination { margin-top: 16px; }
 
+/* 手机导航抽屉：复用 .app-layout__sider 的菜单样式类，但要抹掉它作为「页面侧栏」的特征
+   （宽度 !important、右边框）。★ 放在 .app-layout__sider 规则之后 ⇒ 同特异性后者胜 */
+.nav-drawer .t-drawer__body { padding: 0; }
+.nav-drawer__inner {
+  width: auto !important;
+  flex: 1 1 auto;
+  height: 100%;
+  border-right: 0;
+}
+.nav-drawer__inner .logo { height: 60px; }
+.nav-drawer__footer { border-top: 1px solid var(--ds-line-light); background: var(--ds-surface); }
+.nav-drawer__actions { display: flex; gap: 10px; padding: 0 14px 14px; }
+.header-burger { flex: 0 0 auto; color: var(--ds-ink); font-size: 20px; }
+/*
+ * ★ 抽屉虽然复用 .app-layout__sider 的样式类（菜单配色/选中态不用写两套），
+ *   但 820px 那段「图标模式」是为**窄桌面侧栏**设的：它把 .t-menu__content 等
+ *   全部 display:none ⇒ 抽屉里会只剩图标、文字全没（实测 innerText 全空）。
+ *   这里按更高特异性（.nav-drawer .app-layout__sider = 0,2,0 + 元素）还原完整形态。
+ */
+.nav-drawer .app-layout__sider .logo { justify-content: flex-start; padding: 0 20px; }
+.nav-drawer .app-layout__sider .logo__text { display: flex; }
+.nav-drawer .app-layout__sider .nav-group__label { display: block; }
+.nav-drawer .app-layout__sider .t-menu__content { display: block; }
+.nav-drawer .app-layout__sider .sider-footer__meta { display: flex; }
+.nav-drawer .app-layout__sider .app-layout__nav { padding: 17px 12px 20px; }
+.nav-drawer .app-layout__sider .t-menu__item { justify-content: flex-start; padding: 0 11px; }
+.nav-drawer .app-layout__sider .t-menu__item .t-icon { margin-right: 8px; }
+.nav-drawer .app-layout__sider .sider-footer { justify-content: flex-start; padding: 12px 14px; }
+
 @media (max-width: 1080px) {
   :root { --ds-sidebar: 204px; }
   .app-layout__content { padding-left: 24px; padding-right: 24px; }
   .login-side { padding-left: 38px; padding-right: 38px; }
 }
 @media (max-width: 820px) {
+  /* ★ 下面这套「图标模式」其实已经失效：TDesign Layout.Aside 会写 inline 宽度，
+     --ds-sidebar 管不到它；而 AppLayout 从 820px 起就不再渲染侧栏、改用抽屉
+     （抽屉内有专门规则把文字还原）。保留仅为无 JS/样式兜底，别再往这里加东西。 */
   :root { --ds-sidebar: 72px; }
   .logo { justify-content: center; padding: 0; }
   .logo__text, .nav-group__label, .app-layout__sider .t-menu__content, .sider-footer__meta { display: none; }
@@ -437,12 +469,40 @@ button, input, textarea { font-family: inherit; }
   .login-card { width: min(420px, calc(100% - 48px)); }
 }
 @media (max-width: 640px) {
+  /* 手机形态：侧栏由 React 侧整个不渲染（TDesign Aside 的 inline 宽度 CSS 改不动），
+     顶栏只留汉堡 + 标题 + 告警；改密码/退出登录挪进抽屉 */
+  .app-layout__header { justify-content: flex-start; height: 56px; padding: 0 10px; gap: 6px; }
+  .app-layout__header-actions { display: none; }
+  .header-kicker, .header-divider { display: none; }
+  .app-layout__header-title { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+  .app-layout__content { padding: 16px 14px 40px; }
+  /* 弹窗固定宽度（如修改密码 480px）在手机上会顶出屏幕 ⇒ max-width 兜底；
+     高度同理：内容多的弹窗（赠送积分有 6 个字段）会高过一屏、底部「确定」点不到
+     ⇒ 撑满视口高度上限，正文区自己滚动，头/脚固定 */
+  .t-dialog { max-width: calc(100vw - 24px); max-height: calc(100vh - 32px); display: flex; flex-direction: column; }
+  .t-dialog__body { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  /* TDesign 给「顶部模式」弹窗留了 20vh 的上边距（实测 168.8px）⇒ 手机上弹窗大半截
+     在屏外、底部按钮要滚动才够得着。压到 16px，配合上面的 max-height 正好一屏放下。
+     ★ 必须写成 .t-dialog__ctx .t-dialog__position.t-dialog--top 三段（TDesign 原文
+     就是 0,3,0）—— 少一段就因为特异性不足被 TDesign 抢回去，改了看着像没生效 */
+  .t-dialog__ctx .t-dialog__position.t-dialog--top { padding-top: 16px; padding-bottom: 16px; }
+  /* 分页：「每页条数」下拉 + 「跳至 N 页」在 390px 下把整行挤出容器（实测子项
+     left:-26 —— 溢出到左边被裁，看着像分页只剩半截）。手机上只留「共 N 条 + 页码」。
+     表格本身可横向滑动（TDesign 的 .t-table__content 自带 overflow-x:auto），不用管。 */
+  .t-pagination { flex-wrap: wrap; justify-content: flex-start; }
+  .t-pagination__select, .t-pagination__jump { display: none; }
+  /* 筛选栏：各页用 TDesign Space 横排「输入框 + 下拉 + 查询/重置」，390px 下整行 556px
+     （实测 right:570）⇒ 溢出到屏幕外。允许换行，输入框自身的固定宽度就都放得下 */
+  .t-space-horizontal { flex-wrap: wrap; row-gap: 8px; }
   .page-header { align-items: flex-start; flex-direction: column; gap: 12px; }
   .dashboard-intro { min-height: 0; }
   .dashboard-intro__mark { display: none; }
   .section-heading { align-items: flex-start; flex-direction: column; gap: 4px; }
   .form-row { flex-direction: column; gap: 5px; }
-  .form-row__label { width: auto; padding-top: 0; text-align: left; }
+  /* ★ flex-basis 在竖排后变成**高度**：`.form-row__label{flex:0 0 120px}` 会让每个
+     标签白占 96~120px（实测弹窗因此高到 1231px、超出手机视口）⇒ 必须显式复位
+     flex，只改 width/padding 不够 */
+  .form-row__label { flex: 0 0 auto; width: auto; padding-top: 0; text-align: left; }
   .upload-field { flex-direction: column; }
   .upload-field__preview, .upload-field__empty { width: min(100%, 300px); }
   /* 两个字段一起竖排：二维码在上、按钮在下，别让 108px 的方图把说明文字挤成一条 */
