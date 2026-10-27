@@ -748,8 +748,48 @@ export async function adjust(
   // 这样运营手动补的赠积分不会变成永久余额，口径与「赠送」按钮的语义一致。
   const balanceAfter = bucket === 'RECHARGE' ? acc.balance + args.amount : acc.balance
   const membershipAfter = bucket === 'GRANT' ? acc.grant_balance + args.amount : acc.grant_balance
-  if (balanceAfter < 0n || membershipAfter < 0n) throw new Error('adjust would make balance negative')
+  if (balanceAfter < 0n || membershipAfter < 0n) {
+    // 原文是英文的 `adjust would make balance negative`，但它会**原样**出现在后台运营的
+    // 屏幕上（路由层把 message 直接透传）。改钱失败时看不懂原因，运营只会再点一次。
+    const current = bucket === 'GRANT' ? acc.grant_balance : acc.balance
+    const label = bucket === 'GRANT' ? '会员赠积分' : '充值积分'
+    throw new Error(`「${label}」不够扣：该桶当前只有 ${current}，本次要扣 ${-args.amount}`)
+  }
   const grantAfter = membershipAfter + acc.grant_register_balance
+
+  /**
+   * ★ 扣减还有第二道闸：**扣后可用不得为负**（不只是单桶不为负）。
+   *
+   * 上面那行只保证「被扣的那个桶 ≥ 0」，但 `frozen` 是**账户级**计数器、不属于任何一个桶。
+   * 于是存在这样一条看起来完全合法的路径：注册赠积分 30（注册桶，后台调账碰不到）+
+   * 在途任务冻结 200，运营把充值桶和会员桶各扣到 0 —— 每步单桶都不为负，
+   * 可用余额却成了 `0 + 0 + 30 − 200 = −170`。
+   *
+   * 后果不是当场报错，而是**过一会儿**在途任务结算时报「积分不足」而失败：
+   * 用户没做错任何事，运营也以为自己只是「把余额扣到 0 而已」，两边都查不到因果。
+   * 所以这里直接拒绝，并如实说清被冻结了多少、最多能扣多少。
+   */
+  if (args.amount < 0n) {
+    const availableAfter = availableOf({
+      balance: balanceAfter,
+      grantBalance: membershipAfter,
+      grantRegisterBalance: acc.grant_register_balance,
+      frozen: acc.frozen,
+    })
+    if (availableAfter < 0n) {
+      const availableBefore = availableOf({
+        balance: acc.balance,
+        grantBalance: acc.grant_balance,
+        grantRegisterBalance: acc.grant_register_balance,
+        frozen: acc.frozen,
+      })
+      const maxDeduct = availableBefore > 0n ? availableBefore : 0n
+      throw new Error(
+        `扣减后可用积分会变成 ${availableAfter}（当前可用 ${availableBefore}，` +
+          `其中 ${acc.frozen} 正被在途任务冻结、不能扣），最多可扣 ${maxDeduct}`,
+      )
+    }
+  }
 
   await tx.beanAccount.update({
     where: { merchantId: args.merchantId },

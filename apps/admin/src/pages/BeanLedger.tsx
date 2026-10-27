@@ -149,7 +149,9 @@ export default function BeanLedgerPage() {
         onClose={() => setAdjustOpen(false)}
         onConfirm={doAdjust}
         // 提交中禁用「确定」：连点两次虽然服务端有幂等键兜住，但用户会看到两条「调账成功」
-        confirmBtn={{ loading: adjustSubmitting }}
+        // ★ `content` 不能省：confirmBtn 传对象时 TDesign 不注入 children，只写 `{loading}`
+        //   会渲染成一个没有文字的红色按钮（`renderDialogButton` 的 isObject 分支）。
+        confirmBtn={{ content: '确定', loading: adjustSubmitting }}
         width={520}
       >
         <FieldGroup labelWidth={120}>
