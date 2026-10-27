@@ -3,6 +3,9 @@
 // 一屏只允许一个红色实心主按钮，其余操作降为浅底 / 描边 / 文字链
 
 @use './styles/theme.scss';
+// ★ 图标字体必须声明在 app.wxss（小程序只认 app.wxss / 页面 wxss 里的 @font-face，
+//   写进组件 wxss 的那份真机不认）。缺这一行 ⇒ 所有 t-icon 字形空白且不报错。
+@use './styles/icon-font.scss';
 
 page {
   box-sizing: border-box;
