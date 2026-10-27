@@ -100,6 +100,24 @@ router.get('/auth/me', (req, res) => {
   ok(res, { adminId: req.adminId?.toString(), username: req.adminUsername })
 })
 
+// 修改自己的密码（验旧密码 + scrypt 重哈希；已签发 token 不作废，前端改完即登出）
+const changePasswordInput = z.object({
+  oldPassword: z.string().min(1, '请输入原密码').max(64),
+  // 与登录页口径一致：至少 8 位。上限 64 是哈希输入的合理边界。
+  newPassword: z.string().min(8, '新密码至少 8 位').max(64, '新密码最长 64 位'),
+})
+router.post('/auth/password', async (req, res) => {
+  try {
+    const input = changePasswordInput.parse(req.body ?? {})
+    await adminSvc.adminChangePassword(prisma, BigInt(req.adminId!), input)
+    ok(res, { changed: true })
+  } catch (e) {
+    if (e instanceof z.ZodError) return fail(res, 400, e.issues[0]?.message ?? '参数错误', 400)
+    if (e instanceof adminSvc.OldPasswordMismatchError) return fail(res, 4003, e.message, 400)
+    fail(res, 500, (e as Error).message || '修改失败', 500)
+  }
+})
+
 // ──────────────────────── 仪表盘 ────────────────────────
 router.get('/dashboard', async (_req, res) => {
   try {
@@ -980,7 +998,7 @@ router.get('/works/importable-tasks', async (req, res) => {
   }
 })
 
-/** 从商家成功成片入库：生成一条未上架草稿，运营补齐分类/配方后再上架 */
+/** 从商家成功成片入库：生成一条未上架草稿，运营补齐标题/分类/封面后再上架 */
 router.post('/works/from-render-task', async (req, res) => {
   try {
     const { taskId } = z.object({ taskId: z.string().min(1) }).parse(req.body)

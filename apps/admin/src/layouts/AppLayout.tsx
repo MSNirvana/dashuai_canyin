@@ -1,5 +1,5 @@
-import { Suspense } from 'react'
-import { Layout, Menu, Button, Badge } from 'tdesign-react'
+import { Suspense, useState } from 'react'
+import { Layout, Menu, Button, Badge, Dialog, Input, message } from 'tdesign-react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
   DashboardIcon,
@@ -20,6 +20,8 @@ import {
 import { useAuth } from '../context/AuthContext'
 import RouteFallback from '../components/RouteFallback'
 import PageGuide from '../components/PageGuide'
+import Field, { FieldGroup } from '../components/Field'
+import { request } from '../lib/http'
 import { useOpsAlertSummary } from '../lib/ops-alert'
 
 /** 告警页路径。顶栏横幅与菜单角标都指它，抽出来免得两处写岔 */
@@ -74,12 +76,55 @@ const MENU_GROUPS = [
 
 const MENU = MENU_GROUPS.flatMap((group) => group.items)
 
+/** 修改密码弹窗的初始表单 */
+const emptyPw = () => ({ oldPassword: '', newPassword: '', confirmPassword: '' })
+
 export default function AppLayout() {
   const loc = useLocation()
   const nav = useNavigate()
   const { admin, logout } = useAuth()
   const active = (path: string) =>
     loc.pathname === path || (path !== '/' && loc.pathname.startsWith(path))
+
+  // ── 修改密码 ──────────────────────────────────────────────
+  // 改成功后**立即登出**：服务端的 JWT 在改密码后并不会作废（无状态、2h 自然过期），
+  // 立刻登出把「旧 token 还能用」的窗口收敛到「操作者自己当场」，
+  // 也顺便强制用新密码走一遍登录，确认自己真的记得住。
+  const [pwOpen, setPwOpen] = useState(false)
+  const [pwSubmitting, setPwSubmitting] = useState(false)
+  const [pw, setPw] = useState(emptyPw)
+  const pwError =
+    !pw.oldPassword
+      ? '请输入原密码'
+      : pw.newPassword.length < 8
+        ? '新密码至少 8 位'
+        : pw.newPassword === pw.oldPassword
+          ? '新密码不能与原密码相同'
+          : pw.newPassword !== pw.confirmPassword
+            ? '两次输入的新密码不一致'
+            : ''
+  const setPwField = (patch: Partial<ReturnType<typeof emptyPw>>) => setPw((s) => ({ ...s, ...patch }))
+
+  const submitPassword = async () => {
+    if (pwSubmitting || pwError) return
+    setPwSubmitting(true)
+    try {
+      await request({
+        url: '/auth/password',
+        method: 'POST',
+        data: { oldPassword: pw.oldPassword, newPassword: pw.newPassword },
+      })
+      message.success('密码已修改，请用新密码重新登录')
+      setPwOpen(false)
+      setPw(emptyPw())
+      logout()
+      nav('/login', { replace: true })
+    } catch {
+      // http 层已统一提示（原密码错误 / 至少 8 位都会带原因回来）
+    } finally {
+      setPwSubmitting(false)
+    }
+  }
   /**
    * 未处理告警数：每 60s 拉一次，失败静默（见 lib/ops-alert.ts 的取舍说明）。
    * ★ 两个出口都要有 —— 只在菜单上加角标，人停在别的页面时看不见；
@@ -156,6 +201,17 @@ export default function AppLayout() {
               theme="default"
               variant="outline"
               onClick={() => {
+                setPw(emptyPw())
+                setPwOpen(true)
+              }}
+            >
+              修改密码
+            </Button>
+            <Button
+              size="small"
+              theme="default"
+              variant="outline"
+              onClick={() => {
                 logout()
                 nav('/login', { replace: true })
               }}
@@ -177,6 +233,49 @@ export default function AppLayout() {
           </Suspense>
         </div>
       </Layout.Content>
+
+      <Dialog
+        header="修改密码"
+        visible={pwOpen}
+        onClose={() => setPwOpen(false)}
+        onConfirm={submitPassword}
+        // ★ content 不能省：confirmBtn 传对象时 TDesign 不注入 children，只写 {loading}
+        //   会渲染成一个没有文字的红色按钮（见 BeanLedger / MerchantDetail 的同款注释）
+        confirmBtn={{ content: '确认修改', loading: pwSubmitting, disabled: Boolean(pwError) }}
+        width={480}
+      >
+        <FieldGroup labelWidth={90}>
+          <Field label="原密码" required>
+            <Input
+              type="password"
+              value={pw.oldPassword}
+              onChange={(v) => setPwField({ oldPassword: v as string })}
+              placeholder="当前使用的密码"
+            />
+          </Field>
+          <Field label="新密码" required help="至少 8 位。修改成功后会立即退出登录，需要用新密码重新登录。">
+            <Input
+              type="password"
+              value={pw.newPassword}
+              onChange={(v) => setPwField({ newPassword: v as string })}
+              placeholder="至少 8 位"
+            />
+          </Field>
+          <Field label="确认新密码" required>
+            <Input
+              type="password"
+              value={pw.confirmPassword}
+              onChange={(v) => setPwField({ confirmPassword: v as string })}
+              placeholder="再输入一遍新密码"
+            />
+          </Field>
+        </FieldGroup>
+        {pwError ? (
+          <div className="danger-text" style={{ fontSize: 12, marginTop: 4 }}>
+            {pwError}
+          </div>
+        ) : null}
+      </Dialog>
     </Layout>
   )
 }
