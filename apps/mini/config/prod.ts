@@ -1,4 +1,5 @@
 import type { UserConfigExport } from '@tarojs/cli'
+import { attachIconFontEmbedder } from './embed-icon-font'
 
 /**
  * 关掉 TerserPlugin 的「注释抽取」，让产物里不再出现 *.LICENSE.txt。
@@ -61,6 +62,14 @@ export default {
   mini: {
     webpackChain(chain) {
       disableTerserCommentExtraction(chain)
+      /**
+       * ★ 每次编译后把 TDesign 图标字体内嵌进产物（base64）。
+       *   没有这一步，真机上 `t-icon` 全是空白且不报错 —— 细节见 config/embed-icon-font.ts。
+       *   `scripts/build-weapp-prod.sh` 里也调了一次（那是给人看的显式步骤），
+       *   这里再挂一次是为了覆盖「直接 `npm run build:weapp` / 工具里点编译」这些不走脚本的路径；
+       *   脚本本身幂等，跑两遍没有副作用。
+       */
+      attachIconFontEmbedder(chain)
     },
   },
   h5: {},
