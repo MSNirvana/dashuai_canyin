@@ -173,15 +173,40 @@ export function buildAutoEditPlan(
 
   const selected: AutoEditCandidate[] = []
   let total = 0
+  let skippedByBudget = 0
   for (const candidate of candidates) {
     if (candidate.targetDurationMs <= 0) continue
     const remaining = maxDurationMs - total
     if (remaining <= 0) break
-    // 最后一条台词也不能为了卡上限而被截断；宁可停止继续选镜头，保住已经完整的语句。
-    if (selected.length > 0 && candidate.targetDurationMs > remaining) break
+    // 最后一条台词也不能为了卡上限而被截断；宁可跳过长镜头，保住已经完整的语句。
+    //
+    // ★★★ 这里必须是 `continue`，**绝不能是 `break`**。判据（2026-11-01 实测 creation 466 /
+    //   task 132 与 130 两次同样的失败）：素材 9s / 22.5s / 33s / 3s / 9s / 8s，60s 预算下
+    //   选完前两条已用 31.5s，第三条 33s 塞不进剩下的 28.5s —— 当时 break 把后面
+    //   3s / 9s / 8s 三个完全放得下的短镜头**一起带走**，成片只剩 21 秒，用户看到的就是
+    //   「我拍了六个分镜，只出来两个」。
+    //   同一创作 133 之所以正常（35.8s / 6 条），只是因为那一天用户重拍后素材变短了
+    //   （5s/7s/7s/3s/9s/8s，合计 39s 永远撞不到上限）—— 缺陷一直在，只是没被踩到。
+    //
+    // ★ 为什么不是「把这个长镜头截一段塞进剩余预算」：`targetDurationMs` 只是**选材预算**，
+    //   `applyAutoEditPlan` 刻意不按它 trim（按台词估时裁会切掉句尾），所以「预算截短」并不等于
+    //   成片变短 ⇒ 会直接冲破 60s 上限。真正的缩短只发生在 worker 的口播 keepRanges 那一步。
+    if (candidate.targetDurationMs > remaining) {
+      // 第一条永远保留：真出现「一条素材就超上限」时，宁可让渲染器自己处理，也不要交出一份空计划。
+      if (selected.length === 0) {
+        selected.push(candidate)
+        total += candidate.targetDurationMs
+        continue
+      }
+      skippedByBudget += 1
+      continue
+    }
     const target = candidate.targetDurationMs
     selected.push({ ...candidate, targetDurationMs: target })
     total += target
+  }
+  if (skippedByBudget > 0) {
+    warnings.push(`${skippedByBudget} 个镜头超出 ${Math.round(maxDurationMs / 1000)} 秒成片预算，已跳过（后面的短镜头照常选入）`)
   }
   if (selected.length === 0) {
     warnings.push('素材没有可识别时长，保留原始顺序交给渲染器处理')
