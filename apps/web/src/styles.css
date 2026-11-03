@@ -1383,3 +1383,38 @@ select.ws-input { padding-right: 38px; }
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* ── 成片样例（首页「看看拍出来的成片」） ──
+   ★ 手机端两列：9:16 在 390 屏上单列会占掉大半屏，四条要滚三屏才看完；
+     两列时一条约 168×298，仍然看得清是道菜、也点得动播放键。
+   ★ `aspect-ratio` 写在 video 上而不是靠 height：`<video>` 没有 width/height 属性时
+     默认 300×150，不钉比例会在 poster 加载前先撑成一条横的，加载完再跳成竖的。
+   ★ 别加 `object-fit: cover` 之外的裁切 —— 720×1280 与 9:16 完全同比，
+     多一步缩放只会让画面发虚。 */
+.showcase-lead {
+  margin: -6px 0 18px;
+  max-width: 620px;
+  font-size: 16px;
+  line-height: 1.75;
+  color: var(--ink-2);
+}
+.showcase-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 12px;
+}
+.showcase-card { margin: 0; min-width: 0; }
+.showcase-card video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 9 / 16;
+  background: #0b0b0d;
+  border-radius: var(--r-md);
+  border: 1px solid var(--stroke);
+}
+.showcase-card figcaption { padding: 8px 2px 0; }
+.showcase-card h3 { margin: 0; font-size: 15px; font-weight: 650; line-height: 1.4; }
+.showcase-card p { margin: 2px 0 0; font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+@media (min-width: 768px) {
+  .showcase-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+}

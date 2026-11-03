@@ -98,6 +98,51 @@ const heroPoints = [
   '拍完自动加字幕配音，导出竖版视频。',
 ]
 
+/**
+ * 成片样例（2026-11-03 加）。
+ *
+ * ★★★ 为什么必须加：微信支付 H5 权限两次驳回「网站中体验不到服务内容」。一个做短视频的
+ *   工具，网站上一条视频都没有 —— 光靠文字说明说服不了任何人，`grep video/mp4` 全站零命中。
+ *
+ * ★ 这四条都是**平台自己的合成产物**：`render_task.status='SUCCESS'` 且 `result_key` 非空，
+ *   从 COS 私有桶取原件、服务端 ffmpeg 转码后落到 `/media/*.mp4`。
+ *   ⚠ 不放 COS 签名 URL：签名只有 1 小时，审核方隔天再点就是 403，等于又变成"没有视频"。
+ *   ⚠ 也不放 `/var/www/dashuai-web` 里：前端产物用 `rsync --delete` 部署，会被当孤儿删掉。
+ *     现由 nginx 的 `location /media/ { alias /var/www/dashuai-media/ }` 直出。
+ *
+ * ★ 参数：720×1280、CRF 26、`+faststart`（moov 前置，边下边播）。原件是 1080×1920 约 5~10 Mbps，
+ *   一条 20 秒就 20MB；转码后一条 5~9MB。`preload="metadata"` 不是 `auto` ——
+ *   四条同时 auto 会在首屏拉 30MB。
+ * ★ 封面是单独抽帧的 JPG（都挑了菜拍得最好的那一秒），不是视频第一帧：
+ *   这批视频开头多半是人物起手说话，直接当封面不好看。
+ */
+const showcaseClips = [
+  {
+    src: '/media/showcase-1.mp4',
+    poster: '/media/showcase-1.jpg',
+    title: '花青素蔬菜组合',
+    note: '30 秒 · 从食材讲到口感',
+  },
+  {
+    src: '/media/showcase-2.mp4',
+    poster: '/media/showcase-2.jpg',
+    title: '手工灌腊肠',
+    note: '36 秒 · 拍手艺，也拍人',
+  },
+  {
+    src: '/media/showcase-3.mp4',
+    poster: '/media/showcase-3.jpg',
+    title: '东北烤鹅',
+    note: '19 秒 · 讲门道，不乱吹',
+  },
+  {
+    src: '/media/showcase-4.mp4',
+    poster: '/media/showcase-4.jpg',
+    title: '现炸豆腐',
+    note: '26 秒 · 边炸边讲，声音都在',
+  },
+]
+
 export function Home() {
   // 先用内置默认图渲染，接口返回后台配置后再替换（接口不可用就一直是内置图）。
   // 不是「等接口回来再渲染」—— 那会让首屏空白几百毫秒，接口挂了还会永久空白。
@@ -183,6 +228,36 @@ export function Home() {
                   <p>{step.text}</p>
                 </div>
               </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* 成片样例：放在「三步」之后 —— 先讲怎么做，紧接着就给做出来的东西看。
+          真视频、能播、有声音，这是「网站里确实有服务」最硬的证据。 */}
+      <section className="section" id="showcase">
+        <div className="container">
+          <h2 className="section-title">看看拍出来的成片</h2>
+          <p className="showcase-lead">
+            下面四条都是这套流程出的片：文案、分镜、字幕、配音由平台生成，老板只负责照着拍。
+            竖版 1080×1920，导出就能发。
+          </p>
+          <div className="showcase-grid">
+            {showcaseClips.map((clip) => (
+              <figure className="showcase-card" key={clip.src}>
+                <video
+                  src={clip.src}
+                  poster={clip.poster}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  aria-label={`成片样例：${clip.title}`}
+                />
+                <figcaption>
+                  <h3>{clip.title}</h3>
+                  <p>{clip.note}</p>
+                </figcaption>
+              </figure>
             ))}
           </div>
         </div>
