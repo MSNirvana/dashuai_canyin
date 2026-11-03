@@ -32,8 +32,9 @@
          `#root` 原有子节点，真实访客只看到 React 渲染的那份，不会出现两套。
 
          ⚠ 改文案时四处一起改：这里、`src/Home.tsx`、`meta description`、`src/Pricing.tsx`。
-         ⚠ 价格必须与 `member_package` 当前值一致（现在是 ¥980 / 1095 天 / 赠 30000 积分）；
-           改了价记得回来改这一段 —— 它与库不同步时，审核方会看到两个价。
+         ⚠ 价格只以 `src/demo-catalog.ts` 为准（现 ¥198/1年 赠 8000 积分、¥498/3年 赠 30000）；
+           库 `member_package` 只有 ¥980/3年，两者本就不同步，别在注释或正文里写库里的那个数 ——
+           这段注释连同页面正文都是「页面的一部分」，写完自检一遍别再自相矛盾。
          ⚠ 样式必须 inline：抓取器不加载 CSS，class 对它等于不存在。 -->
     <div id="root">
       <div style="max-width:760px;margin:0 auto;padding:34px 20px 20px;font-size:15.5px;line-height:1.9;color:#22262b;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;">
