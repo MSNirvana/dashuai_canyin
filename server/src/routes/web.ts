@@ -10,6 +10,9 @@ import { requiredText, optionalText } from '../lib/validators.js'
 import { ok, fail } from '../lib/result.js'
 import { WebPayProviderError } from '../lib/wxpay.js'
 import { auth } from '../middleware/auth.js'
+// 免登录演示工作台：签一枚只读 token（scope='demo'），并读演示账号白名单
+import { signAccess } from '../lib/jwt.js'
+import { loadDemoPolicyFresh } from '../lib/demo-account.js'
 import { PackageNotFoundError, PaymentUnavailableError } from '../services/order.service.js'
 import { SubscriptionRequiredError } from '../services/subscription.service.js'
 import { createWebOrder, getWebCatalog, payWebOrder, WebOrderError } from '../services/web-order.service.js'
@@ -297,6 +300,106 @@ router.post('/demo/copy', async (req, res) => {
   // ★ 字段名保持 `text` 不变：老前端（浏览器里缓存的旧 bundle）只认它，
   //   多给两个字段不会让它报错，页面还能正常显示文案。
   ok(res, { ...pack, dish })
+})
+
+/**
+ * 官网「免登录进工作台」—— 发一枚**只读**的演示会话。
+ *
+ * 为什么要有它：微信支付 H5 审核连续两次驳回「网站中体验不到服务内容」。官网原来只有
+ * 首页介绍 + 一个文案试用，工作台 `/app/*` 全在登录墙后面，审核员点进去只能看到登录框。
+ * ⇒ 放一个不登录就能进去看的演示工作台（真实门店/菜品/创作数据），**只读**。
+ *
+ * ★★ 只读靠 `scope: 'demo'` 这一个声明保证（见 `middleware/auth.ts`）：非 GET 一律 1007。
+ *   不要靠前端「隐藏按钮」来装作只读 —— 按钮能藏，请求不能。
+ * ★ 不发 refresh：2 小时自然失效，避免出现「演示 token 靠刷新永久续期」。
+ * ★ 选号规则：只从 `demo.config` 白名单里挑，且**优先有门店数据**的那个 ——
+ *   白名单为空时整块关闭（与演示登录同一套纪律：留空 ≠ 放开所有人）。
+ * ★ 限流只防刷：单 IP 每小时 40 次。访客拿到的数据一样，刷它没有收益，
+ *   但也不能让它变成免费的、可被打爆的签发口。
+ */
+const DEMO_SESSION_PER_IP_HOURLY = 40
+
+function maskPhone(phone: string): string {
+  return phone.length >= 7 ? `${phone.slice(0, 3)}****${phone.slice(-4)}` : '演示账号'
+}
+
+async function pickDemoMerchant() {
+  // ★ 必须 fresh：后台改了白名单要立刻生效，不能吃 settings 的 60 秒缓存
+  const policy = await loadDemoPolicyFresh(prisma)
+  const phones = [...policy.phones]
+  if (phones.length === 0) return null
+  const list = await prisma.merchant.findMany({
+    where: { phone: { in: phones }, status: 'ACTIVE', deletedAt: null },
+    select: { id: true, phone: true, nickname: true, avatarUrl: true },
+    /**
+     * ★★★ 必须显式给顺序。不给 `orderBy` 时 MySQL 的返回顺序会随索引/统计信息漂移，
+     *   而白名单里混着真实商家（其中有的会员已过期）—— 访客一旦落到那个号上：
+     *   页头显示「会员已过期」、点 AI 创作直接 403/2005，看起来像产品坏了。
+     * 取「有门店数据 + id 最小」＝固定的那个演示号（现为 m=1「演示商家」13800000000）。
+     * 想让访客看别的号：改这条规则，不要指望白名单数组的顺序。
+     */
+    orderBy: { id: 'asc' },
+  })
+  if (list.length === 0) return null
+  const stores = await prisma.store.findMany({
+    where: { merchantId: { in: list.map((m) => m.id) }, deletedAt: null },
+    select: { merchantId: true },
+  })
+  const withStore = new Set(stores.map((s) => s.merchantId.toString()))
+  return list.find((m) => withStore.has(m.id.toString())) ?? list[0]!
+}
+
+router.post('/demo/session', async (req, res) => {
+  const ip = webPayerClientIp(req)
+  if (!ip) return fail(res, 4000, '无法识别请求来源，请稍后再试', 400)
+  const count = Number(await redis.eval(`
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], 3600) end
+return n`, 1, `web:demo:session:ip:${ip}`))
+  if (count > DEMO_SESSION_PER_IP_HOURLY) {
+    res.setHeader('Retry-After', '600')
+    return fail(res, 4290, '体验入口有点忙，请稍后再试', 429)
+  }
+
+  const demo = await pickDemoMerchant()
+  if (!demo) return fail(res, 5000, '演示数据暂不可用，请稍后再试', 503)
+
+  const now = new Date()
+  const [membership, account] = await Promise.all([
+    prisma.membership.findFirst({
+      where: { merchantId: demo.id, status: 'ACTIVE', endAt: { gt: now } },
+      orderBy: { endAt: 'desc' },
+      select: { endAt: true },
+    }),
+    prisma.beanAccount.findUnique({ where: { merchantId: demo.id } }),
+  ])
+  const balance = account?.balance ?? 0n
+  const grantBalance = account?.grantBalance ?? 0n
+  const grantRegister = account?.grantRegisterBalance ?? 0n
+  const frozen = account?.frozen ?? 0n
+  // 可用余额口径与 `bean.service.ts` 一致：三个桶相加再减冻结
+  const available = balance + grantBalance + grantRegister - frozen
+
+  ok(res, {
+    token: signAccess({ mid: demo.id.toString(), phone: demo.phone, scope: 'demo' }),
+    // 刻意给空串：前端 401 时不会再拿它去刷新（见 apps/web/src/api.ts 的判断）
+    refreshToken: '',
+    demo: true,
+    merchant: {
+      id: demo.id.toString(),
+      phone: maskPhone(demo.phone),
+      nickname: demo.nickname,
+      avatarUrl: demo.avatarUrl,
+      isNew: false,
+    },
+    member: { isMember: Boolean(membership), endAt: membership?.endAt.toISOString() ?? null },
+    bean: {
+      balance: balance.toString(),
+      grantBalance: (grantBalance + grantRegister).toString(),
+      available: available.toString(),
+      frozen: frozen.toString(),
+    },
+  })
 })
 
 router.use(auth)

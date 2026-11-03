@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowRight, Check, ClipboardList, Copy, LayoutGrid, LoaderCircle, MessageSquare, Sparkles } from 'lucide-react'
+import { ArrowRight, Check, ClipboardList, Copy, LoaderCircle, MessageSquare, Sparkles } from 'lucide-react'
 import { api, ApiError } from './api'
 import { useAuth } from './auth'
 import { useSiteImages } from './site-images'
@@ -142,15 +142,19 @@ export function Home() {
                  - `.nav-links` 在 <768px 是 `display: none`，手机端顶栏只有 logo 和账户状态，
                    没有这个入口的话，手机上根本进不去工作台。
                  ⇒ 措辞带「你的」，让老板知道点进去是**自己的**门店资料。 */}
-            {session && (
-              <p className="hero-account-link">
-                <Link to="/app">
-                  <LayoutGrid size={17} />
-                  进入工作台，管理你的门店与菜品
-                  <ArrowRight size={16} />
-                </Link>
-              </p>
-            )}
+            {/* ★ 2026-11-03：**未登录也显示**。上一版只在已登录时给这个入口，结果审核方
+                打开首页根本找不到「工作台」在哪 —— 而驳回理由正是「网站中体验不到服务内容」。
+                现在未登录点进去会自动进入**只读**演示工作台（服务端 `scope='demo'`），
+                所以两种状态都能点，只是措辞不同。
+                ★ 仍然是一个文字链、不是第二颗按钮：首屏只留一个主行动（免费试做一条）。 */}
+            <p className="hero-account-link">
+              {/* ★ 这里**不要放图标**：`LayoutGrid` 是 4 个描边小方块，17px 时糊成一团，
+                  截图里看着像「88」两个字符。这条链接靠文字和箭头就够清楚。 */}
+              <Link to="/app">
+                {session ? '进入工作台，管理你的门店与菜品' : '先看看工作台长什么样（不用登录）'}
+                <ArrowRight size={16} />
+              </Link>
+            </p>
           </div>
           <div className="hero-media">
             <div className="media-frame">

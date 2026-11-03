@@ -120,6 +120,28 @@ interface RequestOptions extends Omit<RequestInit, 'body'> {
   retry?: boolean
 }
 
+/**
+ * 演示会话的「续期」。
+ *
+ * ★ 服务端**刻意不给演示 token 发 refreshToken**（`signRefresh` 不接受 scope），
+ *   2 小时自然失效 —— 这样没人能靠刷新把演示态永久续下去。
+ * ★ 但访客不该在两小时后看到「登录已过期」：那时再取一枚新的演示 token 就是。
+ *   单 IP 每小时 40 次的门槛（服务端 `/web/demo/session`），一次 2 小时才用掉 1 次。
+ * ★ 必须**去重**：一个页面可能同时打三四个接口，全都 401 ⇒ 没有这一层就会请求三四个 token。
+ */
+let demoFlight: Promise<StoredSession> | null = null
+
+function renewDemoSession(): Promise<StoredSession> {
+  if (!demoFlight) {
+    demoFlight = api<LoginResult>('/web/demo/session', { method: 'POST', auth: false, retry: false })
+      .then((result) => saveSession(result))
+      .finally(() => {
+        demoFlight = null
+      })
+  }
+  return demoFlight
+}
+
 export async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const session = getSession()
   const headers = new Headers(options.headers)
@@ -132,13 +154,29 @@ export async function api<T>(path: string, options: RequestOptions = {}): Promis
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   })
 
+  // ★ 演示会话（`demo`）没有 refreshToken：拿空串去换 /auth/refresh 一定会 1001，
+  //   而那条失败路径会 clearSession 把人踢回登录页 —— 演示访客不该被这么对待。
+  //   所以演示态走自己那条：重新取一枚演示 token 再重试一次（不碰 clearSession）。
   if (response.status === 401 && options.auth !== false && options.retry !== false && session) {
-    const renewed = await refreshSession(session)
-    return api<T>(path, {
-      ...options,
-      retry: false,
-      headers: { ...Object.fromEntries(headers.entries()), Authorization: `Bearer ${renewed.token}` },
-    })
+    if (session.demo) {
+      try {
+        const renewed = await renewDemoSession()
+        return api<T>(path, {
+          ...options,
+          retry: false,
+          headers: { ...Object.fromEntries(headers.entries()), Authorization: `Bearer ${renewed.token}` },
+        })
+      } catch {
+        // 拿不到新会话（被限流 / 演示数据不可用）就按原来的 401 抛出去，别把错误换成另一个。
+      }
+    } else if (session.refreshToken) {
+      const renewed = await refreshSession(session)
+      return api<T>(path, {
+        ...options,
+        retry: false,
+        headers: { ...Object.fromEntries(headers.entries()), Authorization: `Bearer ${renewed.token}` },
+      })
+    }
   }
   return parseEnvelope<T>(response)
 }

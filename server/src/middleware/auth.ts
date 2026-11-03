@@ -52,6 +52,18 @@ export async function auth(req: Request, res: Response, next: NextFunction): Pro
     if (p.dst !== undefined && demoWindowClosed(await loadDemoPolicyFresh(prisma))) {
       throw new DemoExpiredError()
     }
+    /**
+     * ★★ demo 会话（官网「免登录进工作台」）**只读**：非 GET/HEAD 一律在这里拦死。
+     *
+     * 为什么必须有这道拦：那枚 token 是**免登录**签出去的（任何访客点一下就拿到），
+     * 而它带的是演示账号的 `mid` ⇒ 不拦就等于把演示账号的建店/改菜/上传/合成全开放。
+     * 判据只认 token 里的 `scope`，不认 IP/UA（都可伪造）。
+     * ★ 放在查库之前：只读判定与账号状态无关，先判能省一次查询。
+     */
+    if (p.scope === 'demo' && req.method !== 'GET' && req.method !== 'HEAD') {
+      fail(res, 1007, '演示模式只能查看，登录后可正常操作', 403)
+      return
+    }
     const merchant = await prisma.merchant.findUnique({ where: { id: BigInt(p.mid) }, select: { status: true } })
     if (!merchant || merchant.status !== 'ACTIVE') throw new Error('merchant unavailable')
     req.merchantId = BigInt(p.mid)

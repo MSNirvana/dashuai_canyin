@@ -18,6 +18,15 @@ export interface AccessTokenPayload {
    * ★ 为什么写进 token 而不是每次查库：见 demo-account.ts 顶部说明。
    */
   dst?: number
+  /**
+   * `'demo'` = 官网「免登录进工作台」的**只读**演示会话。
+   *
+   * ★ 判据只认这个声明：`middleware/auth.ts` 见到它就只放行 GET/HEAD，写操作一律 1007。
+   *   不要用 IP / UA 判断「是不是演示访客」—— 两样都可伪造，而 token 是签过名的。
+   * ★ 这种 token **不发 refresh**（`signRefresh` 不接受 scope），2 小时自然失效；
+   *   所以 `dst` 那套演示账号窗口与它无关，不要混用。
+   */
+  scope?: 'demo'
 }
 export interface RefreshTokenPayload { mid: string; typ: 'refresh'; dst?: number }
 export interface AdminTokenPayload { aid: string; username: string; typ: 'admin' }

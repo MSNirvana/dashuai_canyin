@@ -24,13 +24,59 @@
          不会出现两个；JS 没加载出来时这一行仍在。
          ⚠ 备案号必须与备案系统**逐字**一致（末位的网站序号不能省），链接必须指向工信部备案官网首页。
          ⚠ 本注释里**刻意不写备案号字面量** —— 否则下方 grep 判据会命中注释而「自己给自己放水」。 -->
+    <!-- ★★★ 静态正文回退（2026-11-03）★★★
+         微信支付 H5 权限连续两次驳回「网站中体验不到服务内容」。线上 nginx 日志可证：
+         抓取侧（iPhone UA、多个 IP）只 `GET /` 一次，**不取 js/css/图片** ⇒ 它不执行 JS。
+         而 React 挂载前 `#root` 里只有一行页脚 ⇒ 抓取侧看到的是一个空页面。
+         所以这里放一份**可读的正文副本**。React 18 的 `createRoot().render()` 会清空
+         `#root` 原有子节点，真实访客只看到 React 渲染的那份，不会出现两套。
+
+         ⚠ 改文案时四处一起改：这里、`src/Home.tsx`、`meta description`、`src/Pricing.tsx`。
+         ⚠ 价格必须与 `member_package` 当前值一致（现在是 ¥980 / 1095 天 / 赠 30000 积分）；
+           改了价记得回来改这一段 —— 它与库不同步时，审核方会看到两个价。
+         ⚠ 样式必须 inline：抓取器不加载 CSS，class 对它等于不存在。 -->
     <div id="root">
-      <footer style="padding: 26px 20px 34px; font-size: 15px; line-height: 1.9; color: #4a4f57;">
-        <div>© 2026 廊坊大帅餐饮管理有限公司</div>
-        <div>
-          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" style="color: #4a4f57;">冀ICP备2023045927号-2</a>
-        </div>
-      </footer>
+      <div style="max-width:760px;margin:0 auto;padding:34px 20px 20px;font-size:15.5px;line-height:1.9;color:#22262b;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Helvetica Neue',Arial,sans-serif;">
+        <p style="margin:0 0 6px;font-size:13.5px;letter-spacing:.08em;color:#b4530a;">餐饮门店 · 轻松拍</p>
+        <h1 style="margin:0 0 14px;font-size:30px;line-height:1.35;font-weight:700;">好菜拍下来，帮你做成短视频</h1>
+        <p style="margin:0 0 16px;color:#3a3f47;">
+          大帅餐饮助手是给餐饮门店做短视频的内容生产工具：填一个菜名和卖点，自动生成口播文案、分镜脚本和发布标题；按分镜拍完上传，自动加字幕、配音，导出 1080×1920 竖版成片。
+        </p>
+
+        <h2 style="margin:26px 0 10px;font-size:20px;font-weight:700;">网站上就能体验，不用登录</h2>
+        <ul style="margin:0 0 8px;padding-left:22px;color:#3a3f47;">
+          <li><strong>免费试做一条</strong>：在首页「填个菜名，出一条完整样例」里输入菜名与卖点，当场生成口播文案、分镜脚本、发布标题。</li>
+          <li><strong>免登录看工作台</strong>：点导航栏「工作台」，直接进入只读的演示门店，可以看到门店资料、菜品库、老板人设、创作与分镜的样子（演示模式为只读，编辑需登录自己的账号）。</li>
+        </ul>
+
+        <h2 style="margin:26px 0 10px;font-size:20px;font-weight:700;">三步，拍完就能发</h2>
+        <ol style="margin:0 0 8px;padding-left:22px;color:#3a3f47;">
+          <li><strong>写文案</strong>：填菜名和卖点，生成能照着念的话。</li>
+          <li><strong>照着拍</strong>：文案拆成镜头，每镜拍什么、说什么一目了然。</li>
+          <li><strong>出成片</strong>：上传素材后自动剪口播、加字幕、配音，导出竖版视频。</li>
+        </ol>
+
+        <h2 style="margin:26px 0 10px;font-size:20px;font-weight:700;">开通后能用什么</h2>
+        <ul style="margin:0 0 8px;padding-left:22px;color:#3a3f47;">
+          <li>门店资料、菜品库、老板人设：AI 写文案前会先读这些内容，写得越具体越像你家店说的话。</li>
+          <li>文案生成、分镜生成、合成出片（1080×1920 / 30fps）、全局调色、字幕分行、AI 配音、背景配乐。</li>
+          <li>创作管理与作品导出，账号在网页与手机端通用，权益同一份。</li>
+        </ul>
+
+        <h2 style="margin:26px 0 10px;font-size:20px;font-weight:700;">售卖的商品</h2>
+        <ul style="margin:0 0 8px;padding-left:22px;color:#3a3f47;">
+          <li><strong>会员套餐</strong>：开通后按门店信息生成并可直接出片，套餐期内不限次数使用上述功能（合成按次扣积分）。</li>
+          <li><strong>积分加油包</strong>：合成一次 AI 成片固定消耗 500 积分，积分用完可单独购买加油包。</li>
+        </ul>
+        <p style="margin:0;color:#5a6068;font-size:14px;">具体价格、有效期与赠送积分以「套餐与积分」页实时显示为准。</p>
+
+        <footer style="margin-top:30px;padding-top:20px;border-top:1px solid #e6e8eb;font-size:14px;line-height:1.9;color:#4a4f57;">
+          <div>© 2026 廊坊大帅餐饮管理有限公司</div>
+          <div>
+            <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer" style="color:#4a4f57;">冀ICP备2023045927号-2</a>
+          </div>
+        </footer>
+      </div>
     </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

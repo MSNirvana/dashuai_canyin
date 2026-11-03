@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { Layout } from './components'
 import { Home } from './Home'
@@ -47,10 +48,33 @@ export function App() {
   )
 }
 
+/**
+ * 工作台入口：登录了就直接进；**没登录先取一枚只读的演示会话**，让人不登录也能看。
+ *
+ * ★ 为什么要这样：微信支付 H5 审核两次驳回「网站中体验不到服务内容」——
+ *   原来 `/app/*` 全在登录墙后面，审核方点进去只能看到登录框。
+ * ★ 只有演示数据不可用（演示号没配 / 白名单为空 / 被限流）时才回落到登录页。
+ * ★ 演示态是只读的（服务端 `scope='demo'`，写操作 1007），页面上另有一条横幅说明。
+ */
 function Protected({ children }: { children: React.ReactNode }) {
-  const { session } = useAuth()
+  const { session, startDemo } = useAuth()
   const location = useLocation()
-  return session ? children : <Navigate to="/login" replace state={{ from: location.pathname }} />
+  const [demoFailed, setDemoFailed] = useState(false)
+
+  useEffect(() => {
+    if (session || demoFailed) return
+    let alive = true
+    void startDemo().catch(() => {
+      if (alive) setDemoFailed(true)
+    })
+    return () => {
+      alive = false
+    }
+  }, [session, demoFailed, startDemo])
+
+  if (session) return <>{children}</>
+  if (demoFailed) return <Navigate to="/login" replace state={{ from: location.pathname }} />
+  return <p className="loading-block">正在打开演示工作台…</p>
 }
 
 function PayReturn() {

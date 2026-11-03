@@ -1355,3 +1355,31 @@ select.ws-input { padding-right: 38px; }
 @media (min-width: 1024px) {
   .ws-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+
+/* ── 演示模式横幅（免登录进工作台） ──
+   ★ 数据是真的（演示门店），权限是假的（服务端只读）。所以这条横幅不是装饰：
+     访客点编辑/新建被拦住时，得有个地方告诉他为什么。 */
+.demo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 12px;
+  padding: 9px 16px;
+  background: #fff8e8;
+  border-bottom: 1px solid #f0d9a8;
+  color: #8a5b00;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+.demo-banner__text { font-weight: 500; }
+.demo-banner__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #b4530a;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

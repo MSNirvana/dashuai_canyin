@@ -75,8 +75,10 @@ export function Layout({ children }: { children: ReactNode }) {
           {/* 桌面端导航；手机端由 CSS 隐藏（见 styles.css 的 .nav-links） */}
           <nav className="nav-links" aria-label="主导航">
             <NavLink to="/">首页</NavLink>
-            {/* ★ 不加 `end`：在 /app/store 这类子页里「工作台」保持高亮，一眼能看出自己在哪个区域 */}
-            {session && <NavLink to="/app">工作台</NavLink>}
+            {/* ★ 不加 `end`：在 /app/store 这类子页里「工作台」保持高亮，一眼能看出自己在哪个区域
+                ★ 2026-11-03：**未登录也显示**。点进去是只读的演示工作台（服务端 scope='demo'），
+                  这是「网站里能体验到服务」的那条路径，藏起来等于把审核要看的入口藏了。 */}
+            <NavLink to="/app">工作台</NavLink>
             <NavLink to="/pricing">套餐与积分</NavLink>
             {session && <NavLink to="/account">账户中心</NavLink>}
             {session && <NavLink to="/orders">订单</NavLink>}
@@ -86,11 +88,18 @@ export function Layout({ children }: { children: ReactNode }) {
               <>
                 <Link className="user-chip" to="/account">
                   <UserRound size={17} />
-                  <span className="chip-label">{maskPhone(session.merchant.phone)}</span>
+                  <span className="chip-label">{session.demo ? '演示账号' : maskPhone(session.merchant.phone)}</span>
                 </Link>
-                <button className="icon-text-button" onClick={signOut}>
-                  <LogOut size={17} />退出
-                </button>
+                {/* ★★ 演示态**不显示「退出」**：退出只是清掉 session，而 `Protected` 见没有
+                    session 会立刻再拿一枚演示 token ⇒ 点了像没反应（访客会以为按钮坏了）。
+                    演示态该给的是「去登录」，那才是有意义的下一个动作。 */}
+                {session.demo ? (
+                  <Link className="button small secondary" to="/login">登录 <ArrowRight size={16} /></Link>
+                ) : (
+                  <button className="icon-text-button" onClick={signOut}>
+                    <LogOut size={17} />退出
+                  </button>
+                )}
               </>
             ) : (
               // ★ 顶栏这颗**故意不用红色实心**：规范要求「一屏最多一个红色实心主按钮」，
@@ -101,6 +110,14 @@ export function Layout({ children }: { children: ReactNode }) {
           </div>
         </div>
       </header>
+      {/* ★ 演示横幅：不登录进来看到的是演示门店的真实数据，但**只能看**。
+          必须显式告知，否则访客改不动东西会以为坏了；也避免被当成真实账号。 */}
+      {session?.demo && (
+        <div className="demo-banner">
+          <span className="demo-banner__text">演示模式 · 下面是演示门店的真实数据，只能查看</span>
+          <Link className="demo-banner__link" to="/login">登录我的账号 <ArrowRight size={14} /></Link>
+        </div>
+      )}
       <main>{children}</main>
       <footer className="site-footer">
         <div className="container footer-grid">
