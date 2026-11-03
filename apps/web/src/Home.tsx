@@ -115,29 +115,37 @@ const heroPoints = [
  *   四条同时 auto 会在首屏拉 30MB。
  * ★ 封面是单独抽帧的 JPG（都挑了菜拍得最好的那一秒），不是视频第一帧：
  *   这批视频开头多半是人物起手说话，直接当封面不好看。
+ *
+ * ★★★ `?v=` 这个查询串**不是装饰**：nginx 给 `/media/` 发了
+ *   `Cache-Control: public, max-age=604800`（7 天）。换片时只覆盖文件、不改 URL 的话，
+ *   老访客浏览器里仍然是旧视频/旧封面，而**你本地和 headless 截图都是干净的缓存**，
+ *   于是"改了但没人看到"，还会被误判成「部署没生效」。
+ *   ⇒ 换任何一条视频或封面，把 `SHOWCASE_VERSION` 改掉（并同步 `index.html` 的静态链接）。
  */
+const SHOWCASE_VERSION = '20261103'
+
 const showcaseClips = [
   {
-    src: '/media/showcase-1.mp4',
-    poster: '/media/showcase-1.jpg',
+    src: `/media/showcase-1.mp4?v=${SHOWCASE_VERSION}`,
+    poster: `/media/showcase-1.jpg?v=${SHOWCASE_VERSION}`,
     title: '花青素蔬菜组合',
     note: '30 秒 · 从食材讲到口感',
   },
   {
-    src: '/media/showcase-2.mp4',
-    poster: '/media/showcase-2.jpg',
+    src: `/media/showcase-2.mp4?v=${SHOWCASE_VERSION}`,
+    poster: `/media/showcase-2.jpg?v=${SHOWCASE_VERSION}`,
     title: '手工灌腊肠',
     note: '36 秒 · 拍手艺，也拍人',
   },
   {
-    src: '/media/showcase-3.mp4',
-    poster: '/media/showcase-3.jpg',
+    src: `/media/showcase-3.mp4?v=${SHOWCASE_VERSION}`,
+    poster: `/media/showcase-3.jpg?v=${SHOWCASE_VERSION}`,
     title: '东北烤鹅',
     note: '19 秒 · 讲门道，不乱吹',
   },
   {
-    src: '/media/showcase-4.mp4',
-    poster: '/media/showcase-4.jpg',
+    src: `/media/showcase-4.mp4?v=${SHOWCASE_VERSION}`,
+    poster: `/media/showcase-4.jpg?v=${SHOWCASE_VERSION}`,
     title: '现炸豆腐',
     note: '26 秒 · 边炸边讲，声音都在',
   },
