@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Check, ClipboardList, Copy, LoaderCircle, MessageSquare, Sparkles } from 'lucide-react'
 import { api, ApiError } from './api'
@@ -156,6 +156,18 @@ export function Home() {
   // 不是「等接口回来再渲染」—— 那会让首屏空白几百毫秒，接口挂了还会永久空白。
   const images = useSiteImages()
   const { session } = useAuth()
+
+  // ★ 导航栏那颗「成片」指向 `/#showcase`。浏览器做原生 hash 定位时 React 还没把
+  //   目标元素渲染出来 ⇒ 那一次跳转必然落空，页面停在顶部，看起来就像点了没反应。
+  //   所以挂载后再滚一次。`block: 'start'` 会让 sticky 顶栏盖住标题，故留 72px。
+  //   ★ 用**瞬时**滚动（不带 `behavior:'smooth'`）：平滑滚动在无头浏览器截图里
+  //     会捕到一帧空白（内容还没绘制），取证时会误判成「页面坏了」。
+  useEffect(() => {
+    if (window.location.hash !== '#showcase') return
+    const el = document.getElementById('showcase')
+    if (!el) return
+    window.scrollTo(0, el.getBoundingClientRect().top + window.scrollY - 72)
+  }, [])
   return (
     <>
       <section className="hero">
@@ -224,25 +236,9 @@ export function Home() {
       {/* 试用区紧贴首屏：审核员/新访客往下滑一格就能用到，这是「网站里有服务」的实证 */}
       <TrySection />
 
-      <section className="section" id="how">
-        <div className="container">
-          <h2 className="section-title">三步，拍完就能发</h2>
-          <div className="steps-grid">
-            {steps.map((step, i) => (
-              <article className="step-card" key={step.title}>
-                <span className="step-num">{i + 1}</span>
-                <div>
-                  <h3>{step.title}</h3>
-                  <p>{step.text}</p>
-                </div>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* 成片样例：放在「三步」之后 —— 先讲怎么做，紧接着就给做出来的东西看。
-          真视频、能播、有声音，这是「网站里确实有服务」最硬的证据。 */}
+      {/* 成片样例：**紧跟在试用区后面**（2026-11-03 调整，原来放在「三步」之后）。
+          理由很实在：上线当天老板自己都没找到 —— 它在第 4 屏，没人往下滑那么远。
+          顺序改成「试一下 → 看看别人做出来的 → 怎么做的」，真视频本身就是最好的说明书。 */}
       <section className="section" id="showcase">
         <div className="container">
           <h2 className="section-title">看看拍出来的成片</h2>
@@ -266,6 +262,23 @@ export function Home() {
                   <p>{clip.note}</p>
                 </figcaption>
               </figure>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className="section" id="how">
+        <div className="container">
+          <h2 className="section-title">三步，拍完就能发</h2>
+          <div className="steps-grid">
+            {steps.map((step, i) => (
+              <article className="step-card" key={step.title}>
+                <span className="step-num">{i + 1}</span>
+                <div>
+                  <h3>{step.title}</h3>
+                  <p>{step.text}</p>
+                </div>
+              </article>
             ))}
           </div>
         </div>

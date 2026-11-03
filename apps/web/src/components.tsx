@@ -75,6 +75,13 @@ export function Layout({ children }: { children: ReactNode }) {
           {/* 桌面端导航；手机端由 CSS 隐藏（见 styles.css 的 .nav-links） */}
           <nav className="nav-links" aria-label="主导航">
             <NavLink to="/">首页</NavLink>
+            {/* ★★ 2026-11-03：成片区原本在第 4 屏，光靠往下滑没人找得到（上线当天老板自己就找不到）。
+                现在区块已上移到试用区后面（第 2 个内容块），这里仍保留一个直达入口。
+                用**普通 `<a>`** 而不是 `NavLink`：目标是首页里的锚点，
+                不是一条路由 —— `NavLink to="/#showcase"` 在 SPA 里不会触发浏览器跳转，
+                而 `<a href>` 会真的走一次文档加载 + 原生 hash 定位（`Home` 里另有兜底滚动，
+                因为 React 渲染晚于浏览器的 hash 定位）。 */}
+            <a href="/#showcase">成片</a>
             {/* ★ 不加 `end`：在 /app/store 这类子页里「工作台」保持高亮，一眼能看出自己在哪个区域
                 ★ 2026-11-03：**未登录也显示**。点进去是只读的演示工作台（服务端 scope='demo'），
                   这是「网站里能体验到服务」的那条路径，藏起来等于把审核要看的入口藏了。 */}
